@@ -5198,6 +5198,82 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFillNullDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table test as (
+                    select
+                        rnd_symbol_zipf('X', 'Y', 'Z', 0.5) sym,
+                        rnd_decimal(2, 0, 0) dec8,
+                        rnd_decimal(4, 0, 0) dec16,
+                        rnd_decimal(8, 0, 0) dec32,
+                        rnd_decimal(16, 0, 0) dec64,
+                        rnd_decimal(32, 0, 0) dec128,
+                        rnd_decimal(64, 0, 0) dec256,
+                        timestamp_sequence(0, 2 * 24 * 3600 * 1_000_000) ts
+                    from long_sequence(5)
+                    ) timestamp(ts) partition by day
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tlast_dec8\tlast_dec16\tlast_dec32\tlast_dec64\tlast_dec128\tlast_dec256
+                            1970-01-01T00:00:00.000000Z\tX\t\t\t\t\t\t
+                            1970-01-02T00:00:00.000000Z\tY\t\t\t\t\t\t
+                            1970-01-02T00:00:00.000000Z\tX\t\t\t\t\t\t
+                            1970-01-03T00:00:00.000000Z\tX\t\t\t\t\t\t
+                            1970-01-04T00:00:00.000000Z\tY\t\t\t\t\t\t
+                            1970-01-04T00:00:00.000000Z\tX\t\t\t\t\t\t
+                            1970-01-05T00:00:00.000000Z\tY\t\t\t\t\t\t
+                            1970-01-06T00:00:00.000000Z\tY\t\t\t\t\t\t
+                            1970-01-06T00:00:00.000000Z\tX\t\t\t\t\t\t
+                            1970-01-07T00:00:00.000000Z\tX\t\t\t\t\t\t
+                            1970-01-08T00:00:00.000000Z\tY\t\t\t\t\t\t
+                            1970-01-08T00:00:00.000000Z\tX\t\t\t\t\t\t
+                            1970-01-09T00:00:00.000000Z\tY\t\t\t\t\t\t
+                            """,
+                    """
+                            select ts, sym, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
+                            from (
+                              select ts, sym, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
+                              from test
+                              sample by 1d fill(null)
+                            )
+                            where last_dec8 is null
+                            """,
+                    "ts",
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tlast_dec8\tlast_dec16\tlast_dec32\tlast_dec64\tlast_dec128\tlast_dec256
+                            1970-01-01T00:00:00.000000Z\t26\t8174\t92859676\t5638984090602703\t10881618612921458465419298532558\t1267875639627833057844730550783849186037266781416574952372186513
+                            1970-01-02T00:00:00.000000Z\t\t\t\t\t\t
+                            1970-01-03T00:00:00.000000Z\t3\t8024\t49627018\t6503215590264589\t8292001915689417400701921841783\t1516159994234903833896194915139743022756920360668065915067582383
+                            1970-01-04T00:00:00.000000Z\t\t\t\t\t\t
+                            1970-01-05T00:00:00.000000Z\t67\t1188\t12807502\t4293009132828437\t10690409887725246607051155205281\t3742522554156084002234983758473156596807420870058911176561836958
+                            1970-01-06T00:00:00.000000Z\t\t\t\t\t\t
+                            1970-01-07T00:00:00.000000Z\t39\t557\t37969477\t5595184115760814\t17298862804614406683231040975838\t1933902402758066896902305640944308769817849744318427294536832519
+                            1970-01-08T00:00:00.000000Z\t\t\t\t\t\t
+                            1970-01-09T00:00:00.000000Z\t47\t597\t26010670\t3335833712179838\t5583683039033373121859683324280\t5446643541983917307096923744112641495802371760351626258897724112
+                            """,
+                    """
+                            select ts, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
+                            from (
+                              select ts, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
+                              from test
+                              sample by 1d fill(null)
+                            )
+                            """,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFilteredByIndex() throws Exception {
         assertQuery(
                 """

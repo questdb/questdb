@@ -110,6 +110,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             if (ColumnType.isUndefined(parquetType)) {
                 continue;
             }
+            if (metadataIndex >= metadata.getColumnCount()) {
+                return true;
+            }
             if (!Chars.equalsIgnoreCase(parquetMetadata.getColumnName(parquetIndex), metadata.getColumnName(metadataIndex))) {
                 return true;
             }

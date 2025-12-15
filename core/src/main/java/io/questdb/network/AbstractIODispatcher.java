@@ -226,7 +226,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 LOG.error().$("could not initialize connection context [fd=").$(connectionContext.getFd())
                         .$(", e=").$safe(e.getFlyweightMessage())
                         .I$();
-                ioContextFactory.done(connectionContext);
                 disconnect(connectionContext, DISCONNECT_REASON_TLS_SESSION_INIT_FAILED);
             }
         }
