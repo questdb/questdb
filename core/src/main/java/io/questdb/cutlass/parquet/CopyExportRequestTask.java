@@ -40,6 +40,8 @@ public class CopyExportRequestTask implements Mutable {
     private int dataPageSize;
     private CopyExportContext.ExportTaskEntry entry;
     private CharSequence fileName;
+    private long now;
+    private int nowTimestampType;
     private int parquetVersion;
     private boolean rawArrayEncoding;
     private CopyExportResult result;
@@ -58,6 +60,8 @@ public class CopyExportRequestTask implements Mutable {
         this.parquetVersion = -1;
         this.rowGroupSize = -1;
         this.statisticsEnabled = true;
+        this.now = 0;
+        this.nowTimestampType = 0;
         this.createOp = Misc.free(createOp);
         result = null;
     }
@@ -92,6 +96,14 @@ public class CopyExportRequestTask implements Mutable {
 
     public CharSequence getFileName() {
         return fileName;
+    }
+
+    public long getNow() {
+        return now;
+    }
+
+    public int getNowTimestampType() {
+        return nowTimestampType;
     }
 
     public int getParquetVersion() {
@@ -134,7 +146,9 @@ public class CopyExportRequestTask implements Mutable {
             int dataPageSize,
             boolean statisticsEnabled,
             int parquetVersion,
-            boolean rawArrayEncoding
+            boolean rawArrayEncoding,
+            int nowTimestampType,
+            long now
     ) {
         this.entry = entry;
         this.result = result;
@@ -148,6 +162,8 @@ public class CopyExportRequestTask implements Mutable {
         this.parquetVersion = parquetVersion;
         this.rawArrayEncoding = rawArrayEncoding;
         this.createOp = createOp;
+        this.now = now;
+        this.nowTimestampType = nowTimestampType;
     }
 
     public enum Phase {

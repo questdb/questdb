@@ -182,7 +182,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getTextConfiguration().getTextLexerStringPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getTextConfiguration().getTimestampAdapterPoolCapacity());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getTextConfiguration().getUtf8SinkSize());
-        Assert.assertEquals(2, configuration.getCairoConfiguration().getScoreboardFormat());
         Assert.assertEquals(0, configuration.getHttpServerConfiguration().getBindIPv4Address());
         Assert.assertEquals(9000, configuration.getHttpServerConfiguration().getBindPort());
 
@@ -1927,7 +1926,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getTextConfiguration().getTextLexerStringPoolCapacity());
         Assert.assertEquals(512, configuration.getTextConfiguration().getTimestampAdapterPoolCapacity());
         Assert.assertEquals(8192, configuration.getTextConfiguration().getUtf8SinkSize());
-        Assert.assertEquals(1, configuration.getScoreboardFormat());
         Assert.assertEquals(4194304, configuration.getSqlCopyBufferSize());
         Assert.assertEquals(64, configuration.getCopyPoolCapacity());
         Assert.assertEquals("test-id-42", configuration.getSnapshotInstanceId());
@@ -2021,6 +2019,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
         Assert.assertEquals(0.1, configuration.getSqlParallelFilterPreTouchThreshold(), 0.000001);
+        Assert.assertEquals(100, configuration.getSqlParallelFilterDispatchLimit());
         Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());

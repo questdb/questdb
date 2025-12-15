@@ -597,6 +597,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 var copyExportContext = engine.getCopyExportContext();
                 CopyExportResult exportResult = state.getExportResult();
                 entry = copyExportContext.getEntry(state.copyID);
+                int nowTimestampType = sqlExecutionContext.getNowTimestampType();
+                long now = sqlExecutionContext.getNow(nowTimestampType);
 
                 task.of(
                         entry,
@@ -610,7 +612,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.getExportModel().getDataPageSize(),
                         state.getExportModel().isStatisticsEnabled(),
                         state.getExportModel().getParquetVersion(),
-                        state.getExportModel().isRawArrayEncoding()
+                        state.getExportModel().isRawArrayEncoding(),
+                        nowTimestampType,
+                        now
                 );
 
                 serialParquetExporter.of(task);

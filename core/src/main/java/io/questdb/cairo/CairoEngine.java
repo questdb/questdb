@@ -193,7 +193,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
             this.writerPool = new WriterPool(configuration, this);
-            this.scoreboardPool = TxnScoreboardPoolFactory.createPool(configuration);
+            this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
             this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
@@ -471,6 +471,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
+    @TestOnly
+    // this is used in replication test
+    public void clearWalWriterPool() {
+        walWriterPool.releaseAll();
+    }
+
     @Override
     public void close() {
         Misc.free(sqlCompilerPool);
@@ -648,7 +654,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 DefaultLifecycleManager.INSTANCE,
                 backupDirName,
                 getDdlListener(tableToken),
-                checkpointAgent,
                 this
         );
     }

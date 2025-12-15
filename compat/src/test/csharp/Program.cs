@@ -55,6 +55,8 @@ public class TestRunner
                 await RunTest(test, globalVariables);
             }
         }
+        
+        await ExtraTests.RunAll();
     }
 
     private TestData LoadYaml(string filePath)

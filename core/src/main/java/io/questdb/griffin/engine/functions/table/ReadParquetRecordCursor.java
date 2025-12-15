@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
@@ -122,7 +123,12 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                         .put(", expected=").put(ColumnType.nameOf(metadataType))
                         .put(", actual=").put(ColumnType.nameOf(parquetType));
             }
-
+            if (metadataIndex >= metadata.getColumnCount()) {
+                return true;
+            }
+            if (!Chars.equalsIgnoreCase(parquetMetadata.getColumnName(parquetIndex), metadata.getColumnName(metadataIndex))) {
+                return true;
+            }
             final boolean symbolRemappingDetected = (metadataType == ColumnType.VARCHAR && parquetType == ColumnType.SYMBOL);
 
             if (!symbolRemappingDetected && metadataType != parquetType) {

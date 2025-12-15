@@ -22,15 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.functions.groupby;
 
-public class TxnScoreboardPoolFactory {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-    public static TxnScoreboardPool createPool(CairoConfiguration configuration) {
-        if (configuration.getScoreboardFormat() == 1) {
-            return new TxnScoreboardPoolV1(configuration);
-        } else {
-            return new TxnScoreboardPoolV2(configuration);
-        }
+public class WeightedAvgDoubleGroupByFunctionFactory implements FunctionFactory {
+
+    @Override
+    public String getSignature() {
+        return "weighted_avg(DD)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new WeightedAvgDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 }

@@ -535,8 +535,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewRowsPerQueryEstimate() {
-        return 10_000_000;
+    public long getMatViewRowsPerQueryEstimate() {
+        return 10_000_000L;
     }
 
     @Override
@@ -796,11 +796,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getScoreboardFormat() {
-        return 2;
-    }
-
-    @Override
     public long getSequencerCheckInterval() {
         return 10_000;
     }
@@ -1025,6 +1020,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlPageFrameMinRows() {
         return 1_000;
+    }
+
+    @Override
+    public int getSqlParallelFilterDispatchLimit() {
+        return Integer.MAX_VALUE;
     }
 
     @Override

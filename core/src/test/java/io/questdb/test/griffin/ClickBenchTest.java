@@ -232,7 +232,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "SELECT MIN(EventDate), MAX(EventDate) FROM hits;",
                         """
                                 GroupBy vectorized: true workers: 1
-                                  values: [min(EventDate),max(EventDate)]
+                                  values: [min(Eventdate),max(Eventdate)]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits
@@ -799,15 +799,6 @@ public class ClickBenchTest extends AbstractCairoTest {
         });
     }
 
-    private static class TestCase {
-        final String expectedPlan;
-        final String name;
-        final String query;
-
-        private TestCase(String name, String query, String expectedPlan) {
-            this.name = name;
-            this.query = query;
-            this.expectedPlan = expectedPlan;
-        }
+    private record TestCase(String name, String query, String expectedPlan) {
     }
 }

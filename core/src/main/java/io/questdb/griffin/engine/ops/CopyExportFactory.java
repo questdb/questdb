@@ -165,6 +165,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
             try {
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
+                int nowTimestampType = executionContext.getNowTimestampType();
+                long now = executionContext.getNow(nowTimestampType);
                 task.of(
                         entry,
                         createOp,
@@ -177,7 +179,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         dataPageSize,
                         statisticsEnabled,
                         parquetVersion,
-                        rawArrayEncoding
+                        rawArrayEncoding,
+                        nowTimestampType,
+                        now
                 );
             } finally {
                 copyRequestPubSeq.done(processingCursor);

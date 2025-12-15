@@ -97,6 +97,33 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
         return false;
     }
 
+    // Chan et al. [CGL82; CGL83]
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcMean = srcValue.getDouble(valueIndex);
+        double srcSum = srcValue.getDouble(valueIndex + 1);
+        long srcCount = srcValue.getLong(valueIndex + 2);
+
+        double destMean = destValue.getDouble(valueIndex);
+        double destSum = destValue.getDouble(valueIndex + 1);
+        long destCount = destValue.getLong(valueIndex + 2);
+
+        long mergedCount = srcCount + destCount;
+        double delta = destMean - srcMean;
+
+        // This is only valid when countA is much larger than countB.
+        // If both are large and similar sizes, delta is not scaled down.
+        // double mergedMean = srcMean + delta * ((double) destCount / mergedCount);
+
+        // So we use this instead:
+        double mergedMean = (srcCount * srcMean + destCount * destMean) / mergedCount;
+        double mergedSum = srcSum + destSum + (delta * delta) * ((double) (srcCount * destCount) / mergedCount);
+
+        destValue.putDouble(valueIndex, mergedMean);
+        destValue.putDouble(valueIndex + 1, mergedSum);
+        destValue.putLong(valueIndex + 2, mergedCount);
+    }
+
     @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
@@ -112,7 +139,7 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     protected void aggregate(MapValue mapValue, double value) {
@@ -128,4 +155,3 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
         mapValue.addLong(valueIndex + 2, 1L);
     }
 }
-

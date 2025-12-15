@@ -279,9 +279,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
             execute(
                     "create table y as (select" +
                             " x id," +
-                            " 'foobar' str," +
                             " timestamp_sequence(0,10000) as ts," +
-                            " timestamp_sequence(0,10000)::timestamp_ns as ns" +
+                            " timestamp_sequence(0,10000)::timestamp_ns as ns," +
+                            " 'foobar' str," +
                             " from long_sequence(1))"
             );
 
