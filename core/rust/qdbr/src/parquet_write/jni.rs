@@ -4,6 +4,7 @@ use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
 use std::fs::File;
 use std::io::Write;
+use std::ops::Sub;
 use std::path::Path;
 use std::slice;
 
@@ -624,7 +625,7 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
     for (idx, partition) in encoder.pending_partitions.iter().enumerate() {
         let partition_rows = partition.columns[0].row_count;
         let available_rows = if idx == 0 {
-            partition_rows.saturating_sub(first_start)
+            partition_rows.sub(first_start)
         } else {
             partition_rows
         };
@@ -675,7 +676,7 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
         .map(|(idx, p)| {
             let rows = p.columns[0].row_count;
             if idx == 0 {
-                rows.saturating_sub(encoder.first_partition_start)
+                rows.sub(encoder.first_partition_start)
             } else {
                 rows
             }
