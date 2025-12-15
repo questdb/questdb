@@ -322,11 +322,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     base.skipRows(counter);
                 }
                 isSuspendableOpInProgress = false;
-                if (counter.get() > 0) {
-                    remaining = 0;
-                } else {
-                    remaining = baseRowsToTake;
-                }
+                remaining = baseRowsToTake;
                 counter.clear();
             }
         }
