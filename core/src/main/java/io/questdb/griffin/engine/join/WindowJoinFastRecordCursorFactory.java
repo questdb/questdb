@@ -532,8 +532,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 }
             }
 
-            simpleMapValue.setNew(true);
             groupByFunctionsUpdater.updateEmpty(simpleMapValue);
+            simpleMapValue.setNew(true);
 
             final int masterKey = internalJoinRecord.getInt(masterSymbolIndex);
             final int idx = toSymbolMapKey(masterKey);
@@ -1043,8 +1043,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 }
             }
 
-            simpleMapValue.setNew(true);
             groupByFunctionsUpdater.updateEmpty(simpleMapValue);
+            simpleMapValue.setNew(true);
 
             final int masterKey = internalJoinRecord.getInt(masterSymbolIndex);
             final int idx = toSymbolMapKey(masterKey);
@@ -1267,8 +1267,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 }
             }
 
-            simpleMapValue.setNew(true);
             groupByFunctionsUpdater.updateEmpty(simpleMapValue);
+            simpleMapValue.setNew(true);
 
             final int masterKey = internalJoinRecord.getInt(masterSymbolIndex);
             final int idx = toSymbolMapKey(masterKey);

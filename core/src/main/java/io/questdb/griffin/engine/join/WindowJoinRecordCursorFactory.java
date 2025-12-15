@@ -323,6 +323,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             groupByFunctionsUpdater.updateEmpty(simpleMapValue);
+            simpleMapValue.setNew(true);
+
             long slaveRowIndex;
             if (includePrevailing) {
                 slaveRowIndex = slaveTimeFrameHelper.findRowLoWithPrevailing(slaveTimestampLo, slaveTimestampHi);
@@ -334,7 +336,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
-            boolean first = true;
             long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
             for (; ; ) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -345,9 +346,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
 
                 if (joinFilter == null || joinFilter.getBool(internalJoinRecord)) {
-                    if (first) {
+                    if (simpleMapValue.isNew()) {
                         groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
-                        first = false;
+                        simpleMapValue.setNew(false);
                     } else {
                         groupByFunctionsUpdater.updateExisting(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
                     }
@@ -415,6 +416,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private class WindowJoinWithPrevailingAndJoinFilterRecordCursor extends WindowJoinRecordCursor {
+
         public WindowJoinWithPrevailingAndJoinFilterRecordCursor(
                 CairoConfiguration configuration,
                 @Nullable IntList columnIndex,
@@ -453,6 +455,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             groupByFunctionsUpdater.updateEmpty(simpleMapValue);
+            simpleMapValue.setNew(true);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
@@ -473,7 +476,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
-            boolean first = true;
             boolean needFindPrevailing = true;
             long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
             slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
@@ -482,14 +484,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             if (slaveTimestamp == slaveTimestampLo) {
                 if (joinFilter.getBool(internalJoinRecord)) {
                     groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
-                    first = false;
                     simpleMapValue.setNew(false);
                     needFindPrevailing = false;
                 }
                 slaveRowIndex++;
             }
             if (needFindPrevailing) {
-                if (findPrevailingForMasterRow(
+                findPrevailingForMasterRow(
                         slaveTimeFrameHelper,
                         prevailingFrameIndex,
                         prevailingRowIndex,
@@ -497,9 +498,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         internalJoinRecord,
                         groupByFunctionsUpdater,
                         simpleMapValue
-                )) {
-                    first = false;
-                }
+                );
             }
 
             for (; ; ) {
@@ -520,9 +519,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
 
                 if (joinFilter.getBool(internalJoinRecord)) {
-                    if (first) {
+                    if (simpleMapValue.isNew()) {
                         groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
-                        first = false;
+                        simpleMapValue.setNew(false);
                     } else {
                         groupByFunctionsUpdater.updateExisting(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
                     }

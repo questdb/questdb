@@ -376,9 +376,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
-                value.setNew(true);
                 rows.skip(valueSizeInLongs);
                 functionUpdater.updateEmpty(value);
+                value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                 slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
@@ -875,9 +875,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
-                value.setNew(true);
                 rows.skip(valueSizeInLongs);
                 functionUpdater.updateEmpty(value);
+                value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                 final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
@@ -1057,9 +1057,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
-                value.setNew(true);
                 rows.skip(valueSizeInLongs);
                 functionUpdater.updateEmpty(value);
+                value.setNew(true);
+
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                 final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
                 final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
@@ -1290,9 +1291,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     record.setRowIndex(r);
                     rows.ensureCapacity(valueSizeInLongs);
                     value.of(rows.getAppendAddress());
-                    value.setNew(true);
                     rows.skip(valueSizeInLongs);
                     functionUpdater.updateEmpty(value);
+                    value.setNew(true);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                     slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
@@ -1818,9 +1819,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     record.setRowIndex(r);
                     rows.ensureCapacity(valueSizeInLongs);
                     value.of(rows.getAppendAddress());
-                    value.setNew(true);
                     rows.skip(valueSizeInLongs);
                     functionUpdater.updateEmpty(value);
+                    value.setNew(true);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                     final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
@@ -2011,9 +2012,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     record.setRowIndex(r);
                     rows.ensureCapacity(valueSizeInLongs);
                     value.of(rows.getAppendAddress());
-                    value.setNew(true);
                     rows.skip(valueSizeInLongs);
                     functionUpdater.updateEmpty(value);
+                    value.setNew(true);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                     final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
