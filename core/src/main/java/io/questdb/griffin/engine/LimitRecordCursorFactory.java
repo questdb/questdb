@@ -290,8 +290,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             isSuspendableOpInProgress = false;
             baseRowsToSkip = -1;
             baseRowsToTake = -1;
+            remaining = -1;
             counter.clear();
-            tryResolveBoundsCheap();
+            resolveBoundsCheap();
         }
 
         @Override
@@ -311,7 +312,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
-            remaining = baseRowsToTake;
             if (!isSuspendableOpInProgress) {
                 isSuspendableOpInProgress = true;
                 base.toTop();
@@ -322,6 +322,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     base.skipRows(counter);
                 }
                 isSuspendableOpInProgress = false;
+                if (counter.get() > 0) {
+                    remaining = 0;
+                } else {
+                    remaining = baseRowsToTake;
+                }
                 counter.clear();
             }
         }
@@ -331,59 +336,63 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void ensureReadyToConsume() {
-            if (!areBoundsResolved()) {
-                resolveBoundsAndGotoTop();
-                remaining = baseRowsToTake;
+            if (remaining != -1) {
+                return;
             }
+            if (!areBoundsResolved()) {
+                // If baseSize was cheap to get, bounds would already have been sorted out in of().
+                // Now it's time to use the heavy-handed approach to getting baseSize.
+                base.toTop();
+                base.calculateSize(circuitBreaker, counter);
+                baseSize = counter.get();
+                counter.clear();
+                // If both LIMIT args were non-negative, we would have resolved the bounds without
+                // needing to know baseSize. Since we're here, one of the args must be negative.
+                resolveBoundsFromNegativeArgs();
+            }
+            toTop();
         }
 
         private boolean isBaseSizeKnown() {
-            return baseSize != -1;
+            return baseSize >= 0;
         }
 
-        private void resolveBoundsAndGotoTop() {
+        private void resolveBoundsCheap() {
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
                 // In both cases the result is an empty cursor.
                 size = baseRowsToSkip = baseRowsToTake = 0;
                 return;
             }
-            if (baseSize == -1) {
-                baseSize = base.size();
+            baseSize = base.size();
+            if (lo >= 0 && hi >= 0) {
+                resolveBoundsTail(lo, hi);
+            } else if (baseSize >= 0) {
+                resolveBoundsFromNegativeArgs();
             }
+        }
+
+        private void resolveBoundsFromNegativeArgs() {
+            assert baseSize >= 0 : "baseSize < 0";
             long startInclusive, endExclusive;
-            if (lo < 0 || hi < 0) {
-                // At least one argument is negative. We must compute base cursor size
-                // to know how many base cursor rows we'll skip.
-                if (baseSize == -1) {
-                    base.toTop();
-                    base.calculateSize(circuitBreaker, counter);
-                    baseSize = counter.get();
-                    counter.clear();
-                }
-                if (lo < 0) {
-                    startInclusive = baseSize + lo;
-                    if (hi <= 0) {
-                        endExclusive = baseSize + hi;
-                    } else {
-                        endExclusive = hi;
-                    }
-                } else {
-                    // (lo < 0) is false, therefore (hi < 0) is true
-                    startInclusive = lo;
+            if (lo < 0) {
+                startInclusive = baseSize + lo;
+                if (hi <= 0) {
                     endExclusive = baseSize + hi;
+                } else {
+                    endExclusive = hi;
                 }
             } else {
+                // (lo < 0) is false, therefore (hi < 0) is true
                 startInclusive = lo;
-                endExclusive = hi;
+                endExclusive = baseSize + hi;
             }
             startInclusive = Math.max(0, startInclusive);
             resolveBoundsTail(startInclusive, endExclusive);
-            toTop();
         }
 
         private void resolveBoundsTail(long startInclusive, long endExclusive) {
-            if (baseSize != -1) {
+            if (baseSize >= 0) {
                 endExclusive = Math.min(baseSize, endExclusive);
             }
             if (startInclusive >= endExclusive) {
@@ -392,23 +401,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             baseRowsToSkip = startInclusive;
             baseRowsToTake = endExclusive - startInclusive;
-            if (baseSize != -1) {
+            if (baseSize >= 0) {
                 size = baseRowsToTake;
-            }
-        }
-
-        private void tryResolveBoundsCheap() {
-            if (lo == hi) {
-                // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
-                // In both cases the result is an empty cursor.
-                size = baseRowsToSkip = baseRowsToTake = 0;
-                return;
-            }
-            if (baseSize == -1) {
-                baseSize = base.size();
-            }
-            if (baseSize != -1 || lo >= 0 && hi >= 0) {
-                resolveBoundsTail(lo, hi);
             }
         }
     }
