@@ -220,7 +220,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series(1d, 10000000d) LIMIT 1",
                 null,
                 false,
-                true);
+                false);
         assertQuery("generate_series\n" +
                         "1.0E7\n",
                 "generate_series(1d, 10000000d) LIMIT -1",
