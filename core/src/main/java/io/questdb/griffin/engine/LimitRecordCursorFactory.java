@@ -232,6 +232,22 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return false;
         }
 
+//        @Override
+//        public void skipRows(Counter rowCount) throws DataUnavailableException {
+//            ensureReadyToConsume();
+//            long counterBeforeSkip = rowCount.get();
+//            base.skipRows(rowCount);
+//            long counterAfterSkip = rowCount.get();
+//            if (counterAfterSkip > 0) {
+//                remaining = 0;
+//            } else {
+//                remaining -= counterBeforeSkip;
+//                if (remaining < 0) {
+//                    remaining = 0;
+//                }
+//            }
+//        }
+
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return base.newSymbolTable(columnIndex);
