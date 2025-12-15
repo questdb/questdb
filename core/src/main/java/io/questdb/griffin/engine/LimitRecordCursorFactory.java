@@ -173,17 +173,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter sizeCounter) {
-            if (areBoundsResolved() && isBaseSizeKnown()) {
+            ensureReadyToConsume();
+            if (isBaseSizeKnown()) {
                 sizeCounter.add(remaining);
             } else {
-                ensureReadyToConsume();
-                if (isBaseSizeKnown()) {
-                    sizeCounter.add(remaining);
-                } else {
-                    // TODO [mtopol]: the commented-out code would be more efficient, a single call to base.skipRows()
-                    // instead of a loop around base.hasNext(). But, skipRows() is broken in PageFrameRecordCursorImpl
-                    // and potentially other places. It malfunctions when called after partial consumption with
-                    // hasNext().
+                // TODO [mtopol]: the commented-out code would be more efficient, a single call to base.skipRows()
+                // instead of a loop around base.hasNext(). But, skipRows() is broken in PageFrameRecordCursorImpl
+                // and potentially other places. It malfunctions when called after partial consumption with
+                // hasNext().
 //                    if (!isSuspendableOpInProgress) {
 //                        counter.set(remaining);
 //                        isSuspendableOpInProgress = true;
@@ -192,10 +189,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 //                    sizeCounter.add(remaining - counter.get());
 //                    counter.clear();
 //                    isSuspendableOpInProgress = false;
-                    while (remaining > 0 && base.hasNext()) {
-                        remaining--;
-                        sizeCounter.inc();
-                    }
+                while (remaining > 0 && base.hasNext()) {
+                    remaining--;
+                    sizeCounter.inc();
                 }
             }
             remaining = 0;
