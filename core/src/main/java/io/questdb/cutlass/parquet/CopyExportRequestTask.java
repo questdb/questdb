@@ -340,13 +340,22 @@ public class CopyExportRequestTask implements Mutable {
         public boolean onResume() throws Exception {
             if (streamExportCurrentPtr != 0) {
                 assert writeCallback != null;
-                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                while (streamExportCurrentPtr != 0) {
+                    writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                    long buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
+                    if (buffer != 0) {
+                        streamExportCurrentPtr = buffer + Long.BYTES;
+                        streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                    } else {
+                        streamExportCurrentPtr = 0;
+                        streamExportCurrentSize = 0;
+                    }
+                }
+
                 if (!exportFinished) {
                     totalRows += currentFrameRowCount;
                     entry.setStreamingSendRowCount(totalRows);
                 }
-                streamExportCurrentPtr = 0;
-                streamExportCurrentSize = 0;
                 return true;
             }
             return false;
@@ -418,15 +427,17 @@ public class CopyExportRequestTask implements Mutable {
                     }
                 }
 
-                // Write chunk to Parquet
-                long buffer = writeStreamingParquetChunk(
-                        streamWriter,
-                        columnData.getAddress(),
-                        frameRowCount
-                );
-                streamExportCurrentPtr = buffer + Long.BYTES;
-                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                long buffer = writeStreamingParquetChunk(streamWriter, columnData.getAddress(), frameRowCount);
+                while (buffer != 0) {
+                    streamExportCurrentPtr = buffer + Long.BYTES;
+                    streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                    writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                    buffer = writeStreamingParquetChunk(
+                            streamWriter,
+                            0,
+                            0
+                    );
+                }
             } else {
                 columnData.clear();
 
@@ -454,9 +465,21 @@ public class CopyExportRequestTask implements Mutable {
                         frame.getParquetRowGroupLo(),
                         frame.getParquetRowGroupHi()
                 );
-                streamExportCurrentPtr = buffer + Long.BYTES;
-                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                while (buffer != 0) {
+                    streamExportCurrentPtr = buffer + Long.BYTES;
+                    streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                    writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                    buffer = writeStreamingParquetChunkFromRowGroup(
+                            streamWriter,
+                            allocator,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                    );
+                }
             }
             totalRows += currentFrameRowCount;
             entry.setStreamingSendRowCount(totalRows);

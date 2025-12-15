@@ -1,5 +1,5 @@
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
-use crate::parquet_write::file::{ChunkedWriter, ParquetWriter};
+use crate::parquet_write::file::{ChunkedWriter, ParquetWriter, DEFAULT_ROW_GROUP_SIZE};
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
 use std::fs::File;
@@ -450,6 +450,16 @@ pub struct StreamingParquetWriter {
     current_buffer: Box<Vec<u8, QdbAllocator>>,
     chunked_writer: ChunkedWriter<BufferWriter>,
     additional_data: Vec<KeyValue>,
+
+    // Fields for accumulating partitions across multiple writeChunk calls
+    row_group_size: usize,
+    pending_partitions: Vec<Partition>,
+    first_partition_start: usize,
+    accumulated_rows: usize,
+    // Keep RowGroupBuffers alive while partitions reference their data.
+    // Used by writeStreamingParquetChunkFromRowGroup to hold decoded parquet data.
+    // Index corresponds to pending_partitions: Some(_) for FromRowGroup, None for writeChunk.
+    pending_row_group_buffers: Vec<Option<crate::parquet_read::RowGroupBuffers>>,
 }
 
 #[no_mangle]
@@ -525,11 +535,18 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_sorting_columns(sorting_columns.clone());
         let chunked_writer = parquet_writer.chunked(parquet_schema, encodings)?;
 
+        let effective_row_group_size = row_group_size_opt.unwrap_or(DEFAULT_ROW_GROUP_SIZE);
+
         Ok(StreamingParquetWriter {
             partition: partition_template,
             current_buffer,
             chunked_writer,
             additional_data,
+            row_group_size: effective_row_group_size,
+            pending_partitions: Vec::new(),
+            first_partition_start: 0,
+            accumulated_rows: 0,
+            pending_row_group_buffers: Vec::new(),
         })
     };
 
@@ -559,20 +576,18 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     }
     let encoder = unsafe { &mut *encoder };
     let mut write_chunk = || -> ParquetResult<*const u8> {
-        unsafe {
-            encoder.current_buffer.set_len(0);
+        let row_count = row_count as usize;
+        if row_count > 0 {
+            let mut new_partition = Partition {
+                table: String::new(),
+                columns: encoder.partition.columns.clone(),
+            };
+            update_partition_data(&mut new_partition, col_data_ptr, row_count)?;
+            encoder.pending_partitions.push(new_partition);
+            encoder.pending_row_group_buffers.push(None);
+            encoder.accumulated_rows += row_count;
         }
-        update_partition_data(&mut encoder.partition, col_data_ptr, row_count as usize)?;
-        encoder
-            .chunked_writer
-            .write_chunk_as_single_row_group(&encoder.partition)?;
-        debug_assert!(
-            encoder.current_buffer.len() >= 8,
-            "buffer too small: length header requires 8 bytes"
-        );
-        let data_len = (encoder.current_buffer.len() - 8) as u64;
-        encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
-        Ok(encoder.current_buffer.as_ptr())
+        flush_pending_partitions(encoder)
     };
 
     match write_chunk() {
@@ -583,6 +598,91 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             std::ptr::null()
         }
     }
+}
+
+fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
+    if encoder.accumulated_rows >= encoder.row_group_size {
+        unsafe {
+            encoder.current_buffer.set_len(0);
+        }
+        write_pending_row_group(encoder)?;
+        let data_len = (encoder.current_buffer.len() - 8) as u64;
+        encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+        Ok(encoder.current_buffer.as_ptr())
+    } else {
+        Ok(std::ptr::null())
+    }
+}
+
+fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResult<()> {
+    let row_group_size = encoder.row_group_size;
+    let first_start = encoder.first_partition_start;
+    let mut rows_needed = row_group_size;
+    let mut last_partition_idx = 0;
+    let mut last_partition_end = 0;
+
+    for (idx, partition) in encoder.pending_partitions.iter().enumerate() {
+        let partition_rows = partition.columns[0].row_count;
+        let available_rows = if idx == 0 {
+            partition_rows.saturating_sub(first_start)
+        } else {
+            partition_rows
+        };
+
+        if available_rows >= rows_needed {
+            last_partition_idx = idx;
+            last_partition_end = if idx == 0 {
+                first_start + rows_needed
+            } else {
+                rows_needed
+            };
+            break;
+        } else {
+            rows_needed -= available_rows;
+            last_partition_idx = idx;
+            last_partition_end = partition_rows;
+        }
+    }
+
+    let partitions: Vec<&Partition> = encoder.pending_partitions[..=last_partition_idx]
+        .iter()
+        .collect();
+    encoder.chunked_writer.write_row_group_from_partitions(
+        &partitions,
+        first_start,
+        last_partition_end,
+    )?;
+    let last_partition_rows = encoder.pending_partitions[last_partition_idx].columns[0].row_count;
+
+    if last_partition_end >= last_partition_rows {
+        encoder.pending_partitions.drain(..=last_partition_idx);
+        encoder
+            .pending_row_group_buffers
+            .drain(..=last_partition_idx);
+        encoder.first_partition_start = 0;
+    } else {
+        encoder.pending_partitions.drain(..last_partition_idx);
+        encoder
+            .pending_row_group_buffers
+            .drain(..last_partition_idx);
+        encoder.first_partition_start = last_partition_end;
+    }
+
+    encoder.accumulated_rows = encoder
+        .pending_partitions
+        .iter()
+        .enumerate()
+        .map(|(idx, p)| {
+            let rows = p.columns[0].row_count;
+            if idx == 0 {
+                rows.saturating_sub(encoder.first_partition_start)
+            } else {
+                rows
+            }
+        })
+        .sum();
+
+    Ok(())
 }
 
 #[no_mangle]
@@ -603,6 +703,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         unsafe {
             encoder.current_buffer.set_len(0);
         }
+
+        if !encoder.pending_partitions.is_empty() && encoder.accumulated_rows > 0 {
+            let last_idx = encoder.pending_partitions.len() - 1;
+            let last_partition_end = encoder.pending_partitions[last_idx].columns[0].row_count;
+
+            let partitions: Vec<&Partition> = encoder.pending_partitions.iter().collect();
+            encoder.chunked_writer.write_row_group_from_partitions(
+                &partitions,
+                encoder.first_partition_start,
+                last_partition_end,
+            )?;
+        }
+
         encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
@@ -754,58 +867,50 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
     let encoder = unsafe { &mut *encoder };
     let mut write_chunk = || -> ParquetResult<*const u8> {
-        use crate::parquet_read::{ParquetDecoder, RowGroupBuffers};
-        use std::io::Cursor;
-        let source_data = unsafe {
-            slice::from_raw_parts(
-                source_parquet_addr as *const u8,
-                source_parquet_size as usize,
-            )
-        };
-        let reader = Cursor::new(source_data);
-        let allocator = unsafe { &*allocator_ptr }.clone();
-        let mut decoder =
-            ParquetDecoder::read(allocator.clone(), reader, source_parquet_size as u64)?;
-        let mut row_group_bufs = RowGroupBuffers::new(allocator);
-
-        // Build columns list (parquet_column_index, column_type)
-        let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = encoder
-            .partition
-            .columns
-            .iter()
-            .enumerate()
-            .map(|(i, col)| (i as i32, col.data_type))
-            .collect();
-
-        decoder.decode_row_group(
-            &mut row_group_bufs,
-            &columns,
-            row_group_index as u32,
-            row_group_lo as u32,
-            row_group_hi as u32,
-        )?;
-
         let row_count = (row_group_hi - row_group_lo) as usize;
-        let partition = convert_row_group_buffers_to_partition(
-            &encoder.partition,
-            &row_group_bufs,
-            &columns,
-            row_count,
-            symbol_data_ptr,
-        )?;
-        unsafe {
-            encoder.current_buffer.set_len(0);
+        if row_count > 0 {
+            use crate::parquet_read::{ParquetDecoder, RowGroupBuffers};
+            use std::io::Cursor;
+            let source_data = unsafe {
+                slice::from_raw_parts(
+                    source_parquet_addr as *const u8,
+                    source_parquet_size as usize,
+                )
+            };
+            let reader = Cursor::new(source_data);
+            let allocator = unsafe { &*allocator_ptr }.clone();
+            let mut decoder =
+                ParquetDecoder::read(allocator.clone(), reader, source_parquet_size as u64)?;
+            let mut row_group_bufs = RowGroupBuffers::new(allocator);
+            let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = encoder
+                .partition
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(i, col)| (i as i32, col.data_type))
+                .collect();
+
+            decoder.decode_row_group(
+                &mut row_group_bufs,
+                &columns,
+                row_group_index as u32,
+                row_group_lo as u32,
+                row_group_hi as u32,
+            )?;
+
+            let partition = convert_row_group_buffers_to_partition(
+                &encoder.partition,
+                &row_group_bufs,
+                &columns,
+                row_count,
+                symbol_data_ptr,
+            )?;
+            encoder.pending_partitions.push(partition);
+            encoder.pending_row_group_buffers.push(Some(row_group_bufs));
+            encoder.accumulated_rows += row_count;
         }
-        encoder
-            .chunked_writer
-            .write_chunk_as_single_row_group(&partition)?;
-        debug_assert!(
-            encoder.current_buffer.len() >= 8,
-            "buffer too small: length header requires 8 bytes"
-        );
-        let data_len = (encoder.current_buffer.len() - 8) as u64;
-        encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
-        Ok(encoder.current_buffer.as_ptr())
+
+        flush_pending_partitions(encoder)
     };
 
     match write_chunk() {

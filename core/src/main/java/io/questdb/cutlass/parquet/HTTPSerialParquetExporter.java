@@ -77,7 +77,6 @@ public class HTTPSerialParquetExporter {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         CreateTableOperation createOp = null;
         sqlExecutionContext.setNowAndFixClock(task.getNow(), task.getNowTimestampType());
-        sqlExecutionContext.changePageFrameSizes(task.getRowGroupSize(), task.getRowGroupSize());
 
         try {
             createOp = task.getCreateOp();
@@ -113,7 +112,6 @@ public class HTTPSerialParquetExporter {
                     } finally {
                         sqlExecutionContext.with(sec);
                     }
-                    sqlExecutionContext.changePageFrameSizes(task.getRowGroupSize(), task.getRowGroupSize());
                     PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                     task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata(), descending);
                     factory = null; // transfer ownership to the task

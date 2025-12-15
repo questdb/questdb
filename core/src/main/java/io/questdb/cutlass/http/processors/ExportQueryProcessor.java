@@ -195,7 +195,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     for (int retries = 0; runQuery; retries++) {
                         try {
                             if (canStreamExportParquet) {
-                                sqlExecutionContext.changePageFrameSizes(state.getExportModel().getRowGroupSize(), state.getExportModel().getRowGroupSize());
                                 state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(sqlExecutionContext, order);
                             } else {
                                 state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);

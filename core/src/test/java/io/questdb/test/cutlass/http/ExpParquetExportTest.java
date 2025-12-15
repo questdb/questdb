@@ -509,6 +509,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     if (rnd.nextBoolean()) {
                                         req.query("rmode", "nodelay");
                                     }
+                                    req.query("row_group_size", String.valueOf(10 + rnd.nextInt(1191)));
                                     sink.clear();
                                     testHttpClient.reqToSink(req, sink, null, null, null, null);
                                     int bytesReceived = sink.size();
@@ -553,7 +554,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 3038, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 1698, params, "test_table");
                 });
     }
 
@@ -579,7 +580,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 1410, params, "select x, ts from test_table");
+                    testHttpClient.assertGetParquet("/exp", 917, params, "select x, ts from test_table");
                 });
     }
 
@@ -707,7 +708,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 1498, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 1142, params, "test_table");
                 });
     }
 
