@@ -349,7 +349,7 @@ public class LimitTest extends AbstractCairoTest {
                             ") limit 1",
                     null,
                     true,
-                    true
+                    false
             );
         });
     }
@@ -392,7 +392,7 @@ public class LimitTest extends AbstractCairoTest {
                             ) limit 2""",
                     "timestamp",
                     true,
-                    true
+                    false
             );
         });
     }
