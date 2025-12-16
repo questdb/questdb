@@ -126,6 +126,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
                 0.1 * rnd.nextDouble()
         );
 
@@ -255,10 +256,38 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double replaceProb,
             double symbolAccessProb
     ) {
-        fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
+        fuzzer.setFuzzProbabilities(
+                cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
                 equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
                 replaceProb, symbolAccessProb
+        );
+    }
+
+    protected void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceProb,
+            double symbolAccessProb,
+            double queryProb
+    ) {
+        fuzzer.setFuzzProbabilities(
+                cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
+                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
+                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
+                replaceProb, symbolAccessProb, queryProb
         );
     }
 

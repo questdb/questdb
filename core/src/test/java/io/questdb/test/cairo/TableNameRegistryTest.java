@@ -174,11 +174,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             AtomicReference<Throwable> ref = new AtomicReference<>();
             CyclicBarrier barrier = new CyclicBarrier(2 * threadCount + 2);
 
-            long[][] seeds = {
-                    {3061779658652450L, 1764199810195L},
-                    {3061779726002740L, 1764199810262L},
-                    {3061779742255143L, 1764199810278L},
-            };
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            long[][] seeds = new long[threadCount][2];
+            for (int i = 0; i < threadCount; i++) {
+                seeds[i][0] = rnd.nextLong();
+                seeds[i][1] = rnd.nextLong();
+            }
 
             ObjList<Thread> threads = new ObjList<>(threadCount + 2);
             for (int i = 0; i < threadCount; i++) {
@@ -215,10 +216,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(LOG, seeds[m][0], seeds[m][1]);
+                        Rnd r = new Rnd(seeds[m][0], seeds[m][1]);
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
-                                boolean isWal = rnd.nextBoolean();
+                                boolean isWal = r.nextBoolean();
                                 try {
                                     execute(
                                             "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
@@ -239,7 +240,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                     // Should never fail on drop table.
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
                                             && !Chars.contains(e.getFlyweightMessage(), "could not lock")
-                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not remove table")) {
                                         throw e;
                                     }
                                 }

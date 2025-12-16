@@ -162,6 +162,17 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
+    /*
+     * Rollback to previous version that is stored before the current version in the file.
+     * This function cannot be called multiple times in a row without commit() in between because
+     * only one previous version is stored.
+     */
+    public void rollback() {
+        mem.putLong(OFFSET_VERSION_64, version - 1);
+        // load version and other fields from mem
+        readUnsafe();
+    }
+
     public void squashPartition(long targetPartitionTimestamp, long sourcePartitionTimestamp) {
         removePartition(sourcePartitionTimestamp);
         // Remove all default partitions that point to the targetPartitionTimestamp
@@ -345,10 +356,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             int srcEnd = srcColumnVersionList.binarySearchBlock(srcIndex, BLOCK_SIZE_MSB, srcTimestamp, Vect.BIN_SEARCH_SCAN_DOWN);
             cachedColumnVersionList.insertFromSource(index, srcColumnVersionList, srcIndex, srcEnd + BLOCK_SIZE);
         } else {
-            throw CairoException.critical(0)
-                    .put("invalid Column Version state ")
-                    .put(dstTimestamp)
-                    .put(" column version state, cannot update partition information");
+            throw CairoException.critical(0).put("invalid Column Version state ").put(dstTimestamp).put(" column version state, cannot update partition information");
         }
         hasChanges = true;
         return index;
@@ -399,7 +407,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     private void storeNewVersion() {
-        mem.putLong(OFFSET_VERSION_64, ++this.version);
+        mem.putLong(OFFSET_VERSION_64, ++version);
     }
 
     private void updateA(long aOffset, long aSize) {
