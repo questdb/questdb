@@ -77,11 +77,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public boolean followedLimitAdvice() {
-        return base.followedLimitAdvice();
-    }
-
-    @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();
     }
