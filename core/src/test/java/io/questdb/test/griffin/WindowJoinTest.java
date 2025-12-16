@@ -1043,6 +1043,164 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinFilterMiddleRowMatchesAtBoundary() throws Exception {
+        // Tests join filter with multiple rows where only a middle row matches.
+
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "  ts timestamp," +
+                            "  sym symbol" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table y (" +
+                            "  ts timestamp," +
+                            "  sym symbol," +
+                            "  val int" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute("insert into x values ('2023-01-01T09:01:00.000000Z', 'A');");
+
+            // Three rows at the boundary timestamp: only the middle one (val=5) matches the filter
+            execute(
+                    "insert into y values " +
+                            "('2023-01-01T09:00:00.000000Z', 'A', 1)," +
+                            "('2023-01-01T09:00:00.000000Z', 'A', 5)," +
+                            "('2023-01-01T09:00:00.000000Z', 'A', 2)," +
+                            "('2023-01-01T09:01:00.000000Z', 'A', 5);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tsum
+                            2023-01-01T09:01:00.000000Z\tA\t10
+                            """,
+                    "select x.ts, x.sym, sum(y.val) " +
+                            "from x " +
+                            "window join y on (x.sym = y.sym and y.val = 5) " +
+                            "range between 1 minute preceding and 1 minute following " +
+                            (includePrevailing ? "include prevailing" : "exclude prevailing"),
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testJoinFilterWithMultipleRowsAtSameTimestamp() throws Exception {
+        // Tests join filter with multiple rows at the same timestamp boundary.
+        // The fix ensures all rows at slaveTimestampLo are checked against the join filter,
+        // not just the first one.
+
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "  ts timestamp," +
+                            "  sym symbol" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table y (" +
+                            "  ts timestamp," +
+                            "  sym symbol," +
+                            "  val int" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            // Insert x row
+            execute("insert into x values ('2023-01-01T09:01:00.000000Z', 'A');");
+
+            // Insert multiple y rows at the same timestamp (the window boundary).
+            // The join filter will exclude the first row (val=1) but match the second (val=2).
+            execute(
+                    "insert into y values " +
+                            "('2023-01-01T09:00:00.000000Z', 'A', 1)," +
+                            "('2023-01-01T09:00:00.000000Z', 'A', 2)," +
+                            "('2023-01-01T09:01:00.000000Z', 'A', 3);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tsum
+                            2023-01-01T09:01:00.000000Z\tA\t5
+                            """,
+                    "select x.ts, x.sym, sum(y.val) " +
+                            "from x " +
+                            "window join y on (x.sym = y.sym and y.val > 1) " +
+                            "range between 1 minute preceding and 1 minute following " +
+                            (includePrevailing ? "include prevailing" : "exclude prevailing"),
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testJoinFilterWithMultipleRowsAtSameTimestampNoSymbol() throws Exception {
+        // Tests join filter with multiple rows at the same timestamp boundary
+        // when using the non-fast path (no symbol equality).
+
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "  ts timestamp," +
+                            "  id int" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table y (" +
+                            "  ts timestamp," +
+                            "  id int," +
+                            "  val int" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            // Insert x row
+            execute("insert into x values ('2023-01-01T09:01:00.000000Z', 1);");
+
+            // Insert multiple y rows at the same timestamp.
+            // First row at the boundary doesn't match the filter, second one does.
+            execute(
+                    "insert into y values " +
+                            "('2023-01-01T09:00:00.000000Z', 1, 10)," +
+                            "('2023-01-01T09:00:00.000000Z', 1, 20)," +
+                            "('2023-01-01T09:01:00.000000Z', 1, 30);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tid\tsum
+                            2023-01-01T09:01:00.000000Z\t1\t50
+                            """,
+                    "select x.ts, x.id, sum(y.val) " +
+                            "from x " +
+                            "window join y on (x.id = y.id and y.val > 10) " +
+                            "range between 1 minute preceding and 1 minute following " +
+                            (includePrevailing ? "include prevailing" : "exclude prevailing"),
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testMasterFilterLimit() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
