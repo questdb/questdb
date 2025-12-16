@@ -476,31 +476,11 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
-            boolean needFindPrevailing = true;
             long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
-            slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
-            long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
 
-            if (slaveTimestamp == slaveTimestampLo) {
-                if (joinFilter.getBool(internalJoinRecord)) {
-                    groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
-                    simpleMapValue.setNew(false);
-                    needFindPrevailing = false;
-                }
-                slaveRowIndex++;
-            }
-            if (needFindPrevailing) {
-                findPrevailingForMasterRow(
-                        slaveTimeFrameHelper,
-                        prevailingFrameIndex,
-                        prevailingRowIndex,
-                        joinFilter,
-                        internalJoinRecord,
-                        groupByFunctionsUpdater,
-                        simpleMapValue
-                );
-            }
-
+            boolean needFindPrevailing = true;
+            // First, check if one of the first rows matching the join filter is also at the slaveTimestampLo timestamp.
+            // If so, we don't need to do backward scan to find the prevailing row.
             for (; ; ) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 if (slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
@@ -513,7 +493,48 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                 }
                 slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
-                slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                if (slaveTimestamp > slaveTimestampLo) {
+                    break;
+                }
+
+                slaveRowIndex++;
+                if (joinFilter.getBool(internalJoinRecord)) {
+                    // - 1 is here to compensate the above increment.
+                    groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex - 1);
+                    simpleMapValue.setNew(false);
+                    needFindPrevailing = false;
+                    break;
+                }
+            }
+
+            // Do a backward scan to find the prevailing row.
+            if (needFindPrevailing) {
+                findPrevailingForMasterRow(
+                        slaveTimeFrameHelper,
+                        prevailingFrameIndex,
+                        prevailingRowIndex,
+                        joinFilter,
+                        internalJoinRecord,
+                        groupByFunctionsUpdater,
+                        simpleMapValue
+                );
+            }
+
+            // Aggregate the rows within the time window.
+            for (; ; ) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                if (slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                    if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                        break;
+                    }
+                    slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                    baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    // don't forget to switch the record to the new frame
+                    slaveTimeFrameHelper.recordAt(baseSlaveRowId);
+                }
+                slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
+                final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (slaveTimestamp > slaveTimestampHi) {
                     break;
                 }
