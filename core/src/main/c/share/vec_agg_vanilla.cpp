@@ -324,50 +324,50 @@ int32_t maxShort_Vanilla(int16_t *ps, int64_t count) {
 extern "C" {
 
 JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_Vect_avgIntAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
+Java_io_questdb_std_Vect_sumIntAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<int32_t *>(pi);
-    double_t avg = 0;
-    double_t c = 1;
-    for (uint32_t i = 0; i < count; i++) {
+    double_t sum = 0;
+    int64_t c = 0;
+    for (uint64_t i = 0; i < count; i++) {
         int32_t v = ppi[i];
         if (v != I_MIN) {
-            avg += (v - avg) / c;
+            sum += (double_t) v;
             ++c;
         }
     }
-    *(reinterpret_cast<jlong *>(pCount)) = ((jlong) c - 1);
-    return avg;
+    *(reinterpret_cast<jlong *>(pCount)) = (jlong) c;
+    return c > 0 ? sum : NAN;
 }
 
 JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_Vect_avgLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
+Java_io_questdb_std_Vect_sumLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<int64_t *>(pi);
-    double_t avg = 0;
-    double_t c = 1;
-    for (uint32_t i = 0; i < count; i++) {
+    double_t sum = 0;
+    int64_t c = 0;
+    for (uint64_t i = 0; i < count; i++) {
         int64_t v = ppi[i];
         if (v != L_MIN) {
-            avg += ((double_t) v - avg) / c;
+            sum += (double_t) v;
             ++c;
         }
     }
-    *(reinterpret_cast<jlong *>(pCount)) = ((jlong) c - 1);
-    return avg;
+    *(reinterpret_cast<jlong *>(pCount)) = (jlong) c;
+    return c > 0 ? sum : NAN;
 }
 
 JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_Vect_avgDoubleAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
+Java_io_questdb_std_Vect_sumDoubleAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<double_t *>(pi);
-    double_t avg = 0;
-    double_t c = 1;
-    for (uint32_t i = 0; i < count; i++) {
+    double_t sum = 0;
+    int64_t c = 0;
+    for (uint64_t i = 0; i < count; i++) {
         double_t v = ppi[i];
         if (!std::isnan(v)) {
-            avg += (v - avg) / c;
+            sum += v;
             ++c;
         }
     }
-    *(reinterpret_cast<jlong *>(pCount)) = ((jlong) c - 1);
-    return avg;
+    *(reinterpret_cast<jlong *>(pCount)) = (jlong) c;
+    return c > 0 ? sum : NAN;
 }
 };
