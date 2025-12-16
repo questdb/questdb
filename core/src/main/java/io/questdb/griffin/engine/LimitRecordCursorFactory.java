@@ -253,46 +253,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return base.newSymbolTable(columnIndex);
         }
 
-        public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
-            this.base = base;
-            this.circuitBreaker = executionContext.getCircuitBreaker();
-
-            leftFunction.init(base, executionContext);
-            if (rightFunction != null) {
-                rightFunction.init(base, executionContext);
-            }
-            long leftArg = leftFunction.getLong(null);
-            if (rightFunction == null) {
-                if (leftArg >= 0) {
-                    lo = 0;
-                    hi = leftArg;
-                } else {
-                    lo = leftArg;
-                    hi = 0;
-                }
-            } else {
-                lo = leftArg;
-                hi = rightFunction.getLong(null);
-                if (lo < 0 && hi > 0) {
-                    throw SqlException.$(argPos, "LIMIT <negative>, <positive> is not allowed");
-                }
-                if (lo > hi && Numbers.sameSign(lo, hi)) {
-                    final long l = hi;
-                    hi = lo;
-                    lo = l;
-                }
-            }
-
-            baseSize = -1;
-            size = -1;
-            isSuspendableOpInProgress = false;
-            baseRowsToSkip = -1;
-            baseRowsToTake = -1;
-            remaining = -1;
-            counter.clear();
-            resolveBoundsCheap();
-        }
-
         @Override
         public long preComputedStateSize() {
             return RecordCursor.fromBool(isBaseSizeKnown()) + RecordCursor.fromBool(areBoundsResolved()) + base.preComputedStateSize();
@@ -377,10 +337,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (hi <= 0) {
                     endExclusive = baseSize + hi;
                 } else {
+                    // "LIMIT <negative>, <positive> is validated against in SqlCodeGenerator because it's confusing.
+                    // We handle it here anyway, in case this decision changes.
                     endExclusive = hi;
                 }
             } else {
-                // (lo < 0) is false, therefore (hi < 0) is true
+                // This method is called only when lo < 0 || hi < 0.
+                // In this branch, we know that lo >= 0, therefore hi < 0.
                 startInclusive = lo;
                 endExclusive = baseSize + hi;
             }
@@ -401,6 +364,46 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (baseSize >= 0) {
                 size = baseRowsToTake;
             }
+        }
+
+        void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+            this.base = base;
+            this.circuitBreaker = executionContext.getCircuitBreaker();
+
+            leftFunction.init(base, executionContext);
+            if (rightFunction != null) {
+                rightFunction.init(base, executionContext);
+            }
+            long leftArg = leftFunction.getLong(null);
+            if (rightFunction == null) {
+                if (leftArg >= 0) {
+                    lo = 0;
+                    hi = leftArg;
+                } else {
+                    lo = leftArg;
+                    hi = 0;
+                }
+            } else {
+                lo = leftArg;
+                hi = rightFunction.getLong(null);
+                if (lo < 0 && hi > 0) {
+                    throw SqlException.$(argPos, "LIMIT <negative>, <positive> is not allowed");
+                }
+                if (lo > hi && Numbers.sameSign(lo, hi)) {
+                    final long l = hi;
+                    hi = lo;
+                    lo = l;
+                }
+            }
+
+            baseSize = -1;
+            size = -1;
+            isSuspendableOpInProgress = false;
+            baseRowsToSkip = -1;
+            baseRowsToTake = -1;
+            remaining = -1;
+            counter.clear();
+            resolveBoundsCheap();
         }
     }
 }
