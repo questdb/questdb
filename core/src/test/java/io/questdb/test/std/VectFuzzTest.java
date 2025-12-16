@@ -63,7 +63,6 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public class VectFuzzTest {
-
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     private Rnd rnd = new Rnd();
@@ -139,6 +138,7 @@ public class VectFuzzTest {
                         void run(long ptr, long count) {
                             if (count == 0) {
                                 Assert.assertTrue("double sum, count: 0", Double.isNaN(Vect.sumDouble(ptr, 0)));
+                                Assert.assertTrue("double non-null sum, count: 0", Double.isNaN(Vect.sumDoubleNonNull(ptr, 0)));
                                 Assert.assertTrue("double Kahan sum, count: 0", Double.isNaN(Vect.sumDoubleKahan(ptr, 0)));
                                 Assert.assertTrue("double Neumaier sum, count: 0", Double.isNaN(Vect.sumDoubleNeumaier(ptr, 0)));
                                 Assert.assertTrue("double min, count: 0", Double.isNaN(Vect.minDouble(ptr, 0)));
@@ -146,6 +146,7 @@ public class VectFuzzTest {
                                 Assert.assertEquals("double count, count: 0", 0, Vect.countDouble(ptr, 0));
                             } else {
                                 Assert.assertEquals("double sum, count: " + count, 0.0, Vect.sumDouble(ptr, count), 0.001);
+                                Assert.assertEquals("double non-null sum, count: " + count, 0.0, Vect.sumDoubleNonNull(ptr, count), 0.001);
                                 Assert.assertEquals("double Kahan sum, count: " + count, 0.0, Vect.sumDoubleKahan(ptr, count), 0.001);
                                 Assert.assertEquals("double Neumaier sum, count: " + count, 0.0, Vect.sumDoubleNeumaier(ptr, count), 0.001);
                                 Assert.assertEquals("double min, count: " + count, 0.0, Vect.minDouble(ptr, count), 0.001);
@@ -174,7 +175,6 @@ public class VectFuzzTest {
     @Test
     public void testBinarySearchIndexT() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             int count = 1000;
             final int size = count * 2 * Long.BYTES;
             final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
@@ -301,7 +301,6 @@ public class VectFuzzTest {
 
                 try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
                     try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-
                         colBuffs.setDedupColumnCount(keyCount);
                         long dedupColBuffPtr = colBuffs.allocateBlock();
                         for (int k = 0; k < keyCount; k++) {
@@ -529,7 +528,6 @@ public class VectFuzzTest {
     @Test
     public void testMergeDedupIndexEmptySrc() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             int srcLen = 10000;
             Rnd rnd = TestUtils.generateRandom(null);
             try (DirectLongList src = new DirectLongList(srcLen, MemoryTag.NATIVE_DEFAULT)) {
@@ -993,7 +991,6 @@ public class VectFuzzTest {
     @Test
     public void testOooMergeCopyVarcharColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             // todo: shuffle vectors
             int rowCount = 10_000;
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;

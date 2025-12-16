@@ -37,6 +37,10 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDouble(JNIEnv *env, jclass
     return sumDouble_Vanilla((double*) pDouble, count);
 }
 
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDoubleNonNull(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
+    return sumDoubleNonNull_Vanilla((double*) pDouble, count);
+}
+
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDoubleKahan(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
     return sumDoubleKahan_Vanilla((double*) pDouble, count);
 }

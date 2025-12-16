@@ -123,6 +123,18 @@ double sumDouble_Vanilla(double *d, int64_t count) {
     return hasData ? sum : NAN;
 }
 
+double sumDoubleNonNull_Vanilla(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
+    const double *lim = d + count;
+    double sum = 0;
+    for (; d < lim; d++) {
+        sum += *d;
+    }
+    return sum;
+}
+
 double sumDoubleKahan_Vanilla(double *d, int64_t count) {
     if (count == 0) {
         return NAN;

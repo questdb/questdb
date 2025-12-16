@@ -29,6 +29,8 @@ int64_t countDouble_Vanilla(double *d, int64_t count);
 
 double sumDouble_Vanilla(double *d, int64_t count);
 
+double sumDoubleNonNull_Vanilla(double *d, int64_t count);
+
 double sumDoubleKahan_Vanilla(double *d, int64_t count);
 
 double sumDoubleNeumaier_Vanilla(double *d, int64_t count);
