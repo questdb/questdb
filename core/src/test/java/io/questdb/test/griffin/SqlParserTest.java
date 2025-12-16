@@ -1652,14 +1652,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testConsecutiveWindowJoins() throws Exception {
         assertQuery(
-                "select-window-join sum(t.price + q.price) sum, sum(t.price + q1.price) sum1 from (select [price, tag] from trades t timestamp (timestamp) window join select [price, tag] from quotes q timestamp (timestamp) between 2 preceding and current row exclude prevailing outer-join-expression t.tag = q.tag window join select [price, tag] from quotes q1 timestamp (timestamp) between 2 preceding and current row exclude prevailing outer-join-expression t.tag = q1.tag) t",
+                "select-window-join sum(t.price + q.price) sum, sum(t.price + q1.price) sum1 from (select [price, tag] from trades t timestamp (timestamp) window join select [price, tag] from quotes q timestamp (timestamp) between 2 preceding and current row include prevailing outer-join-expression t.tag = q.tag window join select [price, tag] from quotes q1 timestamp (timestamp) between 2 preceding and current row include prevailing outer-join-expression t.tag = q1.tag) t",
                 "select sum(t.price + q.price), sum(t.price + q1.price) from trades t WINDOW JOIN quotes q on tag range between 2 preceding and current row window join quotes q1 on tag range between 2 preceding and current row",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
                 modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
         );
 
         assertQuery(
-                "select-window-join sum(t.price + q.price) sum from (select [price, tag] from trades t timestamp (timestamp) asof join select [price, tag] from quotes q timestamp (timestamp) on q.tag = t.tag window join select [tag] from quotes q1 timestamp (timestamp) between 2 preceding and current row exclude prevailing outer-join-expression t.tag = q1.tag) t",
+                "select-window-join sum(t.price + q.price) sum from (select [price, tag] from trades t timestamp (timestamp) asof join select [price, tag] from quotes q timestamp (timestamp) on q.tag = t.tag window join select [tag] from quotes q1 timestamp (timestamp) between 2 preceding and current row include prevailing outer-join-expression t.tag = q1.tag) t",
                 "select sum(t.price + q.price) from trades t asof JOIN quotes q on tag window join quotes q1 on tag range between 2 preceding and current row",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
                 modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)

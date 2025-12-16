@@ -9954,30 +9954,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by x1.a", """
-                    Sort
-                      keys: [a]
-                        Async Window Join workers: 1
-                          vectorized: false
-                          window lo: 1000000 preceding
-                          window hi: 2000000 following
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: x
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: x
-                    """);
-
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a", """
-                    SelectedRecord
-                        Sort
-                          keys: [column]
-                            VirtualRecord
-                              functions: [a,sum,10*a]
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by x1.a",
+                    """
+                            Sort
+                              keys: [a]
                                 Async Window Join workers: 1
                                   vectorized: false
-                                  window lo: 1000000 preceding
+                                  window lo: 1000000 preceding (include prevailing)
                                   window hi: 2000000 following
                                     PageFrame
                                         Row forward scan
@@ -9985,49 +9969,38 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                    """);
+                            """
+            );
 
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 1 desc", """
-                    Sort
-                      keys: [a desc]
-                        Async Window Join workers: 1
-                          vectorized: false
-                          window lo: 1000000 preceding
-                          window hi: 2000000 following
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: x
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: x
-                    """);
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a",
+                    """
+                            SelectedRecord
+                                Sort
+                                  keys: [column]
+                                    VirtualRecord
+                                      functions: [a,sum,10*a]
+                                        Async Window Join workers: 1
+                                          vectorized: false
+                                          window lo: 1000000 preceding (include prevailing)
+                                          window hi: 2000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
 
-            assertPlanNoLeakCheck("select 10*x1.a as a10, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by a10", """
-                    Sort
-                      keys: [a10]
-                        VirtualRecord
-                          functions: [10*a,sum]
-                            Async Window Join workers: 1
-                              vectorized: false
-                              window lo: 1000000 preceding
-                              window hi: 2000000 following
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                    """);
-
-            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc", """
-                    SelectedRecord
-                        Sort
-                          keys: [column desc, a0]
-                            VirtualRecord
-                              functions: [a0,sum,10*a0]
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 1 desc",
+                    """
+                            Sort
+                              keys: [a desc]
                                 Async Window Join workers: 1
                                   vectorized: false
-                                  window lo: 1000000 preceding
+                                  window lo: 1000000 preceding (include prevailing)
                                   window hi: 2000000 following
                                     PageFrame
                                         Row forward scan
@@ -10035,43 +10008,91 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                    """);
+                            """
+            );
 
-            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b), x1.ts from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc", """
-                    SelectedRecord
-                        Sort
-                          keys: [column desc, a0]
-                            VirtualRecord
-                              functions: [a0,sum,ts,10*a0]
-                                Async Window Join workers: 1
-                                  vectorized: false
-                                  window lo: 1000000 preceding
-                                  window hi: 2000000 following
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
-                    """);
+            assertPlanNoLeakCheck(
+                    "select 10*x1.a as a10, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by a10",
+                    """
+                            Sort
+                              keys: [a10]
+                                VirtualRecord
+                                  functions: [10*a,sum]
+                                    Async Window Join workers: 1
+                                      vectorized: false
+                                      window lo: 1000000 preceding (include prevailing)
+                                      window hi: 2000000 following
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
 
-            assertPlanNoLeakCheck("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 3 asc, berlin_ts desc", """
-                    SelectedRecord
-                        Sort
-                          keys: [column desc, sum, berlin_ts desc]
-                            VirtualRecord
-                              functions: [ts,to_utc(ts),a0,sum,10*a0]
-                                Async Window Join workers: 1
-                                  vectorized: false
-                                  window lo: 1000000 preceding
-                                  window hi: 2000000 following
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
-                    """);
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc",
+                    """
+                            SelectedRecord
+                                Sort
+                                  keys: [column desc, a0]
+                                    VirtualRecord
+                                      functions: [a0,sum,10*a0]
+                                        Async Window Join workers: 1
+                                          vectorized: false
+                                          window lo: 1000000 preceding (include prevailing)
+                                          window hi: 2000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b), x1.ts from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc",
+                    """
+                            SelectedRecord
+                                Sort
+                                  keys: [column desc, a0]
+                                    VirtualRecord
+                                      functions: [a0,sum,ts,10*a0]
+                                        Async Window Join workers: 1
+                                          vectorized: false
+                                          window lo: 1000000 preceding (include prevailing)
+                                          window hi: 2000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 3 asc, berlin_ts desc",
+                    """
+                            SelectedRecord
+                                Sort
+                                  keys: [column desc, sum, berlin_ts desc]
+                                    VirtualRecord
+                                      functions: [ts,to_utc(ts),a0,sum,10*a0]
+                                        Async Window Join workers: 1
+                                          vectorized: false
+                                          window lo: 1000000 preceding (include prevailing)
+                                          window hi: 2000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
         });
     }
 
