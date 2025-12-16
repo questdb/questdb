@@ -327,6 +327,77 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitForSubQueryWithAnotherLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table if not exists table1" +
+                            " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                            " timestamp(ts) partition by day wal"
+            );
+            for (int i = 0; i < 9; i++) {
+                execute("insert into table1 values (" + (i * 10000000) + ", 'k" + i + "', " + "'k2_" + i + "', " + i + ")");
+            }
+            drainWalQueue();
+
+            assertQueryAndCache(
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:10.000000Z\t7
+                            """,
+                    "select ts, v_max from (" +
+                            "select ts, k, max(v) as v_max from table1 limit -2" +
+                            ") limit 1",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLimitForSubQueryWithFilterAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE eq_equities_market_data (" +
+                    "timestamp TIMESTAMP, " +
+                    "symbol SYMBOL, " +
+                    "venue SYMBOL, " +
+                    "asks DOUBLE[][], bids DOUBLE[][]" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("INSERT INTO eq_equities_market_data VALUES " +
+                    "(0, 'AAPL', 'NYSE', ARRAY[ [11.4, 12], [10.3, 15] ], ARRAY[ [21.1, 31], [20.1, 21] ]), " +
+                    "(1, 'AAPL', 'NYSE', ARRAY[ [11.5, 13], [10.4, 14] ], ARRAY[ [21.2, 32], [20.2, 22] ]), " +
+                    "(2, 'AAPL', 'NYSE', ARRAY[ [11.6, 17], [10.5, 15] ], ARRAY[ [21.3, 33], [20.3, 23] ]), " +
+                    "(3, 'AAPL', 'NYSE', ARRAY[ [11.2, 30], [10.2, 16] ], ARRAY[ [21.4, 34], [20.4, 24] ]), " +
+                    "(4, 'AAPL', 'NYSE', ARRAY[ [11.4, 20], [10.4,  7] ], ARRAY[ [21.5, 35], [20.5, 25] ]), " +
+                    "(5, 'AAPL', 'NYSE', ARRAY[ [16.0,  3], [15.0,  2] ], ARRAY[ [15.6, 36], [14.6, 26] ])"
+            );
+            drainWalQueue();
+
+            assertQueryAndCache(
+                    """
+                            timestamp\tsymbol\tvenue\tbid_price\tbid_size\task_price\task_size
+                            1970-01-01T00:00:00.000002Z\tAAPL\tNYSE\t21.3\t20.3\t11.6\t10.5
+                            1970-01-01T00:00:00.000003Z\tAAPL\tNYSE\t21.4\t20.4\t11.2\t10.2
+                            """,
+                    """
+                            select * from (
+                                select timestamp, symbol, venue,
+                                    bids[1][1] as bid_price,
+                                    bids[2][1] as bid_size,
+                                    asks[1][1] as ask_price,
+                                    asks[2][1] as ask_size
+                                from eq_equities_market_data
+                                where symbol='AAPL' and timestamp in '1970'
+                                limit -4
+                            ) limit 2""",
+                    "timestamp",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLimitMinusOneAndPredicateAndColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (ts timestamp, id symbol)");
