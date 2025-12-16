@@ -230,6 +230,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return false;
         }
 
+        // TODO [mtopol]: this more efficient impl fails because some cursors don't decrement the counter
+        // as they should by its contract
 //        @Override
 //        public void skipRows(Counter rowCount) throws DataUnavailableException {
 //            ensureReadyToConsume();
