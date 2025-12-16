@@ -310,29 +310,25 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
+            ensureBoundsResolved();
             if (!isSuspendableOpInProgress) {
                 isSuspendableOpInProgress = true;
                 base.toTop();
                 counter.set(baseRowsToSkip);
             }
-            if (isSuspendableOpInProgress) {
-                if (counter.get() > 0) {
-                    base.skipRows(counter);
-                }
-                isSuspendableOpInProgress = false;
-                remaining = baseRowsToTake;
-                counter.clear();
+            if (counter.get() > 0) {
+                base.skipRows(counter);
             }
+            isSuspendableOpInProgress = false;
+            remaining = baseRowsToTake;
+            counter.clear();
         }
 
         private boolean areBoundsResolved() {
             return baseRowsToTake != -1;
         }
 
-        private void ensureReadyToConsume() {
-            if (remaining != -1) {
-                return;
-            }
+        private void ensureBoundsResolved() {
             if (!areBoundsResolved()) {
                 // If baseSize was cheap to get, bounds would already have been sorted out in of().
                 // Now it's time to use the heavy-handed approach to getting baseSize.
@@ -344,6 +340,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 // needing to know baseSize. Since we're here, one of the args must be negative.
                 resolveBoundsFromNegativeArgs();
             }
+        }
+
+        private void ensureReadyToConsume() {
+            if (remaining != -1) {
+                return;
+            }
+            ensureBoundsResolved();
             toTop();
         }
 
