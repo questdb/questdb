@@ -48,7 +48,6 @@ public class QueryModelTest {
         model.setModelPosition(42);
         model.setLimit(newExpressionNode(), newExpressionNode());
         model.setLimitAdvice(newExpressionNode(), newExpressionNode());
-        model.setLimitImplemented(true);
         model.setLimitPosition(42);
         model.setTimestamp(newExpressionNode());
         model.setContext(new JoinContext());

@@ -46,11 +46,6 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean followedLimitAdvice() {
-        return base.followedLimitAdvice();
-    }
-
-    @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();
     }
