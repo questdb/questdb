@@ -55,6 +55,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
     public static final int UNKNOWN = 0;
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
+    public boolean implemented;
     public boolean innerPredicate = false;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
     public ExpressionNode lhs;
@@ -138,6 +139,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.paramCount = node.paramCount;
         copy.intrinsicValue = node.intrinsicValue;
         copy.innerPredicate = node.innerPredicate;
+        copy.implemented = node.implemented;
         return copy;
     }
 
@@ -153,6 +155,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         intrinsicValue = IntrinsicModel.UNDEFINED;
         queryModel = null;
         innerPredicate = false;
+        implemented = false;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {
@@ -184,6 +187,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && paramCount == that.paramCount
                 && intrinsicValue == that.intrinsicValue
                 && innerPredicate == that.innerPredicate
+                && implemented == that.implemented
                 && Objects.equals(args, that.args)
                 && Objects.equals(token, that.token)
                 && Objects.equals(queryModel, that.queryModel)
@@ -193,7 +197,7 @@ public class ExpressionNode implements Mutable, Sinkable {
 
     @Override
     public int hashCode() {
-        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate);
+        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate, implemented);
     }
 
     public boolean isWildcard() {

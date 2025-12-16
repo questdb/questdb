@@ -51,7 +51,6 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
     private final boolean crossedIndex;
@@ -79,11 +78,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public void changePageFrameSizes(int minRows, int maxRows) {
         base.changePageFrameSizes(minRows, maxRows);
-    }
-
-    @Override
-    public boolean followedLimitAdvice() {
-        return base.followedLimitAdvice();
     }
 
     @Override

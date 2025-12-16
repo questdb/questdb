@@ -87,10 +87,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    default boolean followedLimitAdvice() {
-        return false;
-    }
-
     /**
      * True if record cursor factory followed order by advice and doesn't require sorting.
      *

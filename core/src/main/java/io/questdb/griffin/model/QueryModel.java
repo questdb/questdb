@@ -174,9 +174,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
     private boolean isCteModel;
-    //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
-    //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
-    private boolean isLimitImplemented;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
@@ -454,7 +451,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         limitAdviceHi = null;
         limitAdviceLo = null;
         limitPosition = 0;
-        isLimitImplemented = false;
         timestamp = null;
         sqlNodeStack.clear();
         joinColumns.clear();
@@ -650,7 +646,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && joinType == that.joinType
                 && joinKeywordPosition == that.joinKeywordPosition
                 && limitPosition == that.limitPosition
-                && isLimitImplemented == that.isLimitImplemented
                 && isSelectTranslation == that.isSelectTranslation
                 && selectModelType == that.selectModelType
                 && nestedModelIsSubQuery == that.nestedModelIsSubQuery
@@ -1097,7 +1092,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 sampleByUnit, sampleByTo, sampleByFrom, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
                 limitLo, limitHi, limitPosition,
-                limitAdviceLo, limitAdviceHi, isLimitImplemented,
+                limitAdviceLo, limitAdviceHi,
                 isSelectTranslation, selectModelType, nestedModelIsSubQuery,
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
@@ -1124,10 +1119,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isForceBackwardScan() {
         return forceBackwardScan;
-    }
-
-    public boolean isLimitImplemented() {
-        return isLimitImplemented;
     }
 
     public boolean isNestedModelIsSubQuery() {
@@ -1408,10 +1399,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void setLimitAdvice(ExpressionNode lo, ExpressionNode hi) {
         this.limitAdviceLo = lo;
         this.limitAdviceHi = hi;
-    }
-
-    public void setLimitImplemented(boolean limitImplemented) {
-        isLimitImplemented = limitImplemented;
     }
 
     public void setLimitPosition(int limitPosition) {
