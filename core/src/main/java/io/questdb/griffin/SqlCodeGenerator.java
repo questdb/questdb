@@ -4280,7 +4280,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             factory = generateSubQuery(model, executionContext);
             timestampIndex = getTimestampIndex(model, factory);
-            if (timestampIndex == -1 || factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+            if (timestampIndex == -1) {
+                throw SqlException.$(model.getModelPosition(), "base query does not provide designated TIMESTAMP column");
+            }
+            if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
                 throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
             }
         } catch (Throwable e) {
@@ -4798,8 +4801,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int timestampIndex;
         try {
             timestampIndex = getTimestampIndex(model, factory);
-            if (executionContext.isTimestampRequired() && (timestampIndex == -1 || factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD)) {
-                throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
+            if (executionContext.isTimestampRequired()) {
+                if (timestampIndex == -1) {
+                    throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
+                }
+                if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                    throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
+                }
             }
         } catch (Throwable e) {
             Misc.free(factory);
