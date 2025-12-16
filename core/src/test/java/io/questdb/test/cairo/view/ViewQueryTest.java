@@ -222,6 +222,53 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSampleByOrdeByForceDesignatedTimestampMix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE eq_equities_market_data (" +
+                    "timestamp TIMESTAMP, " +
+                    "symbol SYMBOL, " +
+                    "venue SYMBOL, " +
+                    "asks DOUBLE[][], bids DOUBLE[][]" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("INSERT INTO eq_equities_market_data VALUES " +
+                    "(0, 'HSBC', 'LSE', ARRAY[ [11.4, 12], [10.3, 15] ], ARRAY[ [21.1, 31], [20.1, 21] ]), " +
+                    "(1, 'HSBC', 'HKG', ARRAY[ [11.5, 13], [10.4, 14] ], ARRAY[ [21.2, 32], [20.2, 22] ]), " +
+                    "(2, 'BAC', 'NYSE', ARRAY[ [11.6, 17], [10.5, 15] ], ARRAY[ [21.3, 33], [20.3, 23] ]), " +
+                    "(3, 'HSBC', 'LSE', ARRAY[ [11.2, 30], [10.2, 16] ], ARRAY[ [21.4, 34], [20.4, 24] ]), " +
+                    "(4, 'BAC', 'NYSE', ARRAY[ [11.4, 20], [10.4,  7] ], ARRAY[ [21.5, 35], [20.5, 25] ]), " +
+                    "(5, 'MQG', 'ASX', ARRAY[ [16.0,  3], [15.0,  2] ], ARRAY[ [15.6, 36], [14.6, 26] ])"
+            );
+            drainWalQueue();
+
+            createView(VIEW1, """
+                    select timestamp, symbol, count(bids[1][1]) as total
+                    from eq_equities_market_data
+                    where symbol = 'HSBC'
+                    sample by 10s
+                    order by timestamp desc
+                    """);
+
+            createView(VIEW2, """
+                    (view1 order by timestamp) timestamp(timestamp)
+                    """);
+
+            assertQueryAndCache(
+                    """
+                            timestamp\tcount
+                            1970-01-01T00:00:00.000000Z\t1
+                            """,
+                    """
+                            select timestamp, count() from view2
+                            sample by 10m
+                            """,
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testSelectFromViewWithDeclare() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
