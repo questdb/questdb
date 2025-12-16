@@ -246,11 +246,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
-    public boolean followedLimitAdvice() {
-        return base.followedLimitAdvice();
-    }
-
-    @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();
     }
