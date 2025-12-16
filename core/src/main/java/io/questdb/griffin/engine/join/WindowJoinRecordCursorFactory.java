@@ -460,9 +460,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
             final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
-            if (slaveRowIndex == Long.MIN_VALUE && prevailingFrameIndex != -1) {
-                long baseSlaveRowId = Rows.toRowID(prevailingFrameIndex, 0);
-                slaveTimeFrameHelper.recordAt(baseSlaveRowId);
+            if (slaveRowIndex == Long.MIN_VALUE) {
                 findPrevailingForMasterRow(
                         slaveTimeFrameHelper,
                         prevailingFrameIndex,
@@ -478,9 +476,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
 
-            boolean needFindPrevailing = true;
             // First, check if one of the first rows matching the join filter is also at the slaveTimestampLo timestamp.
             // If so, we don't need to do backward scan to find the prevailing row.
+            boolean needToFindPrevailing = true;
             for (; ; ) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 if (slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
@@ -503,13 +501,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     // - 1 is here to compensate the above increment.
                     groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex - 1);
                     simpleMapValue.setNew(false);
-                    needFindPrevailing = false;
+                    needToFindPrevailing = false;
                     break;
                 }
             }
 
             // Do a backward scan to find the prevailing row.
-            if (needFindPrevailing) {
+            if (needToFindPrevailing) {
                 findPrevailingForMasterRow(
                         slaveTimeFrameHelper,
                         prevailingFrameIndex,
