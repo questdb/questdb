@@ -327,16 +327,18 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                     try (final PreparedStatement stmt = connection.prepareStatement("explain SELECT col1, sum(status) as sum, last(ts) as last FROM tab ORDER BY 1 DESC LIMIT 4,-3")) {
                         try (final ResultSet resultSet = stmt.executeQuery()) {
                             assertResultSet(
-                                    "QUERY PLAN[VARCHAR]\n" +
-                                            "Limit left: 4 right: -3 skip-rows: 4 take-rows: 3\n" +
-                                            "    Sort light\n" +
-                                            "      keys: [col1 desc]\n" +
-                                            "        GroupBy vectorized: false\n" +
-                                            "          keys: [col1]\n" +
-                                            "          values: [sum(status),last(ts)]\n" +
-                                            "            PageFrame\n" +
-                                            "                Row forward scan\n" +
-                                            "                Frame forward scan on: tab\n",
+                                    """
+                                            QUERY PLAN[VARCHAR]
+                                            Limit left: 4 right: -3 skip-rows-max: 4 take-rows: baseRows-7
+                                                Sort light
+                                                  keys: [col1 desc]
+                                                    GroupBy vectorized: false
+                                                      keys: [col1]
+                                                      values: [sum(status),last(ts)]
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tab
+                                            """,
                                     Misc.getThreadLocalSink(),
                                     resultSet
                             );
