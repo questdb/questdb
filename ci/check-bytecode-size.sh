@@ -3,7 +3,7 @@
 # Check bytecode size of methods in compiled Java classes.
 # Fails if any method exceeds the specified threshold (default: 8000 bytes).
 #
-# Usage: ./check-bytecode-size.sh [--threshold N] [--jar FILE]
+# Usage: ./check-bytecode-size.sh [--threshold N] --jar FILE
 #
 # The JVM has a hard limit of 64KB (65535 bytes) for method bytecode,
 # but methods over 8000 bytes typically cannot be JIT-compiled efficiently
@@ -88,8 +88,18 @@ BEGIN {
     }
 }
 
-# Match method declaration (two leading spaces, ends with ;)
-/^  [a-zA-Z].*\(.*\);$/ {
+# Match method declaration (two leading spaces, various patterns)
+# This includes regular methods, constructors, and static initializers
+/^  [a-zA-Z<].*\(.*\);$/ || /^  static \{\};$/ {
+    # If we were in a code block, finalize the previous method first
+    if (in_code && last_offset > 0) {
+        code_size = last_offset + 3
+        if (code_size > threshold) {
+            violation_count++
+            print current_class "." current_method ": " code_size " bytes"
+        }
+    }
+
     current_method = $0
     gsub(/^[[:space:]]+/, "", current_method)
     gsub(/;$/, "", current_method)
@@ -106,16 +116,13 @@ BEGIN {
 # Parse bytecode instruction offsets (format: "       N: instruction")
 in_code && /^[[:space:]]+[0-9]+:/ {
     # Extract the offset number
-    match($0, /^[[:space:]]+([0-9]+):/, arr)
-    if (RSTART > 0) {
-        sub(/^[[:space:]]+/, "")
-        sub(/:.*/, "")
-        last_offset = $0 + 0
-    }
+    sub(/^[[:space:]]+/, "")
+    sub(/:.*/, "")
+    last_offset = $0 + 0
 }
 
-# Detect end of Code block
-in_code && (/^[[:space:]]+LineNumberTable/ || /^[[:space:]]+LocalVariableTable/ || /^[[:space:]]+StackMapTable/ || /^[[:space:]]+Exception/ || /^[[:space:]]*$/ || /^  [a-zA-Z]/) {
+# Detect end of Code block - these mark the end of bytecode listing
+in_code && (/^[[:space:]]+LineNumberTable/ || /^[[:space:]]+LocalVariableTable/ || /^[[:space:]]+StackMapTable/ || /^[[:space:]]+Exception/) {
     if (last_offset > 0) {
         # Approximate code size (last offset + estimated instruction size)
         code_size = last_offset + 3
@@ -126,10 +133,18 @@ in_code && (/^[[:space:]]+LineNumberTable/ || /^[[:space:]]+LocalVariableTable/ 
         }
     }
     in_code = 0
+    last_offset = 0
 }
 
 END {
-    exit (violation_count > 0 ? 1 : 0)
+    # Handle last method if still in code block
+    if (in_code && last_offset > 0) {
+        code_size = last_offset + 3
+        if (code_size > threshold) {
+            violation_count++
+            print current_class "." current_method ": " code_size " bytes"
+        }
+    }
 }
 ') || true
 
