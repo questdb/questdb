@@ -150,7 +150,7 @@ function export_java {
 function export_jemalloc() {
     local arch=$(uname -m)
 
-    # Auto-enable jemalloc on Linux x86_64 for open source edition with bundled JRE
+    # auto-enable jemalloc on Linux x86_64 for open source edition with bundled JRE
     # if QDB_JEMALLOC is not explicitly set
     if [[ -z "${QDB_JEMALLOC+x}" ]]; then
         if [[ "$QDB_OS" == "Linux" && "$arch" == "x86_64" && "$JAVA_MAIN" == *"io.questdb"* && "$QDB_PACKAGE" == "withjre" ]]; then
