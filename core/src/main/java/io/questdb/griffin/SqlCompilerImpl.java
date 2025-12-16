@@ -2361,8 +2361,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw e;
         } catch (CairoException e) {
             // position is reported from the view SQL, we have to adjust it
-            e.position(viewSqlPosition + e.getPosition());
-            throw e;
+            throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
         }
 
         final AlterOperationBuilder alterView = alterOperationBuilder.ofAlterView(
