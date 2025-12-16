@@ -2355,9 +2355,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final RecordMetadata metadata = factory.getMetadata();
                 alterOperationBuilder.addAlterViewInfo(viewSql, metadata, dependencies);
             }
-        } catch (SqlException | CairoException e) {
+        } catch (SqlException e) {
             // position is reported from the view SQL, we have to adjust it
-            throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
+            e.setPosition(viewSqlPosition + e.getPosition());
+            throw e;
+        } catch (CairoException e) {
+            // position is reported from the view SQL, we have to adjust it
+            e.position(viewSqlPosition + e.getPosition());
+            throw e;
         }
 
         final AlterOperationBuilder alterView = alterOperationBuilder.ofAlterView(
