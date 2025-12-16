@@ -14118,7 +14118,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         )
                         select * from sampled;""",
                 525,
-                "base query does not provide ASC order over designated TIMESTAMP column"
+                "base query does not provide designated TIMESTAMP column"
         );
     }
 
@@ -14145,7 +14145,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         )
                         select * from sampled;""",
                 501,
-                "base query does not provide ASC order over designated TIMESTAMP column"
+                "base query does not provide designated TIMESTAMP column"
         );
     }
 
