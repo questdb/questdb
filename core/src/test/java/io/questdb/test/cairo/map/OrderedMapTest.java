@@ -81,6 +81,7 @@ import java.util.HashMap;
 
 public class OrderedMapTest extends AbstractCairoTest {
 
+
     @Test
     public void testAllTypesFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -1939,6 +1940,37 @@ public class OrderedMapTest extends AbstractCairoTest {
                     mapCursor.recordAt(mapRecord, heapCursor.index());
                     Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testUsefulErrorMessageWhenPageSizeExceeded() throws Exception {
+        assertMemoryLeak(() -> {
+            int num_columns = 1600;
+            TableModel model = new TableModel(configuration, "testUsefulErrorMessageWhenPageSizeExceeded", PartitionBy.DAY);
+            for (int i = 0; i < num_columns; i++) {
+                model.col("f" + i, ColumnType.FLOAT);
+            }
+            model.timestamp("t");
+            model.wal();
+            AbstractCairoTest.create(model);
+
+            sink.put("SELECT t, ");
+            for (int i = 0; i < num_columns; i++) {
+                sink.put("max(f").put(i).put("),");
+                sink.put("min(f").put(i).put("),");
+                sink.put("avg(f").put(i).put(")");
+                if (i + 1 < num_columns) {
+                    sink.put(',');
+                }
+            }
+            sink.put(" FROM testUsefulErrorMessageWhenPageSizeExceeded SAMPLE BY 1h");
+
+            try {
+                assertException(sink, 0, "page size is too small to fit a single key");
+            } finally {
+                sink.clear();
             }
         });
     }
