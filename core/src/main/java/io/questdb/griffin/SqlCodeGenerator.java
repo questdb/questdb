@@ -2785,9 +2785,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // Use Java filter.
-            final Function limitLoFunction;
             try {
-                limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
                 return new AsyncFilteredRecordCursorFactory(
                         executionContext.getCairoEngine(),
@@ -3939,15 +3938,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             QueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (factory.followedLimitAdvice()) {
-            return factory;
-        }
-
         ExpressionNode limitLo = model.getLimitLo();
         ExpressionNode limitHi = model.getLimitHi();
 
         // we've to check model otherwise we could be skipping limit in outer query that's actually different from the one in inner query!
-        if ((limitLo == null && limitHi == null) || (factory.implementsLimit() && model.isLimitImplemented())) {
+        if ((limitLo == null && limitHi == null) || (factory.implementsLimit() && (limitLo != null && limitLo.implemented))) {
             return factory;
         }
 
@@ -4069,7 +4064,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
-                        model.setLimitImplemented(true);
                         if (!preSortedByTs && loFunc.isConstant() && hiFunc == null) {
                             final long lo = loFunc.getLong(null);
                             if (lo > 0 && lo <= Integer.MAX_VALUE) {
@@ -7244,6 +7238,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (limitTypes.excludes(limitFuncType)) {
             throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(limitFuncType));
         }
+
+        limit.implemented = true;
 
         return limitFunc;
     }
