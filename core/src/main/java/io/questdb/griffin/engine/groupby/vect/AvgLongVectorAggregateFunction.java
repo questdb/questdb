@@ -71,7 +71,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final double s = Vect.avgLongAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
+            final double s = Vect.sumLongAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
             if (Numbers.isFinite(s)) {
                 final long c = Unsafe.getUnsafe().getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
                 sum.add(s);

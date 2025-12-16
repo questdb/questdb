@@ -312,11 +312,11 @@ int32_t maxShort_Vanilla(int16_t *ps, int64_t count) {
 extern "C" {
 
 JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_Vect_avgIntAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
+Java_io_questdb_std_Vect_sumIntAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<int32_t *>(pi);
     double_t sum = 0;
     int64_t c = 0;
-    for (uint32_t i = 0; i < count; i++) {
+    for (uint64_t i = 0; i < count; i++) {
         int32_t v = ppi[i];
         if (v != I_MIN) {
             sum += (double_t) v;
@@ -328,11 +328,11 @@ Java_io_questdb_std_Vect_avgIntAcc(JNIEnv *env, jclass cl, jlong pi, jlong count
 }
 
 JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_Vect_avgLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
+Java_io_questdb_std_Vect_sumLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<int64_t *>(pi);
     double_t sum = 0;
     int64_t c = 0;
-    for (uint32_t i = 0; i < count; i++) {
+    for (uint64_t i = 0; i < count; i++) {
         int64_t v = ppi[i];
         if (v != L_MIN) {
             sum += (double_t) v;
@@ -344,11 +344,11 @@ Java_io_questdb_std_Vect_avgLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong coun
 }
 
 JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_Vect_avgDoubleAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
+Java_io_questdb_std_Vect_sumDoubleAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<double_t *>(pi);
     double_t sum = 0;
     int64_t c = 0;
-    for (uint32_t i = 0; i < count; i++) {
+    for (uint64_t i = 0; i < count; i++) {
         double_t v = ppi[i];
         if (!std::isnan(v)) {
             sum += v;
