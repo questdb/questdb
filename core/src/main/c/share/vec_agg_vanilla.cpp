@@ -315,7 +315,7 @@ JNIEXPORT jdouble JNICALL
 Java_io_questdb_std_Vect_avgIntAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<int32_t *>(pi);
     double_t sum = 0;
-    size_t c = 0;
+    int64_t c = 0;
     for (uint32_t i = 0; i < count; i++) {
         int32_t v = ppi[i];
         if (v != I_MIN) {
@@ -331,7 +331,7 @@ JNIEXPORT jdouble JNICALL
 Java_io_questdb_std_Vect_avgLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<int64_t *>(pi);
     double_t sum = 0;
-    size_t c = 0;
+    int64_t c = 0;
     for (uint32_t i = 0; i < count; i++) {
         int64_t v = ppi[i];
         if (v != L_MIN) {
@@ -347,7 +347,7 @@ JNIEXPORT jdouble JNICALL
 Java_io_questdb_std_Vect_avgDoubleAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<double_t *>(pi);
     double_t sum = 0;
-    size_t c = 0;
+    int64_t c = 0;
     for (uint32_t i = 0; i < count; i++) {
         double_t v = ppi[i];
         if (!std::isnan(v)) {
