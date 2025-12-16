@@ -1967,7 +1967,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             sink.put(" FROM testUsefulErrorMessageWhenPageSizeExceeded SAMPLE BY 1h");
 
             try {
-                assertException(sink, 0, "page size is too small to fit a single key");
+                assertException(sink, 0, "page size is too small to fit a single key. consider increasing `cairo.sql.small.map.page.size` [expected=38408, actual=32768]");
             } finally {
                 sink.clear();
             }
