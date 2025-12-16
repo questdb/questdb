@@ -65,6 +65,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfSetTtl,
             double replaceInsertProb,
             double probabilityOfSymbolAccessValidation,
+            double probabilityOfQuery,
             int maxStrLenForStrColumns,
             String[] symbols,
             int metaVersion
@@ -82,7 +83,8 @@ public class FuzzTransactionGenerator {
                 + probabilityOfTruncate
                 + probabilityOfDropPartition
                 + probabilityOfDataInsert
-                + probabilityOfSymbolAccessValidation;
+                + probabilityOfSymbolAccessValidation
+                + probabilityOfQuery;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
@@ -90,6 +92,7 @@ public class FuzzTransactionGenerator {
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
         probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
         probabilityOfSymbolAccessValidation = probabilityOfSymbolAccessValidation / sumOfProbabilities;
+        probabilityOfQuery = probabilityOfQuery / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
         // probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 
@@ -154,6 +157,10 @@ public class FuzzTransactionGenerator {
             boolean wantToValidateSymbolAccess = !wantSomething && rndDouble < aggregateProbability;
             wantSomething |= wantToValidateSymbolAccess;
 
+            aggregateProbability += probabilityOfQuery;
+            boolean wantToQuery = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToQuery;
+
             aggregateProbability += probabilityOfDropPartition;
             boolean wantToDropPartition = !wantSomething && rndDouble < aggregateProbability;
 
@@ -201,6 +208,13 @@ public class FuzzTransactionGenerator {
                 transaction.waitBarrierVersion = waitBarrierVersion;
                 // Indicate that this operation will not add a seqTxn
                 transaction.rollback = true;
+                transactionList.add(transaction);
+            } else if (wantToQuery) {
+                FuzzTransaction transaction = new FuzzTransaction();
+                final int limit = (rnd.nextBoolean() ? 1 : -1) * (1 + rnd.nextInt(1000));
+                transaction.operationList.add(new FuzzQueryOperation(limit));
+                transaction.structureVersion = metaVersion;
+                transaction.waitBarrierVersion = waitBarrierVersion;
                 transactionList.add(transaction);
             } else {
                 // generate row set

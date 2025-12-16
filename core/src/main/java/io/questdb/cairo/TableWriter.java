@@ -144,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -439,6 +439,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
+            if (columnVersionWriter.getVersion() != txWriter.getColumnVersion()) {
+                if (columnVersionWriter.getVersion() - 1 == txWriter.getColumnVersion()) {
+                    // This is case when transaction was aborted during column version change
+                    // we need to use previous version of _cv file, which should still be available for reading
+                    LOG.info().$("rolling back column version change to match _txn file [table=").$(tableToken)
+                            .$(", txnVersion=").$(txWriter.getColumnVersion())
+                            .$(", actualFileVersion=").$(columnVersionWriter.getVersion())
+                            .I$();
+                    columnVersionWriter.rollback();
+                } else {
+                    throw CairoException.critical(0).put("Unrecoverable storage corruption detected: column version mismatch [table=").put(tableToken)
+                            .put(", txnVersion=").put(txWriter.getColumnVersion())
+                            .put(", actualFileVersion=").put(columnVersionWriter.getVersion())
+                            .put(']');
+                }
+            }
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
             this.parquetStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_TABLE_WRITER);
             this.parquetColumnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_TABLE_WRITER);
@@ -1282,6 +1298,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+        // Capture wall clock once to reduce syscalls. Used for:
+        // - commit latency threshold check in processWalCommit()
+        // - recording last WAL commit timestamp
+        // - TTL wall clock comparison in housekeep()
+        final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
 
         boolean committed;
         final long initialCommittedRowCount = txWriter.getRowCount();
@@ -1289,7 +1310,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try {
             if (transactionBlock == 1) {
-                committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp);
+                committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
             } else {
                 try {
                     int blockSize = processWalCommitBlock(
@@ -1314,7 +1335,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", startTxn=").$(seqTxn)
                                 .I$();
                         // Try applying 1 transaction at a time
-                        committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp);
+                        committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
                     } else {
                         throw e;
                     }
@@ -1337,8 +1358,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setLagOrdered(true);
 
             commit00();
-            lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
-            housekeep();
+            lastWalCommitTimestampMicros = wallClockMicros;
+            housekeep(wallClockMicros);
             shrinkO3Mem();
 
             assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
@@ -2111,52 +2132,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void enforceTtl() {
-        partitionRemoveCandidates.clear();
-        final int ttl = metadata.getTtlHoursOrMonths();
-        if (ttl == 0) {
-            return;
-        }
-        if (metadata.getPartitionBy() == PartitionBy.NONE) {
-            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
-            return;
-        }
-        if (getPartitionCount() < 2) {
-            return;
-        }
-        long maxTimestamp = getMaxTimestamp();
-        long evictedPartitionTimestamp = -1;
-        boolean dropped = false;
-        do {
-            long partitionTimestamp = getPartitionTimestamp(0);
-            long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
-            if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
-                assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
-                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
-                continue;
-            }
-
-
-            long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
-            // TTL < 0 means it's in months
-            boolean shouldEvict = ttl > 0
-                    ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
-                    : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
-            if (shouldEvict) {
-                LOG.info()
-                        .$("Partition's TTL expired, evicting [table=").$(metadata.getTableToken())
-                        .$(", partitionTs=").microTime(partitionTimestamp)
-                        .I$();
-                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
-                evictedPartitionTimestamp = partitionTimestamp;
-            } else {
-                // Partitions are sorted by timestamp, no need to check the rest
-                break;
-            }
-        } while (getPartitionCount() > 1);
-
-        if (dropped) {
-            commitRemovePartitionOperation();
-        }
+        enforceTtl(configuration.getMicrosecondClock().getTicks());
     }
 
     @Override
@@ -3885,14 +3861,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void bumpMetadataAndColumnStructureVersion() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpMetadataAndColumnStructureVersion(this.denseSymbolMapWriters);
+        txWriter.bumpMetadataAndColumnStructureVersion(denseSymbolMapWriters);
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
     private void bumpMetadataVersion() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpMetadataVersion(this.denseSymbolMapWriters);
+        txWriter.bumpMetadataVersion(denseSymbolMapWriters);
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
@@ -4078,9 +4054,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
             final long rowsAdded = txWriter.getRowCount() - committedRowCount;
+            // Capture wall clock once for TTL wall clock comparison in housekeep()
+            final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
 
             commit00();
-            housekeep();
+            housekeep(wallClockMicros);
             metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
             if (!o3) {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
@@ -5349,6 +5327,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return true;
     }
 
+    private void enforceTtl(long wallClockMicros) {
+        partitionRemoveCandidates.clear();
+        final int ttl = metadata.getTtlHoursOrMonths();
+        if (ttl == 0) {
+            return;
+        }
+        if (metadata.getPartitionBy() == PartitionBy.NONE) {
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            return;
+        }
+        if (getPartitionCount() < 2) {
+            return;
+        }
+        long maxTimestamp = getMaxTimestamp();
+        // When wall clock mode is enabled (default), use the minimum of maxTimestamp and current wall clock time.
+        // This prevents accidental data loss when future timestamps are inserted into a table with TTL enabled.
+        if (configuration.isTtlWallClockEnabled()) {
+            long wallClockTimestamp = timestampDriver.fromMicros(wallClockMicros);
+            maxTimestamp = Math.min(maxTimestamp, wallClockTimestamp);
+        }
+        long evictedPartitionTimestamp = -1;
+        boolean dropped = false;
+        do {
+            long partitionTimestamp = getPartitionTimestamp(0);
+            long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
+            if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
+                assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+                continue;
+            }
+
+
+            long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
+            // TTL < 0 means it's in months
+            boolean shouldEvict = ttl > 0
+                    ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
+                    : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
+            if (shouldEvict) {
+                LOG.info()
+                        .$("Partition's TTL expired, evicting [table=").$(metadata.getTableToken())
+                        .$(", partitionTs=").microTime(partitionTimestamp)
+                        .I$();
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+                evictedPartitionTimestamp = partitionTimestamp;
+            } else {
+                // Partitions are sorted by timestamp, no need to check the rest
+                break;
+            }
+        } while (getPartitionCount() > 1);
+
+        if (dropped) {
+            commitRemovePartitionOperation();
+        }
+    }
+
     private long findMinSplitPartitionTimestamp() {
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
@@ -5756,12 +5789,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * What we need to achieve, is to report that data has been committed, but table writes should be discarded. It is
      * necessary when housekeeping runs into an error. To indicate the situation where data is committed.
      */
-    private void housekeep() {
+    private void housekeep(long wallClockMicros) {
         try {
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
-            enforceTtl();
+            enforceTtl(wallClockMicros);
             scaleSymbolCapacities();
         } catch (Throwable e) {
             // Log the exception stack.
@@ -7584,7 +7617,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long commitToTimestamp,
             long walIdSegmentId,
             boolean isLastSegmentUsage,
-            TableWriterPressureControl pressureControl
+            TableWriterPressureControl pressureControl,
+            long wallClockMicros
     ) {
         int initialSize = segmentFileCache.getWalMappedColumns().size();
         int timestampIndex = metadata.getTimestampIndex();
@@ -7637,7 +7671,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
                         // when the time between commits is too long we need to commit regardless of the row count or volume filled
                         // this is to bring the latency of data visibility inline with user expectations
-                        || (configuration.getMicrosecondClock().getTicks() - lastWalCommitTimestampMicros > configuration.getCommitLatency());
+                        || (wallClockMicros - lastWalCommitTimestampMicros > configuration.getCommitLatency());
 
                 boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
@@ -7814,7 +7848,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp) {
+    private boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp, long wallClockMicros) {
         int walId = walTxnDetails.getWalId(seqTxn);
         long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
         long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
@@ -7880,7 +7914,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     commitToTimestamp,
                     walIdSegmentId,
                     isLastSegmentUsage,
-                    pressureControl
+                    pressureControl,
+                    wallClockMicros
             );
         }
     }
