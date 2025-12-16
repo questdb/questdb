@@ -170,7 +170,7 @@ steps:
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - task: Maven@3
-    displayName: "Run tests with Coverage"
+    displayName: "Run tests with Coverage (jemalloc)"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
