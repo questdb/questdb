@@ -43,10 +43,13 @@ public final class Vect {
     // (1-8) bytes of reverse index, e.g. what is the index of the row with current index in the sorted result set
     public static final byte SHUFFLE_INDEX_FORMAT = 2;
 
+    // returns sum of the elements; also stores non-null count to pCount address
     public static native double avgDoubleAcc(long pInt, long count, long pCount);
 
+    // returns sum of the elements; also stores non-null count to pCount address
     public static native double avgIntAcc(long pInt, long count, long pCount);
 
+    // returns sum of the elements; also stores non-null count to pCount address
     public static native double avgLongAcc(long pInt, long count, long pCount);
 
     // Note: high is inclusive!
