@@ -31,6 +31,7 @@
 
 #define COUNT_DOUBLE F_AVX512(countDouble)
 #define SUM_DOUBLE F_AVX512(sumDouble)
+#define SUM_DOUBLE_NON_NULL F_AVX512(sumDoubleNonNull)
 #define SUM_DOUBLE_KAHAN F_AVX512(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_AVX512(sumDoubleNeumaier)
 #define MIN_DOUBLE F_AVX512(minDouble)
@@ -54,6 +55,7 @@
 
 #define COUNT_DOUBLE F_AVX2(countDouble)
 #define SUM_DOUBLE F_AVX2(sumDouble)
+#define SUM_DOUBLE_NON_NULL F_AVX2(sumDoubleNonNull)
 #define SUM_DOUBLE_KAHAN F_AVX2(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_AVX2(sumDoubleNeumaier)
 #define MIN_DOUBLE F_AVX2(minDouble)
@@ -77,6 +79,7 @@
 
 #define COUNT_DOUBLE F_SSE41(countDouble)
 #define SUM_DOUBLE F_SSE41(sumDouble)
+#define SUM_DOUBLE_NON_NULL F_SSE41(sumDoubleNonNull)
 #define SUM_DOUBLE_KAHAN F_SSE41(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_SSE41(sumDoubleNeumaier)
 #define MIN_DOUBLE F_SSE41(minDouble)
@@ -100,6 +103,7 @@
 
 #define COUNT_DOUBLE F_SSE2(countDouble)
 #define SUM_DOUBLE F_SSE2(sumDouble)
+#define SUM_DOUBLE_NON_NULL F_SSE2(sumDoubleNonNull)
 #define SUM_DOUBLE_KAHAN F_SSE2(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_SSE2(sumDoubleNeumaier)
 #define MIN_DOUBLE F_SSE2(minDouble)
@@ -544,6 +548,31 @@ double SUM_DOUBLE(double *d, int64_t count) {
     return NAN;
 }
 
+double SUM_DOUBLE_NON_NULL(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
+
+    Vec8d vec;
+    const int step = 8;
+    Vec8d vecsum = 0.;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(d + i + 63 * step, _MM_HINT_T1);
+        vec.load(d + i);
+        vecsum += vec;
+    }
+
+    _mm_prefetch(d, _MM_HINT_T0);
+    double sum = horizontal_add(vecsum);
+    for (; i < count; i++) {
+        double x = *(d + i);
+        sum += x;
+    }
+
+    return sum;
+}
+
 double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
     if (count == 0) {
         return NAN;
@@ -717,6 +746,7 @@ double MAX_DOUBLE(double *d, int64_t count) {
 // Dispatchers
 DOUBLE_LONG_DISPATCHER(countDouble)
 DOUBLE_DISPATCHER(sumDouble)
+DOUBLE_DISPATCHER(sumDoubleNonNull)
 DOUBLE_DISPATCHER(sumDoubleKahan)
 DOUBLE_DISPATCHER(sumDoubleNeumaier)
 DOUBLE_DISPATCHER(minDouble)
