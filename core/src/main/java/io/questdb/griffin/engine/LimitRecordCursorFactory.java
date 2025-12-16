@@ -116,7 +116,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 long lo = cursor.lo;
                 long hi = cursor.hi;
                 if (lo < 0) {
-                    sink.meta("skip-rows").val("baseRows" + lo);
+                    sink.meta("skip-rows").val("baseRows").val(lo);
                     // if lo < 0, hi should always be <= 0, but guard it just in case.
                     // We don't want any exceptions in toPlan(), so just silently skip unexpected value.
                     if (hi <= 0) {
@@ -127,7 +127,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     // If both lo and hi were >= 0, bounds would already have been resolved in cursor.of().
                     // But cursor bounds aren't resolved, therefore hi < 0.
                     sink.meta("skip-rows-max").val(lo);
-                    sink.meta("take-rows").val("baseRows" + (hi - lo));
+                    sink.meta("take-rows").val("baseRows").val(hi - lo);
                 }
             }
         }
