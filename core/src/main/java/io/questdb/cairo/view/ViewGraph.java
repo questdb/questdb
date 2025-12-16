@@ -24,7 +24,10 @@
 
 package io.questdb.cairo.view;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -112,6 +115,36 @@ public class ViewGraph implements Mutable {
         updateDependencies(viewToken, prevDefinition, REMOVE);
         updateDependencies(viewToken, viewDefinition, ADD);
         return true;
+    }
+
+    /**
+     * Validates that updating a view with the given query model would not create a cycle.
+     * Since referencedViews contains all transitively expanded views from parsing,
+     * a cycle exists if and only if viewToken appears in that list.
+     *
+     * @param viewToken the view being altered
+     * @param model     the query model containing referenced views
+     * @throws CairoException if a circular dependency would be created
+     */
+    public void validateNoCycle(TableToken viewToken, QueryModel model) {
+        final ObjList<ViewDefinition> referencedViews = model.getReferencedViews();
+
+        for (int i = 0, n = referencedViews.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(referencedViews.get(i).getViewToken().getTableName(), viewToken.getTableName())) {
+                if (i == 0) {
+                    throw CairoException.critical(0)
+                            .put("circular dependency detected: view '").put(viewToken.getTableName())
+                            .put("' cannot reference itself");
+                } else {
+                    final CharSequence directDep = referencedViews.get(0).getViewToken().getTableName();
+                    throw CairoException.critical(0)
+                            .put("circular dependency detected: '").put(viewToken.getTableName())
+                            .put("' cannot depend on '").put(directDep)
+                            .put("' because '").put(directDep)
+                            .put("' already depends on '").put(viewToken.getTableName()).put('\'');
+                }
+            }
+        }
     }
 
     @NotNull

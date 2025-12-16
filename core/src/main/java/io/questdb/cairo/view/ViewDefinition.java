@@ -39,9 +39,28 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Represents a database view's metadata, including its SQL definition and dependencies.
+ * <p>
+ * This class is used to persist and load view definitions from disk, tracking which
+ * tables and columns a view references for dependency management and schema validation.
+ */
 public class ViewDefinition implements Mutable {
     public static final String VIEW_DEFINITION_FILE_NAME = "_view";
     public static final int VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
+    /**
+     * Maps table names to the set of column names referenced from each table.
+     * <p>
+     * For example, for a view defined as:
+     * <pre>SELECT a, b FROM table1 JOIN table2 ON table1.x = table2.y</pre>
+     * the dependencies would contain:
+     * <ul>
+     *   <li>"table1" → {"a", "x"}</li>
+     *   <li>"table2" → {"b", "y"}</li>
+     * </ul>
+     * Used for tracking view invalidation when underlying tables change,
+     * cycle detection, and schema validation.
+     */
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
     private String viewSql;
     private TableToken viewToken;

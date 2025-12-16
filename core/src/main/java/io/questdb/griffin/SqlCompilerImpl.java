@@ -2344,6 +2344,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
             final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
             SqlUtil.collectTableAndColumnReferences(engine, executionModel.getQueryModel(), dependencies);
+            engine.getViewGraph().validateNoCycle(viewToken, executionModel.getQueryModel());
+
             try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
                 // test the cursor, if no exception thrown viewSql is working
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
