@@ -337,7 +337,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (hi <= 0) {
                     endExclusive = baseSize + hi;
                 } else {
-                    // "LIMIT <negative>, <positive> is validated against in SqlCodeGenerator because it's confusing.
+                    // "LIMIT <negative>, <positive> is validated against in of() because it's confusing.
                     // We handle it here anyway, in case this decision changes.
                     endExclusive = hi;
                 }
