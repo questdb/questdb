@@ -392,8 +392,6 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 String absoluteGlobPath = root + "/data_*.parquet";
                 sink.clear();
                 sink.put("select * from read_parquet('" + absoluteGlobPath + "') order by id");
-
-                // We should get 15 rows total (5 from each file) with correct IDs and sources
                 assertQueryNoLeakCheck(
                         """
                                 id\tsource

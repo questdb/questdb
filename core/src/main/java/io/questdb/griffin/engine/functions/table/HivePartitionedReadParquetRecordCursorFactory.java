@@ -73,7 +73,6 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
             return new HivePartitionedReadParquetRecordCursor(
                     globCursor,
                     parquetCursor,
-                    configuration.getFilesFacade(),
                     nonGlobbedRoot
             );
         } catch (Throwable e) {
@@ -82,10 +81,6 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
             globCursor.close();
             throw e;
         }
-    }
-
-    public RecordCursorFactory getGlobCursorFactory() {
-        return globCursorFactory;
     }
 
     @Override
@@ -101,7 +96,5 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
 
     @Override
     protected void _close() {
-        // globCursorFactory is managed by SqlOptimiser and may be shared with other factories
-        // Do not close it here to avoid use-after-free
     }
 }

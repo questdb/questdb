@@ -29,13 +29,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,11 +41,9 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8Sequence;
 
 public class ReadParquetFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(ReadParquetFunctionFactory.class);
@@ -77,14 +72,10 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }
 
-        CharSequence nonGlobFileRoot = GlobFilesFunctionFactory.extractNonGlobPrefix(filePath);
+/*        CharSequence nonGlobFileRoot = GlobFilesFunctionFactory.extractNonGlobPrefix(filePath);
         if (!Chars.equals(nonGlobFileRoot, filePath)) {
-            // glob path to read
-
             Path path = Path.getThreadLocal2("");
-
             if (nonGlobFileRoot.charAt(0) != '/') {
-                // need to use input root
                 path.of(configuration.getSqlCopyInputRoot());
             }
             path.concat(filePath);
@@ -105,7 +96,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                     Utf8Sequence firstGlobbedPath = globCursor.getRecord().getVarcharA(0);
 
                     try {
-                        path = Path.getThreadLocal2("");
+                        path.trimTo(0);
                         path.of(nonGlobbedRoot).concat(firstGlobbedPath);
                         final FilesFacade ff = configuration.getFilesFacade();
                         final long fd = TableUtils.openRO(ff, path.$(), LOG);
@@ -143,7 +134,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 Misc.free(globFactory);
                 throw e;
             }
-        }
+        }*/
 
 
         try {

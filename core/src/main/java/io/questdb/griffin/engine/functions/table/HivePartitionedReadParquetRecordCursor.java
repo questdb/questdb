@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -38,7 +37,6 @@ import io.questdb.std.str.Utf8Sequence;
  * Used to handle glob patterns that match multiple parquet files.
  */
 public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRecordCursor {
-    private final FilesFacade ff;
     private final RecordCursor globCursor;
     private final CharSequence nonGlobbedRoot;
     private final ReadParquetRecordCursor parquetCursor;
@@ -47,12 +45,10 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
     public HivePartitionedReadParquetRecordCursor(
             RecordCursor globCursor,
             ReadParquetRecordCursor parquetCursor,
-            FilesFacade ff,
             CharSequence nonGlobbedRoot
     ) {
         this.globCursor = globCursor;
         this.parquetCursor = parquetCursor;
-        this.ff = ff;
         this.nonGlobbedRoot = nonGlobbedRoot;
     }
 
