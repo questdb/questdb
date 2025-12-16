@@ -1050,7 +1050,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, firstPartitionTsm);
 
             if (ColumnType.isSymbol(newType)) {
-                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, false, metadata.getColumnCount() - 1);
+                // Null flag will be set during conversion if source column contains nulls
+                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, false, columnIndex);
             } else {
                 // maintain a sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
@@ -3329,7 +3330,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (replaceColumnIndex < 0) {
             if (ColumnType.isSymbol(columnType)) {
                 try {
-                    createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, getRowCount() > 0, metadata.getColumnCount() - 1);
+                    boolean existingRowsHaveNull = getRowCount() > 0;
+                    createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, existingRowsHaveNull, metadata.getColumnCount() - 1);
                 } catch (CairoException e) {
                     try {
                         recoverFromSymbolMapWriterFailure(columnName);
@@ -4345,7 +4347,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnNameTxn,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean symbolNullValue,
+            boolean symbolNullFlag,
             int columnIndex
     ) {
         MapWriter.createSymbolMapFiles(ff, ddlMem, path, name, columnNameTxn, symbolCapacity, symbolCacheFlag);
@@ -4371,7 +4373,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw t;
         }
 
-        w.updateNullFlag(symbolNullValue);
+        w.updateNullFlag(symbolNullFlag);
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
     }
