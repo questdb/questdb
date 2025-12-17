@@ -296,7 +296,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(workerId);
+        atom.clearTemporaryData(slotId);
         final GroupByLongList slaveRowIds = atom.getLongList(slotId);
         slaveRowIds.of(0);
         final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
@@ -408,13 +408,13 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
 
-        final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(workerId);
+        final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(slotId);
         final IntList groupByFuncTypes = atom.getGroupByFunctionTypes();
         final int columnCount = groupByFuncArgs.size();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(workerId);
+        atom.clearTemporaryData(slotId);
         final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
         slaveColumnSinkPtrs.of(0);
         slaveColumnSinkPtrs.checkCapacity(columnCount);
@@ -531,13 +531,13 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
 
-        final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(workerId);
+        final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(slotId);
         final IntList groupByFuncTypes = atom.getGroupByFunctionTypes();
         final int columnCount = groupByFuncArgs.size();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(workerId);
+        atom.clearTemporaryData(slotId);
         final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
         slaveColumnSinkPtrs.of(0);
         slaveColumnSinkPtrs.checkCapacity(columnCount);
@@ -655,7 +655,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(workerId);
+        atom.clearTemporaryData(slotId);
         final GroupByLongList slaveRowIds = atom.getLongList(slotId);
         slaveRowIds.of(0);
         final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
@@ -766,7 +766,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(workerId);
+        atom.clearTemporaryData(slotId);
         final GroupByLongList slaveRowIds = atom.getLongList(slotId);
         slaveRowIds.of(0);
         final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
@@ -984,7 +984,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
 
-                atom.clearTemporaryData(workerId);
+                atom.clearTemporaryData(slotId);
                 final GroupByLongList slaveRowIds = atom.getLongList(slotId);
                 slaveRowIds.of(0);
                 final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
@@ -1115,13 +1115,13 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 joinRecord.of(record, slaveRecord);
                 final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
                 final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
-                final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(workerId);
+                final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(slotId);
                 final IntList groupByFuncTypes = atom.getGroupByFunctionTypes();
                 final int columnCount = groupByFuncArgs.size();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
 
-                atom.clearTemporaryData(workerId);
+                atom.clearTemporaryData(slotId);
                 final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
                 slaveColumnSinkPtrs.of(0);
                 slaveColumnSinkPtrs.checkCapacity(columnCount);
@@ -1256,13 +1256,13 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 joinRecord.of(record, slaveRecord);
                 final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
                 final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
-                final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(workerId);
+                final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(slotId);
                 final IntList groupByFuncTypes = atom.getGroupByFunctionTypes();
                 final int columnCount = groupByFuncArgs.size();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
 
-                atom.clearTemporaryData(workerId);
+                atom.clearTemporaryData(slotId);
                 final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
                 slaveColumnSinkPtrs.of(0);
                 slaveColumnSinkPtrs.checkCapacity(columnCount);
@@ -1399,7 +1399,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
 
-                atom.clearTemporaryData(workerId);
+                atom.clearTemporaryData(slotId);
                 final GroupByLongList slaveRowIds = atom.getLongList(slotId);
                 slaveRowIds.of(0);
                 final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
@@ -1530,7 +1530,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
 
-                atom.clearTemporaryData(workerId);
+                atom.clearTemporaryData(slotId);
                 final GroupByLongList slaveRowIds = atom.getLongList(slotId);
                 slaveRowIds.of(0);
                 final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
