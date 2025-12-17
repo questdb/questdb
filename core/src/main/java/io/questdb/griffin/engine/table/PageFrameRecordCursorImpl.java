@@ -45,7 +45,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
-    private boolean isSkipped;
     private RowCursor rowCursor;
 
     public PageFrameRecordCursorImpl(
@@ -136,7 +135,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
         areCursorsPrepared = false;
         rowCursor = null;
-        isSkipped = false;
         // prepare for page frame iteration
         super.init();
     }
@@ -153,17 +151,17 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void skipRows(Counter rowCount) {
-        if (isSkipped) {
-            return;
-        }
-
         prepareRowCursorFactory();
 
-        if (filter != null || rowCursorFactory.isUsingIndex()) {
+        // Use slow path when:
+        // - filter is present (need to evaluate each row)
+        // - using index (row order may not be sequential)
+        // - rowCursor is not null (we're mid-frame after hasNext() calls,
+        //   and frameCursor.next() won't return the current frame again)
+        if (filter != null || rowCursorFactory.isUsingIndex() || rowCursor != null) {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
-            isSkipped = true;
             return;
         }
 
@@ -182,7 +180,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
 
         final int frameIndex = frameCount - 1;
-        isSkipped = true;
         // page frame is null when table has no partitions so there's nothing to skip
         if (pageFrame != null) {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
@@ -205,7 +202,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             filter.toTop();
         }
         rowCursor = null;
-        isSkipped = false;
         super.toTop();
     }
 
