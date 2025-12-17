@@ -98,6 +98,15 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
         return this;
     }
 
+    @Override
+    public DirectUtf8StringList put(@Nullable DirectUtf8Sequence dus) {
+        if (dus != null) {
+            putNonAscii(dus.lo(), dus.hi());
+        }
+        setElem();
+        return this;
+    }
+
     public DirectUtf8StringList putAscii(char c) {
         sink.put((byte) c);
         return this;

@@ -64,6 +64,8 @@ import org.jetbrains.annotations.NotNull;
  * - [a-z] matches any character in the range
  * - [!abc] matches any character not in the set
  * - \ escapes the next character
+ * <p>
+ * Note: ~ (home directory) expansion is not supported.
  */
 public class GlobFilesFunctionFactory implements FunctionFactory {
 
@@ -549,39 +551,46 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
             Path workingPath,
             Utf8StringSink fileNameSink
     ) {
-        workingPath.of(basePath).$();
-        long findPtr = ff.findFirst(workingPath.$());
-        if (findPtr <= 0) {
-            return;
-        }
-
+        Utf8StringSink basePathCopy = Misc.acquireUtf8Sink();
         try {
-            do {
-                long namePtr = ff.findName(findPtr);
-                if (namePtr == 0) {
-                    break;
-                }
+            basePathCopy.put(basePath);
+            workingPath.of(basePathCopy).$();
+            long findPtr = ff.findFirst(workingPath.$());
+            if (findPtr <= 0) {
+                return;
+            }
 
-                fileNameSink.clear();
-                Utf8s.utf8ZCopy(namePtr, fileNameSink);
+            try {
+                do {
+                    long namePtr = ff.findName(findPtr);
+                    if (namePtr == 0) {
+                        break;
+                    }
 
-                if (!Files.notDots(fileNameSink)) {
-                    continue;
-                }
+                    fileNameSink.clear();
+                    Utf8s.utf8ZCopy(namePtr, fileNameSink);
 
-                int type = ff.findType(findPtr);
-                // Skip symbolic links
-                if (type == Files.DT_LNK) {
-                    continue;
-                }
-                if (type == Files.DT_DIR) {
-                    Utf8Sequence fullPath = joinPath(basePath, fileNameSink, 0, fileNameSink.size());
-                    resultPaths.put(fullPath);
-                    recursiveGlobDirectories(ff, resultPaths.getQuick(resultPaths.size() - 1), resultPaths, workingPath, fileNameSink);
-                }
-            } while (ff.findNext(findPtr) > 0);
+                    if (!Files.notDots(fileNameSink)) {
+                        continue;
+                    }
+
+                    int type = ff.findType(findPtr);
+                    // Skip symbolic links
+                    if (type == Files.DT_LNK) {
+                        continue;
+                    }
+                    if (type == Files.DT_DIR) {
+                        Utf8Sequence fullPath = joinPath(basePathCopy, fileNameSink, 0, fileNameSink.size());
+                        resultPaths.put(fullPath);
+                        recursiveGlobDirectories(ff, fullPath, resultPaths, workingPath, fileNameSink);
+                    }
+                } while (ff.findNext(findPtr) > 0);
+            } finally {
+                ff.findClose(findPtr);
+            }
         } finally {
-            ff.findClose(findPtr);
+            basePathCopy.clear();
+            Misc.releaseUtf8Sink();
         }
     }
 
@@ -592,43 +601,48 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
             Path workingPath,
             Utf8StringSink fileNameSink
     ) {
-        workingPath.of(basePath).$();
-        long findPtr = ff.findFirst(workingPath.$());
-        if (findPtr <= 0) {
-            return;
-        }
-
+        Utf8StringSink basePathCopy = Misc.acquireUtf8Sink();
         try {
-            do {
-                long namePtr = ff.findName(findPtr);
-                if (namePtr == 0) {
-                    break;
-                }
+            basePathCopy.put(basePath);
+            workingPath.of(basePathCopy).$();
+            long findPtr = ff.findFirst(workingPath.$());
+            if (findPtr <= 0) {
+                return;
+            }
 
-                fileNameSink.clear();
-                Utf8s.utf8ZCopy(namePtr, fileNameSink);
+            try {
+                do {
+                    long namePtr = ff.findName(findPtr);
+                    if (namePtr == 0) {
+                        break;
+                    }
 
-                if (!Files.notDots(fileNameSink)) {
-                    continue;
-                }
+                    fileNameSink.clear();
+                    Utf8s.utf8ZCopy(namePtr, fileNameSink);
 
-                int type = ff.findType(findPtr);
-                // Skip symbolic links
-                if (type == Files.DT_LNK) {
-                    continue;
-                }
+                    if (!Files.notDots(fileNameSink)) {
+                        continue;
+                    }
 
-                Utf8Sequence fullPath = joinPath(basePath, fileNameSink, 0, fileNameSink.size());
+                    int type = ff.findType(findPtr);
+                    // Skip symbolic links
+                    if (type == Files.DT_LNK) {
+                        continue;
+                    }
 
-                if (type == Files.DT_DIR) {
-                    workingPath.of(fullPath).$();
-                    recursiveGlobFiles(ff, workingPath, resultPaths, workingPath, fileNameSink);
-                } else if (type == Files.DT_FILE) {
-                    resultPaths.put(fullPath);
-                }
-            } while (ff.findNext(findPtr) > 0);
+                    Utf8Sequence fullPath = joinPath(basePathCopy, fileNameSink, 0, fileNameSink.size());
+                    if (type == Files.DT_DIR) {
+                        recursiveGlobFiles(ff, fullPath, resultPaths, workingPath, fileNameSink);
+                    } else if (type == Files.DT_FILE) {
+                        resultPaths.put(fullPath);
+                    }
+                } while (ff.findNext(findPtr) > 0);
+            } finally {
+                ff.findClose(findPtr);
+            }
         } finally {
-            ff.findClose(findPtr);
+            basePathCopy.clear();
+            Misc.releaseUtf8Sink();
         }
     }
 
