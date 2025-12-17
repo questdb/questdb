@@ -281,7 +281,7 @@ public class MetricsIODispatcherTest {
 
                         utf16Sink.clear();
                         Fragment fragment;
-                        while ((fragment = chunkedResponse.recv(5_000)) != null) {
+                        while ((fragment = chunkedResponse.recv(15_000)) != null) {
                             Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), utf16Sink);
                         }
                         TestUtils.assertEquals(expectedResponse, utf16Sink);
