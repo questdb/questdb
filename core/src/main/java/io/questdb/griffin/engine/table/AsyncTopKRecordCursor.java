@@ -43,6 +43,7 @@ import io.questdb.std.Rows;
 class AsyncTopKRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncTopKRecordCursor.class);
     private LimitedSizeLongTreeChain.TreeCursor chainCursor;
+    private long consumedCount;
     private int frameLimit;
     private PageFrameMemoryPool frameMemoryPool;
     private PageFrameSequence<AsyncTopKAtom> frameSequence;
@@ -55,7 +56,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         buildChainConditionally();
         final AsyncTopKAtom atom = frameSequence.getAtom();
-        counter.add(atom.getOwnerChain().size());
+        counter.add(atom.getOwnerChain().size() - consumedCount);
     }
 
     @Override
@@ -97,6 +98,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
         buildChainConditionally();
         if (chainCursor.hasNext()) {
             recordAt(recordA, chainCursor.next());
+            consumedCount++;
             return true;
         }
         return false;
@@ -133,6 +135,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
         if (isChainBuilt && chainCursor != null) {
             chainCursor.toTop();
         }
+        consumedCount = 0;
     }
 
     private void buildChain() {
@@ -239,5 +242,6 @@ class AsyncTopKRecordCursor implements RecordCursor {
         atom.initMemoryPools(frameSequence.getPageFrameAddressCache());
         frameLimit = -1;
         isChainBuilt = false;
+        consumedCount = 0;
     }
 }
