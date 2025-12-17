@@ -29,7 +29,7 @@ import io.questdb.cairo.map.MapValue;
 /**
  * Common interface for flyweight map values over off-heap memory.
  */
-public interface DirectMapValue extends MapValue {
+public interface FlyweightMapValue extends MapValue {
 
     long getSizeInBytes();
 

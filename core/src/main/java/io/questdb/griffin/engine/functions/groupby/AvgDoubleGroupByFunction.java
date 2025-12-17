@@ -47,10 +47,11 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeBatch(MapValue mapValue, long ptr, int count) {
         if (count > 0) {
-            final long nonNullCount = Vect.countDouble(ptr, count);
-            if (nonNullCount > 0) {
-                mapValue.putDouble(valueIndex, Vect.sumDouble(ptr, count));
-                mapValue.putLong(valueIndex + 1, nonNullCount);
+            final long countPtr = mapValue.getAddress(valueIndex + 1);
+            final double sum = Vect.sumDoubleAcc(ptr, count, countPtr);
+            if (!Numbers.isNull(sum)) {
+                mapValue.putDouble(valueIndex, sum);
+                // the count is already updated by the sumDoubleAcc call, so we don't need to write it here
             }
         }
     }

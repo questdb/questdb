@@ -40,8 +40,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.groupby.DirectMapValue;
 import io.questdb.griffin.engine.groupby.DirectMapValueFactory;
+import io.questdb.griffin.engine.groupby.FlyweightMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
@@ -86,7 +86,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final GroupByAllocator ownerFunctionAllocator;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
-    private final DirectMapValue ownerGroupByValue;
+    private final FlyweightMapValue ownerGroupByValue;
     private final Function ownerJoinFilter;
     private final JoinRecord ownerJoinRecord;
     // Holds either row ids or column sink pointers.
@@ -102,7 +102,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<Function>> perWorkerGroupByFunctionArgs;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
-    private final ObjList<DirectMapValue> perWorkerGroupByValues;
+    private final ObjList<FlyweightMapValue> perWorkerGroupByValues;
     private final ObjList<Function> perWorkerJoinFilters;
     private final ObjList<JoinRecord> perWorkerJoinRecords;
     private final PerWorkerLocks perWorkerLocks;
@@ -424,7 +424,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerLongLists.getQuick(slotId);
     }
 
-    public DirectMapValue getMapValue(int slotId) {
+    public FlyweightMapValue getMapValue(int slotId) {
         if (slotId == -1) {
             return ownerGroupByValue;
         }
@@ -447,7 +447,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     }
 
     // Thread-unsafe, should be used by query owner thread only.
-    public DirectMapValue getOwnerGroupByValue() {
+    public FlyweightMapValue getOwnerGroupByValue() {
         return ownerGroupByValue;
     }
 

@@ -61,97 +61,103 @@ public class CharGroupByFunctionBatchTest {
     @Test
     public void testFirstCharBatch() {
         GroupByFunction function = newFirstCharFunction();
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateChars('b', 'c');
+            function.computeBatch(value, ptr, 2);
 
-        long ptr = allocateChars('b', 'c');
-        function.computeBatch(value, ptr, 2);
-
-        Assert.assertEquals('b', function.getChar(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals('b', function.getChar(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testFirstCharSetEmpty() {
         GroupByFunction function = newFirstCharFunction();
-        SimpleMapValue value = prepare(function);
-        function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setEmpty(value);
 
-        Assert.assertEquals(CharConstant.ZERO.getChar(null), function.getChar(value));
+            Assert.assertEquals(CharConstant.ZERO.getChar(null), function.getChar(value));
+        }
     }
 
     @Test
     public void testFirstNotNullCharBatch() {
         FirstNotNullCharGroupByFunction function = new FirstNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateChars(CharConstant.ZERO.getChar(null), 'x', 'y');
+            function.computeBatch(value, ptr, 3);
 
-        long ptr = allocateChars(CharConstant.ZERO.getChar(null), 'x', 'y');
-        function.computeBatch(value, ptr, 3);
-
-        Assert.assertEquals('x', function.getChar(value));
+            Assert.assertEquals('x', function.getChar(value));
+        }
     }
 
     @Test
     public void testLastCharBatch() {
         GroupByFunction function = newLastCharFunction();
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateChars('a', 'z', 'm');
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateChars('a', 'z', 'm');
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals('m', function.getChar(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals('m', function.getChar(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastNotNullCharBatch() {
         LastNotNullCharGroupByFunction function = new LastNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateChars('a', CharConstant.ZERO.getChar(null), 'd');
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateChars('a', CharConstant.ZERO.getChar(null), 'd');
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals('d', function.getChar(value));
+            Assert.assertEquals('d', function.getChar(value));
+        }
     }
 
     @Test
     public void testMaxCharBatch() {
         MaxCharGroupByFunction function = new MaxCharGroupByFunction(new CharColumn(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
+        try (SimpleMapValue value = prepare(function)) {
+            value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
 
-        long ptr = allocateChars('a', 'y', CharConstant.ZERO.getChar(null), 'z');
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateChars('a', 'y', CharConstant.ZERO.getChar(null), 'z');
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals('z', function.getChar(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals('z', function.getChar(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testMinCharBatch() {
         MinCharGroupByFunction function = new MinCharGroupByFunction(new CharColumn(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
+        try (SimpleMapValue value = prepare(function)) {
+            value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
 
-        long ptr = allocateChars(CharConstant.ZERO.getChar(null), 'd', 'b', 'c');
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateChars(CharConstant.ZERO.getChar(null), 'd', 'b', 'c');
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(0, function.getChar(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(0, function.getChar(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testMinCharBatchSimple() {
         MinCharGroupByFunction function = new MinCharGroupByFunction(new CharColumn(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
+        try (SimpleMapValue value = prepare(function)) {
+            value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
 
-        long ptr = allocateChars('d', 'b', 'c');
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateChars('d', 'b', 'c');
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals('b', function.getChar(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals('b', function.getChar(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     private long allocateChars(char... values) {

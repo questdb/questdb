@@ -49,7 +49,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.groupby.DirectMapValue;
+import io.questdb.griffin.engine.groupby.FlyweightMapValue;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
@@ -286,7 +286,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final DirectMapValue value = atom.getMapValue(slotId);
+        final FlyweightMapValue value = atom.getMapValue(slotId);
         final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
@@ -400,7 +400,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final DirectMapValue value = atom.getMapValue(slotId);
+        final FlyweightMapValue value = atom.getMapValue(slotId);
         final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
@@ -523,7 +523,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final DirectMapValue value = atom.getMapValue(slotId);
+        final FlyweightMapValue value = atom.getMapValue(slotId);
         final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
@@ -646,7 +646,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final DirectMapValue value = atom.getMapValue(slotId);
+        final FlyweightMapValue value = atom.getMapValue(slotId);
         final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
@@ -756,7 +756,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final DirectMapValue value = atom.getMapValue(slotId);
+        final FlyweightMapValue value = atom.getMapValue(slotId);
         final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
@@ -973,7 +973,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
-                final DirectMapValue value = atom.getMapValue(slotId);
+                final FlyweightMapValue value = atom.getMapValue(slotId);
                 final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
@@ -1108,7 +1108,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
-                final DirectMapValue value = atom.getMapValue(slotId);
+                final FlyweightMapValue value = atom.getMapValue(slotId);
                 final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final JoinRecord joinRecord = atom.getJoinRecord(slotId);
@@ -1249,7 +1249,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
-                final DirectMapValue value = atom.getMapValue(slotId);
+                final FlyweightMapValue value = atom.getMapValue(slotId);
                 final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final JoinRecord joinRecord = atom.getJoinRecord(slotId);
@@ -1389,7 +1389,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
-                final DirectMapValue value = atom.getMapValue(slotId);
+                final FlyweightMapValue value = atom.getMapValue(slotId);
                 final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
@@ -1519,7 +1519,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
-                final DirectMapValue value = atom.getMapValue(slotId);
+                final FlyweightMapValue value = atom.getMapValue(slotId);
                 final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);

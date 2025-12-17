@@ -125,6 +125,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
+        Misc.free(simpleMapValue);
         Misc.freeObjList(groupByFunctions);
         Misc.free(base);
     }

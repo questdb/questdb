@@ -61,192 +61,202 @@ public class DateGroupByFunctionBatchTest {
     @Test
     public void testFirstDateBatch() {
         GroupByFunction function = newFirstDateFunction();
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDates(epochDay(1), epochDay(2));
+            function.computeBatch(value, ptr, 2);
 
-        long ptr = allocateDates(epochDay(1), epochDay(2));
-        function.computeBatch(value, ptr, 2);
-
-        Assert.assertEquals(epochDay(1), function.getDate(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(epochDay(1), function.getDate(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testFirstDateBatchAllNulls() {
         GroupByFunction function = newFirstDateFunction();
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDates(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3);
 
-        long ptr = allocateDates(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 3);
-
-        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testFirstDateBatchEmpty() {
         GroupByFunction function = newFirstDateFunction();
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDates();
+            function.computeBatch(value, ptr, 0);
 
-        long ptr = allocateDates();
-        function.computeBatch(value, ptr, 0);
-
-        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testFirstDateSetEmpty() {
         GroupByFunction function = newFirstDateFunction();
-        SimpleMapValue value = prepare(function);
-        function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setEmpty(value);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+        }
     }
 
     @Test
     public void testFirstNotNullDateBatch() {
         FirstNotNullDateGroupByFunction function = new FirstNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDates(Numbers.LONG_NULL, epochDay(10), epochDay(20));
+            function.computeBatch(value, ptr, 3);
 
-        long ptr = allocateDates(Numbers.LONG_NULL, epochDay(10), epochDay(20));
-        function.computeBatch(value, ptr, 3);
-
-        Assert.assertEquals(epochDay(10), function.getDate(value));
+            Assert.assertEquals(epochDay(10), function.getDate(value));
+        }
     }
 
     @Test
     public void testFirstNotNullDateBatchAllNulls() {
         FirstNotNullDateGroupByFunction function = new FirstNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDates(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3);
 
-        long ptr = allocateDates(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 3);
-
-        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+        }
     }
 
     @Test
     public void testFirstNotNullDateBatchEmpty() {
         FirstNotNullDateGroupByFunction function = new FirstNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDates();
+            function.computeBatch(value, ptr, 0);
 
-        long ptr = allocateDates();
-        function.computeBatch(value, ptr, 0);
-
-        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+        }
     }
 
     @Test
     public void testLastDateBatch() {
         GroupByFunction function = newLastDateFunction();
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateDates(epochDay(5), epochDay(7), epochDay(9));
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateDates(epochDay(5), epochDay(7), epochDay(9));
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(epochDay(9), function.getDate(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(epochDay(9), function.getDate(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastDateBatchAllNulls() {
         GroupByFunction function = newLastDateFunction();
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateDates(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateDates(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastDateBatchEmpty() {
         GroupByFunction function = newLastDateFunction();
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateDates();
-        function.computeBatch(value, ptr, 0);
+            long ptr = allocateDates();
+            function.computeBatch(value, ptr, 0);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastNotNullDateBatch() {
         LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateDates(epochDay(1), Numbers.LONG_NULL, epochDay(3));
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateDates(epochDay(1), Numbers.LONG_NULL, epochDay(3));
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(epochDay(3), function.getDate(value));
+            Assert.assertEquals(epochDay(3), function.getDate(value));
+        }
     }
 
     @Test
     public void testLastNotNullDateBatchAllNulls() {
         LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateDates(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateDates(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+        }
     }
 
     @Test
     public void testLastNotNullDateBatchEmpty() {
         LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateDates();
-        function.computeBatch(value, ptr, 0);
+            long ptr = allocateDates();
+            function.computeBatch(value, ptr, 0);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
+        }
     }
 
     @Test
     public void testLastNotNullDateBatchFirst() {
         LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateDates(epochDay(1), Numbers.LONG_NULL, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateDates(epochDay(1), Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(epochDay(1), function.getDate(value));
+            Assert.assertEquals(epochDay(1), function.getDate(value));
+        }
     }
 
     @Test
     public void testMaxDateBatch() {
         MaxDateGroupByFunction function = new MaxDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        value.putDate(function.getValueIndex(), Numbers.LONG_NULL);
+        try (SimpleMapValue value = prepare(function)) {
+            value.putDate(function.getValueIndex(), Numbers.LONG_NULL);
 
-        long ptr = allocateDates(epochDay(10), epochDay(20), Numbers.LONG_NULL, epochDay(5));
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateDates(epochDay(10), epochDay(20), Numbers.LONG_NULL, epochDay(5));
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(epochDay(20), function.getDate(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(epochDay(20), function.getDate(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testMinDateBatch() {
         MinDateGroupByFunction function = new MinDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        value.putDate(function.getValueIndex(), Numbers.LONG_NULL);
+        try (SimpleMapValue value = prepare(function)) {
+            value.putDate(function.getValueIndex(), Numbers.LONG_NULL);
 
-        long ptr = allocateDates(Numbers.LONG_NULL, epochDay(100), epochDay(50));
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateDates(Numbers.LONG_NULL, epochDay(100), epochDay(50));
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(epochDay(50), function.getDate(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(epochDay(50), function.getDate(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     private long allocateDates(long... values) {

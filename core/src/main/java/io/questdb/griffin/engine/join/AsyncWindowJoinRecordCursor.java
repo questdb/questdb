@@ -43,7 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.groupby.DirectMapValue;
+import io.questdb.griffin.engine.groupby.FlyweightMapValue;
 import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.log.Log;
@@ -80,7 +80,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private long frameRowCount;
     private long frameRowIndex;
     private long frameValueOffset;
-    private DirectMapValue groupByValue;
+    private FlyweightMapValue groupByValue;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
     private PageFrameSequence<? extends AsyncWindowJoinAtom> masterFrameSequence;

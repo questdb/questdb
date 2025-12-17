@@ -79,6 +79,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final Function joinFilter;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
+    private final SimpleMapValue simpleMapValue;
     private final RecordCursorFactory slaveFactory;
     private final long windowHi;
     private final long windowLo;
@@ -100,43 +101,49 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         super(metadata);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
-        this.joinMetadata = joinMetadata;
-        this.joinFilter = joinFilter;
-        this.windowLo = windowLo;
-        this.windowHi = windowHi;
-        this.includePrevailing = includePrevailing;
-        final int columnSplit = masterFactory.getMetadata().getColumnCount();
-        final RecordMetadata masterMetadata = masterFactory.getMetadata();
-        final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        if (includePrevailing && joinFilter != null) {
-            this.cursor = new WindowJoinWithPrevailingAndJoinFilterRecordCursor(
-                    configuration,
-                    columnIndex,
-                    columnSplit,
-                    masterMetadata.getTimestampIndex(),
-                    slaveMetadata.getTimestampIndex(),
-                    masterMetadata.getTimestampType(),
-                    slaveMetadata.getTimestampType(),
-                    groupByFunctions,
-                    groupByFunctionsUpdater,
-                    columnTypes
-            );
-        } else {
-            this.cursor = new WindowJoinRecordCursor(
-                    configuration,
-                    columnIndex,
-                    columnSplit,
-                    masterMetadata.getTimestampIndex(),
-                    slaveMetadata.getTimestampIndex(),
-                    masterMetadata.getTimestampType(),
-                    slaveMetadata.getTimestampType(),
-                    groupByFunctions,
-                    groupByFunctionsUpdater,
-                    columnTypes
-            );
+        try {
+            this.masterFactory = masterFactory;
+            this.slaveFactory = slaveFactory;
+            this.joinMetadata = joinMetadata;
+            this.joinFilter = joinFilter;
+            this.windowLo = windowLo;
+            this.windowHi = windowHi;
+            this.includePrevailing = includePrevailing;
+            this.simpleMapValue = new SimpleMapValue(columnTypes.getColumnCount());
+            final int columnSplit = masterFactory.getMetadata().getColumnCount();
+            final RecordMetadata masterMetadata = masterFactory.getMetadata();
+            final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
+            final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            if (includePrevailing && joinFilter != null) {
+                this.cursor = new WindowJoinWithPrevailingAndJoinFilterRecordCursor(
+                        configuration,
+                        columnIndex,
+                        columnSplit,
+                        masterMetadata.getTimestampIndex(),
+                        slaveMetadata.getTimestampIndex(),
+                        masterMetadata.getTimestampType(),
+                        slaveMetadata.getTimestampType(),
+                        groupByFunctions,
+                        groupByFunctionsUpdater,
+                        simpleMapValue
+                );
+            } else {
+                this.cursor = new WindowJoinRecordCursor(
+                        configuration,
+                        columnIndex,
+                        columnSplit,
+                        masterMetadata.getTimestampIndex(),
+                        slaveMetadata.getTimestampIndex(),
+                        masterMetadata.getTimestampType(),
+                        slaveMetadata.getTimestampType(),
+                        groupByFunctions,
+                        groupByFunctionsUpdater,
+                        simpleMapValue
+                );
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
@@ -210,6 +217,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(cursor);
         Misc.free(joinFilter);
         Misc.free(joinMetadata);
+        Misc.free(simpleMapValue);
     }
 
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {
@@ -245,7 +253,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull ArrayColumnTypes columnTypes
+                @NotNull SimpleMapValue simpleMapValue
         ) {
             this.crossIndex = columnIndex;
             this.columnSplit = columnSplit;
@@ -253,7 +261,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.simpleMapValue = new SimpleMapValue(columnTypes.getColumnCount());
+            this.simpleMapValue = simpleMapValue;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             isOpen = true;
@@ -427,7 +435,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull ArrayColumnTypes columnTypes
+                @NotNull SimpleMapValue simpleMapValue
         ) {
             super(
                     configuration,
@@ -439,7 +447,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     slaveTimestampType,
                     groupByFunctions,
                     groupByFunctionsUpdater,
-                    columnTypes
+                    simpleMapValue
             );
         }
 

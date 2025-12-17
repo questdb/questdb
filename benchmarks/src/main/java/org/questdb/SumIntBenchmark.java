@@ -48,16 +48,16 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class SumDoubleBenchmark {
-    private final static long memSize = 1024 * 16;
-    private final static int doubleCount = (int) (memSize / Double.BYTES);
+public class SumIntBenchmark {
+    private final static long memSize = 1024 * 8;
+    private final static int intCount = (int) (memSize / Long.BYTES);
     private long countAddr;
-    private long doubleAddr;
-    private double[] doubleArray;
+    private long intAddr;
+    private int[] intArray;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(SumDoubleBenchmark.class.getSimpleName())
+                .include(SumIntBenchmark.class.getSimpleName())
                 .warmupIterations(2)
                 .measurementIterations(2)
                 .forks(1)
@@ -69,50 +69,50 @@ public class SumDoubleBenchmark {
     @Setup(Level.Iteration)
     public void setup() {
         Os.init();
-        doubleAddr = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
+        intAddr = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
         countAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        doubleArray = new double[doubleCount];
+        intArray = new int[intCount];
         final Rnd rnd = new Rnd();
-        long p = doubleAddr;
-        for (int i = 0; i < doubleCount; i++) {
-            double d = rnd.nextDouble();
-            Unsafe.getUnsafe().putDouble(p, d);
-            doubleArray[i] = d;
-            p += Double.BYTES;
+        long p = intAddr;
+        for (int i = 0; i < intCount; i++) {
+            int d = rnd.nextInt();
+            Unsafe.getUnsafe().putInt(p, d);
+            intArray[i] = d;
+            p += Integer.BYTES;
         }
     }
 
     @TearDown(Level.Iteration)
     public void tearDown() {
-        Unsafe.free(doubleAddr, memSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(intAddr, memSize, MemoryTag.NATIVE_DEFAULT);
         Unsafe.free(countAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Benchmark
-    public double testJavaHeapSum() {
-        double result = 0.0;
-        for (int i = 0; i < doubleCount; i++) {
-            result += doubleArray[i];
+    public long testJavaHeapSum() {
+        long result = 0;
+        for (int i = 0; i < intCount; i++) {
+            result += intArray[i];
         }
         return result;
     }
 
     @Benchmark
-    public double testJavaNativeSum() {
-        double result = 0.0;
-        for (int i = 0; i < doubleCount; i++) {
-            result += Unsafe.getUnsafe().getDouble(doubleAddr + i * 8);
+    public long testJavaNativeSum() {
+        long result = 0;
+        for (int i = 0; i < intCount; i++) {
+            result += Unsafe.getUnsafe().getInt(intAddr + i * 4);
         }
         return result;
     }
 
     @Benchmark
-    public double testVectSumDouble() {
-        return Vect.sumDouble(doubleAddr, doubleCount);
+    public long testVectSumInt() {
+        return Vect.sumInt(intAddr, intCount);
     }
 
     @Benchmark
-    public double testVectSumDoubleAcc() {
-        return Vect.sumDoubleAcc(doubleAddr, doubleCount, countAddr);
+    public double testVectSumIntAcc() {
+        return Vect.sumIntAcc(intAddr, intCount, countAddr);
     }
 }

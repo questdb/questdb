@@ -93,6 +93,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
     private final int masterSymbolIndex;
+    private final SimpleMapValue simpleMapValue;
     private final RecordCursorFactory slaveFactory;
     private final int slaveSymbolIndex;
     private final boolean vectorized;
@@ -127,6 +128,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.includePrevailing = includePrevailing;
             this.windowLo = windowLo;
             this.windowHi = windowHi;
+            this.simpleMapValue = new SimpleMapValue(columnTypes.getColumnCount());
             final int columnSplit = masterFactory.getMetadata().getColumnCount();
             var masterMetadata = masterFactory.getMetadata();
             var slaveMetadata = slaveFactory.getMetadata();
@@ -162,7 +164,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                         slaveMetadata.getTimestampType(),
                         groupByFunctions,
                         groupByFunctionsUpdater,
-                        columnTypes,
+                        simpleMapValue,
                         2 + groupByFunctionArgs.size(),
                         groupByFunctionArgs,
                         groupByFunctionTypes,
@@ -181,7 +183,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                                 slaveMetadata.getTimestampType(),
                                 groupByFunctions,
                                 groupByFunctionsUpdater,
-                                columnTypes,
+                                simpleMapValue,
                                 3
                         );
                     } else {
@@ -195,7 +197,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                                 slaveMetadata.getTimestampType(),
                                 groupByFunctions,
                                 groupByFunctionsUpdater,
-                                columnTypes,
+                                simpleMapValue,
                                 3
                         );
                     }
@@ -210,7 +212,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             slaveMetadata.getTimestampType(),
                             groupByFunctions,
                             groupByFunctionsUpdater,
-                            columnTypes,
+                            simpleMapValue,
                             3
                     );
                 }
@@ -300,6 +302,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         Misc.free(cursor);
         Misc.free(joinFilter);
         Misc.free(joinMetadata);
+        Misc.free(simpleMapValue);
     }
 
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
@@ -390,7 +393,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private TimeFrameCursor slaveCursor;
 
         public WindowJoinFastRecordCursor(
-                CairoConfiguration configuration,
+                @NotNull CairoConfiguration configuration,
                 @Nullable IntList columnIndex,
                 int columnSplit,
                 int masterTimestampIndex,
@@ -399,7 +402,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull ArrayColumnTypes columnTypes,
+                @NotNull SimpleMapValue simpleMapValue,
                 int valueCount
         ) {
             super(groupByFunctionsUpdater, valueCount);
@@ -408,7 +411,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.groupByFunctions = groupByFunctions;
             this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
-            this.simpleMapValue = new SimpleMapValue(columnTypes.getColumnCount());
+            this.simpleMapValue = simpleMapValue;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             if (masterTimestampType == slaveTimestampType) {
@@ -653,7 +656,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private TimeFrameCursor slaveCursor;
 
         public WindowJoinFastVectRecordCursor(
-                CairoConfiguration configuration,
+                @NotNull CairoConfiguration configuration,
                 @Nullable IntList columnIndex,
                 int columnSplit,
                 int masterTimestampIndex,
@@ -662,11 +665,11 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull ArrayColumnTypes columnTypes,
+                @NotNull SimpleMapValue simpleMapValue,
                 int valueCount,
-                ObjList<Function> groupByFuncArgs,
-                IntList groupByFuncTypes,
-                IntList groupByFunctionToColumnIndex
+                @NotNull ObjList<Function> groupByFuncArgs,
+                @NotNull IntList groupByFuncTypes,
+                @NotNull IntList groupByFunctionToColumnIndex
         ) {
             super(groupByFunctionsUpdater, valueCount);
             this.crossIndex = columnIndex;
@@ -674,7 +677,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.groupByFunctions = groupByFunctions;
             this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
-            this.simpleMapValue = new SimpleMapValue(columnTypes.getColumnCount());
+            this.simpleMapValue = simpleMapValue;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             if (masterTimestampType == slaveTimestampType) {
@@ -959,7 +962,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private long prevailingRowIndex = Long.MIN_VALUE;
 
         public WindowJoinWithPrevailingAndJoinFilterFastRecordCursor(
-                CairoConfiguration configuration,
+                @NotNull CairoConfiguration configuration,
                 @Nullable IntList columnIndex,
                 int columnSplit,
                 int masterTimestampIndex,
@@ -968,7 +971,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull ArrayColumnTypes columnTypes,
+                @NotNull SimpleMapValue simpleMapValue,
                 int valueCount
         ) {
             super(
@@ -981,7 +984,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     slaveTimestampType,
                     groupByFunctions,
                     groupByFunctionsUpdater,
-                    columnTypes,
+                    simpleMapValue,
                     valueCount
             );
         }
@@ -1186,7 +1189,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private final WindowJoinPrevailingCache prevailingCache;
 
         public WindowJoinWithPrevailingFastRecordCursor(
-                CairoConfiguration configuration,
+                @NotNull CairoConfiguration configuration,
                 @Nullable IntList columnIndex,
                 int columnSplit,
                 int masterTimestampIndex,
@@ -1195,7 +1198,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull ArrayColumnTypes columnTypes,
+                @NotNull SimpleMapValue simpleMapValue,
                 int valueCount
         ) {
             super(
@@ -1208,7 +1211,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     slaveTimestampType,
                     groupByFunctions,
                     groupByFunctionsUpdater,
-                    columnTypes,
+                    simpleMapValue,
                     valueCount
             );
 

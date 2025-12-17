@@ -450,6 +450,7 @@ public final class Vect {
     public static native double sumDouble(long pDouble, long count);
 
     // returns sum of the elements; also stores non-null count to pCount address
+    // meant to be used for average calculation
     public static native double sumDoubleAcc(long pInt, long count, long pCount);
 
     public static native double sumDoubleKahan(long pDouble, long count);
@@ -459,11 +460,13 @@ public final class Vect {
     public static native long sumInt(long pInt, long count);
 
     // returns sum of the elements; also stores non-null count to pCount address
+    // meant to be used for average calculation
     public static native double sumIntAcc(long pInt, long count, long pCount);
 
     public static native long sumLong(long pLong, long count);
 
     // returns sum of the elements; also stores non-null count to pCount address
+    // meant to be used for average calculation
     public static native double sumLongAcc(long pInt, long count, long pCount);
 
     public static native long sumShort(long pLong, long count);

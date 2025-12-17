@@ -55,15 +55,16 @@ public class BooleanGroupByFunctionBatchTest {
         FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateBooleans(true, false, true);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateBooleans(true, false, true);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertTrue(function.getBool(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertTrue(function.getBool(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -71,14 +72,15 @@ public class BooleanGroupByFunctionBatchTest {
         FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0);
 
-        Assert.assertFalse(function.getBool(value));
+            Assert.assertFalse(function.getBool(value));
+        }
     }
 
     @Test
@@ -86,11 +88,12 @@ public class BooleanGroupByFunctionBatchTest {
         FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertFalse(function.getBool(value));
+            Assert.assertFalse(function.getBool(value));
+        }
     }
 
     @Test
@@ -98,17 +101,18 @@ public class BooleanGroupByFunctionBatchTest {
         LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateBooleans(false, true, false, true);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateBooleans(false, true, false, true);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
-        Assert.assertTrue(function.getBool(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertTrue(function.getBool(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -116,15 +120,16 @@ public class BooleanGroupByFunctionBatchTest {
         LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateBooleans(false);
-        function.computeBatch(value, ptr, 1);
+            long ptr = allocateBooleans(false);
+            function.computeBatch(value, ptr, 1);
 
-        Assert.assertFalse(function.getBool(value));
+            Assert.assertFalse(function.getBool(value));
+        }
     }
 
     @Test
@@ -132,11 +137,12 @@ public class BooleanGroupByFunctionBatchTest {
         LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertFalse(function.getBool(value));
+            Assert.assertFalse(function.getBool(value));
+        }
     }
 
     private long allocateBooleans(boolean... values) {

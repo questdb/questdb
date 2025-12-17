@@ -61,15 +61,16 @@ public class FloatGroupByFunctionBatchTest {
         CountFloatGroupByFunction function = new CountFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateFloats(1.5f, Float.NaN, 2.5f, Float.POSITIVE_INFINITY, 3.5f);
-        function.computeBatch(value, ptr, 5);
+            long ptr = allocateFloats(1.5f, Float.NaN, 2.5f, Float.POSITIVE_INFINITY, 3.5f);
+            function.computeBatch(value, ptr, 5);
 
-        Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(3L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -77,14 +78,15 @@ public class FloatGroupByFunctionBatchTest {
         CountFloatGroupByFunction function = new CountFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateFloats(Float.NaN, Float.NaN, Float.NaN);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateFloats(Float.NaN, Float.NaN, Float.NaN);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(0L, function.getLong(value));
+            Assert.assertEquals(0L, function.getLong(value));
+        }
     }
 
     @Test
@@ -92,13 +94,14 @@ public class FloatGroupByFunctionBatchTest {
         CountFloatGroupByFunction function = new CountFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0);
 
-        Assert.assertEquals(0L, function.getLong(value));
+            Assert.assertEquals(0L, function.getLong(value));
+        }
     }
 
     @Test
@@ -106,11 +109,12 @@ public class FloatGroupByFunctionBatchTest {
         CountFloatGroupByFunction function = new CountFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertEquals(0L, function.getLong(value));
+            Assert.assertEquals(0L, function.getLong(value));
+        }
     }
 
     @Test
@@ -118,15 +122,16 @@ public class FloatGroupByFunctionBatchTest {
         FirstFloatGroupByFunction function = new FirstFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateFloats(5.5f, 6.6f, 7.7f);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateFloats(5.5f, 6.6f, 7.7f);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(5.5f, function.getFloat(value), 0.000001f);
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(5.5f, function.getFloat(value), 0.000001f);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -134,14 +139,15 @@ public class FloatGroupByFunctionBatchTest {
         FirstFloatGroupByFunction function = new FirstFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateFloats(Float.NaN, 1.0f);
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateFloats(Float.NaN, 1.0f);
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -149,14 +155,15 @@ public class FloatGroupByFunctionBatchTest {
         FirstFloatGroupByFunction function = new FirstFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -164,12 +171,13 @@ public class FloatGroupByFunctionBatchTest {
         FirstFloatGroupByFunction function = new FirstFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -177,11 +185,12 @@ public class FloatGroupByFunctionBatchTest {
         FirstFloatGroupByFunction function = new FirstFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -189,15 +198,16 @@ public class FloatGroupByFunctionBatchTest {
         FirstNotNullFloatGroupByFunction function = new FirstNotNullFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateFloats(Float.NaN, 4.4f, Float.NaN);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateFloats(Float.NaN, 4.4f, Float.NaN);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(4.4f, function.getFloat(value), 0.0f);
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(4.4f, function.getFloat(value), 0.0f);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -205,17 +215,18 @@ public class FloatGroupByFunctionBatchTest {
         LastFloatGroupByFunction function = new LastFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateFloats(11.0f, 22.0f, 33.0f);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateFloats(11.0f, 22.0f, 33.0f);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
-        Assert.assertEquals(33.0f, function.getFloat(value), 0.000001f);
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(33.0f, function.getFloat(value), 0.000001f);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -223,15 +234,16 @@ public class FloatGroupByFunctionBatchTest {
         LastFloatGroupByFunction function = new LastFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateFloats(11.0f, Float.NaN);
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateFloats(11.0f, Float.NaN);
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -239,11 +251,12 @@ public class FloatGroupByFunctionBatchTest {
         LastFloatGroupByFunction function = new LastFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -251,16 +264,17 @@ public class FloatGroupByFunctionBatchTest {
         LastNotNullFloatGroupByFunction function = new LastNotNullFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateFloats(Float.NaN, 1.5f, Float.NaN, 2.5f);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateFloats(Float.NaN, 1.5f, Float.NaN, 2.5f);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(2.5f, function.getFloat(value), 0.0f);
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(2.5f, function.getFloat(value), 0.0f);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -268,16 +282,17 @@ public class FloatGroupByFunctionBatchTest {
         MaxFloatGroupByFunction function = new MaxFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        value.putFloat(0, -999.0f);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            value.putFloat(0, -999.0f);
 
-        long ptr = allocateFloats(-10.0f, Float.NaN, 15.5f, 7.0f);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateFloats(-10.0f, Float.NaN, 15.5f, 7.0f);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(15.5f, function.getFloat(value), 0.000001f);
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(15.5f, function.getFloat(value), 0.000001f);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -285,14 +300,15 @@ public class FloatGroupByFunctionBatchTest {
         MaxFloatGroupByFunction function = new MaxFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateFloats(Float.NaN, Float.NaN);
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateFloats(Float.NaN, Float.NaN);
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -300,11 +316,12 @@ public class FloatGroupByFunctionBatchTest {
         MaxFloatGroupByFunction function = new MaxFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -312,16 +329,17 @@ public class FloatGroupByFunctionBatchTest {
         MinFloatGroupByFunction function = new MinFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        value.putFloat(0, 999.0f);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            value.putFloat(0, 999.0f);
 
-        long ptr = allocateFloats(Float.NaN, 4.0f, 2.5f, 3.0f);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateFloats(Float.NaN, 4.0f, 2.5f, 3.0f);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(2.5f, function.getFloat(value), 0.000001f);
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(2.5f, function.getFloat(value), 0.000001f);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -329,14 +347,15 @@ public class FloatGroupByFunctionBatchTest {
         MinFloatGroupByFunction function = new MinFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateFloats(Float.NaN, Float.NaN);
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateFloats(Float.NaN, Float.NaN);
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -344,11 +363,12 @@ public class FloatGroupByFunctionBatchTest {
         MinFloatGroupByFunction function = new MinFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -356,16 +376,17 @@ public class FloatGroupByFunctionBatchTest {
         SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        value.putFloat(0, 123.0f);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            value.putFloat(0, 123.0f);
 
-        long ptr = allocateFloats(1.0f, Float.NaN, 2.5f, 3.5f);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateFloats(1.0f, Float.NaN, 2.5f, 3.5f);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(7.0f, function.getFloat(value), 0.000001f);
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(7.0f, function.getFloat(value), 0.000001f);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -373,14 +394,15 @@ public class FloatGroupByFunctionBatchTest {
         SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateFloats(Float.NaN, Float.POSITIVE_INFINITY);
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateFloats(Float.NaN, Float.POSITIVE_INFINITY);
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     @Test
@@ -388,14 +410,15 @@ public class FloatGroupByFunctionBatchTest {
         SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        value.putFloat(0, 55.0f);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            value.putFloat(0, 55.0f);
 
-        function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0);
 
-        Assert.assertEquals(55.0f, function.getFloat(value), 0.000001f);
+            Assert.assertEquals(55.0f, function.getFloat(value), 0.000001f);
+        }
     }
 
     @Test
@@ -403,11 +426,12 @@ public class FloatGroupByFunctionBatchTest {
         SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+            Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+        }
     }
 
     private long allocateFloats(float... values) {

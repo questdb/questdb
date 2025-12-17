@@ -55,15 +55,16 @@ public class ByteGroupByFunctionBatchTest {
         FirstByteGroupByFunction function = new FirstByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateBytes((byte) 11, (byte) 22, (byte) 33);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateBytes((byte) 11, (byte) 22, (byte) 33);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(11, function.getByte(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(11, function.getByte(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -71,14 +72,15 @@ public class ByteGroupByFunctionBatchTest {
         FirstByteGroupByFunction function = new FirstByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0);
 
-        Assert.assertEquals(0, function.getByte(value));
+            Assert.assertEquals(0, function.getByte(value));
+        }
     }
 
     @Test
@@ -86,11 +88,12 @@ public class ByteGroupByFunctionBatchTest {
         FirstByteGroupByFunction function = new FirstByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertEquals(0, function.getByte(value));
+            Assert.assertEquals(0, function.getByte(value));
+        }
     }
 
     @Test
@@ -98,17 +101,18 @@ public class ByteGroupByFunctionBatchTest {
         LastByteGroupByFunction function = new LastByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateBytes((byte) 10, (byte) 20, (byte) 30);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateBytes((byte) 10, (byte) 20, (byte) 30);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
-        Assert.assertEquals(30, function.getByte(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(30, function.getByte(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -116,15 +120,16 @@ public class ByteGroupByFunctionBatchTest {
         LastByteGroupByFunction function = new LastByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateBytes((byte) 77);
-        function.computeBatch(value, ptr, 1);
+            long ptr = allocateBytes((byte) 77);
+            function.computeBatch(value, ptr, 1);
 
-        Assert.assertEquals(77, function.getByte(value));
+            Assert.assertEquals(77, function.getByte(value));
+        }
     }
 
     @Test
@@ -132,11 +137,12 @@ public class ByteGroupByFunctionBatchTest {
         LastByteGroupByFunction function = new LastByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertEquals(0, function.getByte(value));
+            Assert.assertEquals(0, function.getByte(value));
+        }
     }
 
     private long allocateBytes(byte... values) {

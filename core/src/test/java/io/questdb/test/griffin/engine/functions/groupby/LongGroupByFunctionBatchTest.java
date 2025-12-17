@@ -61,15 +61,16 @@ public class LongGroupByFunctionBatchTest {
         CountLongGroupByFunction function = new CountLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateLongs(1, Numbers.LONG_NULL, 2, Numbers.LONG_NULL, 3);
-        function.computeBatch(value, ptr, 5);
+            long ptr = allocateLongs(1, Numbers.LONG_NULL, 2, Numbers.LONG_NULL, 3);
+            function.computeBatch(value, ptr, 5);
 
-        Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(3L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -77,14 +78,15 @@ public class LongGroupByFunctionBatchTest {
         CountLongGroupByFunction function = new CountLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(0L, function.getLong(value));
+            Assert.assertEquals(0L, function.getLong(value));
+        }
     }
 
     @Test
@@ -92,13 +94,14 @@ public class LongGroupByFunctionBatchTest {
         CountLongGroupByFunction function = new CountLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0);
 
-        Assert.assertEquals(0L, function.getLong(value));
+            Assert.assertEquals(0L, function.getLong(value));
+        }
     }
 
     @Test
@@ -106,11 +109,12 @@ public class LongGroupByFunctionBatchTest {
         CountLongGroupByFunction function = new CountLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertEquals(0L, function.getLong(value));
+            Assert.assertEquals(0L, function.getLong(value));
+        }
     }
 
     @Test
@@ -118,15 +122,16 @@ public class LongGroupByFunctionBatchTest {
         FirstLongGroupByFunction function = new FirstLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateLongs(5, 6, 7);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateLongs(5, 6, 7);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(5L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(5L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -134,14 +139,15 @@ public class LongGroupByFunctionBatchTest {
         FirstLongGroupByFunction function = new FirstLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateLongs(Numbers.LONG_NULL, 1);
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateLongs(Numbers.LONG_NULL, 1);
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -149,14 +155,15 @@ public class LongGroupByFunctionBatchTest {
         FirstLongGroupByFunction function = new FirstLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -164,12 +171,13 @@ public class LongGroupByFunctionBatchTest {
         FirstLongGroupByFunction function = new FirstLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -177,11 +185,12 @@ public class LongGroupByFunctionBatchTest {
         FirstLongGroupByFunction function = new FirstLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -189,15 +198,16 @@ public class LongGroupByFunctionBatchTest {
         FirstNotNullLongGroupByFunction function = new FirstNotNullLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateLongs(Numbers.LONG_NULL, 100L, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateLongs(Numbers.LONG_NULL, 100L, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(100L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(100L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -205,17 +215,18 @@ public class LongGroupByFunctionBatchTest {
         LastLongGroupByFunction function = new LastLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateLongs(11, 22, 33);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateLongs(11, 22, 33);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
-        Assert.assertEquals(33L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(33L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -223,16 +234,17 @@ public class LongGroupByFunctionBatchTest {
         LastLongGroupByFunction function = new LastLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateLongs(11, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateLongs(11, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -240,11 +252,12 @@ public class LongGroupByFunctionBatchTest {
         LastLongGroupByFunction function = new LastLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -252,16 +265,17 @@ public class LongGroupByFunctionBatchTest {
         LastNotNullLongGroupByFunction function = new LastNotNullLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        function.setNull(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            function.setNull(value);
 
-        long ptr = allocateLongs(Numbers.LONG_NULL, 5L, Numbers.LONG_NULL, 10L);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateLongs(Numbers.LONG_NULL, 5L, Numbers.LONG_NULL, 10L);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(10L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(10L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -269,16 +283,17 @@ public class LongGroupByFunctionBatchTest {
         MaxLongGroupByFunction function = new MaxLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        value.putLong(0, -999);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            value.putLong(0, -999);
 
-        long ptr = allocateLongs(-10, Numbers.LONG_NULL, 15, 7);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateLongs(-10, Numbers.LONG_NULL, 15, 7);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(15L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(15L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -286,14 +301,15 @@ public class LongGroupByFunctionBatchTest {
         MaxLongGroupByFunction function = new MaxLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -301,11 +317,12 @@ public class LongGroupByFunctionBatchTest {
         MaxLongGroupByFunction function = new MaxLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -313,16 +330,17 @@ public class LongGroupByFunctionBatchTest {
         MinLongGroupByFunction function = new MinLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        value.putLong(0, 999);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            value.putLong(0, 999);
 
-        long ptr = allocateLongs(Numbers.LONG_NULL, 4, 2, 3);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateLongs(Numbers.LONG_NULL, 4, 2, 3);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(2L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(2L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -330,14 +348,15 @@ public class LongGroupByFunctionBatchTest {
         MinLongGroupByFunction function = new MinLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -345,11 +364,12 @@ public class LongGroupByFunctionBatchTest {
         MinLongGroupByFunction function = new MinLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -357,16 +377,17 @@ public class LongGroupByFunctionBatchTest {
         SumLongGroupByFunction function = new SumLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        value.putLong(0, 123);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            value.putLong(0, 123);
 
-        long ptr = allocateLongs(1, 2, 3, 4);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateLongs(1, 2, 3, 4);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(10L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(10L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -374,14 +395,15 @@ public class LongGroupByFunctionBatchTest {
         SumLongGroupByFunction function = new SumLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL);
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     @Test
@@ -389,14 +411,15 @@ public class LongGroupByFunctionBatchTest {
         SumLongGroupByFunction function = new SumLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        value.putLong(0, 55);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
+            value.putLong(0, 55);
 
-        function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0);
 
-        Assert.assertEquals(55L, function.getLong(value));
+            Assert.assertEquals(55L, function.getLong(value));
+        }
     }
 
     @Test
@@ -404,11 +427,12 @@ public class LongGroupByFunctionBatchTest {
         SumLongGroupByFunction function = new SumLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
+        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
+            function.initValueIndex(0);
+            function.setEmpty(value);
 
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+            Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        }
     }
 
     private long allocateLongs(long... values) {

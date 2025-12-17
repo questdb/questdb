@@ -35,7 +35,7 @@ public class DirectMapValueFactory {
     private DirectMapValueFactory() {
     }
 
-    public static DirectMapValue createDirectMapValue(ColumnTypes valueTypes, boolean useCompactDirectMap) {
+    public static FlyweightMapValue createDirectMapValue(ColumnTypes valueTypes, boolean useCompactDirectMap) {
         if (useCompactDirectMap) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 final int size = ColumnType.sizeOf(valueTypes.getColumnType(i));
@@ -47,8 +47,8 @@ public class DirectMapValueFactory {
             }
         }
         if (useCompactDirectMap) {
-            return new DirectCompactMapValue(valueTypes.getColumnCount());
+            return new FlyweightCompactMapValue(valueTypes.getColumnCount());
         }
-        return new DirectMapValueImpl(valueTypes.getColumnCount());
+        return new FlyweightMapValueImpl(valueTypes.getColumnCount());
     }
 }

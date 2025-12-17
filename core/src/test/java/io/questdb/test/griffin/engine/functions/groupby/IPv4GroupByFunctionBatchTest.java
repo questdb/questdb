@@ -62,122 +62,127 @@ public class IPv4GroupByFunctionBatchTest {
     @Test
     public void testCountIPv4Batch() {
         CountIPv4GroupByFunction function = new CountIPv4GroupByFunction(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
 
-        long ptr = allocateInts(ipv4("1.1.1.1"), Numbers.IPv4_NULL, ipv4("2.2.2.2"), ipv4("3.3.3.3"));
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateInts(ipv4("1.1.1.1"), Numbers.IPv4_NULL, ipv4("2.2.2.2"), ipv4("3.3.3.3"));
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(3L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testCountIPv4BatchAllNull() {
         CountIPv4GroupByFunction function = new CountIPv4GroupByFunction(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(Numbers.IPv4_NULL, Numbers.IPv4_NULL);
+            function.computeBatch(value, ptr, 2);
 
-        long ptr = allocateInts(Numbers.IPv4_NULL, Numbers.IPv4_NULL);
-        function.computeBatch(value, ptr, 2);
-
-        Assert.assertEquals(0L, function.getLong(value));
+            Assert.assertEquals(0L, function.getLong(value));
+        }
     }
 
     @Test
     public void testFirstIPv4Batch() {
         GroupByFunction function = newFirstIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(ipv4("10.0.0.1"), ipv4("10.0.0.2"));
+            function.computeBatch(value, ptr, 2);
 
-        long ptr = allocateInts(ipv4("10.0.0.1"), ipv4("10.0.0.2"));
-        function.computeBatch(value, ptr, 2);
-
-        Assert.assertEquals(ipv4("10.0.0.1"), function.getIPv4(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(ipv4("10.0.0.1"), function.getIPv4(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testFirstIPv4SetEmpty() {
         GroupByFunction function = newFirstIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        function.setEmpty(value);
-
-        Assert.assertEquals(Numbers.IPv4_NULL, function.getIPv4(value));
+        try (SimpleMapValue value = prepare(function)) {
+            Assert.assertEquals(Numbers.IPv4_NULL, function.getIPv4(value));
+        }
     }
 
     @Test
     public void testFirstNotNullIPv4Batch() {
         GroupByFunction function = newFirstNotNullIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(Numbers.IPv4_NULL, ipv4("10.0.0.7"), Numbers.IPv4_NULL);
+            function.computeBatch(value, ptr, 3);
 
-        long ptr = allocateInts(Numbers.IPv4_NULL, ipv4("10.0.0.7"), Numbers.IPv4_NULL);
-        function.computeBatch(value, ptr, 3);
-
-        Assert.assertEquals(ipv4("10.0.0.7"), function.getIPv4(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(ipv4("10.0.0.7"), function.getIPv4(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastIPv4Batch() {
         GroupByFunction function = newLastIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateInts(ipv4("192.168.1.1"), ipv4("192.168.1.2"), Numbers.IPv4_NULL, ipv4("192.168.1.3"));
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateInts(ipv4("192.168.1.1"), ipv4("192.168.1.2"), Numbers.IPv4_NULL, ipv4("192.168.1.3"));
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(ipv4("192.168.1.3"), function.getIPv4(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(ipv4("192.168.1.3"), function.getIPv4(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastNotNullIPv4Batch() {
         GroupByFunction function = newLastNotNullIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateInts(Numbers.IPv4_NULL, ipv4("1.2.3.4"), Numbers.IPv4_NULL, ipv4("5.6.7.8"));
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateInts(Numbers.IPv4_NULL, ipv4("1.2.3.4"), Numbers.IPv4_NULL, ipv4("5.6.7.8"));
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(ipv4("5.6.7.8"), function.getIPv4(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(ipv4("5.6.7.8"), function.getIPv4(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testMaxIPv4Batch() {
         MaxIPv4GroupByFunction function = new MaxIPv4GroupByFunction(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        value.putInt(function.getValueIndex(), Numbers.IPv4_NULL);
+        try (SimpleMapValue value = prepare(function)) {
+            value.putInt(function.getValueIndex(), Numbers.IPv4_NULL);
 
-        long ptr = allocateInts(ipv4("8.8.8.8"), ipv4("1.1.1.1"), Numbers.IPv4_NULL, ipv4("9.9.9.9"));
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateInts(ipv4("8.8.8.8"), ipv4("1.1.1.1"), Numbers.IPv4_NULL, ipv4("9.9.9.9"));
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(ipv4("9.9.9.9"), function.getIPv4(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(ipv4("9.9.9.9"), function.getIPv4(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testMinIPv4Batch() {
         MinIPv4GroupByFunction function = new MinIPv4GroupByFunction(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        value.putInt(function.getValueIndex(), Numbers.IPv4_NULL);
+        try (SimpleMapValue value = prepare(function)) {
+            value.putInt(function.getValueIndex(), Numbers.IPv4_NULL);
 
-        long ptr = allocateInts(Numbers.IPv4_NULL, ipv4("8.8.4.4"), ipv4("1.1.1.1"));
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateInts(Numbers.IPv4_NULL, ipv4("8.8.4.4"), ipv4("1.1.1.1"));
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(Numbers.IPv4_NULL, function.getIPv4(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(Numbers.IPv4_NULL, function.getIPv4(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testMinIPv4BatchSimple() {
         MinIPv4GroupByFunction function = new MinIPv4GroupByFunction(IPv4Column.newInstance(COLUMN_INDEX));
-        SimpleMapValue value = prepare(function);
-        value.putInt(function.getValueIndex(), Numbers.IPv4_NULL);
+        try (SimpleMapValue value = prepare(function)) {
+            value.putInt(function.getValueIndex(), Numbers.IPv4_NULL);
 
-        long ptr = allocateInts(ipv4("8.8.4.4"), ipv4("1.1.1.1"));
-        function.computeBatch(value, ptr, 2);
+            long ptr = allocateInts(ipv4("8.8.4.4"), ipv4("1.1.1.1"));
+            function.computeBatch(value, ptr, 2);
 
-        Assert.assertEquals(ipv4("1.1.1.1"), function.getIPv4(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(ipv4("1.1.1.1"), function.getIPv4(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     private long allocateInts(int... values) {

@@ -106,11 +106,13 @@ public class VectFuzzTest {
                         void run(long ptr, long count, long countPtr) {
                             if (count == 0) {
                                 Assert.assertEquals("int sum, count: 0", Numbers.LONG_NULL, Vect.sumInt(ptr, 0));
+                                Assert.assertEquals("int sum acc, count: 0", Double.NaN, Vect.sumIntAcc(ptr, 0, countPtr), 0.001);
                                 Assert.assertEquals("int min, count: 0", Numbers.INT_NULL, Vect.minInt(ptr, 0));
                                 Assert.assertEquals("int max, count: 0", Numbers.INT_NULL, Vect.maxInt(ptr, 0));
                                 Assert.assertEquals("int count, count: 0", 0, Vect.countInt(ptr, 0));
                             } else {
                                 Assert.assertEquals("int sum, count: " + count, 0, Vect.sumInt(ptr, count));
+                                Assert.assertEquals("int sum acc, count: " + count, 0, Vect.sumIntAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("int min, count: " + count, 0, Vect.minInt(ptr, count));
                                 Assert.assertEquals("int max, count: " + count, 0, Vect.maxInt(ptr, count));
                                 Assert.assertEquals("int count, count: " + count, count, Vect.countInt(ptr, count));
@@ -122,11 +124,13 @@ public class VectFuzzTest {
                         void run(long ptr, long count, long countPtr) {
                             if (count == 0) {
                                 Assert.assertEquals("long sum, count: 0", Numbers.LONG_NULL, Vect.sumLong(ptr, 0));
+                                Assert.assertEquals("long sum acc, count: 0", Double.NaN, Vect.sumLongAcc(ptr, 0, countPtr), 0.001);
                                 Assert.assertEquals("long min, count: 0", Numbers.LONG_NULL, Vect.minLong(ptr, 0));
                                 Assert.assertEquals("long max, count: 0", Numbers.LONG_NULL, Vect.maxLong(ptr, 0));
                                 Assert.assertEquals("long count, count: 0", 0, Vect.countLong(ptr, 0));
                             } else {
                                 Assert.assertEquals("long sum, count: " + count, 0, Vect.sumLong(ptr, count));
+                                Assert.assertEquals("long sum acc, count: " + count, 0, Vect.sumLongAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("long min, count: " + count, 0, Vect.minLong(ptr, count));
                                 Assert.assertEquals("long max, count: " + count, 0, Vect.maxLong(ptr, count));
                                 Assert.assertEquals("long count, count: " + count, count, Vect.countLong(ptr, count));

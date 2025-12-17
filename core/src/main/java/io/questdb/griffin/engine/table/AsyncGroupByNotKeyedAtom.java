@@ -127,9 +127,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             }
 
             clear();
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             close();
-            throw e;
+            throw th;
         }
     }
 
@@ -163,6 +163,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         Misc.freeObjList(perWorkerFilters);
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
+        Misc.free(ownerMapValue);
+        Misc.freeObjList(perWorkerMapValues);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));

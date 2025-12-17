@@ -29,6 +29,10 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 
+/**
+ * Represents a single value holding a set of slots reserved by aggregate functions.
+ * All implementations of this interface must be backed with off-heap memory.
+ */
 public interface MapValue extends Record {
 
     void addByte(int index, byte value);
@@ -46,6 +50,11 @@ public interface MapValue extends Record {
     void addShort(int index, short value);
 
     void copyFrom(MapValue value);
+
+    /**
+     * Returns memory address for the given slot.
+     */
+    long getAddress(int index);
 
     boolean getBool(int index);
 

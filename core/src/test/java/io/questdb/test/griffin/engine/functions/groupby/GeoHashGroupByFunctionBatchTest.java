@@ -70,13 +70,13 @@ public class GeoHashGroupByFunctionBatchTest {
         CountGeoHashGroupByFunctionByte function = new CountGeoHashGroupByFunctionByte(
                 GeoByteColumn.newInstance(COLUMN_INDEX, type)
         );
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateBytes((byte) 1, GeoHashes.BYTE_NULL, (byte) 2, (byte) 3);
+            function.computeBatch(value, ptr, 4);
 
-        long ptr = allocateBytes((byte) 1, GeoHashes.BYTE_NULL, (byte) 2, (byte) 3);
-        function.computeBatch(value, ptr, 4);
-
-        Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(3L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -85,13 +85,13 @@ public class GeoHashGroupByFunctionBatchTest {
         CountGeoHashGroupByFunctionInt function = new CountGeoHashGroupByFunctionInt(
                 GeoIntColumn.newInstance(COLUMN_INDEX, type)
         );
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(100, GeoHashes.INT_NULL, 200);
+            function.computeBatch(value, ptr, 3);
 
-        long ptr = allocateInts(100, GeoHashes.INT_NULL, 200);
-        function.computeBatch(value, ptr, 3);
-
-        Assert.assertEquals(2L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(2L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -100,13 +100,13 @@ public class GeoHashGroupByFunctionBatchTest {
         CountGeoHashGroupByFunctionLong function = new CountGeoHashGroupByFunctionLong(
                 GeoLongColumn.newInstance(COLUMN_INDEX, type)
         );
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateLongs(1L, GeoHashes.NULL, 2L, 3L);
+            function.computeBatch(value, ptr, 4);
 
-        long ptr = allocateLongs(1L, GeoHashes.NULL, 2L, 3L);
-        function.computeBatch(value, ptr, 4);
-
-        Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(3L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
@@ -115,145 +115,152 @@ public class GeoHashGroupByFunctionBatchTest {
         CountGeoHashGroupByFunctionShort function = new CountGeoHashGroupByFunctionShort(
                 GeoShortColumn.newInstance(COLUMN_INDEX, type)
         );
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateShorts((short) 10, GeoHashes.SHORT_NULL, (short) 20);
+            function.computeBatch(value, ptr, 3);
 
-        long ptr = allocateShorts((short) 10, GeoHashes.SHORT_NULL, (short) 20);
-        function.computeBatch(value, ptr, 3);
-
-        Assert.assertEquals(2L, function.getLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(2L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testFirstGeoHashBatchByte() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
         GroupByFunction function = newFirstGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateBytes((byte) 11, (byte) 22);
+            function.computeBatch(value, ptr, 2);
 
-        long ptr = allocateBytes((byte) 11, (byte) 22);
-        function.computeBatch(value, ptr, 2);
-
-        Assert.assertEquals(11, function.getGeoByte(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(11, function.getGeoByte(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testFirstGeoHashSetEmpty() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
         GroupByFunction function = newFirstGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
-        function.setEmpty(value);
-        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(value));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setEmpty(value);
+            Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(value));
+        }
     }
 
     @Test
     public void testFirstNotNullGeoHashBatchByte() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
         GroupByFunction function = newFirstNotNullGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateBytes(GeoHashes.BYTE_NULL, (byte) 42);
+            function.computeBatch(value, ptr, 2);
 
-        long ptr = allocateBytes(GeoHashes.BYTE_NULL, (byte) 42);
-        function.computeBatch(value, ptr, 2);
-
-        Assert.assertEquals(42, function.getGeoByte(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(42, function.getGeoByte(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testFirstNotNullGeoHashBatchLong() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOLONG_MAX_BITS);
         GroupByFunction function = newFirstNotNullGeoHashFunction(GeoLongColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateLongs(GeoHashes.NULL, 123456789L, GeoHashes.NULL);
+            function.computeBatch(value, ptr, 3);
 
-        long ptr = allocateLongs(GeoHashes.NULL, 123456789L, GeoHashes.NULL);
-        function.computeBatch(value, ptr, 3);
-
-        Assert.assertEquals(123456789L, function.getGeoLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(123456789L, function.getGeoLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastGeoHashBatchByte() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
         GroupByFunction function = newLastGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateBytes((byte) 7, (byte) 9, (byte) 11);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateBytes((byte) 7, (byte) 9, (byte) 11);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(11, function.getGeoByte(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(11, function.getGeoByte(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastGeoHashBatchInt() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOINT_MAX_BITS);
         GroupByFunction function = newLastGeoHashFunction(GeoIntColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateInts(1, 2, 3);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateInts(1, 2, 3);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(3, function.getGeoInt(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(3, function.getGeoInt(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastGeoHashBatchLong() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOLONG_MAX_BITS);
         GroupByFunction function = newLastGeoHashFunction(GeoLongColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateLongs(10L, 20L, 30L);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateLongs(10L, 20L, 30L);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(30L, function.getGeoLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(30L, function.getGeoLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastGeoHashBatchShort() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOSHORT_MAX_BITS);
         GroupByFunction function = newLastGeoHashFunction(GeoShortColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateShorts((short) 5, (short) 10, (short) 15);
-        function.computeBatch(value, ptr, 3);
+            long ptr = allocateShorts((short) 5, (short) 10, (short) 15);
+            function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(15, function.getGeoShort(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(15, function.getGeoShort(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastNotNullGeoHashBatchInt() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOINT_MAX_BITS);
         GroupByFunction function = newLastNotNullGeoHashFunction(GeoIntColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateInts(GeoHashes.INT_NULL, 11, GeoHashes.INT_NULL, 22);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateInts(GeoHashes.INT_NULL, 11, GeoHashes.INT_NULL, 22);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(22, function.getGeoInt(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(22, function.getGeoInt(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     @Test
     public void testLastNotNullGeoHashBatchLong() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOLONG_MAX_BITS);
         GroupByFunction function = newLastNotNullGeoHashFunction(GeoLongColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
-        function.setNull(value);
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
 
-        long ptr = allocateLongs(GeoHashes.NULL, 1L, GeoHashes.NULL, 5L);
-        function.computeBatch(value, ptr, 4);
+            long ptr = allocateLongs(GeoHashes.NULL, 1L, GeoHashes.NULL, 5L);
+            function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(5L, function.getGeoLong(value));
-        Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertEquals(5L, function.getGeoLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
     }
 
     private long allocateBytes(byte... values) {

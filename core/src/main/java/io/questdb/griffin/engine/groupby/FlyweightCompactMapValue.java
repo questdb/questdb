@@ -29,82 +29,77 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 /**
  * A flyweight map value for off-heap memory. To speed up column index-based access,
- * each slot takes 32 bytes.
+ * each slot takes 8 bytes.
  * <p>
- * Unlike {@link DirectCompactMapValue}, this one supports all fixed-size column types.
+ * Warning: only suitable for columns up to 8 bytes in size.
  */
-public class DirectMapValueImpl implements DirectMapValue {
+public class FlyweightCompactMapValue implements FlyweightMapValue {
     private final int columnCount;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
-    private final Long256Impl long256 = new Long256Impl();
     private boolean isNew;
     private long ptr;
 
-    public DirectMapValueImpl(int columnCount) {
+    public FlyweightCompactMapValue(int columnCount) {
         this.columnCount = columnCount;
     }
 
     @Override
     public void addByte(int index, byte value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putByte(p, (byte) (Unsafe.getUnsafe().getByte(p) + value));
     }
 
     @Override
     public void addDouble(int index, double value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putDouble(p, Unsafe.getUnsafe().getDouble(p) + value);
     }
 
     @Override
     public void addFloat(int index, float value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putFloat(p, Unsafe.getUnsafe().getFloat(p) + value);
     }
 
     @Override
     public void addInt(int index, int value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putInt(p, Unsafe.getUnsafe().getInt(p) + value);
     }
 
     @Override
     public void addLong(int index, long value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putLong(p, Unsafe.getUnsafe().getLong(p) + value);
     }
 
     @Override
     public void addLong256(int index, Long256 value) {
-        Long256 acc = getLong256A(index);
-        Long256Util.add(acc, value);
-        final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, acc.getLong0());
-        Unsafe.getUnsafe().putLong(p + 8L, acc.getLong1());
-        Unsafe.getUnsafe().putLong(p + 16L, acc.getLong2());
-        Unsafe.getUnsafe().putLong(p + 24L, acc.getLong3());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addShort(int index, short value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
     }
 
     @Override
     public void copyFrom(MapValue srcValue) {
-        final DirectMapValueImpl directSrcValue = (DirectMapValueImpl) srcValue;
+        final FlyweightCompactMapValue directSrcValue = (FlyweightCompactMapValue) srcValue;
         assert columnCount >= directSrcValue.columnCount;
-        Vect.memcpy(ptr, directSrcValue.ptr, directSrcValue.getSizeInBytes());
+        Unsafe.getUnsafe().copyMemory(directSrcValue.ptr, ptr, directSrcValue.getSizeInBytes());
+    }
+
+    @Override
+    public long getAddress(int index) {
+        return ptr + 8L * index;
     }
 
     @Override
@@ -114,12 +109,12 @@ public class DirectMapValueImpl implements DirectMapValue {
 
     @Override
     public byte getByte(int index) {
-        return Unsafe.getUnsafe().getByte(address0(index));
+        return Unsafe.getUnsafe().getByte(getAddress(index));
     }
 
     @Override
     public char getChar(int index) {
-        return Unsafe.getUnsafe().getChar(address0(index));
+        return Unsafe.getUnsafe().getChar(getAddress(index));
     }
 
     @Override
@@ -128,74 +123,92 @@ public class DirectMapValueImpl implements DirectMapValue {
     }
 
     @Override
+    public void getDecimal128(int index, Decimal128 sink) {
+        final long addr = getAddress(index);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
+    }
+
+    @Override
+    public short getDecimal16(int index) {
+        return Unsafe.getUnsafe().getShort(getAddress(index));
+    }
+
+    @Override
+    public void getDecimal256(int index, Decimal256 sink) {
+        sink.ofRawAddress(getAddress(index));
+    }
+
+    @Override
+    public int getDecimal32(int index) {
+        return Unsafe.getUnsafe().getInt(getAddress(index));
+    }
+
+    @Override
+    public long getDecimal64(int index) {
+        return Unsafe.getUnsafe().getLong(getAddress(index));
+    }
+
+    @Override
+    public byte getDecimal8(int index) {
+        return Unsafe.getUnsafe().getByte(getAddress(index));
+    }
+
+    @Override
     public double getDouble(int index) {
-        return Unsafe.getUnsafe().getDouble(address0(index));
+        return Unsafe.getUnsafe().getDouble(getAddress(index));
     }
 
     @Override
     public float getFloat(int index) {
-        return Unsafe.getUnsafe().getFloat(address0(index));
+        return Unsafe.getUnsafe().getFloat(getAddress(index));
     }
 
     @Override
-    public byte getGeoByte(int col) {
-        return getByte(col);
+    public byte getGeoByte(int index) {
+        return getByte(index);
     }
 
     @Override
-    public int getGeoInt(int col) {
-        return getInt(col);
+    public int getGeoInt(int index) {
+        return getInt(index);
     }
 
     @Override
-    public long getGeoLong(int col) {
-        return getLong(col);
+    public long getGeoLong(int index) {
+        return getLong(index);
     }
 
     @Override
-    public short getGeoShort(int col) {
-        return getShort(col);
+    public short getGeoShort(int index) {
+        return getShort(index);
     }
 
     @Override
     public int getIPv4(int index) {
-        return Unsafe.getUnsafe().getInt(address0(index));
+        return Unsafe.getUnsafe().getInt(getAddress(index));
     }
 
     @Override
     public int getInt(int index) {
-        return Unsafe.getUnsafe().getInt(address0(index));
+        return Unsafe.getUnsafe().getInt(getAddress(index));
     }
 
     @Override
     public long getLong(int index) {
-        return Unsafe.getUnsafe().getLong(address0(index));
-    }
-
-    @Override
-    public long getLong128Hi(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col) + 8L);
-    }
-
-    @Override
-    public long getLong128Lo(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col));
-    }
-
-    @Override
-    public Long256 getLong256A(int index) {
-        long256.fromAddress(address0(index));
-        return long256;
+        return Unsafe.getUnsafe().getLong(getAddress(index));
     }
 
     @Override
     public short getShort(int index) {
-        return Unsafe.getUnsafe().getShort(address0(index));
+        return Unsafe.getUnsafe().getShort(getAddress(index));
     }
 
     @Override
     public long getSizeInBytes() {
-        return 32L * columnCount;
+        return 8L * columnCount;
     }
 
     @Override
@@ -215,20 +228,20 @@ public class DirectMapValueImpl implements DirectMapValue {
 
     @Override
     public void maxInt(int index, int value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putInt(p, Math.max(value, Unsafe.getUnsafe().getInt(p)));
     }
 
     @Override
     public void maxLong(int index, long value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putLong(p, Math.max(value, Unsafe.getUnsafe().getLong(p)));
     }
 
     @Override
     public void minInt(int index, int value) {
         if (value != Numbers.INT_NULL) {
-            final long p = address0(index);
+            final long p = getAddress(index);
             final int current = Unsafe.getUnsafe().getInt(p);
             Unsafe.getUnsafe().putInt(p, current != Numbers.INT_NULL ? Math.min(value, current) : value);
         }
@@ -237,7 +250,7 @@ public class DirectMapValueImpl implements DirectMapValue {
     @Override
     public void minLong(int index, long value) {
         if (value != Numbers.LONG_NULL) {
-            final long p = address0(index);
+            final long p = getAddress(index);
             final long current = Unsafe.getUnsafe().getLong(p);
             Unsafe.getUnsafe().putLong(p, current != Numbers.LONG_NULL ? Math.min(value, current) : value);
         }
@@ -255,13 +268,13 @@ public class DirectMapValueImpl implements DirectMapValue {
 
     @Override
     public void putByte(int index, byte value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putByte(p, value);
     }
 
     @Override
     public void putChar(int index, char value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putChar(p, value);
     }
 
@@ -273,78 +286,72 @@ public class DirectMapValueImpl implements DirectMapValue {
     @Override
     public void putDecimal128(int index, Record record, int colIndex) {
         record.getDecimal128(colIndex, decimal128);
-        Decimal128.put(decimal128, address0(index));
+        Decimal128.put(decimal128, getAddress(index));
     }
 
     @Override
     public void putDecimal128(int index, Decimal128 decimal128) {
-        Decimal128.put(decimal128, address0(index));
+        Decimal128.put(decimal128, getAddress(index));
     }
 
     @Override
     public void putDecimal128Null(int index) {
-        Decimal128.putNull(address0(index));
+        Decimal128.putNull(getAddress(index));
     }
 
     @Override
     public void putDecimal256(int index, Record record, int colIndex) {
         record.getDecimal256(colIndex, decimal256);
-        Decimal256.put(decimal256, address0(index));
+        Decimal256.put(decimal256, getAddress(index));
     }
 
     @Override
     public void putDecimal256(int index, Decimal256 decimal256) {
-        Decimal256.put(decimal256, address0(index));
+        Decimal256.put(decimal256, getAddress(index));
     }
 
     @Override
     public void putDecimal256Null(int index) {
-        Decimal256.putNull(address0(index));
+        Decimal256.putNull(getAddress(index));
     }
 
     @Override
     public void putDouble(int index, double value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putDouble(p, value);
     }
 
     @Override
     public void putFloat(int index, float value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putFloat(p, value);
     }
 
     @Override
     public void putInt(int index, int value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putInt(p, value);
     }
 
     @Override
     public void putLong(int index, long value) {
-        final long p = address0(index);
+        final long p = getAddress(index);
         Unsafe.getUnsafe().putLong(p, value);
     }
 
     @Override
     public void putLong128(int index, long lo, long hi) {
-        long address = address0(index);
-        Unsafe.getUnsafe().putLong(address, lo);
-        Unsafe.getUnsafe().putLong(address + 8L, hi);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putLong256(int index, Long256 value) {
-        final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, value.getLong0());
-        Unsafe.getUnsafe().putLong(p + 8L, value.getLong1());
-        Unsafe.getUnsafe().putLong(p + 16L, value.getLong2());
-        Unsafe.getUnsafe().putLong(p + 24L, value.getLong3());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putShort(int index, short value) {
-        Unsafe.getUnsafe().putShort(address0(index), value);
+        Unsafe.getUnsafe().putShort(getAddress(index), value);
     }
 
     @Override
@@ -360,9 +367,5 @@ public class DirectMapValueImpl implements DirectMapValue {
     @Override
     public void setNew(boolean isNew) {
         this.isNew = isNew;
-    }
-
-    private long address0(int index) {
-        return ptr + 32L * index;
     }
 }
