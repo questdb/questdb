@@ -101,12 +101,20 @@ public class PGServer implements Closeable {
                             return false;
                         }
                         context.handleClientOperation(operation);
+                        // Clear pendingWrite flag on successful WRITE operation
+                        if (operation == IOOperation.WRITE) {
+                            context.setPendingWrite(false);
+                        }
                         dispatcher.registerChannel(context, IOOperation.READ);
                         return true;
                     } catch (PeerIsSlowToWriteException e) {
                         dispatcher.registerChannel(context, IOOperation.READ);
                     } catch (PeerIsSlowToReadException e) {
-                        dispatcher.registerChannel(context, IOOperation.WRITE);
+                        // For edge-triggered epoll (Linux): if pendingWrite is true, epoll is already
+                        // registered and we're waiting for notification. Don't re-register to avoid busy loop.
+                        if (!context.isPendingWrite()) {
+                            dispatcher.registerChannel(context, IOOperation.WRITE);
+                        }
                     } catch (QueryPausedException e) {
                         context.setSuspendEvent(e.getEvent());
                         dispatcher.registerChannel(context, IOOperation.WRITE);

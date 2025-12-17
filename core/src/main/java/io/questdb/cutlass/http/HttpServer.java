@@ -64,6 +64,7 @@ import java.io.Closeable;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final ActiveConnectionTracker activeConnectionTracker;
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
@@ -71,7 +72,6 @@ public class HttpServer implements Closeable {
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
-    private final ActiveConnectionTracker activeConnectionTracker;
 
     public HttpServer(
             HttpServerConfiguration configuration,
@@ -347,11 +347,21 @@ public class HttpServer implements Closeable {
             IODispatcher<HttpConnectionContext> dispatcher
     ) {
         try {
-            return context.handleClientOperation(operation, selector, rescheduleContext);
+            boolean result = context.handleClientOperation(operation, selector, rescheduleContext);
+            // Clear pendingWrite flag on successful WRITE operation
+            if (operation == IOOperation.WRITE) {
+                context.setPendingWrite(false);
+            }
+            return result;
         } catch (HeartBeatException e) {
             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
         } catch (PeerIsSlowToReadException e) {
-            dispatcher.registerChannel(context, IOOperation.WRITE);
+            // For edge-triggered epoll (Linux): if pendingWrite is true, epoll is already
+            // registered and we're waiting for notification. Don't re-register to avoid busy loop.
+            // If pendingWrite is false, this is a normal case where we need to register for WRITE.
+            if (!context.isPendingWrite()) {
+                dispatcher.registerChannel(context, IOOperation.WRITE);
+            }
         } catch (ServerDisconnectException e) {
             dispatcher.disconnect(context, context.getDisconnectReason());
         } catch (PeerIsSlowToWriteException e) {

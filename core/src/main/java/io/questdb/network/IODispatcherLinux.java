@@ -133,6 +133,11 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                     pending.deleteRow(row);
                     return true;
                 }
+                // Clear pendingWrite flag when epoll fires. This tells worker that
+                // any subsequent write failure should trigger re-registration.
+                if (requestedOp == IOOperation.WRITE) {
+                    context.setPendingWrite(false);
+                }
                 publishOperation(requestedOp, context);
                 pending.deleteRow(row);
                 return true;
@@ -280,6 +285,39 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             } else {
                 if (requestedOperation == IOOperation.READ && suspendEvent == null && context.getSocket().isMorePlaintextBuffered()) {
                     publishOperation(IOOperation.READ, context);
+                    continue;
+                }
+
+                // For WRITE operations without suspend events, we register with epoll and immediately
+                // publish the operation to avoid edge-triggered race condition. With EPOLLET, if the
+                // socket becomes writable before we register, we won't receive a notification.
+                // By immediately publishing, the worker will attempt to write; if it succeeds, great.
+                // If it fails (EAGAIN), it checks pendingWrite flag: if true, it waits for epoll
+                // notification instead of re-registering (which would cause a busy loop).
+                if (requestedOperation == IOOperation.WRITE && suspendEvent == null) {
+                    LOG.debug().$("processing write registration with immediate publish [fd=").$(fd)
+                            .$(", op=").$(operation)
+                            .$(", id=").$(opId)
+                            .I$();
+
+                    if (epoll.control(fd, opId, epollCmd, epollOp(operation, context)) < 0) {
+                        LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
+                                .$(", err=").$(nf.errno()).I$();
+                    }
+
+                    int opRow = pending.addRow();
+                    pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
+                    pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                    pending.set(opRow, OPM_FD, fd);
+                    pending.set(opRow, OPM_ID, opId);
+                    pending.set(opRow, OPM_OPERATION, requestedOperation);
+                    pending.set(opRow, context);
+                    // Set pendingWrite flag before publishing. Worker will check this flag:
+                    // - If write succeeds: clears the flag, continues normally
+                    // - If write fails and flag is true: waits for epoll (doesn't re-register)
+                    // - If write fails and flag is false: re-registers for WRITE
+                    context.setPendingWrite(true);
+                    publishOperation(IOOperation.WRITE, context);
                     continue;
                 }
 

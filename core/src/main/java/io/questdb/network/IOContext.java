@@ -34,6 +34,12 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     protected long heartbeatId = -1;
     private int disconnectReason;
     private volatile boolean initialized = false;
+    // Flag to track if epoll WRITE registration is pending. Used to avoid busy loop
+    // with edge-triggered epoll: after registering for WRITE, we immediately publish
+    // a WRITE event to handle the case where socket became writable before registration.
+    // If the immediate write fails, this flag tells us to wait for epoll notification
+    // instead of re-registering (which would cause a busy loop).
+    private volatile boolean pendingWrite = false;
 
     // IMPORTANT: Keep subclass constructors lightweight!
     // Under high load, new context objects are created for each accepted connection.
@@ -114,12 +120,21 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         this.heartbeatId = heartbeatId;
     }
 
+    public boolean isPendingWrite() {
+        return pendingWrite;
+    }
+
+    public void setPendingWrite(boolean pendingWrite) {
+        this.pendingWrite = pendingWrite;
+    }
+
     private void _clear() {
         heartbeatId = -1;
         socket.close();
         disconnectReason = -1;
         clearSuspendEvent();
         initialized = false;
+        pendingWrite = false;
     }
 
     protected void clearSuspendEvent() {
