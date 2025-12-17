@@ -370,6 +370,8 @@ public class ServerMain implements Closeable {
             }
         };
 
+        // make sure view definitions loaded before the view compiler job is started
+        // all views have to be loaded with their dependencies before the compiler starts processing notifications
         engine.buildViewGraphs();
 
         if (matViewEnabled && !isReadOnly) {
