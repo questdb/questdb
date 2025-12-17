@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.MutableMetadataRecordCursorFactory;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
  * This factory has limitations. In that it does not differentiate cursor.toTop() from creating new
  * cursor instance. Semantically toTop() does not refresh data snapshot and newInstance() does, or it's supposed to.
  */
-public class GenericRecordCursorFactory extends MutableMetadataRecordCursorFactory {
+public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursor cursor;
     private final boolean supportsRandomAccess;
 

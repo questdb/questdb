@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine;
 
-import io.questdb.cairo.MutableMetadataRecordCursorFactory;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -32,7 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-public class EmptyTableRecordCursorFactory extends MutableMetadataRecordCursorFactory {
+public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
         super(metadata);

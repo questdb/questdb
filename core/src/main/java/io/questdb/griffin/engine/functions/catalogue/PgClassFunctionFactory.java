@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MutableMetadataRecordCursorFactory;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -128,7 +128,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static class PgClassCursorFactory extends MutableMetadataRecordCursorFactory {
+    private static class PgClassCursorFactory extends AbstractRecordCursorFactory {
         private final PgClassRecordCursor cursor;
         private final Path path;
         private long tempMem;
