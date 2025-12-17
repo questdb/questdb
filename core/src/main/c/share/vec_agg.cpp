@@ -48,6 +48,7 @@
 
 #define COUNT_LONG F_AVX512(countLong)
 #define SUM_LONG F_AVX512(sumLong)
+#define SUM_LONG_ACC F_AVX512(sumLongAcc)
 #define MIN_LONG F_AVX512(minLong)
 #define MAX_LONG F_AVX512(maxLong)
 
@@ -72,6 +73,7 @@
 
 #define COUNT_LONG F_AVX2(countLong)
 #define SUM_LONG F_AVX2(sumLong)
+#define SUM_LONG_ACC F_AVX2(sumLongAcc)
 #define MIN_LONG F_AVX2(minLong)
 #define MAX_LONG F_AVX2(maxLong)
 
@@ -96,6 +98,7 @@
 
 #define COUNT_LONG F_SSE41(countLong)
 #define SUM_LONG F_SSE41(sumLong)
+#define SUM_LONG_ACC F_SSE41(sumLongAcc)
 #define MIN_LONG F_SSE41(minLong)
 #define MAX_LONG F_SSE41(maxLong)
 
@@ -120,6 +123,7 @@
 
 #define COUNT_LONG F_SSE2(countLong)
 #define SUM_LONG F_SSE2(sumLong)
+#define SUM_LONG_ACC F_SSE2(sumLongAcc)
 #define MIN_LONG F_SSE2(minLong)
 #define MAX_LONG F_SSE2(maxLong)
 
@@ -193,6 +197,44 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
     }
 
     return L_MIN;
+}
+
+double SUM_LONG_ACC(int64_t *pl, int64_t count, int64_t *accCount) {
+    if (count == 0) {
+        *accCount = 0;
+        return NAN;
+    }
+
+    Vec8q vec;
+    Vec8d dVec;
+    const int step = 8;
+    Vec8d vecsum = 0.;
+    Vec8qb bVec;
+    Vec8q nancount = 0;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
+        vec.load(pl + i);
+        bVec = vec == L_MIN;
+        dVec = to_double(vec);
+        vecsum = if_add(!bVec, vecsum, dVec);
+        nancount = if_add(bVec, nancount, 1);
+    }
+
+    _mm_prefetch(pl, _MM_HINT_T0);
+    double sum = horizontal_add(vecsum);
+    int64_t nans = horizontal_add(nancount);
+    for (; i < count; i++) {
+        int64_t l = *(pl + i);
+        if (PREDICT_TRUE(l != L_MIN)) {
+            sum += (double) l;
+        } else {
+            nans++;
+        }
+    }
+
+    *accCount = count - nans;
+    return nans < count ? sum : NAN;
 }
 
 int64_t MIN_LONG(int64_t *pl, int64_t count) {
@@ -547,6 +589,7 @@ double SUM_DOUBLE(double *d, int64_t count) {
 
 double SUM_DOUBLE_ACC(double *d, int64_t count, int64_t *accCount) {
     if (count == 0) {
+        *accCount = 0;
         return NAN;
     }
 
@@ -758,6 +801,7 @@ INT_INT_DISPATCHER(maxInt)
 
 LONG_LONG_DISPATCHER(countLong)
 LONG_LONG_DISPATCHER(sumLong)
+LONG_LONG_ACC_DISPATCHER(sumLongAcc)
 LONG_LONG_DISPATCHER(minLong)
 LONG_LONG_DISPATCHER(maxLong)
 

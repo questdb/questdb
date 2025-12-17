@@ -251,6 +251,21 @@ int64_t sumLong_Vanilla(int64_t *pl, int64_t count) {
     return hasData ? sum : L_MIN;
 }
 
+double sumLongAcc_Vanilla(int64_t *pl, int64_t count, int64_t *accCount) {
+    const int64_t *lim = pl + count;
+    double sum = 0;
+    int64_t c = 0;
+    for (; pl < lim; pl++) {
+        const int64_t l = *pl;
+        if (l != L_MIN) {
+            sum += (double) l;
+            ++c;
+        }
+    }
+    *accCount = c;
+    return c > 0 ? sum : NAN;
+}
+
 int64_t minLong_Vanilla(int64_t *pl, int64_t count) {
     if (count == 0) {
         return L_MIN;
@@ -334,22 +349,6 @@ Java_io_questdb_std_Vect_sumIntAcc(JNIEnv *env, jclass cl, jlong pi, jlong count
     for (uint64_t i = 0; i < count; i++) {
         int32_t v = ppi[i];
         if (v != I_MIN) {
-            sum += (double_t) v;
-            ++c;
-        }
-    }
-    *(reinterpret_cast<jlong *>(pCount)) = (jlong) c;
-    return c > 0 ? sum : NAN;
-}
-
-JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_Vect_sumLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
-    auto *ppi = reinterpret_cast<int64_t *>(pi);
-    double_t sum = 0;
-    int64_t c = 0;
-    for (uint64_t i = 0; i < count; i++) {
-        int64_t v = ppi[i];
-        if (v != L_MIN) {
             sum += (double_t) v;
             ++c;
         }

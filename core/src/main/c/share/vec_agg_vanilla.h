@@ -51,6 +51,8 @@ int64_t countLong_Vanilla(int64_t *pl, int64_t count);
 
 int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
 
+double sumLongAcc_Vanilla(int64_t *i, int64_t count, int64_t *accCount);
+
 int64_t minLong_Vanilla(int64_t *pl, int64_t count);
 
 int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
