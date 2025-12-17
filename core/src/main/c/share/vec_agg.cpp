@@ -43,6 +43,7 @@
 
 #define COUNT_INT F_AVX512(countInt)
 #define SUM_INT F_AVX512(sumInt)
+#define SUM_INT_ACC F_AVX512(sumIntAcc)
 #define MIN_INT F_AVX512(minInt)
 #define MAX_INT F_AVX512(maxInt)
 
@@ -68,6 +69,7 @@
 
 #define COUNT_INT F_AVX2(countInt)
 #define SUM_INT F_AVX2(sumInt)
+#define SUM_INT_ACC F_AVX2(sumIntAcc)
 #define MIN_INT F_AVX2(minInt)
 #define MAX_INT F_AVX2(maxInt)
 
@@ -93,6 +95,7 @@
 
 #define COUNT_INT F_SSE41(countInt)
 #define SUM_INT F_SSE41(sumInt)
+#define SUM_INT_ACC F_SSE41(sumIntAcc)
 #define MIN_INT F_SSE41(minInt)
 #define MAX_INT F_SSE41(maxInt)
 
@@ -118,6 +121,7 @@
 
 #define COUNT_INT F_SSE2(countInt)
 #define SUM_INT F_SSE2(sumInt)
+#define SUM_INT_ACC F_SSE2(sumIntAcc)
 #define MIN_INT F_SSE2(minInt)
 #define MAX_INT F_SSE2(maxInt)
 
@@ -366,6 +370,44 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
     }
 
     return hasData > 0 ? result : L_MIN;
+}
+
+double SUM_INT_ACC(int32_t *pi, int64_t count, int64_t *accCount) {
+    if (count == 0) {
+        *accCount = 0;
+        return NAN;
+    }
+
+    const int32_t step = 16;
+    const auto remainder = (int32_t) (count % step);
+    const auto *lim = pi + count;
+    const auto *vec_lim = lim - remainder;
+
+    Vec16i vec;
+    Vec16ib bVec;
+    Vec16i nancount = 0;
+    double sum = 0;
+    for (; pi < vec_lim; pi += step) {
+        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
+        vec.load(pi);
+        bVec = vec != I_MIN;
+        sum += (double) horizontal_add_x(select(bVec, vec, 0));
+        nancount = if_add(!bVec, nancount, 1);
+    }
+
+    _mm_prefetch(pi, _MM_HINT_T0);
+    int64_t nans = horizontal_add_x(nancount);
+    for (; pi < lim; pi++) {
+        int32_t v = *pi;
+        if (PREDICT_TRUE(v != I_MIN)) {
+            sum += (double) v;
+        } else {
+            nans++;
+        }
+    }
+
+    *accCount = count - nans;
+    return nans < count ? sum : NAN;
 }
 
 int32_t MIN_INT(int32_t *pi, int64_t count) {
@@ -796,6 +838,7 @@ SHORT_INT_DISPATCHER(maxShort)
 
 INT_LONG_DISPATCHER(countInt)
 INT_LONG_DISPATCHER(sumInt)
+INT_LONG_ACC_DISPATCHER(sumIntAcc)
 INT_INT_DISPATCHER(minInt)
 INT_INT_DISPATCHER(maxInt)
 

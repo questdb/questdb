@@ -67,6 +67,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_sumInt(JNIEnv *env, jclass cl, 
     return sumInt_Vanilla((int *) pInt, count);
 }
 
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumIntAcc(JNIEnv *env, jclass cl, jlong pInt, jlong count, jlong pAccCount) {
+    return sumIntAcc_Vanilla((int32_t *) pInt, count, (int64_t *) pAccCount);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_minInt(JNIEnv *env, jclass cl, jlong pInt, jlong count) {
     return minInt_Vanilla((int *) pInt, count);
 }
