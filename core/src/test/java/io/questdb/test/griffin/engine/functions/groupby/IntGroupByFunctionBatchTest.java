@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
 import io.questdb.griffin.engine.functions.groupby.CountIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunction;
@@ -59,12 +60,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testCountIntBatch() {
         CountIntGroupByFunction function = new CountIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(1, Numbers.INT_NULL, 2, Numbers.INT_NULL, 3);
             function.computeBatch(value, ptr, 5);
 
@@ -76,12 +72,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testCountIntBatchAllNull() {
         CountIntGroupByFunction function = new CountIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, Numbers.INT_NULL, Numbers.INT_NULL);
             function.computeBatch(value, ptr, 3);
 
@@ -92,12 +83,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testCountIntBatchZeroCountKeepsZero() {
         CountIntGroupByFunction function = new CountIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             function.computeBatch(value, 0, 0);
 
             Assert.assertEquals(0L, function.getLong(value));
@@ -107,12 +93,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testCountIntSetEmpty() {
         CountIntGroupByFunction function = new CountIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(0L, function.getLong(value));
         }
     }
@@ -120,12 +101,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testFirstIntBatch() {
         FirstIntGroupByFunction function = new FirstIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(5, 6, 7);
             function.computeBatch(value, ptr, 3);
 
@@ -137,12 +113,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testFirstIntBatchAllNull() {
         FirstIntGroupByFunction function = new FirstIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, 1);
             function.computeBatch(value, ptr, 2);
 
@@ -153,11 +124,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testFirstIntBatchEmpty() {
         FirstIntGroupByFunction function = new FirstIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             function.computeBatch(value, 0, 0);
@@ -169,11 +136,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testFirstIntBatchNotCalled() {
         FirstIntGroupByFunction function = new FirstIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
@@ -183,12 +146,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testFirstIntSetEmpty() {
         FirstIntGroupByFunction function = new FirstIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
         }
     }
@@ -196,12 +154,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testFirstNotNullIntBatch() {
         FirstNotNullIntGroupByFunction function = new FirstNotNullIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, 42, Numbers.INT_NULL);
             function.computeBatch(value, ptr, 3);
 
@@ -213,11 +166,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testLastIntBatch() {
         LastIntGroupByFunction function = new LastIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             long ptr = allocateInts(11, 22, 33);
@@ -232,11 +181,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testLastIntBatchAllNull() {
         LastIntGroupByFunction function = new LastIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             long ptr = allocateInts(11, Numbers.INT_NULL);
@@ -250,12 +195,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testLastIntSetEmpty() {
         LastIntGroupByFunction function = new LastIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
         }
     }
@@ -263,11 +203,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testLastNotNullIntBatch() {
         LastNotNullIntGroupByFunction function = new LastNotNullIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             long ptr = allocateInts(Numbers.INT_NULL, 10, Numbers.INT_NULL, 20);
@@ -281,11 +217,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testMaxIntBatch() {
         MaxIntGroupByFunction function = new MaxIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putInt(0, -999);
 
             long ptr = allocateInts(-10, Numbers.INT_NULL, 15, 7);
@@ -299,12 +231,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testMaxIntBatchAllNull() {
         MaxIntGroupByFunction function = new MaxIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, Numbers.INT_NULL, Numbers.INT_NULL);
             function.computeBatch(value, ptr, 3);
 
@@ -315,12 +242,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testMaxIntSetEmpty() {
         MaxIntGroupByFunction function = new MaxIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
         }
     }
@@ -328,11 +250,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testMinIntBatch() {
         MinIntGroupByFunction function = new MinIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putInt(0, 999);
 
             long ptr = allocateInts(Numbers.INT_NULL, 4, 2, 3);
@@ -346,12 +264,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testMinIntBatchAllNull() {
         MinIntGroupByFunction function = new MinIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, Numbers.INT_NULL);
             function.computeBatch(value, ptr, 2);
 
@@ -362,12 +275,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testMinIntSetEmpty() {
         MinIntGroupByFunction function = new MinIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
         }
     }
@@ -375,11 +283,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testSumIntBatch() {
         SumIntGroupByFunction function = new SumIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putLong(0, 123);
 
             long ptr = allocateInts(1, 2, 3, 4);
@@ -393,12 +297,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testSumIntBatchAllNull() {
         SumIntGroupByFunction function = new SumIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, Numbers.INT_NULL);
             function.computeBatch(value, ptr, 2);
 
@@ -409,11 +308,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testSumIntBatchZeroCountKeepsExistingValue() {
         SumIntGroupByFunction function = new SumIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putLong(0, 55);
 
             function.computeBatch(value, 0, 0);
@@ -425,12 +320,7 @@ public class IntGroupByFunctionBatchTest {
     @Test
     public void testSumIntSetEmpty() {
         SumIntGroupByFunction function = new SumIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
         }
     }
@@ -445,5 +335,14 @@ public class IntGroupByFunctionBatchTest {
             Unsafe.getUnsafe().putInt(lastAllocated + (long) i * Integer.BYTES, values[i]);
         }
         return lastAllocated;
+    }
+
+    private SimpleMapValue prepare(GroupByFunction function) {
+        var columnTypes = new ArrayColumnTypes();
+        function.initValueTypes(columnTypes);
+        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
+        function.initValueIndex(0);
+        function.setEmpty(value);
+        return value;
     }
 }

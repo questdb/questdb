@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
 import io.questdb.griffin.engine.functions.groupby.AvgShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstShortGroupByFunction;
@@ -55,12 +56,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testAvgShortBatch() {
         AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateShorts((short) 2, (short) 4, (short) 6);
             function.computeBatch(value, ptr, 3);
 
@@ -72,12 +68,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testAvgShortSetEmpty() {
         AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
         }
     }
@@ -85,12 +76,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testFirstShortBatch() {
         FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateShorts((short) 5, (short) 6, (short) 7);
             function.computeBatch(value, ptr, 3);
 
@@ -102,12 +88,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testFirstShortBatchAllNull() {
         FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateShorts(Short.MIN_VALUE, (short) 1);
             function.computeBatch(value, ptr, 2);
 
@@ -118,11 +99,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testFirstShortBatchEmpty() {
         FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             function.computeBatch(value, 0, 0);
@@ -134,12 +111,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testFirstShortSetEmpty() {
         FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(0, function.getShort(value));
         }
     }
@@ -147,11 +119,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testLastShortBatch() {
         LastShortGroupByFunction function = new LastShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             long ptr = allocateShorts((short) 11, (short) 22, (short) 33);
@@ -166,11 +134,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testLastShortBatchAllNull() {
         LastShortGroupByFunction function = new LastShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             long ptr = allocateShorts((short) 11, Short.MIN_VALUE);
@@ -183,12 +147,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testLastShortSetEmpty() {
         LastShortGroupByFunction function = new LastShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(0, function.getShort(value));
         }
     }
@@ -196,11 +155,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testSumShortBatch() {
         SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putLong(0, 10);
 
             long ptr = allocateShorts((short) 1, (short) 2, (short) 3, (short) 4);
@@ -214,12 +169,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testSumShortBatchAllZero() {
         SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateShorts((short) 0, (short) 0);
             function.computeBatch(value, ptr, 2);
 
@@ -230,11 +180,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testSumShortBatchZeroCountKeepsExistingValue() {
         SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putLong(0, 55);
 
             function.computeBatch(value, 0, 0);
@@ -246,12 +192,7 @@ public class ShortGroupByFunctionBatchTest {
     @Test
     public void testSumShortSetEmpty() {
         SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
         }
     }
@@ -266,5 +207,14 @@ public class ShortGroupByFunctionBatchTest {
             Unsafe.getUnsafe().putShort(lastAllocated + (long) i * Short.BYTES, values[i]);
         }
         return lastAllocated;
+    }
+
+    private SimpleMapValue prepare(GroupByFunction function) {
+        var columnTypes = new ArrayColumnTypes();
+        function.initValueTypes(columnTypes);
+        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
+        function.initValueIndex(0);
+        function.setEmpty(value);
+        return value;
     }
 }

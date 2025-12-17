@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunction;
@@ -59,12 +60,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testCountDoubleBatch() {
         CountDoubleGroupByFunction function = new CountDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateDoubles(1.0, Double.NaN, 2.0, Double.NaN, 3.0);
             function.computeBatch(value, ptr, 5);
 
@@ -76,12 +72,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testCountDoubleBatchAllNaN() {
         CountDoubleGroupByFunction function = new CountDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateDoubles(Double.NaN, Double.NaN, Double.NaN);
             function.computeBatch(value, ptr, 3);
 
@@ -92,12 +83,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testCountDoubleBatchZeroCountKeepsZero() {
         CountDoubleGroupByFunction function = new CountDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             function.computeBatch(value, 0, 0);
 
             Assert.assertEquals(0L, function.getLong(value));
@@ -107,12 +93,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testCountDoubleSetEmpty() {
         CountDoubleGroupByFunction function = new CountDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(0L, function.getLong(value));
         }
     }
@@ -120,12 +101,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testFirstDoubleBatch() {
         FirstDoubleGroupByFunction function = new FirstDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateDoubles(5.5, 6.6, 7.7);
             function.computeBatch(value, ptr, 3);
 
@@ -137,12 +113,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testFirstDoubleBatchAllNaN() {
         FirstDoubleGroupByFunction function = new FirstDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateDoubles(Double.NaN, 1.0);
             function.computeBatch(value, ptr, 2);
 
@@ -153,11 +124,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testFirstDoubleBatchEmpty() {
         FirstDoubleGroupByFunction function = new FirstDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             long ptr = allocateDoubles();
@@ -170,11 +137,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testFirstDoubleBatchNotCalled() {
         FirstDoubleGroupByFunction function = new FirstDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
@@ -184,12 +147,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testFirstDoubleSetEmpty() {
         FirstDoubleGroupByFunction function = new FirstDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
         }
     }
@@ -197,12 +155,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testFirstNotNullDoubleBatch() {
         FirstNotNullDoubleGroupByFunction function = new FirstNotNullDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateDoubles(Double.NaN, 7.7, Double.NaN);
             function.computeBatch(value, ptr, 3);
 
@@ -214,11 +167,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testLastDoubleBatch() {
         LastDoubleGroupByFunction function = new LastDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             long ptr = allocateDoubles(11.0, 22.0, 33.0);
@@ -233,11 +182,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testLastDoubleBatchAllNaN() {
         LastDoubleGroupByFunction function = new LastDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             long ptr = allocateDoubles(11.0, Double.NaN);
@@ -251,12 +196,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testLastDoubleSetEmpty() {
         LastDoubleGroupByFunction function = new LastDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
         }
     }
@@ -264,11 +204,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testLastNotNullDoubleBatch() {
         LastNotNullDoubleGroupByFunction function = new LastNotNullDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
             long ptr = allocateDoubles(Double.NaN, 5.5, Double.NaN, 6.6);
@@ -282,11 +218,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testMaxDoubleBatch() {
         MaxDoubleGroupByFunction function = new MaxDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putDouble(0, -999.0);
 
             long ptr = allocateDoubles(-10.0, Double.NaN, 15.5, 7.0);
@@ -300,12 +232,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testMaxDoubleBatchAllNaN() {
         MaxDoubleGroupByFunction function = new MaxDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateDoubles(Double.NaN, Double.NaN, Double.NaN);
             function.computeBatch(value, ptr, 3);
 
@@ -316,12 +243,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testMaxDoubleSetEmpty() {
         MaxDoubleGroupByFunction function = new MaxDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
         }
     }
@@ -329,11 +251,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testMinDoubleBatch() {
         MinDoubleGroupByFunction function = new MinDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putDouble(0, 999.0);
 
             long ptr = allocateDoubles(Double.NaN, 4.0, 2.5, 3.0);
@@ -347,12 +265,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testMinDoubleBatchAllNaN() {
         MinDoubleGroupByFunction function = new MinDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateDoubles(Double.NaN, Double.NaN);
             function.computeBatch(value, ptr, 2);
 
@@ -363,12 +276,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testMinDoubleSetEmpty() {
         MinDoubleGroupByFunction function = new MinDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
         }
     }
@@ -376,11 +284,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testSumDoubleBatch() {
         SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putDouble(0, 123.0);
 
             long ptr = allocateDoubles(1.0, Double.NaN, 2.5, 3.5);
@@ -394,12 +298,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testSumDoubleBatchAllNaN() {
         SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateDoubles(Double.NaN, Double.NaN);
             function.computeBatch(value, ptr, 2);
 
@@ -410,11 +309,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testSumDoubleBatchZeroCountKeepsExistingValue() {
         SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
+        try (SimpleMapValue value = prepare(function)) {
             value.putDouble(0, 55.0);
 
             function.computeBatch(value, 0, 0);
@@ -426,12 +321,7 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testSumDoubleSetEmpty() {
         SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        try (SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount())) {
-            function.initValueIndex(0);
-            function.setEmpty(value);
-
+        try (SimpleMapValue value = prepare(function)) {
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
         }
     }
@@ -446,5 +336,14 @@ public class DoubleGroupByFunctionBatchTest {
             Unsafe.getUnsafe().putDouble(lastAllocated + (long) i * Double.BYTES, values[i]);
         }
         return lastAllocated;
+    }
+
+    private SimpleMapValue prepare(GroupByFunction function) {
+        var columnTypes = new ArrayColumnTypes();
+        function.initValueTypes(columnTypes);
+        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
+        function.initValueIndex(0);
+        function.setEmpty(value);
+        return value;
     }
 }
