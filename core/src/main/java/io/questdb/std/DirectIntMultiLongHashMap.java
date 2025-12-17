@@ -77,7 +77,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         this.noEntryKey = noEntryKey;
         this.noEntryValue = noEntryValue;
         this.valueCount = valueCount;
-        this.entrySize = 4 + (long) valueCount * 8;
+        this.entrySize = 4 + 8L * valueCount;
         this.loadFactor = loadFactor;
         this.memoryTag = memoryTag;
         this.initialCapacity = this.capacity = Numbers.ceilPow2((int) (Math.max(initialCapacity, MIN_INITIAL_CAPACITY) / loadFactor));
@@ -107,10 +107,6 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
             free = 0;
             size = 0;
         }
-    }
-
-    public long entrySize() {
-        return entrySize;
     }
 
     public boolean excludes(int key) {
@@ -187,7 +183,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         if (index < 0) {
             long entryPtr = ptr + (-index - 1) * entrySize;
             for (int i = 0; i < valueCount; i++) {
-                Unsafe.getUnsafe().putLong(entryPtr + 4 + (long) i * 8, values[i]);
+                Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * i, values[i]);
             }
         } else {
             putAllAt0(index, key, values);
@@ -203,14 +199,14 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
             throw new IllegalArgumentException("valueIndex out of bounds: " + valueIndex);
         }
         if (index < 0) {
-            Unsafe.getUnsafe().putLong(ptr + (-index - 1) * entrySize + 4 + (long) valueIndex * 8, value);
+            Unsafe.getUnsafe().putLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex, value);
         } else {
             long entryPtr = ptr + index * entrySize;
             Unsafe.getUnsafe().putInt(entryPtr, key);
             for (int i = 0; i < valueCount; i++) {
-                Unsafe.getUnsafe().putLong(entryPtr + 4 + (long) i * 8, 0L);
+                Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * i, 0L);
             }
-            Unsafe.getUnsafe().putLong(entryPtr + 4 + (long) valueIndex * 8, value);
+            Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * valueIndex, value);
             size++;
             if (--free == 0) {
                 rehash(capacity() << 1);
@@ -248,7 +244,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         if (valueIndex < 0 || valueIndex >= valueCount) {
             throw new IllegalArgumentException("valueIndex out of bounds: " + valueIndex);
         }
-        return index < 0 ? Unsafe.getUnsafe().getLong(ptr + (-index - 1) * entrySize + 4 + (long) valueIndex * 8) : noEntryValue;
+        return index < 0 ? Unsafe.getUnsafe().getLong(ptr + (-index - 1) * entrySize + 4 + 8L * valueIndex) : noEntryValue;
     }
 
     private long probe(int key, long index) {
@@ -271,7 +267,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         final long entryPtr = ptr + index * entrySize;
         Unsafe.getUnsafe().putInt(entryPtr, key);
         for (int i = 0; i < valueCount; i++) {
-            Unsafe.getUnsafe().putLong(entryPtr + 4 + (long) i * 8, values[i]);
+            Unsafe.getUnsafe().putLong(entryPtr + 4 + 8L * i, values[i]);
         }
     }
 
@@ -301,9 +297,8 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
                 long entryPtr = ptr + index * entrySize;
                 Unsafe.getUnsafe().putInt(entryPtr, key);
                 // Copy all values
-                for (int i = 0; i < valueCount; i++) {
-                    long value = Unsafe.getUnsafe().getLong(p + 4 + (long) i * 8);
-                    Unsafe.getUnsafe().putLong(entryPtr + 4 + (long) i * 8, value);
+                for (long o = 4, oLim = 4 + 8L * valueCount; o < oLim; o += 8) {
+                    Unsafe.getUnsafe().putLong(entryPtr + o, Unsafe.getUnsafe().getLong(p + o));
                 }
             }
         }

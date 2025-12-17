@@ -338,7 +338,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         Misc.free(ownerFunctionAllocator);
         Misc.freeObjList(perWorkerFunctionAllocators);
         Misc.free(ownerTemporaryAllocator);
-        Misc.freeObjListAndKeepObjects(perWorkerTemporaryAllocators);
+        Misc.freeObjList(perWorkerTemporaryAllocators);
         Misc.freeObjList(ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
