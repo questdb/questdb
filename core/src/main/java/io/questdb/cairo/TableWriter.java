@@ -2108,12 +2108,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         columnsIndexes.sort();
-        for (int i = 0, j = 0; i < columnCount && j < columnsIndexes.size(); i++) {
-            if (i == columnsIndexes.getQuick(j)) {
+        int j = 0;
+        long nextDedupColIndex = columnsIndexes.size() > j ? (int) columnsIndexes.getQuick(j) : Long.MAX_VALUE;
+        for (int i = 0; i < columnCount; i++) {
+            if (i == nextDedupColIndex) {
                 // Set dedup key flag for the column
                 metadata.getColumnMetadata(i).setDedupKeyFlag(true);
                 // Go to the next dedup column index
                 j++;
+                nextDedupColIndex = columnsIndexes.size() > j ? (int) columnsIndexes.getQuick(j) : Long.MAX_VALUE;
+            } else {
+                // Clear dedup key flag for the column
+                metadata.getColumnMetadata(i).setDedupKeyFlag(false);
             }
         }
         rewriteAndSwapMetadata(metadata);
