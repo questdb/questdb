@@ -1217,24 +1217,34 @@ public class SqlOptimiser implements Mutable {
     private boolean checkForChildAggregates(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
-            if (node.rhs != null) {
-                if (node.rhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
-                    return true;
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    if (node.rhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
+                        return true;
+                    }
+                    sqlNodeStack.push(node.rhs);
                 }
-                sqlNodeStack.push(node.rhs);
-            }
 
-            if (node.lhs != null) {
-                if (node.lhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
-                    return true;
-                }
-                node = node.lhs;
-            } else {
-                if (!sqlNodeStack.isEmpty()) {
-                    node = sqlNodeStack.poll();
+                if (node.lhs != null) {
+                    if (node.lhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
+                        return true;
+                    }
+                    node = node.lhs;
                 } else {
-                    node = null;
+                    node = sqlNodeStack.poll();
                 }
+            } else {
+                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        if (arg.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(arg.token)) {
+                            return true;
+                        }
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                node = sqlNodeStack.poll();
             }
         }
         return false;
