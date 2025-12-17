@@ -72,7 +72,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
-        counter.add(rowCount);
+        counter.add(rowCount - frame.partitionHi);
     }
 
     @Override
