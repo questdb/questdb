@@ -358,7 +358,6 @@ public class HttpServer implements Closeable {
         } catch (PeerIsSlowToReadException e) {
             // For edge-triggered epoll (Linux): if pendingWrite is true, epoll is already
             // registered and we're waiting for notification. Don't re-register to avoid busy loop.
-            // If pendingWrite is false, this is a normal case where we need to register for WRITE.
             if (!context.isPendingWrite()) {
                 dispatcher.registerChannel(context, IOOperation.WRITE);
             }
