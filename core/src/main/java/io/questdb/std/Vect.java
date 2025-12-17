@@ -456,8 +456,6 @@ public final class Vect {
 
     public static native double sumDoubleNeumaier(long pDouble, long count);
 
-    public static native double sumDoubleNonNull(long pDouble, long count);
-
     public static native long sumInt(long pInt, long count);
 
     // returns sum of the elements; also stores non-null count to pCount address

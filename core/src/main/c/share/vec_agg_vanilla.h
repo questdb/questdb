@@ -29,7 +29,7 @@ int64_t countDouble_Vanilla(double *d, int64_t count);
 
 double sumDouble_Vanilla(double *d, int64_t count);
 
-double sumDoubleNonNull_Vanilla(double *d, int64_t count);
+double sumDoubleAcc_Vanilla(double *d, int64_t count, int64_t *accCount);
 
 double sumDoubleKahan_Vanilla(double *d, int64_t count);
 

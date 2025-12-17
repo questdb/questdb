@@ -49,12 +49,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
         if (count > 0) {
             final long nonNullCount = Vect.countDouble(ptr, count);
             if (nonNullCount > 0) {
-                if (nonNullCount == count) {
-                    // fast-path for all non-nulls
-                    mapValue.putDouble(valueIndex, Vect.sumDoubleNonNull(ptr, count));
-                } else {
-                    mapValue.putDouble(valueIndex, Vect.sumDouble(ptr, count));
-                }
+                mapValue.putDouble(valueIndex, Vect.sumDouble(ptr, count));
                 mapValue.putLong(valueIndex + 1, nonNullCount);
             }
         }

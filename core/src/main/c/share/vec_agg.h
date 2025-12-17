@@ -65,6 +65,41 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass 
 \
 }
 
+typedef double DoubleAccVecFuncType(double *, int64_t, int64_t *);
+
+#define DOUBLE_ACC_DISPATCHER(func) \
+\
+DoubleAccVecFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
+\
+DoubleAccVecFuncType *POINTER_NAME(func) = &func ## _dispatch; \
+\
+double F_DISPATCH(func) (double *d, int64_t count, int64_t *accCount) { \
+    const int iset = instrset_detect();  \
+    if (iset >= 10) { \
+        POINTER_NAME(func) = &F_AVX512(func); \
+    } else if (iset >= 8) { \
+        POINTER_NAME(func) = &F_AVX2(func); \
+    } else if (iset >= 5) { \
+        POINTER_NAME(func) = &F_SSE41(func); \
+    } else if (iset >= 2) { \
+        POINTER_NAME(func) = &F_SSE2(func); \
+    } else { \
+        POINTER_NAME(func) = &F_VANILLA(func); \
+    }\
+    return (*POINTER_NAME(func))(d, count, accCount); \
+} \
+\
+inline double func(double *d, int64_t count, int64_t *accCount) { \
+    return (*POINTER_NAME(func))(d, count, accCount); \
+}\
+\
+extern "C" { \
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pDouble, jlong size, jlong pAccCount) { \
+    return func((double *) pDouble, size, (int64_t *) pAccCount); \
+}\
+\
+}
+
 typedef int64_t DoubleLongVecFuncType(double *, int64_t);
 
 #define DOUBLE_LONG_DISPATCHER(func) \

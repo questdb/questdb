@@ -115,9 +115,4 @@ public class SumDoubleBenchmark {
     public double testVectSumDoubleAcc() {
         return Vect.sumDoubleAcc(doubleAddr, doubleCount, countAddr);
     }
-
-    @Benchmark
-    public double testVectSumDoubleNonNull() {
-        return Vect.sumDoubleNonNull(doubleAddr, doubleCount);
-    }
 }

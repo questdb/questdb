@@ -123,16 +123,19 @@ double sumDouble_Vanilla(double *d, int64_t count) {
     return hasData ? sum : NAN;
 }
 
-double sumDoubleNonNull_Vanilla(double *d, int64_t count) {
-    if (count == 0) {
-        return NAN;
-    }
+double sumDoubleAcc_Vanilla(double *d, int64_t count, int64_t *accCount) {
     const double *lim = d + count;
     double sum = 0;
+    int64_t c = 0;
     for (; d < lim; d++) {
-        sum += *d;
+        double v = *d;
+        if (!std::isnan(v)) {
+            sum += v;
+            ++c;
+        }
     }
-    return sum;
+    *accCount = c;
+    return c > 0 ? sum : NAN;
 }
 
 double sumDoubleKahan_Vanilla(double *d, int64_t count) {
@@ -348,22 +351,6 @@ Java_io_questdb_std_Vect_sumLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong coun
         int64_t v = ppi[i];
         if (v != L_MIN) {
             sum += (double_t) v;
-            ++c;
-        }
-    }
-    *(reinterpret_cast<jlong *>(pCount)) = (jlong) c;
-    return c > 0 ? sum : NAN;
-}
-
-JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_Vect_sumDoubleAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
-    auto *ppi = reinterpret_cast<double_t *>(pi);
-    double_t sum = 0;
-    int64_t c = 0;
-    for (uint64_t i = 0; i < count; i++) {
-        double_t v = ppi[i];
-        if (!std::isnan(v)) {
-            sum += v;
             ++c;
         }
     }
