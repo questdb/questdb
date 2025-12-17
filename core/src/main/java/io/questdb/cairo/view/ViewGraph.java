@@ -47,13 +47,9 @@ import java.util.function.Function;
 public class ViewGraph implements Mutable {
     private static final BiConsumer<ObjList<TableToken>, TableToken> ADD = ObjList::add;
     private static final BiConsumer<ObjList<TableToken>, TableToken> REMOVE = ObjList::remove;
-    private final Function<CharSequence, ViewDependencyList> createDependencyList;
+    private static final Function<CharSequence, ViewDependencyList> CREATE_DEPENDENCY_LIST = name -> new ViewDependencyList();
     private final ConcurrentHashMap<ViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
-
-    public ViewGraph() {
-        createDependencyList = name -> new ViewDependencyList();
-    }
 
     public synchronized boolean addView(ViewDefinition viewDefinition) {
         final TableToken viewToken = viewDefinition.getViewToken();
@@ -149,7 +145,7 @@ public class ViewGraph implements Mutable {
 
     @NotNull
     private ViewDependencyList getOrCreateDependentViews(CharSequence tableName) {
-        return dependentViewsByTableName.computeIfAbsent(tableName, createDependencyList);
+        return dependentViewsByTableName.computeIfAbsent(tableName, CREATE_DEPENDENCY_LIST);
     }
 
     private void updateDependencies(TableToken viewToken, ViewDefinition viewDefinition, BiConsumer<ObjList<TableToken>, TableToken> operation) {
