@@ -29,6 +29,117 @@ import org.junit.Test;
 public class AlterViewTest extends AbstractViewTest {
 
     @Test
+    public void testCreateOrReplaceView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
+            createOrReplaceView(VIEW1, query1, TABLE1);
+
+            assertQueryAndPlan(
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
+                    VIEW1,
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: 5<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+
+            assertViewMetadata("{" +
+                    "\"columnCount\":3," +
+                    "\"columns\":[" +
+                    "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                    "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
+                    "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
+                    "]," +
+                    "\"timestampIndex\":-1" +
+                    "}");
+
+            final String query2 = "select ts, k, min(v) as v_min from " + TABLE1 + " where v > 6";
+            createOrReplaceView(VIEW1, query2, TABLE1);
+
+            assertQueryAndPlan(
+                    """
+                            ts\tk\tv_min
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
+                    VIEW1,
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [min(v)]
+                              filter: 6<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+
+            assertViewMetadata("{" +
+                    "\"columnCount\":3," +
+                    "\"columns\":[" +
+                    "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                    "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
+                    "{\"index\":2,\"name\":\"v_min\",\"type\":\"LONG\"}" +
+                    "]," +
+                    "\"timestampIndex\":-1" +
+                    "}");
+
+            final String query3 = "select t1.ts, t2.v from " + TABLE1 + " t1 join " + TABLE2 + " t2 on k where t2.ts > '1970-01-01T00:01:00'";
+            createOrReplaceView(VIEW1, query3, TABLE1, TABLE2);
+
+            assertQueryAndPlan(
+                    """
+                            ts\tv
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
+                    VIEW1, "ts", false, false,
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: t2.k=t1.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: table2
+                                              intervals: [("1970-01-01T00:01:00.000001Z","MAX")]
+                            """,
+                    VIEW1
+            );
+
+            assertViewMetadata("{" +
+                    "\"columnCount\":2," +
+                    "\"columns\":[" +
+                    "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                    "{\"index\":1,\"name\":\"v\",\"type\":\"LONG\"}" +
+                    "]," +
+                    "\"timestampIndex\":-1" +
+                    "}");
+        });
+    }
+
+    @Test
     public void testAlterView() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

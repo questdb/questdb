@@ -197,6 +197,14 @@ class AbstractViewTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    void createOrReplaceView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
+        execute("CREATE OR REPLACE VIEW " + viewName + " AS (" + viewQuery + ")");
+        drainWalAndViewQueues();
+        assertViewDefinition(viewName, viewQuery, expectedDependencies);
+        assertViewDefinitionFile(viewName, viewQuery);
+        assertViewState(viewName);
+    }
+
     void createView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
         execute("CREATE VIEW " + viewName + " AS (" + viewQuery + ")");
         drainWalAndViewQueues();

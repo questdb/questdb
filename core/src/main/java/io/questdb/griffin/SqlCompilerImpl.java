@@ -1628,6 +1628,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void alterViewExecution(SqlExecutionContext executionContext, TableToken viewToken, String viewSql, int viewSqlPosition, int viewNamePosition) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+            final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+            SqlUtil.collectTableAndColumnReferences(engine, executionModel.getQueryModel(), dependencies);
+            engine.getViewGraph().validateNoCycle(viewToken, executionModel.getQueryModel());
+
+            try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
+                // test the cursor, if no exception thrown viewSql is working
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    cursor.hasNext();
+                }
+
+                final RecordMetadata metadata = factory.getMetadata();
+                alterOperationBuilder.addAlterViewInfo(viewSql, metadata, dependencies);
+            }
+        } catch (SqlException e) {
+            // position is reported from the view SQL, we have to adjust it
+            e.setPosition(viewSqlPosition + e.getPosition());
+            throw e;
+        } catch (CairoException e) {
+            // position is reported from the view SQL, we have to adjust it
+            throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
+        }
+
+        final AlterOperationBuilder alterView = alterOperationBuilder.ofAlterView(
+                viewNamePosition,
+                viewToken,
+                viewToken.getTableId()
+        );
+        executionContext.getSecurityContext().authorizeAlterView(viewToken);
+        compiledQuery.ofAlter(alterView.build(CMD_ALTER_VIEW));
+    }
+
     private TableToken authorizeCompileView(SecurityContext securityContext, CompileViewModel model) {
         final CharSequence viewName = unquote(model.getTableName());
         final TableToken tt = engine.getTableTokenIfExists(viewName);
@@ -2340,37 +2374,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int viewSqlPosition = lexer.getPosition();
         final String viewSql = parser.parseViewSql(lexer, this);
 
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
-            final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            SqlUtil.collectTableAndColumnReferences(engine, executionModel.getQueryModel(), dependencies);
-            engine.getViewGraph().validateNoCycle(viewToken, executionModel.getQueryModel());
-
-            try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
-                // test the cursor, if no exception thrown viewSql is working
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    cursor.hasNext();
-                }
-
-                final RecordMetadata metadata = factory.getMetadata();
-                alterOperationBuilder.addAlterViewInfo(viewSql, metadata, dependencies);
-            }
-        } catch (SqlException e) {
-            // position is reported from the view SQL, we have to adjust it
-            e.setPosition(viewSqlPosition + e.getPosition());
-            throw e;
-        } catch (CairoException e) {
-            // position is reported from the view SQL, we have to adjust it
-            throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
-        }
-
-        final AlterOperationBuilder alterView = alterOperationBuilder.ofAlterView(
-                viewNamePosition,
-                viewToken,
-                viewToken.getTableId()
-        );
-        executionContext.getSecurityContext().authorizeAlterView(viewToken);
-        compiledQuery.ofAlter(alterView.build(CMD_ALTER_VIEW));
+        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition, viewNamePosition);
     }
 
     private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
@@ -2510,7 +2514,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
-
     private RecordCursorFactory compileCopyTo(SecurityContext securityContext, ExportModel model, CharSequence sqlText) throws SqlException {
         assert !model.isCancel();
 
@@ -2536,6 +2539,54 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 securityContext,
                 sqlText
         );
+    }
+
+    private void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
+        if (!isOrKeyword(tok)) {
+            // not CREATE OR REPLACE VIEW
+            // just bail out and let parseCreate() handle it
+            lexerToFirstToken(lexer);
+            return;
+        }
+        tok = expectToken(lexer, "'replace'");
+        if (!isReplaceKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'replace' expected");
+        }
+        tok = expectToken(lexer, "'view'");
+        if (!isViewKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'view' expected");
+        }
+
+        final int viewNamePosition = lexer.getPosition();
+        tok = expectToken(lexer, "view name");
+        assertNameIsQuotedOrNotAKeyword(tok, viewNamePosition);
+        final CharSequence viewName = unquote(tok);
+
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        if (viewToken == null) {
+            // view does not exist yet
+            // just bail out and let CREATE VIEW handle it
+            lexerToFirstToken(lexer);
+            return;
+        }
+        if (engine.getViewGraph().getViewDefinition(viewToken) == null) {
+            // view does not exist yet
+            // just bail out and let CREATE VIEW handle it
+            lexerToFirstToken(lexer);
+            return;
+        }
+        assert viewToken.isView();
+
+        tok = expectToken(lexer, "'as'");
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        final int viewSqlPosition = lexer.getPosition();
+        final String viewSql = parser.parseViewSql(lexer, this);
+
+        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition, viewNamePosition);
     }
 
     private void compileDeallocate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -4562,6 +4613,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
     }
 
+    private void lexerToFirstToken(GenericLexer lexer) throws SqlException {
+        lexer.restart();
+        SqlUtil.fetchNext(lexer);
+    }
+
     private void lightlyValidateInsertModel(InsertModel model) throws SqlException {
         ExpressionNode tableNameExpr = model.getTableNameExpr();
         if (tableNameExpr.type != ExpressionNode.LITERAL) {
@@ -4821,6 +4877,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         keywordBasedExecutors.put("truncate", this::compileTruncate);
         keywordBasedExecutors.put("alter", this::compileAlter);
+        keywordBasedExecutors.put("create", this::compileCreate);
         keywordBasedExecutors.put("reindex", this::compileReindex);
         keywordBasedExecutors.put("set", compileSet);
         keywordBasedExecutors.put("begin", this::compileBegin);

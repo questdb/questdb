@@ -382,7 +382,6 @@ public class ServerMain implements Closeable {
                         config.getMatViewRefreshPoolConfiguration(),
                         WorkerPoolManager.Requester.MAT_VIEW_REFRESH
                 );
-
                 setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
             } else {
                 log.advisory().$("mat view refresh is disabled; set ")
@@ -488,12 +487,12 @@ public class ServerMain implements Closeable {
         mvWorkerPool.assign(matViewTimerJob);
     }
 
-    protected void setupViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
-        for (int i = 0, workerCount = mvWorkerPool.getWorkerCount(); i < workerCount; i++) {
+    protected void setupViewJobs(WorkerPool vWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = vWorkerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
             final ViewCompilerJob viewCompilerJob = new ViewCompilerJob(i, engine, sharedQueryWorkerCount);
-            mvWorkerPool.assign(i, viewCompilerJob);
-            mvWorkerPool.freeOnExit(viewCompilerJob);
+            vWorkerPool.assign(i, viewCompilerJob);
+            vWorkerPool.freeOnExit(viewCompilerJob);
         }
     }
 

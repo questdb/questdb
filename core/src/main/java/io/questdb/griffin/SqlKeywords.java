@@ -1601,6 +1601,17 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 't';
     }
 
+    public static boolean isReplaceKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'r'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'c'
+                && (tok.charAt(6) | 32) == 'e';
+    }
+
     public static boolean isPartitionKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'p'

@@ -49,10 +49,20 @@ public class ViewCompileTest extends ViewInvalidationTest {
         AbstractViewTest.setUpStatic();
     }
 
+    @Test
+    public void testCompileViewSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("compile view", 12, "view name expected");
+
+            execute("create view " + VIEW1 + " as (select 249)");
+            assertException("compile view " + VIEW1 + " bla", 19, "unexpected token [bla]");
+        });
+    }
+
     @Override
     protected void detectInvalidView(String viewName, String expectedErrorMessage) {
-        // automatic view invalidation is switched off in test, so have to query the view
-        // to be able to detect that it does not work anymore.
+        // automatic view invalidation is switched off in test, so have to query or
+        // recompile the view to be able to detect that it does not work anymore.
         // child views are invalidated recursively.
         try (RecordCursorFactory ignored = select(viewName)) {
             fail("Expected SqlException");
@@ -68,15 +78,5 @@ public class ViewCompileTest extends ViewInvalidationTest {
         // if the view successfully compiles and becomes valid, its children
         // will be compiled recursively too.
         compileView(viewName);
-    }
-
-    @Test
-    public void testCompileViewSyntax() throws Exception {
-        assertMemoryLeak(() -> {
-            assertException("compile view", 12, "view name expected");
-
-            execute("create view " + VIEW1 + " as (select 249)");
-            assertException("compile view " + VIEW1 + " bla", 19, "unexpected token [bla]");
-        });
     }
 }

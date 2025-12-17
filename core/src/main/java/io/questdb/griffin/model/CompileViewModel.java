@@ -35,9 +35,6 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
     private QueryModel queryModel;
     private ExpressionNode viewExpr;
 
-    public CompileViewModel() {
-    }
-
     @Override
     public void clear() {
         viewExpr = null;

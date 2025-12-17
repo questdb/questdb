@@ -1034,7 +1034,12 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view'");
+        CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
+        if (isOrKeyword(tok)) {
+            // we need to skip OR REPLACE, it is handled in an executor
+            expectTok(lexer, "replace");
+            tok = tok(lexer, "'view'");
+        }
         if (isViewKeyword(tok)) {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
         }
