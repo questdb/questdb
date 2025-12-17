@@ -4330,6 +4330,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCaseWhenMissingThenWithFill() throws Exception {
+        // FILL keyword used instead of THEN - should report "'then' expected" at FILL position
+        assertSyntaxError(
+                "SELECT CASE WHEN col1 > 10 THEN col2 WHEN col3 < 20 FILL 123 END FROM tab",
+                52,
+                "'then' expected",
+                modelOf("tab").col("col1", ColumnType.INT).col("col2", ColumnType.INT).col("col3", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testDottedConstAlias() throws Exception {
         assertSql(
                 """

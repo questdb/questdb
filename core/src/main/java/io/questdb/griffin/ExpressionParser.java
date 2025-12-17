@@ -1409,7 +1409,7 @@ public class ExpressionParser {
                                         if (paramCount == 0) {
                                             throw SqlException.$(lastPos, "'when' expected");
                                         }
-                                        if (paramCount <= 2) {
+                                        if ((paramCount % 2) == 0) {
                                             throw SqlException.$(lastPos, "'then' expected");
                                         }
 
@@ -1558,6 +1558,11 @@ public class ExpressionParser {
                                     throw SqlException.$(lastPos, "Nested window functions are not currently supported.");
                                 }
                                 lexer.unparseLast();
+                            }
+
+                            // Inside CASE expression expecting THEN? Error out now with the right position
+                            if (caseCount > 0 && paramCount > 0 && (paramCount % 2) == 0) {
+                                throw SqlException.$(lastPos, "'then' expected");
                             }
 
                             // this is a function or array name, push it onto the stack

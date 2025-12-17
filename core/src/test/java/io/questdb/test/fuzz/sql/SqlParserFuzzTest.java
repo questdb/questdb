@@ -65,7 +65,7 @@ public class SqlParserFuzzTest extends AbstractCairoTest {
     private static final String PROP_TIMEOUT = "questdb.fuzz.timeout";
 
     // Defaults
-    private static final int DEFAULT_ITERATIONS = 10_000;
+    private static final int DEFAULT_ITERATIONS = 100_000;
     private static final long DEFAULT_TIMEOUT_MS = 1000;
 
     /**
