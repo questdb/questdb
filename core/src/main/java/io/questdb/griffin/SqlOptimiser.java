@@ -1230,8 +1230,10 @@ public class SqlOptimiser implements Mutable {
                         return true;
                     }
                     node = node.lhs;
-                } else {
+                } else if (!sqlNodeStack.isEmpty()) {
                     node = sqlNodeStack.poll();
+                } else {
+                    node = null;
                 }
             } else {
                 // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
@@ -1244,7 +1246,11 @@ public class SqlOptimiser implements Mutable {
                         sqlNodeStack.push(arg);
                     }
                 }
-                node = sqlNodeStack.poll();
+                if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
             }
         }
         return false;
