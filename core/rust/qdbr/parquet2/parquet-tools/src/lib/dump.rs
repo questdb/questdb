@@ -11,11 +11,7 @@ use crate::{Result, SEPARATOR};
 // Dumps data from the file.
 // The function prints a sample of the data from each of the RowGroups.
 // The columns to be printed is controlled using the arguments introduced in the command line
-pub fn dump_file<T, W>(
-    file_name: T,
-    columns: Option<Vec<usize>>,
-    writer: &mut W,
-) -> Result<()>
+pub fn dump_file<T, W>(file_name: T, columns: Option<Vec<usize>>, writer: &mut W) -> Result<()>
 where
     T: AsRef<Path> + std::fmt::Display,
     W: Write,
