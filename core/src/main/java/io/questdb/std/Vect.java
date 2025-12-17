@@ -43,12 +43,6 @@ public final class Vect {
     // (1-8) bytes of reverse index, e.g. what is the index of the row with current index in the sorted result set
     public static final byte SHUFFLE_INDEX_FORMAT = 2;
 
-    public static native double avgDoubleAcc(long pInt, long count, long pCount);
-
-    public static native double avgIntAcc(long pInt, long count, long pCount);
-
-    public static native double avgLongAcc(long pInt, long count, long pCount);
-
     // Note: high is inclusive!
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
@@ -455,13 +449,22 @@ public final class Vect {
 
     public static native double sumDouble(long pDouble, long count);
 
+    // returns sum of the elements; also stores non-null count to pCount address
+    public static native double sumDoubleAcc(long pInt, long count, long pCount);
+
     public static native double sumDoubleKahan(long pDouble, long count);
 
     public static native double sumDoubleNeumaier(long pDouble, long count);
 
     public static native long sumInt(long pInt, long count);
 
+    // returns sum of the elements; also stores non-null count to pCount address
+    public static native double sumIntAcc(long pInt, long count, long pCount);
+
     public static native long sumLong(long pLong, long count);
+
+    // returns sum of the elements; also stores non-null count to pCount address
+    public static native double sumLongAcc(long pInt, long count, long pCount);
 
     public static native long sumShort(long pLong, long count);
 
