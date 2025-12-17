@@ -192,7 +192,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         Misc.free(ownerSlaveData);
         Misc.freeObjList(perWorkerSlaveData);
         Misc.free(ownerPrevailingCache);
-        Misc.freeObjListAndKeepObjects(perWorkerPrevailingCache);
+        Misc.freeObjList(perWorkerPrevailingCache);
     }
 
     public int getMasterSymbolIndex() {
