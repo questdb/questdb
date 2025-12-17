@@ -348,6 +348,7 @@ fn create_partition_descriptor(
             symbol_offsets_addr as *const u64,
             symbol_offsets_size as usize,
             designated_timestamp,
+            true,
         )?;
 
         columns.push(column);
@@ -488,6 +489,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_names_len,
             col_meta_data,
             timestamp_index,
+            timestamp_descending,
         )?;
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
@@ -756,6 +758,7 @@ fn create_partition_template(
     col_names_len: jint,
     col_meta_data_ptr: *const i64,
     timestamp_index: jint,
+    timestamp_descending: jboolean,
 ) -> ParquetResult<Partition> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
@@ -789,6 +792,7 @@ fn create_partition_template(
             std::ptr::null(),
             0,
             designated_timestamp,
+            timestamp_descending == 0,
         )?;
 
         columns.push(column);
