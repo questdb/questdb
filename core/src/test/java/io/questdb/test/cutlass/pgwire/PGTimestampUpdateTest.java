@@ -30,11 +30,22 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.function.Consumer;
 
 @SuppressWarnings({"SqlNoDataSourceInspection"})
 public class PGTimestampUpdateTest extends BasePGTest {
+
+    @Test
+    public void testUpdateMicrosColumnToNull() throws Exception {
+        testUpdateTimestampColumnToNull("TIMESTAMP");
+    }
+
+    @Test
+    public void testUpdateMicrosColumnToNullSentinel() throws Exception {
+        testUpdateTimestampColumnToNullSentinel("TIMESTAMP");
+    }
 
     @Test
     public void testUpdateMicrosColumnUsingSetLongAPI() throws Exception {
@@ -67,6 +78,16 @@ public class PGTimestampUpdateTest extends BasePGTest {
                 throw new RuntimeException(e);
             }
         }, "2025-12-04T15:58:45.000004");
+    }
+
+    @Test
+    public void testUpdateNanosColumnToNull() throws Exception {
+        testUpdateTimestampColumnToNull("TIMESTAMP_NS");
+    }
+
+    @Test
+    public void testUpdateNanosColumnToNullSentinel() throws Exception {
+        testUpdateTimestampColumnToNullSentinel("TIMESTAMP_NS");
     }
 
     @Test
@@ -137,6 +158,84 @@ public class PGTimestampUpdateTest extends BasePGTest {
             drainWalQueue();
             assertQueryNoLeakCheck("id\tstatus\tmts\tcts\n" +
                             "20\tHAHAHA\t" + expectedTimestamp + "Z\t2022-01-03T00:00:00.000000Z\n",
+                    "table1", null, "cts", null, null, true, true, false);
+        });
+    }
+
+    private void testUpdateTimestampColumnToNull(String tsType) throws Exception {
+        final boolean isNanos = tsType.equals("TIMESTAMP_NS");
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE table1 (" +
+                        "id LONG, " +
+                        "status SYMBOL CAPACITY 32 CACHE INDEX CAPACITY 256, " +
+                        "mts " + tsType + ", " +
+                        "cts TIMESTAMP" +
+                        ") timestamp(cts) PARTITION BY MONTH WAL");
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "insert into table1 values(20, 'HOHOHO', to_timestamp('2022-01-03', 'yyyy-MM-dd'), to_timestamp('2022-01-03', 'yyyy-MM-dd'))"
+            )) {
+                statement.execute();
+            }
+            drainWalQueue();
+            assertQueryNoLeakCheck("id\tstatus\tmts\tcts\n" +
+                            "20\tHOHOHO\t2022-01-03T00:00:00.000000" + (isNanos ? "000" : "") + "Z\t2022-01-03T00:00:00.000000Z\n",
+                    "table1", null, "cts", null, null, true, true, false);
+
+            try (PreparedStatement statement = connection.prepareStatement("update table1 set status = ?, mts = ? where id = ?")) {
+                statement.setString(1, "HAHAHA");
+                statement.setNull(2, Types.TIMESTAMP);
+                statement.setLong(3, 20L);
+
+                statement.executeUpdate();
+            }
+            drainWalQueue();
+            assertQueryNoLeakCheck("""
+                            id\tstatus\tmts\tcts
+                            20\tHAHAHA\t\t2022-01-03T00:00:00.000000Z
+                            """,
+                    "table1", null, "cts", null, null, true, true, false);
+        });
+    }
+
+    private void testUpdateTimestampColumnToNullSentinel(String tsType) throws Exception {
+        final boolean isNanos = tsType.equals("TIMESTAMP_NS");
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE table1 (" +
+                        "id LONG, " +
+                        "status SYMBOL CAPACITY 32 CACHE INDEX CAPACITY 256, " +
+                        "mts " + tsType + ", " +
+                        "cts TIMESTAMP" +
+                        ") timestamp(cts) PARTITION BY MONTH WAL");
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "insert into table1 values(20, 'HOHOHO', to_timestamp('2022-01-03', 'yyyy-MM-dd'), to_timestamp('2022-01-03', 'yyyy-MM-dd'))"
+            )) {
+                statement.execute();
+            }
+            drainWalQueue();
+            assertQueryNoLeakCheck("id\tstatus\tmts\tcts\n" +
+                            "20\tHOHOHO\t2022-01-03T00:00:00.000000" + (isNanos ? "000" : "") + "Z\t2022-01-03T00:00:00.000000Z\n",
+                    "table1", null, "cts", null, null, true, true, false);
+
+            try (PreparedStatement statement = connection.prepareStatement("update table1 set status = ?, mts = ? where id = ?")) {
+                statement.setString(1, "HAHAHA");
+                statement.setLong(2, Long.MIN_VALUE);
+                statement.setLong(3, 20L);
+
+                statement.executeUpdate();
+            }
+            drainWalQueue();
+            assertQueryNoLeakCheck("""
+                            id\tstatus\tmts\tcts
+                            20\tHAHAHA\t\t2022-01-03T00:00:00.000000Z
+                            """,
                     "table1", null, "cts", null, null, true, true, false);
         });
     }
