@@ -30,9 +30,11 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8StringList;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -43,6 +45,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.HashSet;
 
 public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
 
@@ -58,6 +61,176 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setupTestFiles();
+    }
+
+    @Test
+    public void testFuzzGlobMatch() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        String chars = "abcdefghijklmnopqrstuvwxyz0123456789_.";
+        StringSink nameSink = new StringSink();
+        StringSink patternSink = new StringSink();
+
+        for (int iter = 0; iter < 1000; iter++) {
+            // Generate random filename (3-15 chars)
+            int nameLen = 3 + rnd.nextInt(13);
+            nameSink.clear();
+            for (int i = 0; i < nameLen; i++) {
+                nameSink.put(chars.charAt(rnd.nextInt(chars.length())));
+            }
+            String name = nameSink.toString();
+
+            // Test 1: exact pattern should always match
+            assertGlobMatch(name, name, true);
+
+            // Test 2: * should match everything
+            assertGlobMatch(name, "*", true);
+
+            // Test 3: pattern with single ? per char should match
+            patternSink.clear();
+            for (int i = 0; i < nameLen; i++) {
+                patternSink.put('?');
+            }
+            assertGlobMatch(name, patternSink.toString(), true);
+
+            // Test 4: wrong length ? pattern should not match
+            if (nameLen > 1) {
+                assertGlobMatch(name, patternSink.subSequence(1, patternSink.length()).toString(), false);
+            }
+
+            // Test 5: prefix* should match
+            if (nameLen > 2) {
+                int prefixLen = 1 + rnd.nextInt(nameLen - 1);
+                patternSink.clear();
+                patternSink.put(name, 0, prefixLen).put('*');
+                assertGlobMatch(name, patternSink.toString(), true);
+            }
+
+            // Test 6: *suffix should match
+            if (nameLen > 2) {
+                int suffixStart = 1 + rnd.nextInt(nameLen - 1);
+                patternSink.clear();
+                patternSink.put('*').put(name, suffixStart, nameLen);
+                assertGlobMatch(name, patternSink.toString(), true);
+            }
+
+            // Test 7: [abc] bracket matching
+            char firstChar = name.charAt(0);
+            patternSink.clear();
+            patternSink.put('[').put(firstChar).put(']');
+            if (nameLen > 1) {
+                patternSink.put('*');
+            }
+            assertGlobMatch(name, patternSink.toString(), true);
+
+            // Negated bracket should not match
+            patternSink.clear();
+            patternSink.put("[!").put(firstChar).put(']');
+            if (nameLen > 1) {
+                patternSink.put('*');
+            }
+            assertGlobMatch(name, patternSink.toString(), false);
+        }
+    }
+
+    @Test
+    public void testFuzzRandomDirectoryStructure() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        FilesFacade ff = configuration.getFilesFacade();
+        HashSet<String> createdFiles = new HashSet<>();
+
+        try (Path path = new Path()) {
+            String fuzzRoot = inputRoot + File.separator + "fuzz";
+            ff.mkdir(path.of(fuzzRoot).$(), 493);
+            String[] extensions = {".parquet", ".csv", ".txt", ".log"};
+            String[] prefixes = {"data", "file", "test", "report"};
+
+            for (int i = 0; i < 50; i++) {
+                String prefix = prefixes[rnd.nextInt(prefixes.length)];
+                String ext = extensions[rnd.nextInt(extensions.length)];
+                int num = rnd.nextInt(100);
+                String fileName = prefix + "_" + num + ext;
+                String relativePath = "fuzz" + File.separator + fileName;
+
+                if (!createdFiles.contains(relativePath)) {
+                    createTestFile(relativePath, 100 + rnd.nextInt(900));
+                    createdFiles.add(relativePath);
+                }
+            }
+
+            StringSink dirPath = new StringSink();
+            StringSink relativePath = new StringSink();
+            for (int depth = 1; depth <= 3; depth++) {
+                dirPath.clear();
+                dirPath.put("fuzz");
+                for (int d = 0; d < depth; d++) {
+                    dirPath.put(File.separator).put("level").put(d);
+                }
+                ff.mkdir(path.of(inputRoot).concat(dirPath).$(), 493);
+
+                for (int i = 0; i < 5; i++) {
+                    String ext = extensions[rnd.nextInt(extensions.length)];
+                    relativePath.clear();
+                    relativePath.put(dirPath).put(File.separator).put("nested_").put(depth).put('_').put(i).put(ext);
+                    createTestFile(relativePath.toString(), 50 + rnd.nextInt(200));
+                    createdFiles.add(relativePath.toString());
+                }
+            }
+
+            try (
+                    DirectUtf8StringList resultFiles = new DirectUtf8StringList(256, 16);
+                    DirectUtf8StringList tempPaths = new DirectUtf8StringList(256, 16);
+                    Path workingPath = new Path(MemoryTag.NATIVE_PATH)
+            ) {
+                IntList offsets = new IntList();
+                Utf8StringSink fileNameSink = new Utf8StringSink();
+
+                // Test 1: *.parquet should find all parquet files in fuzz/
+                offsets.clear();
+                Utf8String pattern1 = new Utf8String("fuzz/*.parquet");
+                GlobFilesFunctionFactory.parseGlobPattern(pattern1, offsets);
+                GlobFilesFunctionFactory.globFiles(ff, pattern1, workingPath, inputRoot, fileNameSink, resultFiles, tempPaths, offsets);
+                int parquetCount = 0;
+                for (String f : createdFiles) {
+                    if (f.startsWith("fuzz" + File.separator) && f.endsWith(".parquet") && !f.contains("level")) {
+                        parquetCount++;
+                    }
+                }
+                Assert.assertEquals("*.parquet count mismatch", parquetCount, resultFiles.size());
+
+                // Test 2: ** should find all files recursively
+                offsets.clear();
+                Utf8String pattern2 = new Utf8String("fuzz/**");
+                GlobFilesFunctionFactory.parseGlobPattern(pattern2, offsets);
+                GlobFilesFunctionFactory.globFiles(ff, pattern2, workingPath, inputRoot, fileNameSink, resultFiles, tempPaths, offsets);
+                Assert.assertEquals("** count mismatch", createdFiles.size(), resultFiles.size());
+
+                // Test 3: **/*.csv should find all csv files at any depth
+                offsets.clear();
+                Utf8String pattern3 = new Utf8String("fuzz/**/*.csv");
+                GlobFilesFunctionFactory.parseGlobPattern(pattern3, offsets);
+                GlobFilesFunctionFactory.globFiles(ff, pattern3, workingPath, inputRoot, fileNameSink, resultFiles, tempPaths, offsets);
+                int csvCount = 0;
+                for (String f : createdFiles) {
+                    if (f.endsWith(".csv")) {
+                        csvCount++;
+                    }
+                }
+                Assert.assertEquals("**/*.csv count mismatch", csvCount, resultFiles.size());
+
+                // Test 4: data_??.* should match data_XX.* (two digit)
+                offsets.clear();
+                Utf8String pattern4 = new Utf8String("fuzz/data_??.*");
+                GlobFilesFunctionFactory.parseGlobPattern(pattern4, offsets);
+                GlobFilesFunctionFactory.globFiles(ff, pattern4, workingPath, inputRoot, fileNameSink, resultFiles, tempPaths, offsets);
+                for (int i = 0; i < resultFiles.size(); i++) {
+                    String resultPath = resultFiles.getQuick(i).toString();
+                    // Extract filename and verify it matches data_XX pattern (2 digits)
+                    String fileName = resultPath.substring(resultPath.lastIndexOf(File.separator) + 1);
+                    Assert.assertTrue("Should match data_??.* pattern: " + fileName,
+                            fileName.matches("data_\\d\\d\\..*"));
+                }
+            }
+        }
     }
 
     @Test
@@ -480,6 +653,38 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGlobMatchEdgeCases() {
+        // empty strings
+        assertGlobMatch("", "", true);
+        assertGlobMatch("", "*", true);
+        assertGlobMatch("a", "", false);
+        assertGlobMatch("", "a", false);
+
+        // only wildcards
+        assertGlobMatch("anything", "*", true);
+        assertGlobMatch("a", "?", true);
+        assertGlobMatch("ab", "??", true);
+        assertGlobMatch("abc", "???", true);
+        assertGlobMatch("abc", "****", true);
+
+        // consecutive wildcards
+        assertGlobMatch("abc", "a**c", true);
+        assertGlobMatch("abc", "*a*b*c*", true);
+        assertGlobMatch("abc", "**a**b**c**", true);
+
+        // special characters in filename
+        assertGlobMatch("file.txt", "*.txt", true);
+        assertGlobMatch("file_name.txt", "*_*.txt", true);
+        assertGlobMatch("file-name.txt", "*-*.txt", true);
+
+        // bracket at boundaries
+        assertGlobMatch("a", "[a-z]", true);
+        assertGlobMatch("z", "[a-z]", true);
+        assertGlobMatch("0", "[0-9]", true);
+        assertGlobMatch("9", "[0-9]", true);
+    }
+
+    @Test
     public void testGlobMatchEscape() {
         assertGlobMatch("*.txt", "\\*.txt", true);
         assertGlobMatch("hello.txt", "\\*.txt", false);
@@ -708,7 +913,6 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
         Assert.assertEquals(0, offsets.getQuick(0));
         Assert.assertEquals(9, offsets.getQuick(1));
     }
-
 
     @Test
     public void testParseGlobPatternTrailingSeparator() {
