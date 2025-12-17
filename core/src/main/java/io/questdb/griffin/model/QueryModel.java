@@ -118,6 +118,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceHashSet constDecls = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
@@ -485,6 +486,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
+        constDecls.clear();
         orderDescendingByDesignatedTimestampOnly = false;
         forceBackwardScan = false;
         hintsMap.clear();
@@ -569,13 +571,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    public void copyDeclsFrom(QueryModel model, boolean overrideDeclares) {
+    public void copyDeclsFrom(QueryModel model, boolean overrideDeclares) throws SqlException {
         copyDeclsFrom(model.getDecls(), overrideDeclares);
     }
 
-    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) {
+    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException {
         if (decls != null && decls.size() > 0) {
             if (overrideDeclares) {
+                final ObjList<CharSequence> keys = decls.keys();
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    final CharSequence key = keys.getQuick(i);
+                    if (this.constDecls.contains(key)) {
+                        ExpressionNode existing = decls.get(key);
+                        int position = existing != null ? existing.position : 0;
+                        throw SqlException.$(position, "cannot override CONST variable: ").put(key);
+                    }
+                }
                 this.decls.putAll(decls);
             } else {
                 final ObjList<CharSequence> keys = decls.keys();
@@ -766,6 +777,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<QueryColumn> getColumns() {
         return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
+    }
+
+    public LowerCaseCharSequenceHashSet getConstDecls() {
+        return constDecls;
     }
 
     public ExpressionNode getConstWhereClause() {

@@ -939,6 +939,39 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareConst() throws Exception {
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE CONST @x := 5 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareConstCaseInsensitive() throws Exception {
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE const @x := 5 SELECT @x", ExecutionModel.QUERY);
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE Const @x := 5 SELECT @x", ExecutionModel.QUERY);
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE CONST @x := 5 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareConstMixed() throws Exception {
+        assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
+                "DECLARE CONST @x := 5, @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareConstMultiple() throws Exception {
+        assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
+                "DECLARE CONST @x := 5, CONST @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareConstMissingVariable() throws Exception {
+        assertException("DECLARE CONST SELECT 1", 14, "variable name expected after CONST");
+    }
+
+    @Test
     public void testDeclareWorksWithJit() throws Exception {
         assertMemoryLeak(() -> {
             String plan = """

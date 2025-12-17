@@ -1967,6 +1967,16 @@ public class SqlParser {
                 throw errUnexpected(lexer, tok, "Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
             }
 
+            boolean isConst = false;
+            if (isConstKeyword(tok)) {
+                isConst = true;
+                pos = lexer.getPosition();
+                tok = optTok(lexer);
+                if (tok == null || tok.charAt(0) != '@') {
+                    throw SqlException.$(pos, "variable name expected after CONST");
+                }
+            }
+
             if (isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
                 lexer.unparseLast();
                 break;
@@ -1996,6 +2006,9 @@ public class SqlParser {
             }
 
             model.getDecls().put(tok, expr);
+            if (isConst) {
+                model.getConstDecls().add(tok);
+            }
         }
     }
 

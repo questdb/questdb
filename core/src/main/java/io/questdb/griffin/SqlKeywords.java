@@ -304,6 +304,15 @@ public class SqlKeywords {
                 && tok.charAt(1) == '|';
     }
 
+    public static boolean isConstKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'n'
+                && (tok.charAt(3) | 32) == 's'
+                && (tok.charAt(4) | 32) == 't';
+    }
+
     public static boolean isConvertKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'c'

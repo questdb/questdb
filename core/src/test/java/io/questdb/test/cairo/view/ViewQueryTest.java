@@ -43,6 +43,84 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testDeclareConstViewCannotOverride() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query1 = "DECLARE CONST @x := 6 select ts, v from " + TABLE1 + " where v = @x";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // sanity check
+            assertQueryNoLeakCheck("""
+                            ts\tv
+                            1970-01-01T00:01:00.000000Z\t6
+                            """,
+                    VIEW1, "ts", true, sqlExecutionContext);
+
+            assertExceptionNoLeakCheck("DECLARE @x := 5 SELECT * FROM " + VIEW1, 11, "cannot override CONST variable: @x");
+        });
+    }
+
+    @Test
+    public void testDeclareConstViewMixedCannotOverrideConst() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // view with mixed CONST and non-CONST variables
+            final String query1 = "DECLARE CONST @lo := 5, @hi := 8 select ts, v from " + TABLE1 + " where v >= @lo and v <= @hi";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // sanity check: no overrides at all
+            assertQueryNoLeakCheck("""
+                            ts	v
+                            1970-01-01T00:00:50.000000Z	5
+                            1970-01-01T00:01:00.000000Z	6
+                            1970-01-01T00:01:10.000000Z	7
+                            1970-01-01T00:01:20.000000Z	8
+                            """,
+                    "VIEW1", "ts", true, sqlExecutionContext);
+
+            // can override @hi (not const)
+            assertQueryNoLeakCheck("""
+                            ts	v
+                            1970-01-01T00:00:50.000000Z	5
+                            1970-01-01T00:01:00.000000Z	6
+                            1970-01-01T00:01:10.000000Z	7
+                            """,
+                    "DECLARE @hi := 7 SELECT * FROM " + VIEW1, "ts", true, sqlExecutionContext);
+
+            // override @lo (const) should fail
+            assertExceptionNoLeakCheck("DECLARE @lo := 3 SELECT * FROM " + VIEW1, 12, "cannot override CONST variable: @lo");
+        });
+    }
+
+    @Test
+    public void testDeclareConstViewMultipleCannotOverride() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query1 = "DECLARE CONST @x := 5, CONST @y := 8 select ts, v from " + TABLE1 + " where v >= @x and v <= @y";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // default values
+            assertQueryNoLeakCheck("""
+                            ts\tv
+                            1970-01-01T00:00:50.000000Z\t5
+                            1970-01-01T00:01:00.000000Z\t6
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
+                    VIEW1, "ts", true, sqlExecutionContext);
+
+            assertExceptionNoLeakCheck("DECLARE @x := 3 SELECT * FROM " + VIEW1, 11, "cannot override CONST variable: @x");
+            assertExceptionNoLeakCheck("DECLARE @y := 10 SELECT * FROM " + VIEW1, 11, "cannot override CONST variable: @y");
+        });
+    }
+
+    @Test
     public void testDeclareInViewDefinition() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
