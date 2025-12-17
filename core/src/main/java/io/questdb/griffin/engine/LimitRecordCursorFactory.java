@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -177,22 +178,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isBaseSizeKnown()) {
                 sizeCounter.add(remaining);
             } else {
-                // TODO [mtopol]: the commented-out code would be more efficient, a single call to base.skipRows()
-                // instead of a loop around base.hasNext(). But, skipRows() is broken in PageFrameRecordCursorImpl
-                // and potentially other places. It malfunctions when called after partial consumption with
-                // hasNext().
-//                    if (!isSuspendableOpInProgress) {
-//                        counter.set(remaining);
-//                        isSuspendableOpInProgress = true;
-//                    }
-//                    base.skipRows(counter);
-//                    sizeCounter.add(remaining - counter.get());
-//                    counter.clear();
-//                    isSuspendableOpInProgress = false;
-                while (remaining > 0 && base.hasNext()) {
-                    remaining--;
-                    sizeCounter.inc();
+                if (!isSuspendableOpInProgress) {
+                    counter.set(remaining);
+                    isSuspendableOpInProgress = true;
                 }
+                base.skipRows(counter);
+                isSuspendableOpInProgress = false;
+                sizeCounter.add(remaining - counter.get());
+                counter.clear();
             }
             remaining = 0;
         }
@@ -230,24 +223,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return false;
         }
 
-        // TODO [mtopol]: this more efficient impl fails because some cursors don't decrement the counter
-        // as they should by its contract
-//        @Override
-//        public void skipRows(Counter rowCount) throws DataUnavailableException {
-//            ensureReadyToConsume();
-//            long counterBeforeSkip = rowCount.get();
-//            base.skipRows(rowCount);
-//            long counterAfterSkip = rowCount.get();
-//            if (counterAfterSkip > 0) {
-//                remaining = 0;
-//            } else {
-//                remaining -= counterBeforeSkip;
-//                if (remaining < 0) {
-//                    remaining = 0;
-//                }
-//            }
-//        }
-
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return base.newSymbolTable(columnIndex);
@@ -266,6 +241,29 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public long size() {
             return size;
+        }
+
+        @Override
+        public void skipRows(Counter rowCount) throws DataUnavailableException {
+            ensureReadyToConsume();
+            long excessCount = Math.max(0, rowCount.get() - remaining);
+            if (excessCount > 0) {
+                rowCount.set(remaining);
+            }
+            long rowsToSkip = rowCount.get();
+            base.skipRows(rowCount);
+            long counterAfterSkip = rowCount.get();
+            if (counterAfterSkip > 0) {
+                remaining = 0;
+            } else {
+                remaining -= (rowsToSkip - counterAfterSkip);
+                if (remaining < 0) {
+                    remaining = 0;
+                }
+            }
+            if (excessCount > 0) {
+                rowCount.add(excessCount);
+            }
         }
 
         @Override
