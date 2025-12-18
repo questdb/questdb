@@ -153,32 +153,54 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     // https://github.com/questdb/questdb/issues/6549
     @Test
     public void testCaseWithAggregatesInGroupBy() throws Exception {
-        assertQuery(
-                """
-                        sym\tsum\tavg\tresult
-                        a\t60.0\t20.0\t60.0
-                        b\t90.0\t45.0\t45.0
-                        """,
-                "SELECT sym, sum(val), avg(val), " +
-                        "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
-                        "FROM test " +
-                        "GROUP BY sym " +
-                        "ORDER BY sym",
-                "create table test as (" +
-                        "  select 'a' as sym, 10.0 as val from long_sequence(1)" +
-                        "  union all" +
-                        "  select 'a' as sym, 20.0 as val from long_sequence(1)" +
-                        "  union all" +
-                        "  select 'a' as sym, 30.0 as val from long_sequence(1)" +
-                        "  union all" +
-                        "  select 'b' as sym, 40.0 as val from long_sequence(1)" +
-                        "  union all" +
-                        "  select 'b' as sym, 50.0 as val from long_sequence(1)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table test as (" +
+                            "  select 'a' as sym, 10.0 as val from long_sequence(1)" +
+                            "  union all" +
+                            "  select 'a' as sym, 20.0 as val from long_sequence(1)" +
+                            "  union all" +
+                            "  select 'a' as sym, 30.0 as val from long_sequence(1)" +
+                            "  union all" +
+                            "  select 'b' as sym, 40.0 as val from long_sequence(1)" +
+                            "  union all" +
+                            "  select 'b' as sym, 50.0 as val from long_sequence(1)" +
+                            ")"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tresult
+                            a\t60.0
+                            b\t45.0
+                            """,
+                    "SELECT sym, " +
+                            "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
+                            "FROM test " +
+                            "GROUP BY sym " +
+                            "ORDER BY sym",
+                    null,
+                    true,
+                    true
+            );
+
+            // Same query, but with additionally SELECTed aggregates
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tsum\tavg\tresult
+                            a\t60.0\t20.0\t60.0
+                            b\t90.0\t45.0\t45.0
+                            """,
+                    "SELECT sym, sum(val), avg(val), " +
+                            "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
+                            "FROM test " +
+                            "GROUP BY sym " +
+                            "ORDER BY sym",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
@@ -887,28 +909,6 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNestedGroupByFn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
-            try {
-                assertExceptionNoLeakCheck("select sym, max(sum(x + min(x)) - avg(x)) from test");
-            } catch (SqlException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "Aggregate function cannot be passed as an argument"));
-            }
-        });
-    }
-
-    @Test
-    public void testNonNestedGroupByFn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
-            try (RecordCursorFactory ignored = select("select sym, max(x) - (min(x) + 1) from test")) {
-                Assert.assertTrue(true);
-            }
-        });
-    }
-
-    @Test
     public void testKeyedSumLongSomeNaN() throws Exception {
         assertQuery("""
                         s\tsum
@@ -928,6 +928,28 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testNestedGroupByFn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
+            try {
+                assertExceptionNoLeakCheck("select sym, max(sum(x + min(x)) - avg(x)) from test");
+            } catch (SqlException e) {
+                Assert.assertTrue(Chars.contains(e.getMessage(), "Aggregate function cannot be passed as an argument"));
+            }
+        });
+    }
+
+    @Test
+    public void testNonNestedGroupByFn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
+            try (RecordCursorFactory ignored = select("select sym, max(x) - (min(x) + 1) from test")) {
+                Assert.assertTrue(true);
+            }
+        });
     }
 
     @Test
