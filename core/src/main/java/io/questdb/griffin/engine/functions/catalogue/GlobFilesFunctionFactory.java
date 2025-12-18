@@ -212,9 +212,9 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
     public static boolean hasGlob(Utf8Sequence segment, int low, int high) {
         for (int i = low; i < high; i++) {
             byte c = segment.byteAt(i);
-            if (c == '\\' && i + 1 < high) {
+            if (c == '\\' && Files.SEPARATOR != '\\' && i + 1 < high) {
                 byte next = segment.byteAt(i + 1);
-                if (next == '*' || next == '?' || next == '[' || next == '\\') {
+                if (next == '*' || next == '?' || next == '[' || next == ']' || next == '\\') {
                     i++;
                     continue;
                 }
@@ -237,19 +237,19 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         for (int i = 0; i < n; i++) {
             byte c = pattern.byteAt(i);
             if (c == '\\') {
-                if (i + 1 < n) {
-                    byte next = pattern.byteAt(i + 1);
-                    if (next == '*' || next == '?' || next == '[' || next == '\\') {
-                        i++;
-                        continue;
-                    }
-                }
                 if (Files.SEPARATOR == '\\') {
                     if (i > lastPos) {
                         offsets.add(lastPos);
                         offsets.add(i);
                     }
                     lastPos = i + 1;
+                } else {
+                    if (i + 1 < n) {
+                        byte next = pattern.byteAt(i + 1);
+                        if (next == '*' || next == '?' || next == '[' || next == ']' || next == '\\') {
+                            i++;
+                        }
+                    }
                 }
                 continue;
             }
@@ -448,13 +448,36 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
                     break;
                 }
                 case '\\':
-                    // Escape character, next character needs to match literally
-                    pi++;
-                    if (pi == plen) {
-                        return false;
+                    if (Files.SEPARATOR == '\\') {
+                        if (n != '\\' && n != '/') {
+                            return false;
+                        }
+                        ni++;
+                        pi++;
+                    } else {
+                        if (pi + 1 < plen) {
+                            byte next = pattern.byteAt(pi + 1);
+                            if (next == '*' || next == '?' || next == '[' || next == ']' || next == '\\') {
+                                pi++;
+                                p = pattern.byteAt(pi);
+                                if (n != p) {
+                                    return false;
+                                }
+                                ni++;
+                                pi++;
+                                break;
+                            }
+                        }
+                        if (n != '\\') {
+                            return false;
+                        }
+                        ni++;
+                        pi++;
                     }
-                    p = pattern.byteAt(pi);
-                    if (n != p) {
+                    break;
+                case '/':
+                    // Forward slash is a path separator - match both / and \
+                    if (n != '/' && n != '\\') {
                         return false;
                     }
                     ni++;
