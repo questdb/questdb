@@ -239,13 +239,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public boolean incrementPartitionSquashCounter(int partitionIndex) {
-        int partitionSquashCounter = getPartitionSquashCountByRawIndex(partitionIndex);
+        final int partitionRawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        int partitionSquashCounter = getPartitionSquashCountByRawIndex(partitionRawIndex);
         if (partitionSquashCounter == PARTITION_SQUASH_COUNTER_MAX) {
             // This means 16bit unsigned value is overflown.
             // Return false so that the caller can fall back to an alternative way to track squashes.
             return false;
         }
-        setPartitionSquashCounterByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, (short) (partitionSquashCounter + 1));
+        setPartitionSquashCounterByRawIndex(partitionRawIndex, (short) (partitionSquashCounter + 1));
         // Bump versions to make sure that incremental txn update will save the change
         // and incremental txn read will read it
         recordStructureVersion++;

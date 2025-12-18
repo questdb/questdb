@@ -118,24 +118,18 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
-import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.TABLE_KIND_REGULAR_TABLE;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.engine.ops.CreateMatViewOperation.validateMatViewPeriodLength;

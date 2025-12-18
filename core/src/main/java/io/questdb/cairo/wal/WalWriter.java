@@ -317,6 +317,7 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public void commit() {
+        Os.sleep(1000);
         // plain old commit
         commit0(
                 WalTxnType.DATA,
