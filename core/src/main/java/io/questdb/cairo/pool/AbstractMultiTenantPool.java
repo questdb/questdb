@@ -159,6 +159,21 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         return true;
     }
 
+    public void notifyDropped(TableToken token) {
+        Entry<T> e = entries.get(token.getDirName());
+        long thread = Thread.currentThread().getId();
+        while (e != null) {
+            for (int i = 0; i < ENTRY_SIZE; i++) {
+                if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
+                    // check if deadline violation still holds
+                    closeTenant(thread, e, i, PoolListener.EV_EXPIRE, PoolConstants.CR_IDLE);
+                    Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                }
+            }
+            e = e.next;
+        }
+    }
+
     public void removeThreadLocalPoolSupervisor() {
         this.threadLocalPoolSupervisor.remove();
     }

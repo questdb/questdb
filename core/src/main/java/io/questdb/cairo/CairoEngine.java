@@ -1194,6 +1194,8 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean notifyDropped(TableToken tableToken) {
         if (tableNameRegistry.dropTable(tableToken)) {
+            readerPool.notifyDropped(tableToken);
+            walWriterPool.notifyDropped(tableToken);
             final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
             matViewRefreshTask.clear();
             matViewRefreshTask.baseTableToken = tableToken;
