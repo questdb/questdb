@@ -1,0 +1,95 @@
+# description: Test dedup altering
+# group: [dedup]
+
+control iso_timestamp on
+
+# Absolute path
+statement ok
+create table x (x int, y long, ts timestamp)
+timestamp(ts) partition by DAY WAL;
+
+
+# Insert some data 1
+statement ok
+insert into x(x, y, ts)
+values (1, 100, '2020-01-01T00:00:00.000Z'),
+(1, 200, '2020-01-01T00:10:00.000Z');
+
+
+# enable dedup
+statement ok
+alter table x dedup enable upsert keys(ts, x);
+
+
+# Insert data 2
+statement ok
+insert into x(x, y, ts)
+values (1, 100, '2020-01-01T00:00:00.000Z'),
+(1, 200, '2020-01-01T00:10:00.000Z');
+
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+
+# check dedup data
+query TIT
+select x, y, ts from x order by ts, x, y;
+----
+1 100 2020-01-01T00:00:00.000000Z
+1 200 2020-01-01T00:10:00.000000Z
+
+
+# enable dedup
+statement ok
+alter table x dedup enable upsert keys(ts, y);
+
+
+# Insert data 3
+statement ok
+insert into x(x, y, ts)
+values (1, 101, '2020-01-01T00:00:00.000Z'),
+(1, 202, '2020-01-01T00:10:00.000Z');
+
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+
+# check dedup data
+query TIT
+select x, y, ts from x order by ts, x, y;
+----
+1 100 2020-01-01T00:00:00.000000Z
+1 101 2020-01-01T00:00:00.000000Z
+1 200 2020-01-01T00:10:00.000000Z
+1 202 2020-01-01T00:10:00.000000Z
+
+
+# change dedup
+statement ok
+alter table x dedup enable upsert keys(ts);
+
+
+# Insert data 4
+statement ok
+insert into x(x, y, ts)
+values (1, 103, '2020-01-01T00:00:00.000Z'),
+(1, 203, '2020-01-01T00:10:00.000Z');
+
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+
+# check dedup data
+query TIT
+select x, y, ts from x order by ts, x, y;
+----
+1 103 2020-01-01T00:00:00.000000Z
+1 103 2020-01-01T00:00:00.000000Z
+1 203 2020-01-01T00:10:00.000000Z
+1 203 2020-01-01T00:10:00.000000Z
