@@ -160,7 +160,6 @@ import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.engine.ops.CreateMatViewOperation.validateMatViewPeriodLength;
 import static io.questdb.griffin.model.ExportModel.COPY_TYPE_FROM;
 import static io.questdb.std.GenericLexer.unquote;
-import static io.questdb.tasks.TableWriterTask.CMD_ALTER_VIEW;
 
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
@@ -1628,21 +1627,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void alterViewExecution(SqlExecutionContext executionContext, TableToken viewToken, String viewSql, int viewSqlPosition, int viewNamePosition) throws SqlException {
+    private void alterViewExecution(SqlExecutionContext executionContext, TableToken viewToken, String viewSql, int viewSqlPosition) throws SqlException {
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
-            final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            SqlUtil.collectTableAndColumnReferences(engine, executionModel.getQueryModel(), dependencies);
-            engine.getViewGraph().validateNoCycle(viewToken, executionModel.getQueryModel());
+            final QueryModel queryModel = executionModel.getQueryModel();
+            SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
+            engine.getViewGraph().validateNoCycle(viewToken, queryModel);
 
             try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
                 // test the cursor, if no exception thrown viewSql is working
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     cursor.hasNext();
                 }
-
-                final RecordMetadata metadata = factory.getMetadata();
-                alterOperationBuilder.addAlterViewInfo(viewSql, metadata, dependencies);
             }
         } catch (SqlException e) {
             // position is reported from the view SQL, we have to adjust it
@@ -1653,13 +1650,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
         }
 
-        final AlterOperationBuilder alterView = alterOperationBuilder.ofAlterView(
-                viewNamePosition,
-                viewToken,
-                viewToken.getTableId()
-        );
         executionContext.getSecurityContext().authorizeAlterView(viewToken);
-        compiledQuery.ofAlter(alterView.build(CMD_ALTER_VIEW));
+        engine.replaceViewDefinition(viewToken, viewSql, dependencies);
+        compiledQuery.ofReplaceView();
     }
 
     private TableToken authorizeCompileView(SecurityContext securityContext, CompileViewModel model) {
@@ -2374,7 +2367,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int viewSqlPosition = lexer.getPosition();
         final String viewSql = parser.parseViewSql(lexer, this);
 
-        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition, viewNamePosition);
+        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
 
     private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
@@ -2587,7 +2580,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int viewSqlPosition = lexer.getPosition();
         final String viewSql = parser.parseViewSql(lexer, this);
 
-        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition, viewNamePosition);
+        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
 
     private void compileDeallocate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -4208,6 +4201,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
 
                     createViewOp.updateOperationFutureTableToken(viewToken);
+                    engine.getViewStateStore().enqueueCompile(viewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "view requires a SELECT statement");
                 }

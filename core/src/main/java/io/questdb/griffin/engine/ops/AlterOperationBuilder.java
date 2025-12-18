@@ -25,10 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.LongList;
-import io.questdb.std.LowerCaseCharSequenceHashSet;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -49,44 +46,6 @@ public class AlterOperationBuilder implements Mutable {
     // the builder and the operation it builds share the extraInfo list
     public AlterOperationBuilder() {
         this.op = new AlterOperation(extraInfo, extraStrInfo);
-    }
-
-    public void addAlterViewInfo(
-            CharSequence viewSql,
-            RecordMetadata metadata,
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
-    ) {
-        //add view metadata
-        final int columnCount = metadata.getColumnCount();
-        extraInfo.add(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            final CharSequence columnName = metadata.getColumnName(i);
-            assert columnName != null && !columnName.isEmpty();
-            extraStrInfo.add(columnName);
-
-            final int columnType = metadata.getColumnType(i);
-            extraInfo.add(columnType);
-        }
-
-        //add view sql
-        extraStrInfo.add(viewSql);
-
-        //add view dependencies
-        final ObjList<CharSequence> tableNames = dependencies.keys();
-        final int numOfDependencies = tableNames.size();
-        extraInfo.add(numOfDependencies);
-        for (int i = 0; i < numOfDependencies; i++) {
-            final CharSequence tableName = tableNames.getQuick(i);
-            extraStrInfo.add(tableName);
-            final LowerCaseCharSequenceHashSet columns = dependencies.get(tableName);
-            extraInfo.add(columns.size());
-            for (int j = 0; j < columns.getKeyCount(); j++) {
-                final CharSequence key = columns.getKey(j);
-                if (key != null) {
-                    extraStrInfo.add(key);
-                }
-            }
-        }
     }
 
     public void addColumnToList(
@@ -165,14 +124,6 @@ public class AlterOperationBuilder implements Mutable {
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(indexValueBlockSize);
-    }
-
-    public AlterOperationBuilder ofAlterView(int viewNamePosition, TableToken viewToken, int tableId) {
-        this.command = ALTER_VIEW;
-        this.tableNamePosition = viewNamePosition;
-        this.tableToken = viewToken;
-        this.tableId = tableId;
-        return this;
     }
 
     public AlterOperationBuilder ofAttachPartition(int tableNamePosition, TableToken tableToken, int tableId) {

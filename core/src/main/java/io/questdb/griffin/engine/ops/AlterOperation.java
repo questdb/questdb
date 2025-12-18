@@ -31,7 +31,6 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -42,8 +41,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
-import io.questdb.std.LowerCaseCharSequenceHashSet;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectString;
@@ -76,7 +73,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
-    public final static short ALTER_VIEW = SET_MAT_VIEW_REFRESH + 1; // 26
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -85,8 +81,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // to exception message using TableUtils.setSinkForPartition.
     private final LongList extraInfo;
     private final ObjCharSequenceList extraStrInfo;
-    // used as a temp storage in alterView()
-    private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> viewDependencies = new LowerCaseCharSequenceObjHashMap<>();
     private CharSequenceList activeExtraStrInfo;
     private short command;
     private MemoryFCRImpl deserializeMem;
@@ -234,9 +228,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SET_MAT_VIEW_REFRESH:
                     setMatViewRefresh(svc);
                     break;
-                case ALTER_VIEW:
-                    alterView(svc);
-                    break;
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
@@ -276,7 +267,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         activeExtraStrInfo = extraStrInfo;
         extraInfo.clear();
         keepMatViewsValid = false;
-        viewDependencies.clear();
         clearCommandCorrelationId();
     }
 
@@ -344,7 +334,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public boolean isStructural() {
         return switch (command) {
             case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, SET_DEDUP_DISABLE, SET_DEDUP_ENABLE,
-                 CHANGE_COLUMN_TYPE, ALTER_VIEW -> true;
+                 CHANGE_COLUMN_TYPE -> true;
             default -> false;
         };
     }
@@ -445,52 +435,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public boolean shouldCompileDependentViews() {
         return switch (command) {
-            case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, CHANGE_COLUMN_TYPE -> true;
+            case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, CHANGE_COLUMN_TYPE -> true;
             default -> false;
         };
     }
 
     @Override
     public void startAsync() {
-    }
-
-    private void alterView(MetadataService svc) {
-        final TableRecordMetadata metadata = svc.getMetadata();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            CharSequence columnName = metadata.getColumnName(i);
-            int columnType = metadata.getColumnType(i);
-            if (columnType > 0) {
-                svc.removeViewColumn(columnName);
-            }
-        }
-
-        int extraInfoIndex = 0;
-        int extraStrInfoIndex = 0;
-
-        final int columnCount = (int) extraInfo.get(extraInfoIndex++);
-        for (int i = 0; i < columnCount; i++) {
-            final CharSequence columnName = activeExtraStrInfo.getStrA(extraStrInfoIndex++);
-            final int type = (int) extraInfo.get(extraInfoIndex++);
-            svc.addViewColumn(columnName, type);
-        }
-
-        final String viewSql = Chars.toString(activeExtraStrInfo.getStrA(extraStrInfoIndex++));
-
-        viewDependencies.clear();
-        final int numOfDependencies = (int) extraInfo.get(extraInfoIndex++);
-        for (int i = 0; i < numOfDependencies; i++) {
-            final String tableName = Chars.toString(activeExtraStrInfo.getStrA(extraStrInfoIndex++));
-            final int numOfColumns = (int) extraInfo.get(extraInfoIndex++);
-
-            final LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
-            for (int j = 0; j < numOfColumns; j++) {
-                final CharSequence columnName = activeExtraStrInfo.getStrA(extraStrInfoIndex++);
-                columns.add(Chars.toString(columnName));
-            }
-            viewDependencies.put(tableName, columns);
-        }
-
-        svc.alterView(viewSql, viewDependencies);
     }
 
     private void applyAddColumn(MetadataService svc) {

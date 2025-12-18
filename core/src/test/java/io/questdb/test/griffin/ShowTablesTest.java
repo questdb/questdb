@@ -267,12 +267,13 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances (ts timestamp, cust_id int, ccy symbol, balance double) timestamp(ts) partition by day wal");
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
             execute("create view balances_view as (select ts, max(balance) from balances sample by 1h)");
+            drainWalAndViewQueues();
             assertSql(
                     """
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
                             1\tbalances\tts\tDAY\t1000\t300000000\ttrue\tbalances~1\tfalse\t0\tHOUR\tT
                             2\tbalances_1h\tts\tWEEK\t1000\t-1\ttrue\tbalances_1h~2\tfalse\t0\tHOUR\tM
-                            3\tbalances_view\tts\tN/A\t-1\t-1\ttrue\tbalances_view~3\tfalse\t0\tHOUR\tV
+                            3\tbalances_view\tts\tN/A\t0\t0\ttrue\tbalances_view~3\tfalse\t0\tHOUR\tV
                             """,
                     "tables() order by table_name"
             );

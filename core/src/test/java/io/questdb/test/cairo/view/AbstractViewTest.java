@@ -185,6 +185,14 @@ class AbstractViewTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
     }
 
+    void createOrReplaceView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
+        execute("CREATE OR REPLACE VIEW " + viewName + " AS (" + viewQuery + ")");
+        drainWalAndViewQueues();
+        assertViewDefinition(viewName, viewQuery, expectedDependencies);
+        assertViewDefinitionFile(viewName, viewQuery);
+        assertViewState(viewName);
+    }
+
     void createTable(String tableName) throws SqlException {
         execute(
                 "create table if not exists " + tableName +
@@ -195,14 +203,6 @@ class AbstractViewTest extends AbstractCairoTest {
             execute("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + "'k2_" + i + "', " + i + ")");
         }
         drainWalQueue();
-    }
-
-    void createOrReplaceView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
-        execute("CREATE OR REPLACE VIEW " + viewName + " AS (" + viewQuery + ")");
-        drainWalAndViewQueues();
-        assertViewDefinition(viewName, viewQuery, expectedDependencies);
-        assertViewDefinitionFile(viewName, viewQuery);
-        assertViewState(viewName);
     }
 
     void createView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {

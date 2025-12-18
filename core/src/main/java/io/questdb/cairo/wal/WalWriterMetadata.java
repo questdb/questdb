@@ -164,10 +164,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         );
     }
 
-    public void alterView() {
-        structureVersion++;
-    }
-
     public void changeColumnType(
             CharSequence columnName,
             int columnType,

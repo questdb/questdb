@@ -26,6 +26,7 @@ package io.questdb.cairo.view;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
@@ -36,12 +37,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 public class ViewStateStoreImpl implements ViewStateStore {
+    private final CairoEngine engine;
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<ViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final ThreadLocal<ViewCompilerTask> taskHolder = new ThreadLocal<>(ViewCompilerTask::new);
     private final Queue<ViewCompilerTask> taskQueue = ConcurrentQueue.createConcurrentQueue(ViewCompilerTask::new);
 
     public ViewStateStoreImpl(CairoEngine engine) {
+        this.engine = engine;
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
@@ -49,6 +52,7 @@ public class ViewStateStoreImpl implements ViewStateStore {
     @Override
     public void clear() {
         stateByTableDirName.clear();
+        taskQueue.clear();
     }
 
     @Override
@@ -59,6 +63,10 @@ public class ViewStateStoreImpl implements ViewStateStore {
         final ViewState prevState = stateByTableDirName.putIfAbsent(viewToken.getDirName(), state);
         if (prevState != null) {
             throw CairoException.critical(0).put("view state already exists [dir=").put(viewToken.getDirName());
+        }
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(state.getViewMetadata());
         }
     }
 

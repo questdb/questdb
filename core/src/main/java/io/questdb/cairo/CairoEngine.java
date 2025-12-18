@@ -65,6 +65,8 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.NoOpViewStateStore;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewGraph;
+import io.questdb.cairo.view.ViewMetadata;
+import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.cairo.vm.Vm;
@@ -112,6 +114,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -933,6 +937,9 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken, long desiredVersion) {
         assert tableToken.isWal();
         verifyTableToken(tableToken);
+        if (tableToken.isView()) {
+            return getViewMetadata(tableToken);
+        }
         final TableRecordMetadata metadata = sequencerMetadataPool.get(tableToken);
         validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
         return metadata;
@@ -985,6 +992,9 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public TableMetadata getTableMetadata(TableToken tableToken, long desiredVersion) {
         verifyTableToken(tableToken);
+        if (tableToken.isView()) {
+            return getViewMetadata(tableToken);
+        }
         try {
             final TableMetadata metadata = tableMetadataPool.get(tableToken);
             validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
@@ -1514,6 +1524,21 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void replaceViewDefinition(
+            TableToken viewToken,
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) {
+        try (WalWriter walWriter = getWalWriter(viewToken)) {
+            long seqTxn = walWriter.replaceViewDefinition(viewSql, dependencies);
+            LOG.info().$("replacing view definition [view='").$(viewToken)
+                    .$("', sql='").$safe(viewSql)
+                    .$("', wal=").$(walWriter.getWalId())
+                    .$("', seqTxn=").$(seqTxn)
+                    .I$();
+        }
+    }
+
     @TestOnly
     public void resetFrameFactory() {
         frameFactory.close();
@@ -1830,6 +1855,14 @@ public class CairoEngine implements Closeable, WriterSource {
             enqueueCompileView(tableToken);
             return tableToken;
         }
+    }
+
+    private @NotNull ViewMetadata getViewMetadata(TableToken tableToken) {
+        final ViewState state = getViewStateStore().getViewState(tableToken);
+        if (state == null) {
+            throw CairoException.viewDoesNotExist(tableToken.getTableName());
+        }
+        return state.getViewMetadata();
     }
 
     private void notifyViewStoresAboutDrop(TableToken droppedToken) {

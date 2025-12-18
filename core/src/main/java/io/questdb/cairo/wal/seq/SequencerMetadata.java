@@ -95,18 +95,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
-    public void addViewColumn(
-            CharSequence columnName,
-            int columnType
-    ) {
-        addColumn0(columnName, columnType, 0, false, false, 0, false);
-        readColumnOrder.add(columnMetadata.size() - 1);
-    }
-
-    public void alterView() {
-        structureVersion.incrementAndGet();
-    }
-
     public void changeColumnType(
             CharSequence columnName,
             int columnType,
@@ -251,10 +239,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     public void removeColumn(CharSequence columnName) {
         removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
         structureVersion.incrementAndGet();
-    }
-
-    public void removeViewColumn(CharSequence columnName) {
-        removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
     }
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {

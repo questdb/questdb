@@ -40,7 +40,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -101,9 +100,7 @@ import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
-import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -147,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -780,82 +777,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void addPhysicallyWrittenRows(long rows) {
         physicallyWrittenRowsSinceLastCommit.addAndGet(rows);
         metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
-    }
-
-    @Override
-    public void addViewColumn(
-            CharSequence columnName,
-            int columnType
-    ) {
-        assert txWriter.getLagRowCount() == 0;
-
-        checkDistressed();
-        checkColumnName(columnName);
-
-        if (metadata.getColumnIndexQuiet(columnName) != -1) {
-            throw CairoException.duplicateColumn(columnName);
-        }
-
-        long columnNameTxn = getTxn();
-        LOG.info()
-                .$("adding column '").$safe(columnName)
-                .$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn)
-                .$(" to ").$substr(pathRootSize, path)
-                .$();
-
-        // extend columnTop list to make sure row cancel can work
-        // need for setting correct top is hard to test without being able to read from table
-        int columnIndex = columnCount;
-
-        addViewColumnToMeta(columnName, columnType, metadata);
-
-        // Set txn number in the column version file to mark the transaction where the column is added
-        columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getLastPartitionTimestamp());
-
-        // create column files
-        if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
-            try {
-                openNewColumnFiles(columnName, columnType, false, 0);
-            } catch (CairoException e) {
-                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, e);
-            }
-        }
-    }
-
-    @Override
-    public void alterView(String viewSql, LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
-        rewriteAndSwapMetadata(metadata);
-
-        clearTodoAndCommitMetaStructureVersion();
-
-        try {
-            if (!Os.isWindows()) {
-                try {
-                    ff.fsyncAndClose(openRO(ff, path.$(), LOG));
-                } catch (CairoException e) {
-                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
-                            .$(", msg=").$safe(e.getFlyweightMessage())
-                            .$(", errno=").$(e.getErrno())
-                            .I$();
-                }
-            }
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-        } catch (CairoError err) {
-            throw err;
-        } catch (Throwable th) {
-            throwDistressException(th);
-        }
-
-        final ViewDefinition viewDefinition = new ViewDefinition();
-        viewDefinition.init(tableToken, viewSql, dependencies);
-
-        updateViewDefinition(viewDefinition);
-
-        // trigger a compile view, so view compiler job will validate the view after successful alter
-        engine.enqueueCompileView(tableToken);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -2647,7 +2568,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean contextAllowsAnyStructureChanges) {
         if (cmd.getTableId() == getMetadata().getTableId()) {
-            // no need to handle the ALTER VIEW case, it should never go async 
             switch (cmd.getType()) {
                 case CMD_ALTER_TABLE:
                     processAsyncWriterCommand(alterOp, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
@@ -2826,53 +2746,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commitRemovePartitionOperation();
         }
         return dropped;
-    }
-
-    @Override
-    public void removeViewColumn(@NotNull CharSequence name) {
-        assert txWriter.getLagRowCount() == 0;
-
-        checkDistressed();
-        checkColumnName(name);
-
-        final int index = getColumnIndex(name);
-        final int type = metadata.getColumnType(index);
-        final boolean isIndexed = metadata.isIndexed(index);
-        String columnName = metadata.getColumnName(index);
-
-        LOG.info().$("removing [column=").$safe(name).$(", path=").$substr(pathRootSize, path).I$();
-
-        final int timestampIndex = metadata.getTimestampIndex();
-        boolean timestamp = (index == timestampIndex);
-
-        metadata.removeColumn(index);
-        if (timestamp) {
-            metadata.clearTimestampIndex();
-        }
-
-        try {
-            // remove column objects
-            freeColumnMemory(index);
-
-            // remove symbol map writer or entry for such
-            removeSymbolMapWriter(index);
-
-            // reset timestamp limits
-            if (timestamp) {
-                txWriter.resetTimestamp();
-                timestampSetter = value -> {
-                };
-            }
-
-            // remove column files
-            removeColumnFiles(index, columnName, type, isIndexed);
-
-            finishColumnPurge();
-        } catch (CairoError err) {
-            throw err;
-        } catch (Throwable th) {
-            throwDistressException(th);
-        }
     }
 
     @Override
@@ -3478,33 +3351,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isIndexed) {
             populateDenseIndexerList();
         }
-
-        // increment column count
-        columnCount++;
-    }
-
-    private void addViewColumnToMeta(
-            CharSequence columnName,
-            int columnType,
-            TableWriterMetadata metadata
-    ) {
-        metadata.addColumn(
-                columnName,
-                columnType,
-                false,
-                0,
-                metadata.getColumnCount(),
-                0,
-                false,
-                -1,
-                false
-        );
-
-        // maintain the sparse list of symbol writers
-        symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
-
-        // add column objects
-        configureColumn(columnType, false, columnCount);
 
         // increment column count
         columnCount++;
@@ -10606,20 +10452,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
-    }
-
-    private void updateViewDefinition(ViewDefinition newDefinition) {
-        if (blockFileWriter == null) {
-            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
-        }
-        try (BlockFileWriter definitionWriter = blockFileWriter) {
-            definitionWriter.of(path.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
-            ViewDefinition.append(newDefinition, definitionWriter);
-        } finally {
-            path.trimTo(pathSize);
-        }
-
-        engine.getViewGraph().updateView(newDefinition);
     }
 
     private void validateSwapMeta() {

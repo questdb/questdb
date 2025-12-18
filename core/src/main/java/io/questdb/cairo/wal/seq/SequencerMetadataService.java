@@ -28,8 +28,6 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
-import io.questdb.std.LowerCaseCharSequenceHashSet;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import org.jetbrains.annotations.NotNull;
 
 public class SequencerMetadataService implements MetadataServiceStub {
@@ -62,16 +60,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
                 indexValueBlockCapacity,
                 isDedupKey
         );
-    }
-
-    @Override
-    public void addViewColumn(CharSequence columnName, int columnType) {
-        metadata.addViewColumn(columnName, columnType);
-    }
-
-    @Override
-    public void alterView(String viewSql, LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
-        metadata.alterView();
     }
 
     @Override
@@ -132,11 +120,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
     @Override
     public void removeColumn(@NotNull CharSequence columnName) {
         metadata.removeColumn(columnName);
-    }
-
-    @Override
-    public void removeViewColumn(@NotNull CharSequence columnName) {
-        metadata.removeViewColumn(columnName);
     }
 
     @Override

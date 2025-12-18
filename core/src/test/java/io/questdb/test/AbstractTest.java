@@ -157,7 +157,6 @@ public class AbstractTest {
     protected static void drainWalAndViewQueues(CairoEngine engine) {
         drainWalQueue(engine);
         drainViewQueue(engine);
-        drainWalQueue(engine);
     }
 
     protected static void drainWalQueue(CairoEngine engine) {

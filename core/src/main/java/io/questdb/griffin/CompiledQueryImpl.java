@@ -336,6 +336,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = true;
     }
 
+    public void ofReplaceView() {
+        of(REPLACE_VIEW);
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofRollback() {
         of(ROLLBACK);
         this.isExecutedAtParseTime = false;

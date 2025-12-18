@@ -33,12 +33,12 @@ public class ViewsFunctionTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
             final String query = "select ts, k, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
-            execute("create view test as (" + query + ")");
+            createView("test", query, TABLE1);
             assertQueryNoLeakCheck(
                     """
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            k\tSYMBOL\tfalse\t0\tfalse\t128\t0\tfalse\tfalse
+                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
                             doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
                             avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
                             """,
@@ -167,8 +167,8 @@ public class ViewsFunctionTest extends AbstractViewTest {
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
                             1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
                             2\ttable2\tts\tDAY\t1000\t300000000\ttrue\ttable2~2\tfalse\t0\tHOUR\tT
-                            3\tview1\t\tN/A\t-1\t-1\ttrue\tview1~3\tfalse\t0\tHOUR\tV
-                            4\tview2\t\tN/A\t-1\t-1\ttrue\tview2~4\tfalse\t0\tHOUR\tV
+                            3\tview1\t\tN/A\t0\t0\ttrue\tview1~3\tfalse\t0\tHOUR\tV
+                            4\tview2\t\tN/A\t0\t0\ttrue\tview2~4\tfalse\t0\tHOUR\tV
                             5\tview3\tts\tDAY\t1000\t-1\ttrue\tview3~5\tfalse\t0\tHOUR\tM
                             6\tview4\tts\tDAY\t1000\t-1\ttrue\tview4~6\tfalse\t0\tHOUR\tM
                             """,

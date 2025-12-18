@@ -25,6 +25,7 @@
 package io.questdb.cairo.view;
 
 import io.questdb.cairo.TableToken;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 public class NoOpViewStateStore implements ViewStateStore {
@@ -40,7 +41,7 @@ public class NoOpViewStateStore implements ViewStateStore {
     }
 
     @Override
-    public void enqueueCompile(TableToken viewToken) {
+    public void enqueueCompile(@NotNull TableToken viewToken) {
     }
 
     @Override

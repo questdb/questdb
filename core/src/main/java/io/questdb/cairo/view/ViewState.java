@@ -34,7 +34,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.locks.ReadWriteLock;
 
 /**
- * View state serves the purpose of keeping track of invalidated views.
+ * View state serves the purpose of keeping track of view metadata and invalidated flag.
  */
 public class ViewState {
     private final StringSink invalidationReason = new StringSink();
@@ -42,9 +42,11 @@ public class ViewState {
     private final ViewDefinition viewDefinition;
     private boolean invalid;
     private long updateTimestamp;
+    private ViewMetadata viewMetadata;
 
     public ViewState(@NotNull ViewDefinition viewDefinition, long updateTimestamp) {
         this.viewDefinition = viewDefinition;
+        this.viewMetadata = ViewMetadata.newInstance(viewDefinition.getViewToken());
         this.updateTimestamp = updateTimestamp;
     }
 
@@ -59,6 +61,10 @@ public class ViewState {
 
     public @NotNull ViewDefinition getViewDefinition() {
         return viewDefinition;
+    }
+
+    public @NotNull ViewMetadata getViewMetadata() {
+        return viewMetadata;
     }
 
     public boolean isInvalid() {
@@ -81,7 +87,7 @@ public class ViewState {
         lock.writeLock().unlock();
     }
 
-    public void updateState(boolean invalid, @Nullable CharSequence invalidationReason, long updateTimestamp) {
+    public void updateState(boolean invalid, @Nullable CharSequence invalidationReason, @Nullable ViewMetadata viewMetadata, long updateTimestamp) {
         this.invalid = invalid;
 
         this.invalidationReason.clear();
@@ -89,6 +95,9 @@ public class ViewState {
             this.invalidationReason.put(invalidationReason);
         }
 
+        if (viewMetadata != null) {
+            this.viewMetadata = viewMetadata;
+        }
         this.updateTimestamp = updateTimestamp;
     }
 }

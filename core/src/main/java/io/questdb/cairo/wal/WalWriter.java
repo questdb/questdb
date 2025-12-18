@@ -530,6 +530,19 @@ public class WalWriter implements TableWriterAPI {
         return txn;
     }
 
+    public long replaceViewDefinition(
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) {
+        try {
+            lastSegmentTxn = events.appendViewDefinition(viewSql, dependencies);
+            return getSequencerTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
+    }
+
     // Marks the materialized view as invalid or resets its invalidation status,
     // depending on the input values.
     public void resetMatViewState(
@@ -1979,21 +1992,6 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void addViewColumn(CharSequence columnName, int columnType) {
-            if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
-                throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
-            }
-            if (columnType <= 0) {
-                throw CairoException.nonCritical().put("invalid column type: ").put(columnType);
-            }
-        }
-
-        @Override
-        public void alterView(String viewSql, LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
-            structureVersion++;
-        }
-
-        @Override
         public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
             int columnIndex = validateExistingColumnName(columnName, "cannot change type");
             validateNewColumnType(newType);
@@ -2044,15 +2042,6 @@ public class WalWriter implements TableWriterAPI {
         public void removeColumn(@NotNull CharSequence columnName) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
-        }
-
-        @Override
-        public void removeViewColumn(@NotNull CharSequence columnName) {
-            int columnIndex = metadata.getColumnIndexQuiet(columnName);
-            if (columnIndex < 0) {
-                throw CairoException.nonCritical().put("cannot remove").put(", column does not exist [table=").put(tableToken.getTableName())
-                        .put(", column=").put(columnName).put(']');
-            }
         }
 
         @Override
@@ -2191,72 +2180,6 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void addViewColumn(
-                CharSequence columnName,
-                int columnType
-        ) {
-            int columnIndex = metadata.getColumnIndexQuiet(columnName);
-
-            if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
-                long uncommittedRows = getUncommittedRowCount();
-                if (currentTxnStartRowNum > 0) {
-                    // Roll last transaction to new segment
-                    rollUncommittedToNewSegment(-1, -1);
-                }
-
-                if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
-                    long segmentRowCount = getUncommittedRowCount();
-                    metadata.addViewColumn(columnName, columnType);
-                    columnCount = metadata.getColumnCount();
-                    columnIndex = columnCount - 1;
-                    // create column file
-                    configureColumn(columnIndex, columnType);
-                    if (ColumnType.isSymbol(columnType)) {
-                        configureSymbolMapWriter(columnIndex, columnName, 0, -1);
-                    }
-
-                    if (!rollSegmentOnNextRow) {
-                        // this means we have rolled uncommitted rows to a new segment already
-                        // we should switch metadata to this new segment
-                        path.trimTo(pathSize).slash().put(segmentId);
-                        // this will close old _meta file and create the new one
-                        metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
-                        openColumnFiles(columnName, columnType, columnIndex, path.size());
-                        path.trimTo(pathSize);
-                    }
-
-                    // if we did not have to roll uncommitted rows to a new segment
-                    // it will add the column file and switch metadata file on next row write
-                    // as part of rolling to a new segment
-                    if (uncommittedRows > 0) {
-                        setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
-                    }
-
-                    LOG.info().$("added column to WAL [path=").$substr(pathRootSize, path)
-                            .$(", columnName=").$safe(columnName)
-                            .$(", type=").$(ColumnType.nameOf(columnType))
-                            .I$();
-                } else {
-                    throw CairoException.critical(0).put("column '").put(columnName)
-                            .put("' was added, cannot apply commit because of concurrent table definition change");
-                }
-            } else {
-                if (metadata.getColumnType(columnIndex) == columnType) {
-                    LOG.info().$("column has already been added by another WAL [path=").$substr(pathRootSize, path)
-                            .$(", columnName=").$safe(columnName)
-                            .I$();
-                } else {
-                    throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
-                }
-            }
-        }
-
-        @Override
-        public void alterView(String viewSql, LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
-            metadata.alterView();
-        }
-
-        @Override
         public void changeColumnType(
                 CharSequence columnNameSeq,
                 int newType,
@@ -2375,49 +2298,6 @@ public class WalWriter implements TableWriterAPI {
                     if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
                         int index = metadata.getColumnIndex(columnName);
                         metadata.removeColumn(columnName);
-                        columnCount = metadata.getColumnCount();
-
-                        if (!rollSegmentOnNextRow) {
-                            // this means we have rolled uncommitted rows to a new segment already
-                            // we should switch metadata to this new segment
-                            path.trimTo(pathSize).slash().put(segmentId);
-                            // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
-                        }
-                        // if we did not have to roll uncommitted rows to a new segment
-                        // it will switch metadata file on next row write
-                        // as part of rolling to a new segment
-
-                        markColumnRemoved(index, type);
-                        path.trimTo(pathSize);
-                        LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                                .$(", columnName=").$safe(columnName).I$();
-                    } else {
-                        throw CairoException.critical(0)
-                                .put("column was removed, cannot apply commit because of concurrent table definition change")
-                                .put(" [column=").put(columnName).put(']');
-                    }
-                }
-            } else {
-                throw CairoException.nonCritical().put("column does not exist [column=").put(columnNameSeq).put(']');
-            }
-        }
-
-        @Override
-        public void removeViewColumn(@NotNull CharSequence columnNameSeq) {
-            final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
-            if (columnIndex > -1) {
-                String columnName = metadata.getColumnName(columnIndex);
-                int type = metadata.getColumnType(columnIndex);
-                if (type > 0) {
-                    if (currentTxnStartRowNum > 0) {
-                        // Roll last transaction to new segment
-                        rollUncommittedToNewSegment(-1, -1);
-                    }
-
-                    if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
-                        int index = metadata.getColumnIndex(columnName);
-                        metadata.removeViewColumn(columnName);
                         columnCount = metadata.getColumnCount();
 
                         if (!rollSegmentOnNextRow) {
