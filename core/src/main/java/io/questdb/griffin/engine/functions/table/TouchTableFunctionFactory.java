@@ -145,6 +145,9 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         private long touchMemory(long pageSize, long baseAddress, long memorySize) {
+            if (baseAddress == 0) {
+                return 0;
+            }
             final long pageCount = (memorySize + pageSize - 1) / pageSize;
 
             for (long i = 0; i < pageCount; i++) {
@@ -169,13 +172,6 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
                         final long columnMemorySize = frame.getPageSize(columnIndex);
                         final long columnBaseAddress = frame.getPageAddress(columnIndex);
-
-                        if (columnBaseAddress == 0) {
-                            LOG.info().$("column was empty, skipping touch [column=").$safe(metadata.getColumnName(columnIndex)).I$();
-                            // column is empty, continue
-                            continue;
-                        }
-
                         dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
 
                         if (metadata.isColumnIndexed(columnIndex)) {
@@ -183,21 +179,9 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
                             final long keyBaseAddress = indexReader.getKeyBaseAddress();
                             final long keyMemorySize = indexReader.getKeyMemorySize();
-
-                            if (keyBaseAddress == 0) {
-                                LOG.info().$("column index key was empty, skipping touch [column=").$safe(metadata.getColumnName(columnIndex)).I$();
-                                continue;
-                            }
-
                             indexKeyPages += touchMemory(pageSize, keyBaseAddress, keyMemorySize);
 
                             final long valueBaseAddress = indexReader.getValueBaseAddress();
-
-                            if (valueBaseAddress == 0) {
-                                LOG.info().$("column index value was empty, skipping touch [column=").$safe(metadata.getColumnName(columnIndex)).I$();
-                                continue;
-                            }
-
                             final long valueMemorySize = indexReader.getValueMemorySize();
                             indexValuePages += touchMemory(pageSize, valueBaseAddress, valueMemorySize);
                         }
