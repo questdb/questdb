@@ -157,6 +157,75 @@ public class SampleByTest extends AbstractCairoTest {
         );
     }
 
+    // https://github.com/questdb/questdb/issues/6549
+    @Test
+    public void testCaseWithAggregatesInSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table trades as (" +
+                            "select * from (" +
+                            "  select timestamp_sequence(172800000000, 900000000) ts, 'BTC-USD' symbol, 100.0 + x price from long_sequence(8)" +
+                            "  union all " +
+                            "  select timestamp_sequence(172800000000, 900000000) ts, 'ETH-USD' symbol, 200.0 + x price from long_sequence(8)" +
+                            ") order by ts" +
+                            ") timestamp(ts) partition by DAY"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsymbol\tswitch
+                            1970-01-03T00:00:00.000000Z\tBTC-USD\t101.0
+                            1970-01-03T00:00:00.000000Z\tETH-USD\t202.0
+                            1970-01-03T01:00:00.000000Z\tBTC-USD\t103.0
+                            1970-01-03T01:00:00.000000Z\tETH-USD\t204.0
+                            1970-01-03T02:00:00.000000Z\tBTC-USD\t105.0
+                            1970-01-03T02:00:00.000000Z\tETH-USD\t206.0
+                            1970-01-03T03:00:00.000000Z\tBTC-USD\t107.0
+                            1970-01-03T03:00:00.000000Z\tETH-USD\t208.0
+                            """,
+                    "SELECT " +
+                            "  ts, symbol, " +
+                            "  CASE " +
+                            "    WHEN symbol = 'BTC-USD' THEN first(price) " +
+                            "    ELSE last(price) " +
+                            "  END " +
+                            "FROM trades " +
+                            "SAMPLE BY 1h",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Same query, but with additionally SELECTed aggregates
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsymbol\tfirst_price\tlast_price\tswitch
+                            1970-01-03T00:00:00.000000Z\tBTC-USD\t101.0\t102.0\t101.0
+                            1970-01-03T00:00:00.000000Z\tETH-USD\t201.0\t202.0\t202.0
+                            1970-01-03T01:00:00.000000Z\tBTC-USD\t103.0\t104.0\t103.0
+                            1970-01-03T01:00:00.000000Z\tETH-USD\t203.0\t204.0\t204.0
+                            1970-01-03T02:00:00.000000Z\tBTC-USD\t105.0\t106.0\t105.0
+                            1970-01-03T02:00:00.000000Z\tETH-USD\t205.0\t206.0\t206.0
+                            1970-01-03T03:00:00.000000Z\tBTC-USD\t107.0\t108.0\t107.0
+                            1970-01-03T03:00:00.000000Z\tETH-USD\t207.0\t208.0\t208.0
+                            """,
+                    "SELECT " +
+                            "  ts, symbol, " +
+                            "  first(price) as first_price, " +
+                            "  last(price) as last_price, " +
+                            "  CASE " +
+                            "    WHEN symbol = 'BTC-USD' THEN first(price) " +
+                            "    ELSE last(price) " +
+                            "  END " +
+                            "FROM trades " +
+                            "SAMPLE BY 1h ALIGN TO CALENDAR",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
     @Test
     public void testDecimalFillNull() throws Exception {
         assertQuery(
@@ -15906,7 +15975,7 @@ public class SampleByTest extends AbstractCairoTest {
                                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                             TestUtils.drainCursor(cursor);
                                         } catch (Throwable e) {
-                                            e.printStackTrace();
+                                            e.printStackTrace(System.out);
                                             errors.incrementAndGet();
                                         }
                                     }
