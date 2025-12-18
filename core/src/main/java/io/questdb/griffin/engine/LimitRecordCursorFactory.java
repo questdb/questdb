@@ -244,26 +244,30 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
+        public void skipRows(Counter skipCounter) throws DataUnavailableException {
             ensureReadyToConsume();
-            long excessCount = Math.max(0, rowCount.get() - remaining);
-            if (excessCount > 0) {
-                rowCount.set(remaining);
-            }
-            long rowsToSkip = rowCount.get();
-            base.skipRows(rowCount);
-            long counterAfterSkip = rowCount.get();
+            long rowsToSkip = skipCounter.get();
+            long excessCount = Math.max(0, rowsToSkip - remaining);
+            rowsToSkip -= excessCount;
+            // Updating skipCounter like this will cause broken behavior if base.skipRows()
+            // throws DataUnavailableException. Fixing it would require saving excessCount
+            // in a field. Since this suspension mechanism will be deprecated soon, the
+            // added complexity was left out.
+            skipCounter.dec(excessCount);
+            base.skipRows(skipCounter);
+            long counterAfterSkip = skipCounter.get();
             if (counterAfterSkip > 0) {
                 remaining = 0;
             } else {
+                // counterAfterSkip should never be negative, so normally it will be zero here.
+                // However, if the base cursor is broken and makes it negative, it's better
+                // not to erase the trace of that bug, so we preserve its effect.
                 remaining -= (rowsToSkip - counterAfterSkip);
                 if (remaining < 0) {
                     remaining = 0;
                 }
             }
-            if (excessCount > 0) {
-                rowCount.add(excessCount);
-            }
+            skipCounter.add(excessCount);
         }
 
         @Override
