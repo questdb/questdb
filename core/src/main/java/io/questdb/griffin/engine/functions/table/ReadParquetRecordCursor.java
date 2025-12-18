@@ -44,6 +44,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
@@ -99,11 +100,18 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     /**
      * Validates that metadata columns can be projected from parquet and optionally populates column mappings.
      *
-     * @param columns if not null, will be populated with (parquetIndex, parquetType) pairs
+     * @param columns       if not null, will be populated with (parquetIndex, parquetType) pairs
+     * @param columnIndexes if not null, will be populated with metadata column indexes (0, 1, 2, ...)
      * @return true if projection is possible, false otherwise
      */
-    public static boolean canProjectMetadata(RecordMetadata metadata, PartitionDecoder decoder, @Nullable DirectIntList columns) {
+    public static boolean canProjectMetadata(
+            RecordMetadata metadata,
+            PartitionDecoder decoder,
+            @Nullable DirectIntList columns,
+            @Nullable IntList columnIndexes
+    ) {
         final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
+
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             final int expectedType = metadata.getColumnType(i);
             final CharSequence columnName = metadata.getColumnName(i);
@@ -131,6 +139,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             if (columns != null) {
                 columns.add(parquetIndex);
                 columns.add(actualType);
+            }
+            if (columnIndexes != null) {
+                columnIndexes.add(parquetIndex);
             }
         }
 
@@ -180,8 +191,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             rowGroupBuffers.reopen();
             columns.reopen();
+            columns.clear();
             columns.setCapacity(2L * metadata.getColumnCount());
-            if (!canProjectMetadata(metadata, decoder, columns)) {
+            if (!canProjectMetadata(metadata, decoder, columns, null)) {
                 // We need to recompile the factory as the Parquet metadata has changed.
                 throw TableReferenceOutOfDateException.of(path);
             }

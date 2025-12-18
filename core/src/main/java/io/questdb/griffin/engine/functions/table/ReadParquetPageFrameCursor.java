@@ -132,14 +132,10 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         this.fileSize = ff.length(fd);
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-        if (!canProjectMetadata(metadata, decoder, null)) {
+        columnIndexes.clear();
+        if (!canProjectMetadata(metadata, decoder, null, columnIndexes)) {
             // We need to recompile the factory as the Parquet metadata has changed.
             throw TableReferenceOutOfDateException.of(path);
-        }
-
-        columnIndexes.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            columnIndexes.add(i);
         }
         this.rowCount = decoder.metadata().getRowCount();
         this.rowGroupCount = decoder.metadata().getRowGroupCount();
