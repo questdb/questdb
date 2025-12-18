@@ -545,15 +545,16 @@ int32_t MIN_SHORT(int16_t *ps, int64_t count) {
         return I_MIN;
     }
 
-    const int step = 16;
+    const int step = 32;
     const auto remainder = (int32_t) (count % step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
-    Vec16s vec;
-    Vec16s vec_min = S_MAX;
+    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
+    Vec32s vec;
+    Vec32s vec_min = S_MAX;
     for (; ps < vec_lim; ps += step) {
-        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
+        _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
         vec.load(ps);
         vec_min = min(vec_min, vec);
     }
@@ -578,10 +579,11 @@ int32_t MAX_SHORT(int16_t *ps, int64_t count) {
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
-    Vec16s vec;
-    Vec16s vec_max = S_MIN;
+    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
+    Vec32s vec;
+    Vec32s vec_max = S_MIN;
     for (; ps < vec_lim; ps += step) {
-        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
+        _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
         vec.load(ps);
         vec_max = max(vec_max, vec);
     }
