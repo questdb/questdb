@@ -24,20 +24,18 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.MutableMetadataRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -45,30 +43,31 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 /**
  * Factory for parallel read_parquet() SQL function.
  */
-public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final PageFrameRecordCursorImpl cursor;
-    private final ReadParquetPageFrameCursor pageFrameCursor;
+public class ReadParquetPageFrameRecordCursorFactory extends MutableMetadataRecordCursorFactory {
+    private PageFrameRecordCursorImpl cursor;
+    private ReadParquetPageFrameCursor pageFrameCursor;
     private Path path;
 
     public ReadParquetPageFrameRecordCursorFactory(
-            @NotNull CairoConfiguration configuration,
             @Transient Path path,
             RecordMetadata metadata
     ) {
         super(metadata);
         this.path = new Path().of(path);
-        this.cursor = new PageFrameRecordCursorImpl(
-                configuration,
-                metadata,
-                new PageFrameRowCursorFactory(ORDER_ASC),
-                true,
-                null
-        );
-        this.pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), metadata);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (this.cursor == null) {
+            this.cursor = new PageFrameRecordCursorImpl(
+                    executionContext.getCairoEngine().getConfiguration(),
+                    getMetadata(),
+                    new PageFrameRowCursorFactory(ORDER_ASC),
+                    true,
+                    null
+            );
+            this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        }
         pageFrameCursor.of(path.$());
         try {
             cursor.of(pageFrameCursor, executionContext);

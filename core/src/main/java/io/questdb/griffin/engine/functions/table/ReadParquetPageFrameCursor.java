@@ -46,7 +46,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.metadataHasChanged;
+import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.canProjectMetadata;
 
 /**
  * Page frame cursor for parallel read_parquet() SQL function.
@@ -132,7 +132,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         this.fileSize = ff.length(fd);
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-        if (metadataHasChanged(metadata, decoder)) {
+        if (!canProjectMetadata(metadata, decoder, null)) {
             // We need to recompile the factory as the Parquet metadata has changed.
             throw TableReferenceOutOfDateException.of(path);
         }

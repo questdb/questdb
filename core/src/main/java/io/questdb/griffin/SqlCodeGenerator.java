@@ -38,6 +38,7 @@ import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.MutableMetadataRecordCursorFactory;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -434,6 +435,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
+    private final IntList tempColumnIndexes = new IntList();
+    private final IntList tempColumnSizeShifts = new IntList();
     private final ObjList<QueryColumn> tempColumnsList = new ObjList<>();
     private final ObjList<ExpressionNode> tempExpressionNodeList = new ObjList<>();
     private final ObjList<Function> tempInnerProjectionFunctions = new ObjList<>();
@@ -1030,6 +1033,80 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private void backupWhereClause(ExpressionNode node) {
         processNodeQueryModels(node, backupWhereClauseRef);
+    }
+
+    private GenericRecordMetadata buildQueryMetadata(
+            @Transient QueryModel model,
+            @Transient SqlExecutionContext executionContext,
+            @Transient RecordMetadata metadata,
+            int readerTimestampIndex,
+            boolean requiresTimestamp,
+            IntList columnIndexes,
+            IntList columnSizeShifts
+    ) throws SqlException {
+        final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
+        final int topDownColumnCount = topDownColumns.size();
+        final GenericRecordMetadata queryMeta = new GenericRecordMetadata();
+
+        try {
+            if (requiresTimestamp) {
+                executionContext.pushTimestampRequiredFlag(true);
+            }
+
+            boolean contextTimestampRequired = executionContext.isTimestampRequired();
+            // some "sample by" queries don't select any cols but needs timestamp col selected
+            // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
+            if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
+                for (int i = 0; i < topDownColumnCount; i++) {
+                    QueryColumn column = topDownColumns.getQuick(i);
+                    int columnIndex = metadata.getColumnIndexQuiet(column.getName());
+                    if (columnIndex == -1) {
+                        throw SqlException.invalidColumn(column.getAst().position, column.getName());
+                    }
+                    int type = metadata.getColumnType(columnIndex);
+                    int typeSize = ColumnType.sizeOf(type);
+                    columnIndexes.add(columnIndex);
+                    columnSizeShifts.add(Numbers.msb(typeSize));
+
+                    queryMeta.add(new TableColumnMetadata(
+                            metadata.getColumnName(columnIndex),
+                            type,
+                            metadata.isColumnIndexed(columnIndex),
+                            metadata.getIndexValueBlockCapacity(columnIndex),
+                            metadata.isSymbolTableStatic(columnIndex),
+                            metadata.getMetadata(columnIndex),
+                            -1,
+                            false,
+                            0,
+                            metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
+                            metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
+                    ));
+
+                    if (columnIndex == readerTimestampIndex) {
+                        queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
+                    }
+                }
+
+                // select timestamp when it is required but not already selected
+                if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
+                    queryMeta.add(new TableColumnMetadata(
+                            metadata.getColumnName(readerTimestampIndex),
+                            metadata.getColumnType(readerTimestampIndex),
+                            metadata.getMetadata(readerTimestampIndex)
+                    ));
+                    queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
+
+                    columnIndexes.add(readerTimestampIndex);
+                    columnSizeShifts.add(Numbers.msb(ColumnType.TIMESTAMP));
+                }
+            }
+        } finally {
+            if (requiresTimestamp) {
+                executionContext.popTimestampRequiredFlag();
+            }
+        }
+
+        return queryMeta;
     }
 
     // Checks if lo, hi is set and lo >= 0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
@@ -2819,17 +2896,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory tableFactory = model.getTableNameFunction();
+        RecordCursorFactory tableFactory = model.getTableNameFunction();
         if (tableFactory != null) {
             // We're transferring ownership of the tableFactory's factory to another factory
             // setting tableFactory to NULL will prevent double-ownership.
             // We should not release tableFactory itself, they typically just a lightweight factory wrapper.
             model.setTableNameFunction(null);
-            return tableFactory;
         } else {
             // when tableFactory is null we have to recompile it from scratch, including creating new factory
-            return TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
+            tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
         }
+
+        if (tableFactory instanceof MutableMetadataRecordCursorFactory factory) {
+            RecordMetadata metadata = factory.getMetadata();
+            int readerTimestampIndex = getTimestampIndex(model, metadata);
+            boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
+            factory.setMetadata(buildQueryMetadata(
+                    model,
+                    executionContext,
+                    tableFactory.getMetadata(),
+                    readerTimestampIndex,
+                    requiresTimestamp,
+                    tempColumnIndexes,
+                    tempColumnSizeShifts
+            ));
+        }
+
+        return tableFactory;
     }
 
     private RecordCursorFactory generateIntersectOrExceptAllFactory(
@@ -6180,81 +6273,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         // create metadata based on top-down columns that are required
 
-        final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
-        final int topDownColumnCount = topDownColumns.size();
         final IntList columnIndexes = new IntList();
         final IntList columnSizeShifts = new IntList();
-
-        // topDownColumnCount can be 0 for 'select count()' queries
-
-        int readerTimestampIndex;
-        readerTimestampIndex = getTimestampIndex(model, metadata);
-
+        int readerTimestampIndex = getTimestampIndex(model, metadata);
         // Latest by on a table requires the provided timestamp column to be the designated timestamp.
         if (latestBy.size() > 0 && readerTimestampIndex != metadata.getTimestampIndex()) {
             throw SqlException.$(model.getTimestamp().position, "latest by over a table requires designated TIMESTAMP");
         }
 
         boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
-        final GenericRecordMetadata queryMeta = new GenericRecordMetadata();
-        try {
-            if (requiresTimestamp) {
-                executionContext.pushTimestampRequiredFlag(true);
-            }
-
-            boolean contextTimestampRequired = executionContext.isTimestampRequired();
-            // some "sample by" queries don't select any cols but needs timestamp col selected
-            // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
-            if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
-                for (int i = 0; i < topDownColumnCount; i++) {
-                    QueryColumn column = topDownColumns.getQuick(i);
-                    int columnIndex = metadata.getColumnIndexQuiet(column.getName());
-                    if (columnIndex == -1) {
-                        throw SqlException.invalidColumn(column.getAst().position, column.getName());
-                    }
-                    int type = metadata.getColumnType(columnIndex);
-                    int typeSize = ColumnType.sizeOf(type);
-
-                    columnIndexes.add(columnIndex);
-                    columnSizeShifts.add(Numbers.msb(typeSize));
-
-                    queryMeta.add(new TableColumnMetadata(
-                            metadata.getColumnName(columnIndex),
-                            type,
-                            metadata.isColumnIndexed(columnIndex),
-                            metadata.getIndexValueBlockCapacity(columnIndex),
-                            metadata.isSymbolTableStatic(columnIndex),
-                            metadata.getMetadata(columnIndex),
-                            -1,
-                            false,
-                            0,
-                            metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
-                            metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-                    ));
-
-                    if (columnIndex == readerTimestampIndex) {
-                        queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
-                    }
-                }
-
-                // select timestamp when it is required but not already selected
-                if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
-                    queryMeta.add(new TableColumnMetadata(
-                            metadata.getColumnName(readerTimestampIndex),
-                            metadata.getColumnType(readerTimestampIndex),
-                            metadata.getMetadata(readerTimestampIndex)
-                    ));
-                    queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
-
-                    columnIndexes.add(readerTimestampIndex);
-                    columnSizeShifts.add(Numbers.msb(ColumnType.TIMESTAMP));
-                }
-            }
-        } finally {
-            if (requiresTimestamp) {
-                executionContext.popTimestampRequiredFlag();
-            }
-        }
+        final GenericRecordMetadata queryMeta = buildQueryMetadata(
+                model,
+                executionContext,
+                metadata,
+                readerTimestampIndex,
+                requiresTimestamp,
+                columnIndexes,
+                columnSizeShifts
+        );
 
         if (reader == null) {
             // This is WAL serialisation compilation. We don't need to read data from table
