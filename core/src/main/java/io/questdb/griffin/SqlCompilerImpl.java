@@ -2542,11 +2542,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        int rollbackPosition = lexer.lastTokenPosition();
         CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
         if (!isOrKeyword(tok)) {
             // not CREATE OR REPLACE VIEW
             // just bail out and let parseCreate() handle it
-            lexerToFirstToken(lexer);
+            lexerToFirstToken(lexer, rollbackPosition);
             return;
         }
         tok = expectToken(lexer, "'replace'");
@@ -2567,13 +2568,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (viewToken == null) {
             // view does not exist yet
             // just bail out and let CREATE VIEW handle it
-            lexerToFirstToken(lexer);
+            lexerToFirstToken(lexer, rollbackPosition);
             return;
         }
         if (engine.getViewGraph().getViewDefinition(viewToken) == null) {
             // view does not exist yet
             // just bail out and let CREATE VIEW handle it
-            lexerToFirstToken(lexer);
+            lexerToFirstToken(lexer, rollbackPosition);
             return;
         }
         assert viewToken.isView();
@@ -4613,8 +4614,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
     }
 
-    private void lexerToFirstToken(GenericLexer lexer) throws SqlException {
-        lexer.restart();
+    private void lexerToFirstToken(GenericLexer lexer, int rollbackPosition) throws SqlException {
+        lexer.goToPosition(rollbackPosition);
         SqlUtil.fetchNext(lexer);
     }
 
