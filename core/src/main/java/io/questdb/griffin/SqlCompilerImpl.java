@@ -2900,6 +2900,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
             if (!executionContext.isValidationOnly()) {
+                executionContext.getCircuitBreaker().resetTimer();
                 engine.snapshotCreate(executionContext.getCircuitBreaker());
             }
             compiledQuery.ofCheckpointCreate();
