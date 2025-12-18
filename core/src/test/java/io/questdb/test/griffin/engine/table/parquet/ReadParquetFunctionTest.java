@@ -97,6 +97,8 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 Assert.assertTrue(Files.exists(path.$()));
                 sink.clear();
                 sink.put("select a_ts, a_long from read_parquet('x.parquet')");
+                // If projection pushdown is not working, a SelectedRecord operator would appear
+                // above the parquet scan in the plan.
                 final String expectedPlan = parallel ? """
                         parquet page frame scan
                           columns: a_ts,a_long
@@ -109,8 +111,120 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         expectedPlan
                 );
 
-
                 assertSqlCursors0("select a_ts, a_long from x");
+            }
+        });
+    }
+
+    @Test
+    public void testColumnProjectionDifferentOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " rnd_str(4,4,4,2) as a_str," +
+                    " rnd_long() as a_long," +
+                    " rnd_int() as an_int" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                final String expectedPlan = parallel ? """
+                        parquet page frame scan
+                          columns: an_int,a_long,a_str
+                        """ : """
+                        parquet file sequential scan
+                          columns: an_int,a_long,a_str
+                        """;
+                sink.clear();
+                sink.put("select an_int, a_long, a_str from read_parquet('x.parquet')");
+                assertPlanNoLeakCheck(
+                        sink,
+                        expectedPlan
+                );
+                assertSqlCursors0("select an_int, a_long, a_str from x");
+            }
+        });
+    }
+
+    @Test
+    public void testColumnProjectionSingleColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " rnd_str(4,4,4,2) as a_str," +
+                    " rnd_long() as a_long," +
+                    " rnd_int() as an_int" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                sink.clear();
+                sink.put("select a_long from read_parquet('x.parquet')");
+                // Select single column
+                final String expectedPlan = parallel ? """
+                        parquet page frame scan
+                          columns: a_long
+                        """ : """
+                        parquet file sequential scan
+                          columns: a_long
+                        """;
+                assertPlanNoLeakCheck(
+                        sink,
+                        expectedPlan
+                );
+                assertSqlCursors0("select a_long from x");
+            }
+        });
+    }
+
+    @Test
+    public void testColumnProjectionWithExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " rnd_str(4,4,4,2) as a_str," +
+                    " rnd_long() as a_long," +
+                    " rnd_int() as an_int" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                // Expression requires VirtualRecord but projection should still work
+                final String expectedPlan = parallel ? """
+                        VirtualRecord
+                          functions: [a_long+1]
+                            parquet page frame scan
+                              columns: a_long
+                        """ : """
+                        VirtualRecord
+                          functions: [a_long+1]
+                            parquet file sequential scan
+                              columns: a_long
+                        """;
+                assertPlanNoLeakCheck(
+                        "select a_long + 1 from read_parquet('x.parquet')",
+                        expectedPlan
+                );
             }
         });
     }
