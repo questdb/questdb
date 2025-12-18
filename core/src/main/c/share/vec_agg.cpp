@@ -24,6 +24,7 @@
 
 #include "vec_agg.h"
 #include "util.h"
+#include <immintrin.h>
 
 #define MAX_VECTOR_SIZE 512
 
@@ -482,15 +483,45 @@ int64_t SUM_SHORT(int16_t *ps, int64_t count) {
         return L_MIN;
     }
 
+#if INSTRSET >= 8
+    // Faster AVX2 version: uses raw intrinsics since _mm256_madd_epi16 (vpmaddwd) is not available in VCL
     const int32_t step = 32;
     const auto remainder = (int32_t) (count % step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
-    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
-    Vec32s vec;
-    Vec16i acc0 = 0;
-    Vec16i acc1 = 0;
+    const __m256i ones = _mm256_set1_epi16(1);
+    __m256i acc0 = _mm256_setzero_si256();
+    __m256i acc1 = _mm256_setzero_si256();
+    for (; ps < vec_lim; ps += step) {
+        _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
+        __m256i vec0 = _mm256_loadu_si256((__m256i const*) ps);
+        __m256i vec1 = _mm256_loadu_si256((__m256i const*) (ps + 16));
+        // multiply the loaded vectors by 1 (no-op) and extend them to 32-bit;
+        // then add them to the accumulators
+        acc0 = _mm256_add_epi32(acc0, _mm256_madd_epi16(vec0, ones));
+        acc1 = _mm256_add_epi32(acc1, _mm256_madd_epi16(vec1, ones));
+    }
+
+    _mm_prefetch(ps, _MM_HINT_T0);
+    // Horizontal sum of both accumulators to int64
+    __m256i combined = _mm256_add_epi32(acc0, acc1);
+    __m128i lo = _mm256_castsi256_si128(combined);
+    __m128i hi = _mm256_extracti128_si256(combined, 1);
+    __m128i sum128 = _mm_add_epi32(lo, hi);
+    int64_t sum = (int64_t) _mm_extract_epi32(sum128, 0) +
+                  (int64_t) _mm_extract_epi32(sum128, 1) +
+                  (int64_t) _mm_extract_epi32(sum128, 2) +
+                  (int64_t) _mm_extract_epi32(sum128, 3);
+#else
+    const int32_t step = 16;
+    const auto remainder = (int32_t) (count % step);
+    const auto *lim = ps + count;
+    const auto *vec_lim = lim - remainder;
+
+    Vec16s vec;
+    Vec8i acc0 = 0;
+    Vec8i acc1 = 0;
     for (; ps < vec_lim; ps += step) {
         _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
         vec.load(ps);
@@ -498,13 +529,15 @@ int64_t SUM_SHORT(int16_t *ps, int64_t count) {
         acc1 += extend_high(vec);
     }
 
-    int64_t result = horizontal_add_x(acc0) + horizontal_add_x(acc1);
+    _mm_prefetch(ps, _MM_HINT_T0);
+    int64_t sum = horizontal_add_x(acc0) + horizontal_add_x(acc1);
+#endif
     for (; ps < lim; ps++) {
         int16_t v = *ps;
-        result += v;
+        sum += v;
     }
 
-    return result;
+    return sum;
 }
 
 int32_t MIN_SHORT(int16_t *ps, int64_t count) {
@@ -512,21 +545,20 @@ int32_t MIN_SHORT(int16_t *ps, int64_t count) {
         return I_MIN;
     }
 
-    const int step = 32;
+    const int step = 16;
     const auto remainder = (int32_t) (count % step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
-    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
-    Vec32s vec;
-    Vec32s vecMin = S_MAX;
+    Vec16s vec;
+    Vec16s vec_min = S_MAX;
     for (; ps < vec_lim; ps += step) {
         _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
         vec.load(ps);
-        vecMin = min(vecMin, vec);
+        vec_min = min(vec_min, vec);
     }
 
-    int32_t min = horizontal_min(vecMin);
+    int32_t min = horizontal_min(vec_min);
     for (; ps < lim; ps++) {
         int16_t x = *ps;
         if (x < min) {
@@ -546,16 +578,15 @@ int32_t MAX_SHORT(int16_t *ps, int64_t count) {
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
-    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
-    Vec32s vec;
-    Vec32s vecMax = S_MIN;
+    Vec16s vec;
+    Vec16s vec_max = S_MIN;
     for (; ps < vec_lim; ps += step) {
         _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
         vec.load(ps);
-        vecMax = max(vecMax, vec);
+        vec_max = max(vec_max, vec);
     }
 
-    int32_t max = horizontal_max(vecMax);
+    int32_t max = horizontal_max(vec_max);
     for (; ps < lim; ps++) {
         int16_t x = *ps;
         if (x > max) {

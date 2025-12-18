@@ -107,6 +107,16 @@ public class SumDoubleBenchmark {
     }
 
     @Benchmark
+    public double testVectMaxDouble() {
+        return Vect.maxDouble(doubleAddr, doubleCount);
+    }
+
+    @Benchmark
+    public double testVectMinDouble() {
+        return Vect.minDouble(doubleAddr, doubleCount);
+    }
+
+    @Benchmark
     public double testVectSumDouble() {
         return Vect.sumDouble(doubleAddr, doubleCount);
     }

@@ -107,6 +107,16 @@ public class SumIntBenchmark {
     }
 
     @Benchmark
+    public int testVectMaxInt() {
+        return Vect.maxInt(intAddr, intCount);
+    }
+
+    @Benchmark
+    public int testVectMinInt() {
+        return Vect.minInt(intAddr, intCount);
+    }
+
+    @Benchmark
     public long testVectSumInt() {
         return Vect.sumInt(intAddr, intCount);
     }

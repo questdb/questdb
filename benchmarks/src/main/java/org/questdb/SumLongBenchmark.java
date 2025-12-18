@@ -107,6 +107,16 @@ public class SumLongBenchmark {
     }
 
     @Benchmark
+    public long testVectMaxLong() {
+        return Vect.maxLong(longAddr, longCount);
+    }
+
+    @Benchmark
+    public long testVectMinLong() {
+        return Vect.minLong(longAddr, longCount);
+    }
+
+    @Benchmark
     public long testVectSumLong() {
         return Vect.sumLong(longAddr, longCount);
     }
