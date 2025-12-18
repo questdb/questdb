@@ -66,6 +66,8 @@ public class ReadParquetPageFrameRecordCursorFactory extends MutableMetadataReco
                     true,
                     null
             );
+        }
+        if (this.pageFrameCursor == null) {
             this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
         }
         pageFrameCursor.of(path.$());
@@ -81,6 +83,9 @@ public class ReadParquetPageFrameRecordCursorFactory extends MutableMetadataReco
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert order != ORDER_DESC;
+        if (this.pageFrameCursor == null) {
+            this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        }
         pageFrameCursor.of(path.$());
         return pageFrameCursor;
     }
@@ -98,6 +103,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends MutableMetadataReco
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("parquet page frame scan");
+        sink.attr("columns").val(getMetadata());
     }
 
     @Override

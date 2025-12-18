@@ -7045,6 +7045,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Async JIT Filter workers: 1
                                   filter: a_long=42
                                     parquet page frame scan
+                                      columns: a_long,a_str,a_ts
                                 """
                 );
 
@@ -7054,6 +7055,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 GroupBy vectorized: true workers: 1
                                   values: [avg(a_long)]
                                     parquet page frame scan
+                                      columns: a_long
                                 """
                 );
 
@@ -7065,6 +7067,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   values: [max(a_long)]
                                   filter: null
                                     parquet page frame scan
+                                      columns: a_str,a_long
                                 """
                 );
             }

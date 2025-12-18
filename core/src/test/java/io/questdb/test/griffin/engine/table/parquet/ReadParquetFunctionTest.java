@@ -95,9 +95,21 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
                 Assert.assertTrue(Files.exists(path.$()));
-
                 sink.clear();
                 sink.put("select a_ts, a_long from read_parquet('x.parquet')");
+                final String expectedPlan = parallel ? """
+                        parquet page frame scan
+                          columns: a_ts,a_long
+                        """ : """
+                        parquet file sequential scan
+                          columns: a_ts,a_long
+                        """;
+                assertPlanNoLeakCheck(
+                        sink,
+                        expectedPlan
+                );
+
+
                 assertSqlCursors0("select a_ts, a_long from x");
             }
         });
@@ -185,7 +197,13 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 // No sorting is needed since we recognize the designated timestamp.
                 final String query = "select * from read_parquet('x.parquet') order by ts";
-                final String expectedPlan = parallel ? "parquet page frame scan\n" : "parquet file sequential scan\n";
+                final String expectedPlan = parallel ? """
+                        parquet page frame scan
+                          columns: id,ts
+                        """ : """
+                        parquet file sequential scan
+                          columns: id,ts
+                        """;
                 assertPlanNoLeakCheck(
                         query,
                         expectedPlan
@@ -359,9 +377,16 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.put("select * from read_parquet('x.parquet')");
 
                 if (parallel) {
-                    assertPlanNoLeakCheck(sink, "parquet page frame scan\n");
+                    assertPlanNoLeakCheck(sink, """ 
+                            parquet page frame scan
+                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                            """
+                    );
                 } else {
-                    assertPlanNoLeakCheck(sink, "parquet file sequential scan\n");
+                    assertPlanNoLeakCheck(sink, """ 
+                            parquet file sequential scan
+                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                            """);
                 }
 
                 sink.put(" where 1 = 2");

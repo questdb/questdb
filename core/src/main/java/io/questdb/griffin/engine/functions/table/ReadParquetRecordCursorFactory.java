@@ -63,6 +63,7 @@ public class ReadParquetRecordCursorFactory extends MutableMetadataRecordCursorF
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("parquet file sequential scan");
+        sink.attr("columns").val(getMetadata());
     }
 
     @Override
