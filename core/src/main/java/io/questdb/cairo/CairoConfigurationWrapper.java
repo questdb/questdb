@@ -44,6 +44,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 
@@ -54,6 +55,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public CairoConfigurationWrapper(Metrics metrics) {
         this.metrics = metrics;
         delegate.set(null);
+    }
+
+    @Override
+    public Map<String, String> getEnv() {
+        return getDelegate().getEnv();
     }
 
     public CairoConfigurationWrapper(@NotNull CairoConfiguration delegate) {

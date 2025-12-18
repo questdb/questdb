@@ -815,4 +815,49 @@ public class ServerMainTest extends AbstractBootstrapTest {
             }
         });
     }
+
+    @Test
+    public void testDefaultInstanceNameNotOverwrittenIfAlreadySet() throws Exception {
+        assertMemoryLeak(() -> {
+            Map<String, String> env = new HashMap<>(System.getenv());
+            env.put("QDB_DEFAULT_INSTANCE_NAME", "env-instance-name");
+
+            Bootstrap bootstrap = new Bootstrap(
+                    new DefaultBootstrapConfiguration() {
+                        @Override
+                        public Map<String, String> getEnv() {
+                            return env;
+                        }
+                    },
+                    getServerMainArgs()
+            );
+
+            // first start: set the instance name from env
+            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                serverMain.start();
+                CharSequence instanceName = serverMain.getEngine().getSettingsStore().getPreference("instance_name");
+                Assert.assertEquals("env-instance-name", instanceName.toString());
+
+                // set a different value explicitly
+                serverMain.getEngine().getSettingsStore().setPreference("instance_name", "manually-set-name");
+            }
+
+            // second start with different env value - should NOT overwrite
+            env.put("QDB_DEFAULT_INSTANCE_NAME", "different-env-name");
+            Bootstrap bootstrap2 = new Bootstrap(
+                    new DefaultBootstrapConfiguration() {
+                        @Override
+                        public Map<String, String> getEnv() {
+                            return env;
+                        }
+                    },
+                    getServerMainArgs()
+            );
+            try (final ServerMain serverMain = new ServerMain(bootstrap2)) {
+                serverMain.start();
+                CharSequence instanceName = serverMain.getEngine().getSettingsStore().getPreference("instance_name");
+                Assert.assertEquals("manually-set-name", instanceName.toString());
+            }
+        });
+    }
 }

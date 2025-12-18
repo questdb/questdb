@@ -210,6 +210,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean devModeEnabled;
     private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
+    private final @Nullable Map<String, String> env;
     private final WorkerPoolConfiguration exportPoolConfiguration = new PropExportPoolConfiguration();
     private final int[] exportWorkerAffinity;
     private final int exportWorkerCount;
@@ -760,6 +761,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
+        this.env = env;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
         this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
@@ -2938,6 +2940,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 return value.incrementAndGet();
             }
         };
+
+        @Override
+        public Map<String, String> getEnv() {
+            return env;
+        }
 
         @Override
         public boolean attachPartitionCopy() {
