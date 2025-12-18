@@ -209,7 +209,6 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
 
-                // Expression requires VirtualRecord but projection should still work
                 final String expectedPlan = parallel ? """
                         VirtualRecord
                           functions: [a_long+1]
