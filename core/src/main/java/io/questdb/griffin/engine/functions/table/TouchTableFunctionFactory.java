@@ -26,8 +26,13 @@ package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -164,6 +169,13 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
                         final long columnMemorySize = frame.getPageSize(columnIndex);
                         final long columnBaseAddress = frame.getPageAddress(columnIndex);
+
+                        if (columnBaseAddress == 0) {
+                            LOG.info().$("column was empty, skipping touch [column=").$safe(metadata.getColumnName(columnIndex)).I$();
+                            // column is empty, continue
+                            continue;
+                        }
+
                         dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
 
                         if (metadata.isColumnIndexed(columnIndex)) {
@@ -171,9 +183,21 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
                             final long keyBaseAddress = indexReader.getKeyBaseAddress();
                             final long keyMemorySize = indexReader.getKeyMemorySize();
+
+                            if (keyBaseAddress == 0) {
+                                LOG.info().$("column index key was empty, skipping touch [column=").$safe(metadata.getColumnName(columnIndex)).I$();
+                                continue;
+                            }
+
                             indexKeyPages += touchMemory(pageSize, keyBaseAddress, keyMemorySize);
 
                             final long valueBaseAddress = indexReader.getValueBaseAddress();
+
+                            if (valueBaseAddress == 0) {
+                                LOG.info().$("column index value was empty, skipping touch [column=").$safe(metadata.getColumnName(columnIndex)).I$();
+                                continue;
+                            }
+
                             final long valueMemorySize = indexReader.getValueMemorySize();
                             indexValuePages += touchMemory(pageSize, valueBaseAddress, valueMemorySize);
                         }

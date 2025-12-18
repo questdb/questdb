@@ -43,6 +43,44 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
             "), index(b) timestamp(k) partition by DAY";
 
     @Test
+    public void testNoSegfaultWhenAddingNewColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t1 AS (
+                      SELECT generate_series as t,\s
+                             (generate_series % 123456)::int as i\s
+                      FROM generate_series('2025-12-25', '2025-12-26', '1s')
+                    ) PARTITION BY DAY WAL;
+                    """);
+
+            drainWalQueue();
+
+            String query = "select touch(select * from t1);";
+            String response = """
+                    touch
+                    {"data_pages": 67, "index_key_pages":0, "index_values_pages": 0}
+                    """;
+
+            String response2 = """
+                    touch
+                    {"data_pages": 90, "index_key_pages":0, "index_values_pages": 0}
+                    """;
+
+            assertSql(response, query);
+
+            execute("alter table t1 add column f float;");
+
+            assertSql(response, query);
+            assertSql(response, query);
+
+            execute("update t1 set f = 5.2f");
+            drainWalQueue();
+
+            assertSql(response2, query);
+        });
+    }
+
+    @Test
     public void testTouchTableNoTimestampColumnSelected() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select touch(select g,a,b from x where k in '1970-01-22')";
