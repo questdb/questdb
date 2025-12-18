@@ -329,7 +329,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -655,7 +654,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         RecordCursorFactory factory;
         if (queryModel != null) {
             factory = generate(queryModel, executionContext);
-            if (innerModel.getModelType() != QUERY) {
+            if (innerModel.getModelType() != QueryModel.QUERY) {
                 factory = new RecordCursorFactoryStub(innerModel, factory);
             }
         } else {
@@ -2863,9 +2862,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // Use Java filter.
-            final Function limitLoFunction;
             try {
-                limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
                 return new AsyncFilteredRecordCursorFactory(
                         executionContext.getCairoEngine(),
@@ -4033,15 +4031,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             QueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (factory.followedLimitAdvice()) {
-            return factory;
-        }
-
         ExpressionNode limitLo = model.getLimitLo();
         ExpressionNode limitHi = model.getLimitHi();
 
         // we've to check model otherwise we could be skipping limit in outer query that's actually different from the one in inner query!
-        if ((limitLo == null && limitHi == null) || (factory.implementsLimit() && model.isLimitImplemented())) {
+        if ((limitLo == null && limitHi == null) || (factory.implementsLimit() && (limitLo != null && limitLo.implemented))) {
             return factory;
         }
 
@@ -4163,7 +4157,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
-                        model.setLimitImplemented(true);
                         if (!preSortedByTs && loFunc.isConstant() && hiFunc == null) {
                             final long lo = loFunc.getLong(null);
                             if (lo > 0 && lo <= Integer.MAX_VALUE) {
@@ -5489,11 +5482,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (model.isUpdate()) {
                     // Check the type of the column to be updated
                     int columnIndex = model.getUpdateTableColumnNames().indexOf(column.getAlias());
-                    int toType = model.getUpdateTableColumnTypes().get(columnIndex);
-                    // If the column is timestamp, we will not change the type, otherwise we will lose timestamp's precision.
-                    if (!isTimestamp(toType)) {
-                        targetColumnType = toType;
-                    }
+                    targetColumnType = model.getUpdateTableColumnTypes().get(columnIndex);
                 }
 
                 // define "undefined" functions as string unless it's update.
@@ -5549,6 +5538,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // Replace with symbol null constant
                         functions.setQuick(functions.size() - 1, SymbolConstant.NULL);
                     }
+                } else if (columnType == TIMESTAMP && (function.getType() == STRING || function.getType() == VARCHAR)) {
+                    m = new TableColumnMetadata(
+                            Chars.toString(column.getAlias()),
+                            function.getType(),
+                            false,
+                            0,
+                            false,
+                            function.getMetadata()
+                    );
                 } else {
                     m = new TableColumnMetadata(
                             Chars.toString(column.getAlias()),
@@ -7276,6 +7274,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (limitTypes.excludes(limitFuncType)) {
             throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(limitFuncType));
         }
+
+        limit.implemented = true;
 
         return limitFunc;
     }

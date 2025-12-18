@@ -33,12 +33,17 @@
             <source>../LICENSE.txt</source>
             <outputDirectory>${runtime.name}/legal</outputDirectory>
         </file>
-        <file>
-            <source>src/main/bin/${platform.dir.name}/${jemalloc.so}</source>
-            <outputDirectory>${runtime.name}/bin</outputDirectory>
-        </file>
     </files>
     <fileSets>
+        <!-- jemalloc (Linux only) -->
+        <fileSet>
+            <directory>src/main/bin/${platform.dir.name}</directory>
+            <includes>
+                <include>${jemalloc.so}</include>
+            </includes>
+            <outputDirectory>${runtime.name}/bin</outputDirectory>
+        </fileSet>
+
         <!-- questdb native libs -->
         <fileSet>
             <directory>src/main/resources/io/questdb/bin/${platform.dir.name}</directory>

@@ -122,11 +122,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public boolean followedLimitAdvice() {
-        return limitLoFunction != null;
-    }
-
-    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
@@ -187,6 +182,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         Misc.free(frameSequence);
         cursor.freeRecords();
         negativeLimitCursor.freeRecords();
+    }
+
+    @Override
+    public boolean implementsLimit() {
+        return limitLoFunction != null;
     }
 
     @Override
