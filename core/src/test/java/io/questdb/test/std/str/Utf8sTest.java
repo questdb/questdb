@@ -586,6 +586,10 @@ public class Utf8sTest {
             Assert.assertTrue(Utf8s.isAscii(sink));
             Assert.assertTrue(Utf8s.isAscii(sink.ptr(), sink.size()));
             sink.clear();
+            sink.put("foobarfoobarfoobarfoobarfoobarfoobarfoobar");
+            Assert.assertTrue(Utf8s.isAscii(sink));
+            Assert.assertTrue(Utf8s.isAscii(sink.ptr(), sink.size()));
+            sink.clear();
             sink.put("фубар");
             Assert.assertFalse(Utf8s.isAscii(sink));
             Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
