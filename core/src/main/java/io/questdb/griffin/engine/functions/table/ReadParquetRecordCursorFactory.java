@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.MutableMetadataRecordCursorFactory;
+import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
@@ -37,7 +37,7 @@ import io.questdb.std.str.Path;
 /**
  * Factory for single-threaded read_parquet() SQL function.
  */
-public class ReadParquetRecordCursorFactory extends MutableMetadataRecordCursorFactory {
+public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFactory {
     private ReadParquetRecordCursor cursor;
     private Path path;
 

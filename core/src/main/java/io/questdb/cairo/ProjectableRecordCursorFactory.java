@@ -27,10 +27,11 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 
-public abstract class MutableMetadataRecordCursorFactory implements RecordCursorFactory {
-    private RecordMetadata metadata;
+public abstract class ProjectableRecordCursorFactory implements RecordCursorFactory {
+    private final RecordMetadata metadata;
+    private RecordMetadata queryProjectMetadata;
 
-    public MutableMetadataRecordCursorFactory(RecordMetadata metadata) {
+    public ProjectableRecordCursorFactory(RecordMetadata metadata) {
         this.metadata = metadata;
     }
 
@@ -41,11 +42,14 @@ public abstract class MutableMetadataRecordCursorFactory implements RecordCursor
 
     @Override
     public RecordMetadata getMetadata() {
+        if (queryProjectMetadata != null) {
+            return queryProjectMetadata;
+        }
         return metadata;
     }
 
-    public void setMetadata(RecordMetadata metadata) {
-        this.metadata = metadata;
+    public void setQueryProjectedMetadata(RecordMetadata metadata) {
+        this.queryProjectMetadata = metadata;
     }
 
     protected void _close() {

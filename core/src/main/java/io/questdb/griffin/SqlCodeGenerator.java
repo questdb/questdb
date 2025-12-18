@@ -38,8 +38,8 @@ import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.MutableMetadataRecordCursorFactory;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.SqlJitMode;
@@ -2905,11 +2905,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
         }
 
-        if (tableFactory instanceof MutableMetadataRecordCursorFactory factory) {
+        if (tableFactory instanceof ProjectableRecordCursorFactory factory) {
             RecordMetadata metadata = factory.getMetadata();
             int readerTimestampIndex = getTimestampIndex(model, metadata);
             boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
-            factory.setMetadata(buildQueryMetadata(
+            factory.setQueryProjectedMetadata(buildQueryMetadata(
                     model,
                     executionContext,
                     tableFactory.getMetadata(),

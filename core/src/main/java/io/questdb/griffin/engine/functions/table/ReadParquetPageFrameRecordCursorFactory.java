@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.MutableMetadataRecordCursorFactory;
+import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -43,7 +43,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 /**
  * Factory for parallel read_parquet() SQL function.
  */
-public class ReadParquetPageFrameRecordCursorFactory extends MutableMetadataRecordCursorFactory {
+public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCursorFactory {
     private PageFrameRecordCursorImpl cursor;
     private ReadParquetPageFrameCursor pageFrameCursor;
     private Path path;
