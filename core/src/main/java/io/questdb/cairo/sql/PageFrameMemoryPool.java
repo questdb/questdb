@@ -64,8 +64,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // Contains [parquet_column_index, column_type] pairs.
     private final DirectIntList parquetColumns;
     private final PartitionDecoder parquetDecoder;
-    // Contains table reader to parquet column index mapping.
-    private final IntList toParquetColumnIndexes;
     private PageFrameAddressCache addressCache;
 
     public PageFrameMemoryPool(int parquetCacheSize) {
@@ -77,7 +75,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 freeParquetBuffers.add(new ParquetBuffers());
             }
             frameMemory = new PageFrameMemoryImpl();
-            toParquetColumnIndexes = new IntList(16);
             fromParquetColumnIndexes = new IntList(16);
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
             parquetDecoder = new PartitionDecoder();
@@ -267,33 +264,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     .put(", columnCount=")
                     .put(addressCache.getColumnCount());
         }
-        // Prepare table reader to parquet column index mappings.
-        toParquetColumnIndexes.clear();
-        int metadataIndex = 0;
-        for (int parquetIndex = 0, n = parquetMetadata.getColumnCount(); parquetIndex < n; parquetIndex++) {
-            final int parquetColumnType = parquetMetadata.getColumnType(parquetIndex);
-            // If the column is not recognized by the decoder, we have to skip it.
-            if (ColumnType.isUndefined(parquetColumnType)) {
-                continue;
-            }
-            if (!addressCache.isExternal()) {
-                // We can only trust column ids in case of partition files.
-                final int columnId = parquetMetadata.getColumnId(parquetIndex);
-                assert columnId > -1 : "negative column id value for " + parquetMetadata.getColumnName(parquetIndex);
-                toParquetColumnIndexes.extendAndSet(columnId, parquetIndex);
-            } else {
-                toParquetColumnIndexes.extendAndSet(metadataIndex, parquetIndex);
-            }
-            metadataIndex++;
-        }
-        // Now do the final remapping.
+
         parquetColumns.reopen();
         parquetColumns.clear();
         fromParquetColumnIndexes.clear();
         fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
         for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
-            final int columnIndex = addressCache.getColumnIndexes().getQuick(i);
-            final int parquetColumnIndex = toParquetColumnIndexes.getQuick(columnIndex);
+            final int parquetColumnIndex = addressCache.getColumnIndexes().getQuick(i);
             final int columnType = addressCache.getColumnTypes().getQuick(i);
             parquetColumns.add(parquetColumnIndex);
             fromParquetColumnIndexes.setQuick(parquetColumnIndex, i);

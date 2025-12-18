@@ -192,11 +192,15 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             rowGroupBuffers.reopen();
             columns.reopen();
             columns.clear();
-            columns.setCapacity(2L * metadata.getColumnCount());
-            if (!canProjectMetadata(metadata, decoder, columns, null)) {
-                // We need to recompile the factory as the Parquet metadata has changed.
-                throw TableReferenceOutOfDateException.of(path);
+            int n = metadata.getColumnCount();
+            if (n > 0) {
+                columns.setCapacity(2L * n);
+                if (!canProjectMetadata(metadata, decoder, columns, null)) {
+                    // We need to recompile the factory as the Parquet metadata has changed.
+                    throw TableReferenceOutOfDateException.of(path);
+                }
             }
+
             toTop();
         } catch (DataUnavailableException e) {
             throw new RuntimeException(e);
