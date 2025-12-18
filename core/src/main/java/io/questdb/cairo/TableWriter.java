@@ -10123,20 +10123,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions_updateSquashTimestampFile(long targetPartition, long targetPartitionNameTxn) {
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
-        other.concat(TableUtils.PARTITION_LAST_SQUASH_TIMESTAMP_FILE);
-        long squashCounterFileFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
-        Unsafe.getUnsafe().putLong(tempMem16b, configuration.getMicrosecondClock().getTicks());
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
+            other.concat(TableUtils.PARTITION_LAST_SQUASH_TIMESTAMP_FILE);
+            long squashCounterFileFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
+            Unsafe.getUnsafe().putLong(tempMem16b, configuration.getMicrosecondClock().getTicks());
 
-        if (squashCounterFileFd == -1 || ff.write(squashCounterFileFd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
-            // Log as critical, this is not fatal
-            LOG.critical().$("cannot write partition squash timestamp, " +
-                            "incremental backup may not be able to track partition update [path=")
-                    .$(other).$(", errno=").$(Os.errno())
-                    .I$();
+            if (squashCounterFileFd == -1 || ff.write(squashCounterFileFd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
+                // Log as critical, this is not fatal
+                LOG.critical().$("cannot write partition squash timestamp, " +
+                                "incremental backup may not be able to track partition update [path=")
+                        .$(other).$(", errno=").$(ff.errno())
+                        .I$();
 
+            }
+            ff.close(squashCounterFileFd);
+        } finally {
+            other.trimTo(pathSize);
         }
-        ff.close(squashCounterFileFd);
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {

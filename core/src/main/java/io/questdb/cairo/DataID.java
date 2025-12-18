@@ -51,7 +51,7 @@ public final class DataID implements Sinkable {
      * The data within the file is stored as 16 bytes binary and follows the RFC 4122 big endian binary representation.
      */
     public static final String FILENAME = ".data_id";
-    public static long FILE_SIZE = Long.BYTES * 2;  // Storing UUID as binary
+    public static final long FILE_SIZE = Long.BYTES * 2;  // Storing UUID as binary
     private final CairoConfiguration configuration;
     private final Uuid id;
 
@@ -183,7 +183,7 @@ public final class DataID implements Sinkable {
             final long written = ff.write(fd, buf, FILE_SIZE, 0);
             if (written != FILE_SIZE) {
                 throw CairoException.critical(ff.errno())
-                        .put("cannot write DataID after writing [fd=").put(fd).put(", path=").put(path).put(']');
+                        .put("cannot write DataID [fd=").put(fd).put(", path=").put(path).put(']');
             }
 
             ff.fsync(fd);
