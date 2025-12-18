@@ -213,8 +213,11 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         for (int i = low; i < high; i++) {
             byte c = segment.byteAt(i);
             if (c == '\\' && i + 1 < high) {
-                i++;
-                continue;
+                byte next = segment.byteAt(i + 1);
+                if (next == '*' || next == '?' || next == '[' || next == '\\') {
+                    i++;
+                    continue;
+                }
             }
             if (c == '*' || c == '?' || c == '[') {
                 return true;
@@ -233,8 +236,21 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         int n = pattern.size();
         for (int i = 0; i < n; i++) {
             byte c = pattern.byteAt(i);
-            if (c == '\\' && i + 1 < n) {
-                i++;
+            if (c == '\\') {
+                if (i + 1 < n) {
+                    byte next = pattern.byteAt(i + 1);
+                    if (next == '*' || next == '?' || next == '[' || next == '\\') {
+                        i++;
+                        continue;
+                    }
+                }
+                if (Files.SEPARATOR == '\\') {
+                    if (i > lastPos) {
+                        offsets.add(lastPos);
+                        offsets.add(i);
+                    }
+                    lastPos = i + 1;
+                }
                 continue;
             }
             if (c == '/' || c == Files.SEPARATOR) {
@@ -265,7 +281,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(0), "glob pattern cannot be null or empty");
         }
 
-        if (glob.byteAt(0) != '/' && glob.byteAt(0) != Files.SEPARATOR) {
+        if (!isAbsolutePathQuick(glob)) {
             if (Chars.isBlank(configuration.getSqlCopyInputRoot())) {
                 throw SqlException.$(position, "'cairo.sql.copy.root' is not set");
             }
@@ -298,10 +314,9 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
 
     private static Utf8Sequence buildLiteralPath(Utf8Sequence glob, IntList patternOffsets, CharSequence defaultRoot) {
         Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
-        int firstSegmentStart = patternOffsets.getQuick(0);
-        boolean isAbsolutePath = firstSegmentStart > 0;
+        boolean isAbsolute = isAbsolutePath(glob, patternOffsets);
 
-        if (isAbsolutePath) {
+        if (isAbsolute) {
             sink.put(glob);
         } else {
             sink.put(defaultRoot);
@@ -315,17 +330,22 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
     private static Utf8Sequence buildRootPath(Utf8Sequence glob, IntList patternOffsets, int firstGlobSegment, CharSequence defaultRoot) {
         Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
         int firstSegmentStart = patternOffsets.getQuick(0);
-        boolean isAbsolutePath = firstSegmentStart > 0;
+        boolean isAbsolute = isAbsolutePath(glob, patternOffsets);
 
         if (firstGlobSegment == 0) {
-            if (isAbsolutePath) {
-                sink.put(glob, 0, firstSegmentStart);
+            if (isAbsolute) {
+                if (firstSegmentStart > 0) {
+                    sink.put(glob, 0, firstSegmentStart);
+                } else {
+                    int firstSegmentEnd = patternOffsets.getQuick(1);
+                    sink.put(glob, 0, firstSegmentEnd);
+                }
             } else {
                 sink.put(defaultRoot);
             }
         } else {
             int lastSegmentEnd = patternOffsets.getQuick(firstGlobSegment * 2 - 1);
-            if (!isAbsolutePath) {
+            if (!isAbsolute) {
                 sink.put(defaultRoot);
                 appendSeparatorIfNeeded(sink);
             }
@@ -460,8 +480,51 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         return pi == plen && ni == nLen;
     }
 
+    private static boolean isAbsolutePath(Utf8Sequence glob, IntList patternOffsets) {
+        if (patternOffsets.size() < 2) {
+            return false;
+        }
+
+        int firstSegmentStart = patternOffsets.getQuick(0);
+        if (firstSegmentStart > 0) {
+            return true;
+        }
+        int firstSegmentEnd = patternOffsets.getQuick(1);
+        return isWindowsDriveLetter(glob, firstSegmentStart, firstSegmentEnd);
+    }
+
+    private static boolean isAbsolutePathQuick(Utf8Sequence glob) {
+        if (glob.size() == 0) {
+            return false;
+        }
+        byte firstChar = glob.byteAt(0);
+
+        // Unix absolute path
+        if (firstChar == '/' || firstChar == Files.SEPARATOR) {
+            return true;
+        }
+
+        // Windows absolute path
+        if (glob.size() >= 2) {
+            byte secondChar = glob.byteAt(1);
+            if (secondChar == ':' && ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isCrawl(Utf8Sequence segment, int low, int high) {
         return high - low == 2 && segment.byteAt(low) == '*' && segment.byteAt(low + 1) == '*';
+    }
+
+    private static boolean isWindowsDriveLetter(Utf8Sequence glob, int start, int end) {
+        if (end - start != 2) {
+            return false;
+        }
+        byte firstChar = glob.byteAt(start);
+        byte secondChar = glob.byteAt(start + 1);
+        return ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z')) && secondChar == ':';
     }
 
     private static Utf8Sequence joinPath(Utf8Sequence base, Utf8Sequence name, int low, int high) {

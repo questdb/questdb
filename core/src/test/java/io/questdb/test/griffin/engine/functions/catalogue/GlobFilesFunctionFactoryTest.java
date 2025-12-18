@@ -882,14 +882,20 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParseGlobPatternEscapedSeparator() {
+    public void testParseGlobPatternEscapedGlobChars() {
         IntList offsets = new IntList();
-        GlobFilesFunctionFactory.parseGlobPattern(new Utf8String("a\\/b/c"), offsets);
-        Assert.assertEquals(4, offsets.size());
+        offsets.clear();
+        GlobFilesFunctionFactory.parseGlobPattern(new Utf8String("a/\\*/b"), offsets);
+        Assert.assertEquals(6, offsets.size());
         Assert.assertEquals(0, offsets.getQuick(0));
-        Assert.assertEquals(4, offsets.getQuick(1));
-        Assert.assertEquals(5, offsets.getQuick(2));
-        Assert.assertEquals(6, offsets.getQuick(3));
+        Assert.assertEquals(1, offsets.getQuick(1));
+        Assert.assertEquals(2, offsets.getQuick(2));
+        Assert.assertEquals(4, offsets.getQuick(3));
+        Assert.assertEquals(5, offsets.getQuick(4));
+        Assert.assertEquals(6, offsets.getQuick(5));
+        offsets.clear();
+        GlobFilesFunctionFactory.parseGlobPattern(new Utf8String("a/\\\\/b"), offsets);
+        Assert.assertEquals(6, offsets.size());
     }
 
     @Test
