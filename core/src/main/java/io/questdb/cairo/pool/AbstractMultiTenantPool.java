@@ -165,8 +165,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         while (e != null) {
             for (int i = 0; i < ENTRY_SIZE; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                    // check if deadline violation still holds
-                    closeTenant(thread, e, i, PoolListener.EV_EXPIRE, PoolConstants.CR_IDLE);
+                    closeTenant(thread, e, i, PoolListener.EV_EXPIRE, PoolConstants.CR_DROPPED);
                     Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                 }
             }
