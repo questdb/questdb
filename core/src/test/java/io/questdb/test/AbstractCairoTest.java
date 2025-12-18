@@ -283,7 +283,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
             while (counter.get() < skip && cursor.hasNext()) {
                 counter.inc();
             }
-            SqlExecutionCircuitBreaker breaker = sqlExecutionContext.getCircuitBreaker();
+            SqlExecutionCircuitBreaker breaker =
+                    sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null;
             cursor.calculateSize(breaker, counter);
             Assert.assertEquals(
                     String.format("Skip %,d then calculateSize(). Expect: as counted with hasNext(), actual: cursor.calculateSize()", skip),
