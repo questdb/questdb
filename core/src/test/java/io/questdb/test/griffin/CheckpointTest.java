@@ -559,7 +559,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            final String tableName = "t";
+            final String tableName = getTestTableName();
             execute(
                     "create table " + tableName + " as (" +
                             "select rnd_symbol('A','B','C') sym1, " +
@@ -617,7 +617,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            final String tableName = "t";
+            final String tableName = getTestTableName();
             // Create table without indexed columns initially
             execute(
                     "create table " + tableName + " as (" +
@@ -680,7 +680,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            final String tableName = "t";
+            final String tableName = getTestTableName();
             execute(
                     "create table " + tableName + " as (" +
                             "select rnd_symbol('A','B','C') sym1, " +
