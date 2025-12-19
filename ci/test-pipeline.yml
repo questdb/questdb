@@ -231,7 +231,7 @@ stages:
               ls -al $(Pipeline.Workspace)/rust-llvm-coverage
 
               # Merge partial profdata files from all jobs into the complete report
-              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*/*.profdata
+              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
 
               OBJECTS=""
               PATH_EQUIV_ARGS=""
