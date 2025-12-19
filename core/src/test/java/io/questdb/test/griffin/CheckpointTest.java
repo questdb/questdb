@@ -553,6 +553,188 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreIndexNonPartitioned() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            final String tableName = "t";
+            execute(
+                    "create table " + tableName + " as (" +
+                            "select rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2, " +
+                            "x " +
+                            "from long_sequence(1000)" +
+                            "), index(sym1), index(sym2)"
+            );
+
+            // Query using indexes before checkpoint to get expected counts
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym1 = 'A'");
+            final String sym1ACountBefore = sink.toString();
+
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym2 = 'X'");
+            final String sym2XCountBefore = sink.toString();
+
+            execute("checkpoint create");
+
+            // Insert more data after checkpoint
+            execute(
+                    "insert into " + tableName +
+                            " select rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2, " +
+                            "x + 1000 " +
+                            "from long_sequence(500)"
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // Verify index queries return correct results (pre-checkpoint data only)
+            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
+
+            // Verify new inserts work correctly with rebuilt indexes
+            execute("insert into " + tableName + " values('A', 'X', 9999)");
+
+            final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
+            final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
+            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreIndexWithColumnTop() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            final String tableName = "t";
+            // Create table without indexed columns initially
+            execute(
+                    "create table " + tableName + " as (" +
+                            "select x, " +
+                            "timestamp_sequence(0, 100000000000) ts " +
+                            "from long_sequence(500)" +
+                            ") timestamp(ts) PARTITION BY DAY"
+            );
+
+            // Add indexed symbol columns (creates column top)
+            execute("alter table " + tableName + " add column sym1 symbol index");
+            execute("alter table " + tableName + " add column sym2 symbol index");
+
+            // Insert data with the new columns
+            execute(
+                    "insert into " + tableName +
+                            " select x + 500, " +
+                            "timestamp_sequence(50000000000000, 100000000000) ts, " +
+                            "rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2 " +
+                            "from long_sequence(500)"
+            );
+
+            // Query using indexes before checkpoint to get expected counts
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym1 = 'A'");
+            final String sym1ACountBefore = sink.toString();
+
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym2 = 'X'");
+            final String sym2XCountBefore = sink.toString();
+
+            execute("checkpoint create");
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // Verify index queries return correct results
+            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
+
+            // Verify new inserts work correctly with rebuilt indexes
+            execute("insert into " + tableName + " values(9999, now(), 'A', 'X')");
+
+            final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
+            final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
+            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsBitmapIndexes() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            final String tableName = "t";
+            execute(
+                    "create table " + tableName + " as (" +
+                            "select rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2, " +
+                            "x, " +
+                            "timestamp_sequence(0, 100000000000) ts " +
+                            "from long_sequence(1000)" +
+                            "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY"
+            );
+
+            // Query using indexes before checkpoint to get expected counts
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym1 = 'A'");
+            final String sym1ACountBefore = sink.toString();
+
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym2 = 'X'");
+            final String sym2XCountBefore = sink.toString();
+
+            execute("checkpoint create");
+
+            // Insert more data after checkpoint
+            execute(
+                    "insert into " + tableName +
+                            " select rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2, " +
+                            "x + 1000, " +
+                            "timestamp_sequence(100000000000000, 100000000000) ts " +
+                            "from long_sequence(500)"
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // Verify index queries return correct results (pre-checkpoint data only)
+            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
+
+            // Verify new inserts work correctly with rebuilt indexes
+            execute("insert into " + tableName + " values('A', 'X', 9999, now())");
+
+            // Count should increase by 1 for both
+            final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
+            final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
+            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointRestoresDroppedWalTable() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
@@ -1779,188 +1961,6 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("Recovery shouldn't happen but the snapshot path does not exist:" + Utf8s.toString(path));
                 }
             }
-
-            engine.checkpointRelease();
-        });
-    }
-
-    @Test
-    public void testCheckpointRestoreRebuildsBitmapIndexes() throws Exception {
-        final String snapshotId = "00000000-0000-0000-0000-000000000000";
-        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
-
-            final String tableName = "t";
-            execute(
-                    "create table " + tableName + " as (" +
-                            "select rnd_symbol('A','B','C') sym1, " +
-                            "rnd_symbol('X','Y','Z') sym2, " +
-                            "x, " +
-                            "timestamp_sequence(0, 100000000000) ts " +
-                            "from long_sequence(1000)" +
-                            "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY"
-            );
-
-            // Query using indexes before checkpoint to get expected counts
-            sink.clear();
-            printSql("select count() from " + tableName + " where sym1 = 'A'");
-            final String sym1ACountBefore = sink.toString();
-
-            sink.clear();
-            printSql("select count() from " + tableName + " where sym2 = 'X'");
-            final String sym2XCountBefore = sink.toString();
-
-            execute("checkpoint create");
-
-            // Insert more data after checkpoint
-            execute(
-                    "insert into " + tableName +
-                            " select rnd_symbol('A','B','C') sym1, " +
-                            "rnd_symbol('X','Y','Z') sym2, " +
-                            "x + 1000, " +
-                            "timestamp_sequence(100000000000000, 100000000000) ts " +
-                            "from long_sequence(500)"
-            );
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            engine.clear();
-            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.checkpointRecover();
-
-            // Verify index queries return correct results (pre-checkpoint data only)
-            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
-
-            // Verify new inserts work correctly with rebuilt indexes
-            execute("insert into " + tableName + " values('A', 'X', 9999, now())");
-
-            // Count should increase by 1 for both
-            final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
-            final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
-            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
-
-            engine.checkpointRelease();
-        });
-    }
-
-    @Test
-    public void testCheckpointRestoreIndexWithColumnTop() throws Exception {
-        final String snapshotId = "00000000-0000-0000-0000-000000000000";
-        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
-
-            final String tableName = "t";
-            // Create table without indexed columns initially
-            execute(
-                    "create table " + tableName + " as (" +
-                            "select x, " +
-                            "timestamp_sequence(0, 100000000000) ts " +
-                            "from long_sequence(500)" +
-                            ") timestamp(ts) PARTITION BY DAY"
-            );
-
-            // Add indexed symbol columns (creates column top)
-            execute("alter table " + tableName + " add column sym1 symbol index");
-            execute("alter table " + tableName + " add column sym2 symbol index");
-
-            // Insert data with the new columns
-            execute(
-                    "insert into " + tableName +
-                            " select x + 500, " +
-                            "timestamp_sequence(50000000000000, 100000000000) ts, " +
-                            "rnd_symbol('A','B','C') sym1, " +
-                            "rnd_symbol('X','Y','Z') sym2 " +
-                            "from long_sequence(500)"
-            );
-
-            // Query using indexes before checkpoint to get expected counts
-            sink.clear();
-            printSql("select count() from " + tableName + " where sym1 = 'A'");
-            final String sym1ACountBefore = sink.toString();
-
-            sink.clear();
-            printSql("select count() from " + tableName + " where sym2 = 'X'");
-            final String sym2XCountBefore = sink.toString();
-
-            execute("checkpoint create");
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            engine.clear();
-            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.checkpointRecover();
-
-            // Verify index queries return correct results
-            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
-
-            // Verify new inserts work correctly with rebuilt indexes
-            execute("insert into " + tableName + " values(9999, now(), 'A', 'X')");
-
-            final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
-            final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
-            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
-
-            engine.checkpointRelease();
-        });
-    }
-
-    @Test
-    public void testCheckpointRestoreIndexNonPartitioned() throws Exception {
-        final String snapshotId = "00000000-0000-0000-0000-000000000000";
-        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
-
-            final String tableName = "t";
-            execute(
-                    "create table " + tableName + " as (" +
-                            "select rnd_symbol('A','B','C') sym1, " +
-                            "rnd_symbol('X','Y','Z') sym2, " +
-                            "x " +
-                            "from long_sequence(1000)" +
-                            "), index(sym1), index(sym2)"
-            );
-
-            // Query using indexes before checkpoint to get expected counts
-            sink.clear();
-            printSql("select count() from " + tableName + " where sym1 = 'A'");
-            final String sym1ACountBefore = sink.toString();
-
-            sink.clear();
-            printSql("select count() from " + tableName + " where sym2 = 'X'");
-            final String sym2XCountBefore = sink.toString();
-
-            execute("checkpoint create");
-
-            // Insert more data after checkpoint
-            execute(
-                    "insert into " + tableName +
-                            " select rnd_symbol('A','B','C') sym1, " +
-                            "rnd_symbol('X','Y','Z') sym2, " +
-                            "x + 1000 " +
-                            "from long_sequence(500)"
-            );
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            engine.clear();
-            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.checkpointRecover();
-
-            // Verify index queries return correct results (pre-checkpoint data only)
-            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
-
-            // Verify new inserts work correctly with rebuilt indexes
-            execute("insert into " + tableName + " values('A', 'X', 9999)");
-
-            final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
-            final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
-            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
 
             engine.checkpointRelease();
         });
