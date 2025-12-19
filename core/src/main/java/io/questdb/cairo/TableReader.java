@@ -278,6 +278,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getPartitionTimestampByTimestamp(timestamp);
     }
 
+    public PartitionDecoder getAndInitParquetPartitionDecoders(int partitionIndex) {
+        PartitionDecoder decoder = parquetPartitionDecoders.getQuick(partitionIndex);
+        long addr = getParquetAddr(partitionIndex);
+        long fileSize = getParquetFileSize(partitionIndex);
+        assert addr != 0 && fileSize > 0;
+        if (decoder.getFileAddr() != addr || decoder.getFileSize() != fileSize) {
+            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        }
+        return decoder;
+    }
+
     public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnIndex, int direction) {
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
@@ -383,10 +394,6 @@ public class TableReader implements Closeable, SymbolTableSource {
      */
     public long getParquetFileSize(int partitionIndex) {
         return parquetPartitions.getQuick(partitionIndex).size();
-    }
-
-    public PartitionDecoder getParquetPartitionDecoders(int partitionIndex) {
-        return parquetPartitionDecoders.getQuick(partitionIndex);
     }
 
     public int getPartitionCount() {

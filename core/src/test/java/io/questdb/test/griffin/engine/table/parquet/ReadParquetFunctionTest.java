@@ -457,58 +457,6 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLimitOffset() throws Exception {
-        assertMemoryLeak(() -> {
-            final long rows = 100;
-            execute("create table x as (select" +
-                    " x as id," +
-                    " rnd_str(4,4,0) as a_str" +
-                    " from long_sequence(" + rows + "))");
-
-            try (
-                    Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
-                    TableReader reader = engine.getReader("x")
-            ) {
-                path.of(root).concat("x.parquet");
-                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                PartitionEncoder.encode(partitionDescriptor, path);
-                Assert.assertTrue(Files.exists(path.$()));
-
-                // Test LIMIT only
-                sink.clear();
-                sink.put("select * from read_parquet('x.parquet') limit 10");
-                assertSqlCursors0("select * from x limit 10");
-
-                // Test OFFSET only (skip first 10 rows)
-                sink.clear();
-                sink.put("select * from read_parquet('x.parquet') limit -1 offset 10");
-                assertSqlCursors0("select * from x limit -1 offset 10");
-
-                // Test LIMIT with OFFSET
-                sink.clear();
-                sink.put("select * from read_parquet('x.parquet') limit 10 offset 5");
-                assertSqlCursors0("select * from x limit 10 offset 5");
-
-                // Test OFFSET larger than half the data
-                sink.clear();
-                sink.put("select * from read_parquet('x.parquet') limit 10 offset 60");
-                assertSqlCursors0("select * from x limit 10 offset 60");
-
-                // Test OFFSET near end of data
-                sink.clear();
-                sink.put("select * from read_parquet('x.parquet') limit 10 offset 95");
-                assertSqlCursors0("select * from x limit 10 offset 95");
-
-                // Test OFFSET at exact boundary
-                sink.clear();
-                sink.put("select * from read_parquet('x.parquet') limit 5 offset 0");
-                assertSqlCursors0("select * from x limit 5 offset 0");
-            }
-        });
-    }
-
-    @Test
     public void testLimitOffsetWithMultipleRowGroups() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 5000;
