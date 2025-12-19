@@ -42,7 +42,6 @@ import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
-import io.questdb.tasks.MarkoutReduceTask;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionPurgeTask;
@@ -106,12 +105,6 @@ public interface MessageBus extends Closeable {
     RingQueue<LatestByTask> getLatestByQueue();
 
     MCSequence getLatestBySubSeq();
-
-    MPSequence getMarkoutReducePubSeq();
-
-    RingQueue<MarkoutReduceTask> getMarkoutReduceQueue();
-
-    MCSequence getMarkoutReduceSubSeq();
 
     MPSequence getO3CopyPubSeq();
 

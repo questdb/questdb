@@ -24,117 +24,116 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
+import io.questdb.cairo.sql.async.PageFrameReducer;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.jit.CompiledFilter;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
+
 /**
- * Factory for parallel markout query execution.
+ * Factory for parallel markout query execution using PageFrameSequence.
  * <p>
  * This factory creates the infrastructure for parallelizing:
  * Master -> MarkoutHorizon (CROSS JOIN time_offset_sequence) -> ASOF JOIN slave -> GROUP BY time_offset
  */
 public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final AsyncMarkoutGroupByAtom atom;
+    private static final PageFrameReducer FILTER_AND_REDUCE = AsyncMarkoutGroupByRecordCursorFactory::filterAndReduce;
+    private static final PageFrameReducer REDUCE = AsyncMarkoutGroupByRecordCursorFactory::reduce;
+
+    private final RecordCursorFactory base;  // Master table factory
+    private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncMarkoutGroupByRecordCursor cursor;
-    private final RecordCursorFactory masterFactory;   // Base master table
-    private final ObjList<RecordCursorFactory> slaveFactories;   // Per-slot slave factories for ASOF JOIN
-    private final ObjList<Function> recordFunctions;   // Record functions (includes groupByFunctions)
-    private final RecordCursorFactory sequenceFactory;  // Offset sequence
+    private final PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence;
+    private final ObjList<Function> recordFunctions;
+    private final RecordCursorFactory sequenceFactory;
+    private final int workerCount;
 
     public AsyncMarkoutGroupByRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull CairoEngine engine,
+            @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
             @NotNull RecordCursorFactory masterFactory,
-            @NotNull ObjList<RecordCursorFactory> slaveFactories,
+            @NotNull RecordCursorFactory slaveFactory,
             @NotNull RecordCursorFactory sequenceFactory,
             int masterTimestampColumnIndex,
             int sequenceColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
-            @NotNull ArrayColumnTypes keyTypes,
-            @NotNull ArrayColumnTypes valueTypes,
-            @Nullable ColumnTypes asofJoinKeyTypes,
+            @Transient @NotNull ArrayColumnTypes keyTypes,
+            @Transient @NotNull ArrayColumnTypes valueTypes,
+            @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable RecordSink masterKeyCopier,
             @Nullable RecordSink slaveKeyCopier,
             int slaveTimestampIndex,
             @NotNull RecordSink groupByKeyCopier,
-            @NotNull int[] columnSources,
-            @NotNull int[] columnIndices,
-            int workerCount
+            int @NotNull [] columnSources,
+            int @NotNull [] columnIndices,
+            @Nullable CompiledFilter compiledFilter,
+            @Nullable MemoryCARW bindVarMemory,
+            @Nullable ObjList<Function> bindVarFunctions,
+            @Nullable Function filter,
+            @Nullable ObjList<Function> perWorkerFilters,
+            int workerCount,
+            @Transient @NotNull BytecodeAssembler asm,
+            @NotNull PageFrameReduceTaskFactory reduceTaskFactory
     ) {
         super(metadata);
-
-        this.masterFactory = masterFactory;
-        this.slaveFactories = slaveFactories;
-        this.recordFunctions = recordFunctions;
-        this.sequenceFactory = sequenceFactory;
-
-        BytecodeAssembler asm = new BytecodeAssembler();
-        ObjList<RecordSink> perWorkerMapSinks;
-        EntityColumnFilter sequenceColumnFilter = new EntityColumnFilter();
-        EntityColumnFilter masterColumnFilter = new EntityColumnFilter();
-        EntityColumnFilter keyColumnFilter = new EntityColumnFilter();
-
         try {
-            // Create RecordSink for materializing sequence (offset) records
-            sequenceColumnFilter.of(sequenceFactory.getMetadata().getColumnCount());
-            RecordSink sequenceRecordSink = RecordSinkFactory.getInstance(
-                    asm,
-                    sequenceFactory.getMetadata(),
-                    sequenceColumnFilter
-            );
+            this.base = masterFactory;
+            this.sequenceFactory = sequenceFactory;
+            this.recordFunctions = recordFunctions;
+            this.workerCount = workerCount;
 
-            // Create RecordSink for materializing master records
-            // Symbols are stored as ints - symbol table resolver will be set up for reading
-            masterColumnFilter.of(masterFactory.getMetadata().getColumnCount());
-            RecordSink masterRecordSink = RecordSinkFactory.getInstance(
-                    asm,
-                    masterFactory.getMetadata(),
-                    masterColumnFilter
-            );
-
-            // Create owner and per-worker map sinks for the aggregation map key
-            keyColumnFilter.of(keyTypes.getColumnCount());
-            RecordSink ownerMapSink = RecordSinkFactory.getInstance(asm, keyTypes, keyColumnFilter);
-            perWorkerMapSinks = new ObjList<>(workerCount);
-            for (int i = 0; i < workerCount; i++) {
-                perWorkerMapSinks.add(RecordSinkFactory.getInstance(asm, keyTypes, keyColumnFilter));
-            }
-
-            // Create the atom with all per-worker resources
-            this.atom = new AsyncMarkoutGroupByAtom(
+            AsyncMarkoutGroupByAtom atom = new AsyncMarkoutGroupByAtom(
                     asm,
                     configuration,
-                    slaveFactories,
-                    sequenceFactory,
-                    sequenceRecordSink,
-                    masterRecordSink,
+                    slaveFactory,
                     masterTimestampColumnIndex,
                     sequenceColumnIndex,
                     keyTypes,
                     valueTypes,
-                    asofJoinKeyTypes,
+                    asOfJoinKeyTypes,
                     masterKeyCopier,
                     slaveKeyCopier,
                     slaveTimestampIndex,
@@ -143,41 +142,51 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     columnIndices,
                     groupByFunctions,
                     perWorkerGroupByFunctions,
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    filter,
+                    perWorkerFilters,
                     workerCount
             );
 
-            // Create the cursor
-            this.cursor = new AsyncMarkoutGroupByRecordCursor(
-                    configuration,
+            this.frameSequence = new PageFrameSequence<>(
                     engine,
-                    engine.getMessageBus(),
+                    configuration,
+                    messageBus,
                     atom,
-                    recordFunctions,
-                    masterRecordSink,
-                    masterFactory.getMetadata()
+                    filter != null ? FILTER_AND_REDUCE : REDUCE,
+                    reduceTaskFactory,
+                    workerCount,
+                    PageFrameReduceTask.TYPE_GROUP_BY
             );
+
+            this.cursor = new AsyncMarkoutGroupByRecordCursor(recordFunctions, sequenceFactory, messageBus);
         } catch (Throwable th) {
-            Misc.free(masterFactory);
-            Misc.freeObjList(slaveFactories);
-            Misc.free(sequenceFactory);
+            close();
             throw th;
         }
     }
 
     @Override
+    public PageFrameSequence<AsyncMarkoutGroupByAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+        return frameSequence.of(base, executionContext, collectSubSeq, order);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor masterCursor = null;
-        RecordCursor sequenceCursor = null;
-        try {
-            masterCursor = masterFactory.getCursor(executionContext);
-            sequenceCursor = sequenceFactory.getCursor(executionContext);
-            cursor.of(masterCursor, sequenceCursor, executionContext);
-            return cursor;
-        } catch (Throwable th) {
-            Misc.free(masterCursor);
-            Misc.free(sequenceCursor);
-            throw th;
-        }
+        cursor.of(execute(executionContext, collectSubSeq, ORDER_ASC), executionContext);
+        return cursor;
+    }
+
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
     }
 
     @Override
@@ -187,21 +196,348 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Async Markout GroupBy");
-        sink.child(masterFactory);
+        if (usesCompiledFilter()) {
+            sink.type("Async JIT Markout GroupBy");
+        } else {
+            sink.type("Async Markout GroupBy");
+        }
+        sink.meta("workers").val(workerCount);
+        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
+        sink.child(base);
         sink.child(sequenceFactory);
-        if (slaveFactories.size() > 0) {
-            sink.child(slaveFactories.getQuick(0));
+        sink.child(frameSequence.getAtom().getSlaveFactory());
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return frameSequence.getAtom().getCompiledFilter() != null;
+    }
+
+    /**
+     * Page frame reducer for markout GROUP BY.
+     * <p>
+     * For each master row in the page frame, iterates through all sequence offsets,
+     * performs ASOF JOIN lookup, and aggregates results.
+     */
+    private static void reduce(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = task.getFrameRowCount();
+        if (frameRowCount == 0) {
+            return;
+        }
+
+        final PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence = task.getFrameSequence(AsyncMarkoutGroupByAtom.class);
+        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
+
+        final long sequenceRowCount = atom.getSequenceRowCount();
+        if (sequenceRowCount == 0) {
+            return;
+        }
+
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
+
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+
+        try {
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final Map partialMap = atom.getMap(slotId);
+            final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
+            final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
+            final CombinedRecord combinedRecord = atom.getCombinedRecord(slotId);
+
+            // Get ASOF join resources
+            Map asofJoinMap = atom.getAsofJoinMap(slotId);
+            RecordSink masterKeyCopier = atom.getMasterKeyCopier();
+            RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
+            int slaveTimestampIndex = atom.getSlaveTimestampIndex();
+
+            RecordCursor slaveCursor = null;
+            Record slaveRecord = null;
+            Record slaveRecordB = null;
+            if (asofJoinMap != null && masterKeyCopier != null) {
+                try {
+                    slaveCursor = atom.getSlaveCursor(slotId);
+                    slaveCursor.toTop();
+                    slaveRecord = slaveCursor.getRecord();
+                    slaveRecordB = slaveCursor.getRecordB();
+                } catch (SqlException e) {
+                    throw CairoException.nonCritical().put("Failed to get slave cursor: ").put(e.getMessage());
+                }
+                asofJoinMap.clear();
+            }
+
+            // ASOF join state for forward-only cursor advancement
+            long lastSlaveTimestamp = Long.MIN_VALUE;
+            long lastSlaveRowId = Numbers.LONG_NULL;
+            boolean hasBufferedValue = false;
+
+            // Process rows using k-way merge algorithm
+            // For simplicity in page frame mode, we process rows in frame order
+            // and for each row iterate through all sequence offsets
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+
+            for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                record.setRowIndex(r);
+                long masterTimestamp = record.getTimestamp(masterTimestampColumnIndex);
+
+                for (int seqIdx = 0; seqIdx < sequenceRowCount; seqIdx++) {
+                    // sec_offs is stored, compute usec_offs dynamically (sec_offs * 1_000_000)
+                    long secOffsValue = atom.getSequenceOffsetValue(seqIdx);
+                    long usecOffsValue = secOffsValue * 1_000_000L;
+                    long horizonTimestamp = masterTimestamp + usecOffsValue;
+
+                    // ASOF JOIN lookup
+                    Record matchedSlaveRecord = null;
+                    if (asofJoinMap != null && slaveCursor != null) {
+                        // Advance slave cursor forward-only up to horizon timestamp
+                        // First, check if we have a buffered row
+                        if (hasBufferedValue) {
+                            if (lastSlaveTimestamp <= horizonTimestamp) {
+                                // Store the buffered row
+                                MapKey joinKey = asofJoinMap.withKey();
+                                joinKey.put(slaveRecord, slaveKeyCopier);
+                                MapValue joinValue = joinKey.createValue();
+                                joinValue.putLong(0, lastSlaveRowId);
+                                hasBufferedValue = false;
+                            }
+                        }
+
+                        // Advance cursor
+                        if (!hasBufferedValue) {
+                            while (slaveCursor.hasNext()) {
+                                long priceTs = slaveRecord.getTimestamp(slaveTimestampIndex);
+                                long rowId = slaveRecord.getRowId();
+                                lastSlaveTimestamp = priceTs;
+                                lastSlaveRowId = rowId;
+
+                                if (priceTs <= horizonTimestamp) {
+                                    MapKey joinKey = asofJoinMap.withKey();
+                                    joinKey.put(slaveRecord, slaveKeyCopier);
+                                    MapValue joinValue = joinKey.createValue();
+                                    joinValue.putLong(0, rowId);
+                                } else {
+                                    hasBufferedValue = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Look up master's join key
+                        MapKey lookupKey = asofJoinMap.withKey();
+                        lookupKey.put(record, masterKeyCopier);
+                        MapValue lookupValue = lookupKey.findValue();
+
+                        if (lookupValue != null) {
+                            long slaveRowId = lookupValue.getLong(0);
+                            if (slaveRowId != Numbers.LONG_NULL) {
+                                slaveCursor.recordAt(slaveRecordB, slaveRowId);
+                                matchedSlaveRecord = slaveRecordB;
+                            }
+                        }
+                    }
+
+                    // Set up combined record (pass sec_offs for GROUP BY key)
+                    combinedRecord.of(record, secOffsValue, matchedSlaveRecord);
+
+                    // Aggregate
+                    MapKey key = partialMap.withKey();
+                    key.put(combinedRecord, groupByKeyCopier);
+                    MapValue value = key.createValue();
+                    if (value.isNew()) {
+                        functionUpdater.updateNew(value, combinedRecord, baseRowId + r);
+                    } else {
+                        functionUpdater.updateExisting(value, combinedRecord, baseRowId + r);
+                    }
+                }
+            }
+        } finally {
+            atom.release(slotId);
+        }
+    }
+
+    /**
+     * Page frame reducer for filtered markout GROUP BY.
+     * <p>
+     * Applies filter first, then for each filtered master row iterates through all sequence offsets,
+     * performs ASOF JOIN lookup, and aggregates results.
+     */
+    private static void filterAndReduce(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = task.getFrameRowCount();
+        if (frameRowCount == 0) {
+            return;
+        }
+
+        final PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence = task.getFrameSequence(AsyncMarkoutGroupByAtom.class);
+        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
+
+        final long sequenceRowCount = atom.getSequenceRowCount();
+        if (sequenceRowCount == 0) {
+            return;
+        }
+
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
+
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+
+        try {
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final Map partialMap = atom.getMap(slotId);
+            final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
+            final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
+            final CombinedRecord combinedRecord = atom.getCombinedRecord(slotId);
+            final CompiledFilter compiledFilter = atom.getCompiledFilter();
+            final Function filter = atom.getFilter(slotId);
+
+            // Apply filter to master rows
+            final DirectLongList rows = task.getFilteredRows();
+            rows.clear();
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+            }
+
+            final long filteredRowCount = rows.size();
+            if (filteredRowCount == 0) {
+                return;
+            }
+
+            // Get ASOF join resources
+            Map asofJoinMap = atom.getAsofJoinMap(slotId);
+            RecordSink masterKeyCopier = atom.getMasterKeyCopier();
+            RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
+            int slaveTimestampIndex = atom.getSlaveTimestampIndex();
+
+            RecordCursor slaveCursor = null;
+            Record slaveRecord = null;
+            Record slaveRecordB = null;
+            if (asofJoinMap != null && masterKeyCopier != null) {
+                try {
+                    slaveCursor = atom.getSlaveCursor(slotId);
+                    slaveCursor.toTop();
+                    slaveRecord = slaveCursor.getRecord();
+                    slaveRecordB = slaveCursor.getRecordB();
+                } catch (SqlException e) {
+                    throw CairoException.nonCritical().put("Failed to get slave cursor: ").put(e.getMessage());
+                }
+                asofJoinMap.clear();
+            }
+
+            // ASOF join state for forward-only cursor advancement
+            long lastSlaveTimestamp = Long.MIN_VALUE;
+            long lastSlaveRowId = Numbers.LONG_NULL;
+            boolean hasBufferedValue = false;
+
+            // Process filtered rows
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+
+            for (long i = 0; i < filteredRowCount; i++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                final long r = rows.get(i);
+                record.setRowIndex(r);
+                long masterTimestamp = record.getTimestamp(masterTimestampColumnIndex);
+
+                for (int seqIdx = 0; seqIdx < sequenceRowCount; seqIdx++) {
+                    // sec_offs is stored, compute usec_offs dynamically (sec_offs * 1_000_000)
+                    long secOffsValue = atom.getSequenceOffsetValue(seqIdx);
+                    long usecOffsValue = secOffsValue * 1_000_000L;
+                    long horizonTimestamp = masterTimestamp + usecOffsValue;
+
+                    // ASOF JOIN lookup
+                    Record matchedSlaveRecord = null;
+                    if (asofJoinMap != null && slaveCursor != null) {
+                        // Advance slave cursor forward-only up to horizon timestamp
+                        // First, check if we have a buffered row
+                        if (hasBufferedValue) {
+                            if (lastSlaveTimestamp <= horizonTimestamp) {
+                                // Store the buffered row
+                                MapKey joinKey = asofJoinMap.withKey();
+                                joinKey.put(slaveRecord, slaveKeyCopier);
+                                MapValue joinValue = joinKey.createValue();
+                                joinValue.putLong(0, lastSlaveRowId);
+                                hasBufferedValue = false;
+                            }
+                        }
+
+                        // Advance cursor
+                        if (!hasBufferedValue) {
+                            while (slaveCursor.hasNext()) {
+                                long priceTs = slaveRecord.getTimestamp(slaveTimestampIndex);
+                                long rowId = slaveRecord.getRowId();
+                                lastSlaveTimestamp = priceTs;
+                                lastSlaveRowId = rowId;
+
+                                if (priceTs <= horizonTimestamp) {
+                                    MapKey joinKey = asofJoinMap.withKey();
+                                    joinKey.put(slaveRecord, slaveKeyCopier);
+                                    MapValue joinValue = joinKey.createValue();
+                                    joinValue.putLong(0, rowId);
+                                } else {
+                                    hasBufferedValue = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Look up master's join key
+                        MapKey lookupKey = asofJoinMap.withKey();
+                        lookupKey.put(record, masterKeyCopier);
+                        MapValue lookupValue = lookupKey.findValue();
+
+                        if (lookupValue != null) {
+                            long slaveRowId = lookupValue.getLong(0);
+                            if (slaveRowId != Numbers.LONG_NULL) {
+                                slaveCursor.recordAt(slaveRecordB, slaveRowId);
+                                matchedSlaveRecord = slaveRecordB;
+                            }
+                        }
+                    }
+
+                    // Set up combined record (pass sec_offs for GROUP BY key)
+                    combinedRecord.of(record, secOffsValue, matchedSlaveRecord);
+
+                    // Aggregate
+                    MapKey key = partialMap.withKey();
+                    key.put(combinedRecord, groupByKeyCopier);
+                    MapValue value = key.createValue();
+                    if (value.isNew()) {
+                        functionUpdater.updateNew(value, combinedRecord, baseRowId + r);
+                    } else {
+                        functionUpdater.updateExisting(value, combinedRecord, baseRowId + r);
+                    }
+                }
+            }
+        } finally {
+            atom.release(slotId);
         }
     }
 
     @Override
     protected void _close() {
-        Misc.free(atom);
+        Misc.free(frameSequence);
         Misc.free(cursor);
-        Misc.free(masterFactory);
-        Misc.freeObjList(slaveFactories);
-        Misc.freeObjList(recordFunctions);
+        Misc.free(base);
         Misc.free(sequenceFactory);
+        // Note: slaveFactory is owned by the atom and closed there
+        Misc.freeObjList(recordFunctions);
     }
 }

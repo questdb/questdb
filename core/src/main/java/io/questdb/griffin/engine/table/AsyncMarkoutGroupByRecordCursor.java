@@ -25,92 +25,57 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
-import io.questdb.griffin.engine.groupby.MarkoutReduceJob;
-import io.questdb.griffin.engine.groupby.MasterRowBatch;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.tasks.MarkoutReduceTask;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Record cursor for parallel markout query execution.
- * <p>
- * This cursor:
- * 1. Reads master rows from the master cursor and batches them into MasterRowBatches
- * 2. Dispatches tasks to the MarkoutReduceQueue
- * 3. Waits for all workers to complete
- * 4. Merges partial maps from workers
- * 5. Iterates over the merged results
+ * Cursor for parallel markout GROUP BY using PageFrameSequence.
  */
-public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
+class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncMarkoutGroupByRecordCursor.class);
-    private final AsyncMarkoutGroupByAtom atom;
-    private final CairoConfiguration configuration;
-    private final RecordMetadata masterMetadata;
-    private final RecordSink masterRecordSink;
-    // MasterRowBatch pool for reuse
-    private final ObjList<MasterRowBatch> masterRowBatchPool = new ObjList<>();
+
     private final MessageBus messageBus;
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
-    // Task coordination
-    private final AtomicBooleanCircuitBreaker taskCircuitBreaker;
-    private final SOUnboundedCountDownLatch taskDoneLatch = new SOUnboundedCountDownLatch();
-    private final AtomicInteger taskStartedCounter = new AtomicInteger();
-    // State
+    private final RecordCursorFactory sequenceFactory;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private int dispatchedBatchCount;
+    private int frameLimit;
+    private PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence;
     private boolean isDataMapBuilt;
     private boolean isOpen;
     private MapRecordCursor mapCursor;
-    private RecordCursor masterCursor;
-    private int nextPoolIndex = 0;
+    private RecordCursor sequenceCursor;
 
     public AsyncMarkoutGroupByRecordCursor(
-            CairoConfiguration configuration,
-            CairoEngine engine,
-            MessageBus messageBus,
-            AsyncMarkoutGroupByAtom atom,
             ObjList<Function> recordFunctions,
-            RecordSink masterRecordSink,
-            RecordMetadata masterMetadata
+            RecordCursorFactory sequenceFactory,
+            MessageBus messageBus
     ) {
-        this.configuration = configuration;
-        this.messageBus = messageBus;
-        this.atom = atom;
         this.recordFunctions = recordFunctions;
-        this.masterRecordSink = masterRecordSink;
-        this.masterMetadata = masterMetadata;
+        this.sequenceFactory = sequenceFactory;
+        this.messageBus = messageBus;
         this.recordA = new VirtualRecord(recordFunctions);
         this.recordB = new VirtualRecord(recordFunctions);
-        this.taskCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         this.isOpen = true;
     }
 
@@ -125,11 +90,19 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         if (isOpen) {
             isOpen = false;
             mapCursor = Misc.free(mapCursor);
-            Misc.free(masterCursor);
-            masterCursor = null;
-            Misc.freeObjList(masterRowBatchPool);
-            masterRowBatchPool.clear();
-            atom.clear();
+            sequenceCursor = Misc.free(sequenceCursor);
+
+            if (frameSequence != null) {
+                LOG.debug()
+                        .$("closing [shard=").$(frameSequence.getShard())
+                        .$(", frameCount=").$(frameLimit)
+                        .I$();
+
+                if (frameLimit > -1) {
+                    frameSequence.await();
+                }
+                frameSequence.clear();
+            }
         }
     }
 
@@ -184,86 +157,88 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         if (mapCursor != null) {
             mapCursor.toTop();
             GroupByUtils.toTop(recordFunctions);
+            frameSequence.getAtom().toTop();
         }
     }
 
-    private void awaitCompletion(int queuedCount, RingQueue<MarkoutReduceTask> queue, MCSequence subSeq) {
-        int iterations = 0;
-        while (!taskDoneLatch.done(queuedCount)) {
-            if (circuitBreaker.checkIfTripped()) {
-                taskCircuitBreaker.cancel();
-            }
-
-            // Try to steal work
-            long cursor = subSeq.next();
-            if (cursor >= 0) {
-                MarkoutReduceTask task = queue.get(cursor);
-                MarkoutReduceJob.run(-1, task, subSeq, cursor, atom);
-            } else {
-                Os.pause();
-            }
-            iterations++;
-            if (iterations % 100000 == 0) {
-                LOG.info().$("awaitCompletion: still waiting [iterations=").$(iterations).$(", queuedCount=").$(queuedCount).$("]").$();
-            }
+    void of(PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
+        if (!isOpen) {
+            isOpen = true;
+            atom.reopen();
         }
+        this.frameSequence = frameSequence;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
+        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
+
+        // Materialize sequence cursor
+        this.sequenceCursor = sequenceFactory.getCursor(executionContext);
+        atom.materializeSequenceCursor(sequenceCursor, circuitBreaker);
+
+        isDataMapBuilt = false;
+        frameLimit = -1;
     }
 
     private void buildMap() {
-        // Reset coordination primitives
-        taskCircuitBreaker.reset();
-        taskStartedCounter.set(0);
-        taskDoneLatch.reset();
-
-        final RingQueue<MarkoutReduceTask> queue = messageBus.getMarkoutReduceQueue();
-        final MPSequence pubSeq = messageBus.getMarkoutReducePubSeq();
-        final MCSequence subSeq = messageBus.getMarkoutReduceSubSeq();
-
-        int queuedCount = 0;
-
-        try {
-            // Read master rows and dispatch batches
-            Record masterRecord = masterCursor.getRecord();
-            MasterRowBatch currentBatch = getOrCreateMasterRowBatch();
-
-            while (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-
-                if (!currentBatch.add(masterRecord)) {
-                    // Batch is full, dispatch it
-                    queuedCount += dispatchBatch(currentBatch, queue, pubSeq, subSeq, queuedCount);
-                    currentBatch = getOrCreateMasterRowBatch();
-                    currentBatch.add(masterRecord);
-                }
-            }
-
-            // Dispatch remaining batch if not empty
-            if (currentBatch.size() > 0) {
-                queuedCount += dispatchBatch(currentBatch, queue, pubSeq, subSeq, queuedCount);
-            }
-
-        } catch (Throwable th) {
-            taskCircuitBreaker.cancel();
-            throw th;
+        if (frameLimit == -1) {
+            frameSequence.prepareForDispatch();
+            frameLimit = frameSequence.getFrameCount() - 1;
         }
 
-        // Wait for all workers to complete
-        awaitCompletion(queuedCount, queue, subSeq);
+        int frameIndex = -1;
+        boolean allFramesActive = true;
+        try {
+            do {
+                final long cursor = frameSequence.next();
+                if (cursor > -1) {
+                    PageFrameReduceTask task = frameSequence.getTask(cursor);
+                    LOG.debug()
+                            .$("collected [shard=").$(frameSequence.getShard())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .$(", active=").$(frameSequence.isActive())
+                            .$(", cursor=").$(cursor)
+                            .I$();
+                    if (task.hasError()) {
+                        throw CairoException.nonCritical()
+                                .position(task.getErrorMessagePosition())
+                                .put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled())
+                                .setInterruption(task.isCancelled())
+                                .setOutOfMemory(task.isOutOfMemory());
+                    }
 
-        if (taskCircuitBreaker.checkIfTripped()) {
+                    allFramesActive &= frameSequence.isActive();
+                    frameIndex = task.getFrameIndex();
+
+                    frameSequence.collect(cursor, false);
+                } else if (cursor == -2) {
+                    break; // No frames to process
+                } else {
+                    Os.pause();
+                }
+            } while (frameIndex < frameLimit);
+        } catch (CairoException e) {
+            if (e.isInterruption()) {
+                throwTimeoutException();
+            } else {
+                throw e;
+            }
+        }
+
+        if (!allFramesActive) {
             throwTimeoutException();
         }
 
-        // Merge partial maps
-        Map mergedMap = atom.mergeWorkerMaps();
-        mapCursor = mergedMap.getCursor();
+        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
+
+        // Merge all per-worker maps into the owner map
+        final Map dataMap = atom.mergeOwnerMap();
+        mapCursor = dataMap.getCursor();
 
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
         isDataMapBuilt = true;
-
-        LOG.debug().$("map built [batches=").$(dispatchedBatchCount)
-                .$(", queuedCount=").$(queuedCount).I$();
     }
 
     private void buildMapConditionally() {
@@ -272,81 +247,11 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         }
     }
 
-    private int dispatchBatch(
-            MasterRowBatch batch,
-            RingQueue<MarkoutReduceTask> queue,
-            MPSequence pubSeq,
-            MCSequence subSeq,
-            int currentQueuedCount
-    ) {
-        // Set symbol table resolver so getSymA() can convert symbol ints to strings
-        batch.setSymbolTableResolver(masterCursor);
-
-        while (true) {
-            long cursor = pubSeq.next();
-            if (cursor >= 0) {
-                MarkoutReduceTask task = queue.get(cursor);
-                task.of(
-                        taskCircuitBreaker,
-                        taskStartedCounter,
-                        taskDoneLatch,
-                        atom,
-                        dispatchedBatchCount,
-                        batch
-                );
-                pubSeq.done(cursor);
-                dispatchedBatchCount++;
-                return 1;
-            }
-
-            // Queue is full, try work stealing
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-
-            // Try to steal work from the queue
-            long stealCursor = subSeq.next();
-            if (stealCursor >= 0) {
-                MarkoutReduceTask task = queue.get(stealCursor);
-                MarkoutReduceJob.run(-1, task, subSeq, stealCursor, atom);
-            } else {
-                Os.pause();
-            }
-        }
-    }
-
-    private MasterRowBatch getOrCreateMasterRowBatch() {
-        if (nextPoolIndex < masterRowBatchPool.size()) {
-            MasterRowBatch batch = masterRowBatchPool.getQuick(nextPoolIndex++);
-            batch.clear();
-            return batch;
-        }
-        MasterRowBatch batch = new MasterRowBatch(configuration, masterMetadata, masterRecordSink);
-        masterRowBatchPool.add(batch);
-        nextPoolIndex++;
-        return batch;
-    }
-
     private void throwTimeoutException() {
-        throw CairoException.queryTimedOut();
-    }
-
-    void of(
-            RecordCursor masterCursor,
-            RecordCursor sequenceCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (!isOpen) {
-            isOpen = true;
-            atom.reopen();
+        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            throw CairoException.queryCancelled();
+        } else {
+            throw CairoException.queryTimedOut();
         }
-        this.masterCursor = masterCursor;
-        this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, null, executionContext, null);
-        isDataMapBuilt = false;
-        dispatchedBatchCount = 0;
-        nextPoolIndex = 0;
-
-        // Materialize sequence cursor into shared RecordArray
-        atom.materializeSequenceCursor(sequenceCursor, circuitBreaker);
-        atom.initSlaveCursors(executionContext);
     }
 }

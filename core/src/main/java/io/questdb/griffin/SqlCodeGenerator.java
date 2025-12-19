@@ -246,6 +246,7 @@ import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMarkoutGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.CombinedRecord;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexRowCursorFactory;
@@ -328,8 +329,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -4119,7 +4120,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         RecordCursorFactory nestedFactory = null;
         RecordCursorFactory masterFactory = null;
-        ObjList<RecordCursorFactory> slaveFactories = null;
+        RecordCursorFactory slaveFactory = null;
         RecordCursorFactory sequenceFactory = null;
 
         try {
@@ -4131,32 +4132,59 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Generate component factories for parallel execution
             // Generate without processing joins to get just the base table factories
             masterFactory = generateQuery(curveInfo.crossMasterModel, executionContext, false);
+
+            // Check if master factory supports page frames - required for parallel execution
+            // Try to steal the filter from the nested factory if possible
+            CompiledFilter compiledFilter = null;
+            MemoryCARW bindVarMemory = null;
+            ObjList<Function> bindVarFunctions = null;
+            Function filter = null;
+            boolean supportsParallelism = masterFactory.supportsPageFrameCursor();
+
+            if (!supportsParallelism && masterFactory.supportsFilterStealing()) {
+                RecordCursorFactory filterFactory = masterFactory;
+                masterFactory = masterFactory.getBaseFactory();
+                assert masterFactory.supportsPageFrameCursor();
+                compiledFilter = filterFactory.getCompiledFilter();
+                bindVarMemory = filterFactory.getBindVarMemory();
+                bindVarFunctions = filterFactory.getBindVarFunctions();
+                filter = filterFactory.getFilter();
+                supportsParallelism = true;
+                filterFactory.halfClose();
+            }
+
+            if (!supportsParallelism) {
+                LOG.debug().$("markout_curve: master factory doesn't support page frames, falling back to standard GROUP BY").$();
+                Misc.free(nestedFactory);
+                Misc.free(masterFactory);
+                return null;
+            }
+
             sequenceFactory = generateQuery(curveInfo.crossSlaveModel, executionContext, false);
 
-            // Create per-slot slave factories - each worker needs its own factory
-            // to create independent cursors for parallel ASOF JOIN processing
-            int workerCount = executionContext.getSharedQueryWorkerCount();
-            int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
-            slaveFactories = new ObjList<>(slotCount + 1);  // +1 for owner thread
-            for (int i = 0; i <= slotCount; i++) {
-                slaveFactories.add(generateQuery(curveInfo.asofSlaveModel, executionContext, true));
+            // Generate slave factory for ASOF JOIN processing
+            // The factory must support TimeFrameCursor for parallel cursor creation
+            slaveFactory = generateQuery(curveInfo.asofSlaveModel, executionContext, true);
+            if (!slaveFactory.supportsTimeFrameCursor()) {
+                LOG.debug().$("markout_curve: slave factory doesn't support time frame cursor, falling back to standard GROUP BY").$();
+                Misc.free(nestedFactory);
+                Misc.free(masterFactory);
+                Misc.free(slaveFactory);
+                Misc.free(sequenceFactory);
+                return null;
             }
+
+            int workerCount = executionContext.getSharedQueryWorkerCount();
 
             // Get timestamp index from master
             RecordMetadata masterMetadata = masterFactory.getMetadata();
             int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
-            // Find the offset sequence column index (the offset column from long_sequence)
             RecordMetadata sequenceMetadata = sequenceFactory.getMetadata();
-            int sequenceColumnIndex = findSequenceColumnIndex(sequenceMetadata);
-            if (masterTimestampColumnIndex == -1 || sequenceColumnIndex == -1) {
-                LOG.debug().$("markout_curve: ")
-                        .$(masterTimestampColumnIndex == -1 ?
-                                "master has no designated timestamp" :
-                                "could not find offset sequence column"
-                        ).$(", falling back to standard GROUP BY").$();
+            if (masterTimestampColumnIndex == -1) {
+                LOG.debug().$("markout_curve: master has no designated timestamp, falling back to standard GROUP BY").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
-                Misc.freeObjList(slaveFactories);
+                Misc.free(slaveFactory);
                 Misc.free(sequenceFactory);
                 return null;
             }
@@ -4205,7 +4233,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 LOG.debug().$("markout_curve: parallelism not supported for GROUP BY functions, falling back").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
-                Misc.freeObjList(slaveFactories);
+                Misc.free(slaveFactory);
                 Misc.free(sequenceFactory);
                 return null;
             }
@@ -4231,8 +4259,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
 
             // Get slave metadata (needed for column mapping and ASOF join processing)
-            // All slave factories have the same metadata, use the first one
-            RecordMetadata slaveMetadata = slaveFactories.getQuick(0).getMetadata();
+            RecordMetadata slaveMetadata = slaveFactory.getMetadata();
 
             // Build column mappings from baseMetadata to source records (master, sequence, slave)
             // These mappings are needed by CombinedRecord in MarkoutReducer to route column accesses
@@ -4295,6 +4322,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw new AssertionError("failed to resolve column" + fullName);
             }
 
+            // Find the sequence column index by looking at which GROUP BY key column comes from the sequence.
+            // This is the column that will be used for grouping and for computing horizon timestamps.
+            // listColumnFilterA contains the GROUP BY key column indices (from assembleGroupByFunctions).
+            int sequenceColumnIndex = -1;
+            for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+                int keyColIdx = listColumnFilterA.getColumnIndexFactored(i);
+                if (columnSources[keyColIdx] == CombinedRecord.SOURCE_SEQUENCE) {
+                    sequenceColumnIndex = columnIndices[keyColIdx];
+                    break;
+                }
+            }
+            if (sequenceColumnIndex == -1) {
+                // Fallback to findSequenceColumnIndex if no GROUP BY key column comes from sequence
+                sequenceColumnIndex = findSequenceColumnIndex(sequenceMetadata);
+            }
+            if (sequenceColumnIndex == -1) {
+                LOG.debug().$("markout_curve: could not find offset sequence column, falling back to standard GROUP BY").$();
+                Misc.free(nestedFactory);
+                Misc.free(masterFactory);
+                Misc.free(slaveFactory);
+                Misc.free(sequenceFactory);
+                return null;
+            }
+
             // Create keyCopier for GROUP BY key population from the CombinedRecord
             // Note: listColumnFilterA contains the GROUP BY key column indices (from assembleGroupByFunctions)
             // We need to save it before it gets overwritten by ASOF join key processing
@@ -4305,7 +4356,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ArrayColumnTypes asofJoinKeyTypes = null;
             RecordSink masterKeyCopier = null;
             RecordSink slaveKeyCopier = null;
-            BitSet asofWriteSymbolAsString = null;
+            BitSet asofWriteSymbolAsString;
 
             JoinContext asofJoinContext = curveInfo.asofJoinContext;
             if (asofJoinContext != null && !asofJoinContext.isEmpty()) {
@@ -4378,9 +4429,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new AsyncMarkoutGroupByRecordCursorFactory(
                     configuration,
                     executionContext.getCairoEngine(),
+                    executionContext.getMessageBus(),
                     outerProjectionMetadata,
                     masterFactory,
-                    slaveFactories,
+                    slaveFactory,
                     sequenceFactory,
                     masterTimestampColumnIndex,
                     sequenceColumnIndex,
@@ -4396,13 +4448,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     groupByKeyCopier,
                     columnSources,
                     columnIndices,
-                    workerCount
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    filter,
+                    compileWorkerFilterConditionally(
+                            executionContext,
+                            filter,
+                            workerCount,
+                            null,
+                            masterMetadata
+                    ),
+                    workerCount,
+                    asm,
+                    reduceTaskFactory
             );
 
         } catch (Throwable th) {
             Misc.free(nestedFactory);
             Misc.free(masterFactory);
-            Misc.freeObjList(slaveFactories);
+            Misc.free(slaveFactory);
             Misc.free(sequenceFactory);
             throw th;
         }
