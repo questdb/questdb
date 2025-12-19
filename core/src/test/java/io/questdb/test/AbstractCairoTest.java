@@ -294,6 +294,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             counter.set(count + 1);
             cursor.skipRows(counter);
             Assert.assertEquals("skipRows(rowCountPlusOne) didn't leave the counter at 1", 1, counter.get());
+            Assert.assertFalse("hasNext() returned true after skipRows exhausted the cursor", cursor.hasNext());
 
             if (count > 1) {
                 skip = rnd.nextInt(countReducedToInt / 2);
@@ -734,12 +735,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             cursor.calculateSize(circuitBreaker, counter);
+            Assert.assertFalse("hasNext() returned true after calculateSize exhausted the cursor", cursor.hasNext());
             size = counter.get();
             long preComputeStateSize = cursor.preComputedStateSize();
             cursor.toTop();
             Assert.assertEquals(preComputeStateSize, cursor.preComputedStateSize());
             counter.clear();
             cursor.calculateSize(circuitBreaker, counter);
+            Assert.assertFalse("hasNext() returned true after calculateSize exhausted the cursor", cursor.hasNext());
             long sizeAfterToTop = counter.get();
 
             Assert.assertEquals(size, sizeAfterToTop);
