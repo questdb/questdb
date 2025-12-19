@@ -78,7 +78,6 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ObjList<Future<?>> futures = new ObjList<>();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
-    private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
@@ -427,28 +426,37 @@ public class TableSnapshotRestore implements QuietCloseable {
             int pathTableLen
     ) {
         tablePath.trimTo(pathTableLen);
+        final String tablePathStr = tablePath.toString();
+
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
             final int columnType = tableMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
                 final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
                 final String columnName = tableMetadata.getColumnName(i);
-                LOG.info().$("rebuilding symbol files [table=").$(tablePath)
-                        .$(", column=").$safe(columnName)
-                        .$(", count=").$(cleanSymbolCount)
-                        .I$();
-
                 final int writerIndex = tableMetadata.getWriterIndex(i);
                 final int indexKeyBlockCapacity = tableMetadata.getIndexBlockCapacity(i);
-                symbolMapUtil.rebuildSymbolFiles(
-                        configuration,
-                        tablePath,
-                        columnName,
-                        columnVersionReader.getSymbolTableNameTxn(writerIndex),
-                        cleanSymbolCount,
-                        -1,
-                        indexKeyBlockCapacity
-                );
-                recoveredSymbolFiles.incrementAndGet();
+                final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
+
+                futures.add(executor.submit(() -> {
+                    LOG.info().$("rebuilding symbol files [table=").$(tablePathStr)
+                            .$(", column=").$safe(columnName)
+                            .$(", count=").$(cleanSymbolCount)
+                            .I$();
+
+                    SymbolMapUtil localSymbolMapUtil = new SymbolMapUtil();
+                    try (Path localPath = new Path().of(tablePathStr)) {
+                        localSymbolMapUtil.rebuildSymbolFiles(
+                                configuration,
+                                localPath,
+                                columnName,
+                                columnNameTxn,
+                                cleanSymbolCount,
+                                -1,
+                                indexKeyBlockCapacity
+                        );
+                    }
+                    recoveredSymbolFiles.incrementAndGet();
+                }));
             }
         }
     }
