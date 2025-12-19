@@ -98,6 +98,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_CREATE_MAT_VIEW = 15;
     public static final int SHOW_CREATE_TABLE = 14;
     public static final int SHOW_DATE_STYLE = 9;
+    public static final int SHOW_DEFAULT_TRANSACTION_READ_ONLY = 16;
     public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
     public static final int SHOW_PARAMETERS = 11;
     public static final int SHOW_PARTITIONS = 3;
@@ -169,11 +170,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
+    private boolean isCteModel;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
     private boolean isUpdateModel;
-    private boolean isCteModel;
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_INNER;
@@ -1084,6 +1085,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return artificialStar;
     }
 
+    public boolean isCteModel() {
+        return isCteModel;
+    }
+
     public boolean isDistinct() {
         return distinct;
     }
@@ -1123,10 +1128,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isUpdate() {
         return isUpdateModel;
-    }
-
-    public boolean isCteModel() {
-        return isCteModel;
     }
 
     /**
@@ -1338,12 +1339,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.forceBackwardScan = forceBackwardScan;
     }
 
-    public void setIsUpdate(boolean isUpdate) {
-        this.isUpdateModel = isUpdate;
-    }
-
     public void setIsCteModel(boolean isCteModel) {
         this.isCteModel = isCteModel;
+    }
+
+    public void setIsUpdate(boolean isUpdate) {
+        this.isUpdateModel = isUpdate;
     }
 
     public void setJoinCriteria(ExpressionNode joinCriteria) {

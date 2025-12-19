@@ -12,6 +12,7 @@ public static class ExtraTests
     public static async Task RunAll()
     {
         await CheckBindVarsInBatchedQueriesAreConsistent();
+        await CheckNpgsqlMultiUrlWorks();
     }
 
     // Regression test for https://github.com/questdb/questdb/issues/6123
@@ -78,5 +79,27 @@ public static class ExtraTests
             Console.WriteLine($"Test '{testName}' failed: {e.Message}");
             Environment.Exit(1);
         }
+    }
+
+    public static async Task CheckNpgsqlMultiUrlWorks()  {
+            const string testName = "CheckNpgsqlMultiUrlWorks";
+            Console.WriteLine($"Running test '{testName}'");
+
+            try
+            {
+                var port = int.Parse(Environment.GetEnvironmentVariable("PGPORT") ?? "8812");
+                await using var dataSource = new NpgsqlDataSourceBuilder(
+                    $"Host=localhost,127.0.0.1;Port={port};Username=admin;Password=quest;Database=qdb;ServerCompatibilityMode=NoTypeLoading;"
+                ).Build();
+
+                await using var connection = await dataSource.OpenConnectionAsync();
+
+                Console.WriteLine($"Test '{testName}' passed.");
+            }
+           catch (Exception e)
+           {
+                Console.WriteLine($"Test '{testName}' failed: {e.Message}");
+                Environment.Exit(1);
+           }
     }
 }

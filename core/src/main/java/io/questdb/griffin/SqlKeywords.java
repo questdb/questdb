@@ -440,6 +440,39 @@ public class SqlKeywords {
                 && (tok.charAt(10) | 32) == 'e';
     }
 
+    public static boolean isDefaultTransactionReadOnly(CharSequence tok) {
+        return tok.length() == 29
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'f'
+                && (tok.charAt(3) | 32) == 'a'
+                && (tok.charAt(4) | 32) == 'u'
+                && (tok.charAt(5) | 32) == 'l'
+                && (tok.charAt(6) | 32) == 't'
+                && (tok.charAt(7)) == '_'
+                && (tok.charAt(8) | 32) == 't'
+                && (tok.charAt(9) | 32) == 'r'
+                && (tok.charAt(10) | 32) == 'a'
+                && (tok.charAt(11) | 32) == 'n'
+                && (tok.charAt(12) | 32) == 's'
+                && (tok.charAt(13) | 32) == 'a'
+                && (tok.charAt(14) | 32) == 'c'
+                && (tok.charAt(15) | 32) == 't'
+                && (tok.charAt(16) | 32) == 'i'
+                && (tok.charAt(17) | 32) == 'o'
+                && (tok.charAt(18) | 32) == 'n'
+                && (tok.charAt(19)) == '_'
+                && (tok.charAt(20) | 32) == 'r'
+                && (tok.charAt(21) | 32) == 'e'
+                && (tok.charAt(22) | 32) == 'a'
+                && (tok.charAt(23) | 32) == 'd'
+                && (tok.charAt(24)) == '_'
+                && (tok.charAt(25) | 32) == 'o'
+                && (tok.charAt(26) | 32) == 'n'
+                && (tok.charAt(27) | 32) == 'l'
+                && (tok.charAt(28) | 32) == 'y';
+    }
+
     public static boolean isDeferredKeyword(CharSequence tok) {
         return tok.length() == 8
                 && (tok.charAt(0) | 32) == 'd'

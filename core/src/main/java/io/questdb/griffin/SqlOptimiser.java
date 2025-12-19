@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowDateStyleCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowDefaultTransactionReadOnlyCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowMaxIdentifierLengthCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowParametersCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
@@ -3501,6 +3502,9 @@ public class SqlOptimiser implements Mutable {
                 case QueryModel.SHOW_TRANSACTION:
                 case QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
                     tableFactory = new ShowTransactionIsolationLevelCursorFactory();
+                    break;
+                case SHOW_DEFAULT_TRANSACTION_READ_ONLY:
+                    tableFactory = new ShowDefaultTransactionReadOnlyCursorFactory();
                     break;
                 case QueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
                     tableFactory = new ShowMaxIdentifierLengthCursorFactory();
