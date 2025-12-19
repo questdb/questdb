@@ -45,6 +45,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
+    private boolean isExhausted;
     private RowCursor rowCursor;
 
     public PageFrameRecordCursorImpl(
@@ -83,6 +84,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         counter.add(frameCursor.getRemainingRowsInInterval());
 
         frameCursor.calculateSize(counter);
+        isExhausted = true;
     }
 
     public RowCursorFactory getRowCursorFactory() {
@@ -91,6 +93,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        if (isExhausted) {
+            return false;
+        }
         prepareRowCursorFactory();
         try {
             if (rowCursor != null && rowCursor.hasNext()) {
@@ -113,9 +118,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 }
             }
         } catch (NoMoreFramesException ignore) {
+            isExhausted = true;
             return false;
         }
 
+        isExhausted = true;
         return false;
     }
 
@@ -134,6 +141,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
         areCursorsPrepared = false;
+        isExhausted = false;
         rowCursor = null;
         // prepare for page frame iteration
         super.init();
@@ -156,13 +164,24 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // Use slow path when:
         // - filter is present (need to evaluate each row)
         // - using index (row order may not be sequential)
-        // - rowCursor is not null (we're mid-frame after hasNext() calls,
-        //   and frameCursor.next() won't return the current frame again)
-        if (filter != null || rowCursorFactory.isUsingIndex() || rowCursor != null) {
+        if (filter != null || rowCursorFactory.isUsingIndex()) {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
             return;
+        }
+
+        // If we're mid-frame after hasNext() calls, exhaust current rowCursor first,
+        // then fall through to the fast path for remaining frames
+        if (rowCursor != null) {
+            while (rowCount.get() > 0 && rowCursor.hasNext()) {
+                rowCursor.next();
+                rowCount.dec();
+            }
+            if (rowCount.get() == 0) {
+                return;
+            }
+            rowCursor = null;
         }
 
         long skipTarget = rowCount.get();
@@ -188,6 +207,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             recordA.setRowIndex(0);
             rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
             rowCursor.jumpTo(skipTarget);
+        } else {
+            isExhausted = true;
         }
     }
 
@@ -202,6 +223,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             filter.toTop();
         }
         rowCursor = null;
+        isExhausted = false;
         super.toTop();
     }
 
