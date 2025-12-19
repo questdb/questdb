@@ -192,7 +192,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
 
         // Check for already reached row limit.
-        if (rowsRemaining < 0) {
+        if (rowsRemaining <= 0) {
             return false;
         }
 
