@@ -27,9 +27,11 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
 public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
@@ -237,9 +239,14 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                     final byte format = reader.getPartitionFormat(currentPartition);
                     if (format == PartitionFormat.PARQUET) {
-                        assert parquetDecoder.getFileAddr() != -1 : "parquet decoder is not initialized";
+                        PartitionDecoder decoder = reader.getParquetPartitionDecoders(currentPartition);
+                        long addr = reader.getParquetAddr(currentPartition);
+                        long fileSize = reader.getParquetFileSize(currentPartition);
+                        if (addr != decoder.getFileAddr() || fileSize != decoder.getFileSize()) {
+                            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        }
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetDecoder = parquetDecoder;
+                        frame.parquetDecoder = decoder;
                     } else {
                         assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;
