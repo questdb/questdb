@@ -30,6 +30,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8StringList;
@@ -40,6 +41,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -686,6 +688,8 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testGlobMatchEscape() {
+        // Skip on Windows,  backslash is the path separator, not an escape character
+        Assume.assumeTrue(!Os.isWindows());
         assertGlobMatch("*.txt", "\\*.txt", true);
         assertGlobMatch("hello.txt", "\\*.txt", false);
         assertGlobMatch("?.txt", "\\?.txt", true);
@@ -843,6 +847,8 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testHasGlob() {
+        // Skip on Windows, backslash is the path separator, not an escape character
+        Assume.assumeTrue(!Os.isWindows());
         assertHasGlob("*.txt", true);
         assertHasGlob("file?.txt", true);
         assertHasGlob("[abc].txt", true);
@@ -883,6 +889,8 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testParseGlobPatternEscapedGlobChars() {
+        // Skip on Windows, backslash is the path separator, not an escape character
+        Assume.assumeTrue(!Os.isWindows());
         IntList offsets = new IntList();
         offsets.clear();
         GlobFilesFunctionFactory.parseGlobPattern(new Utf8String("a/\\*/b"), offsets);
