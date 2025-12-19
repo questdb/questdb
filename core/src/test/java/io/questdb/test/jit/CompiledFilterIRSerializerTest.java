@@ -210,7 +210,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testBooleanOperators() throws Exception {
         serialize("anint = 0 and not (abyte = 0) or along = 0");
-        assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(=)(!)(i32 0L)(i32 anint)(=)(&&)(||)(ret)");
+        assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(=)(!)(i32 0L)(i32 anint)(=)(&)(|)(ret)");
     }
 
     @Test
@@ -1158,67 +1158,42 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         }
 
         private String operatorName(int operator) {
-            switch (operator) {
-                case NEG:
-                    return "neg";
-                case NOT:
-                    return "!";
-                case AND:
-                    return "&&";
-                case OR:
-                    return "||";
-                case EQ:
-                    return "=";
-                case NE:
-                    return "<>";
-                case LT:
-                    return "<";
-                case LE:
-                    return "<=";
-                case GT:
-                    return ">";
-                case GE:
-                    return ">=";
-                case ADD:
-                    return "+";
-                case SUB:
-                    return "-";
-                case MUL:
-                    return "*";
-                case DIV:
-                    return "/";
-                case RET:
-                    return "ret";
-                default:
-                    return "unknown";
-            }
+            return switch (operator) {
+                case NEG -> "neg";
+                case NOT -> "!";
+                case AND -> "&&";
+                case AND_SC -> "and_sc";
+                case OR -> "||";
+                case OR_SC -> "or_sc";
+                case EQ -> "=";
+                case NE -> "<>";
+                case LT -> "<";
+                case LE -> "<=";
+                case GT -> ">";
+                case GE -> ">=";
+                case ADD -> "+";
+                case SUB -> "-";
+                case MUL -> "*";
+                case DIV -> "/";
+                case RET -> "ret";
+                default -> "unknown";
+            };
         }
 
         private String typeName(int type) {
-            switch (type) {
-                case I1_TYPE:
-                    return "i8";
-                case I2_TYPE:
-                    return "i16";
-                case I4_TYPE:
-                    return "i32";
-                case I8_TYPE:
-                    return "i64";
-                case F4_TYPE:
-                    return "f32";
-                case F8_TYPE:
-                    return "f64";
-                case I16_TYPE:
-                    return "i128";
-                case STRING_HEADER_TYPE:
-                    return "string_header";
-                case BINARY_HEADER_TYPE:
-                    return "binary_header";
-                case VARCHAR_HEADER_TYPE:
-                    return "varchar_header";
-                default:
-                    return "unknown: " + type;
-            }
+            return switch (type) {
+                case I1_TYPE -> "i8";
+                case I2_TYPE -> "i16";
+                case I4_TYPE -> "i32";
+                case I8_TYPE -> "i64";
+                case F4_TYPE -> "f32";
+                case F8_TYPE -> "f64";
+                case I16_TYPE -> "i128";
+                case STRING_HEADER_TYPE -> "string_header";
+                case BINARY_HEADER_TYPE -> "binary_header";
+                case VARCHAR_HEADER_TYPE -> "varchar_header";
+                default -> "unknown: " + type;
+            };
         }
     }
 }

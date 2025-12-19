@@ -74,7 +74,7 @@ import java.util.Arrays;
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     public static final int ADD = 14; // a + b
     public static final int AND = 6;  // a && b
-    public static final int AND_SC = 18; // a && b with short-circuit (jump to next row if false)
+    public static final int AND_SC = 18; // short-circuit (jump to next row if false)
     public static final int BINARY_HEADER_TYPE = 8;
     public static final int DIV = 17; // a / b
     public static final int EQ = 8;   // a == b
@@ -101,7 +101,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int NEG = 4;  // -a
     public static final int NOT = 5;  // !a
     public static final int OR = 7;   // a || b
-    public static final int OR_SC = 19;  // a || b with short-circuit (jump to next row if true)
+    public static final int OR_SC = 19;  // short-circuit (jump to next row if true)
     // Opcodes:
     // Return code. Breaks the loop
     public static final int RET = 0;  // ret
@@ -584,6 +584,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private int getOptions(boolean scalar, boolean debug, boolean nullChecks) {
         final TypesObserver typesObserver = predicateContext.globalTypesObserver;
+        debug = true;
         int options = debug ? 1 : 0;
         final int typeSize = typesObserver.maxSize();
         if (typeSize > 0) {
@@ -609,6 +610,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node == null || node.type != ExpressionNode.OPERATION) {
             return PRIORITY_OTHER;
         }
+        // TODO(puzpuzpuz): add priorities for UUID
         // Check if it's an equality operation
         if (Chars.equals(node.token, '=')) {
             // Find the column type involved in this equality
@@ -1204,17 +1206,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Serializes predicates in priority order with short-circuit ANDs for high-priority ones.
      */
     private void serializePredicatesAndSc(ObjList<ExpressionNode> predicates) throws SqlException {
-        int n = predicates.size();
+        final int n = predicates.size();
         if (n == 0) {
             return;
         }
 
+        traverseAlgo.traverse(predicates.getQuick(0), this);
+        putOperator(AND_SC);
         // Serialize all predicates in the priority order with short-circuit ANDs
-        for (int i = 0; i < n; i++) {
+        for (int i = 1; i < n; i++) {
             traverseAlgo.traverse(predicates.getQuick(i), this);
-            if (i != n - 1) {
-                putOperator(AND_SC);
-            }
+            putOperator(AND);
+            putOperator(AND_SC);
         }
     }
 
@@ -1222,17 +1225,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Serializes predicates in priority order with short-circuit ORs for low-priority ones.
      */
     private void serializePredicatesOrSc(ObjList<ExpressionNode> predicates) throws SqlException {
-        int n = predicates.size();
+        final int n = predicates.size();
         if (n == 0) {
             return;
         }
 
+        traverseAlgo.traverse(predicates.getQuick(0), this);
+        putOperator(OR_SC);
         // Serialize all predicates in the inverted priority order with short-circuit ORs
-        for (int i = 0; i < n; i++) {
+        for (int i = 1; i < n; i++) {
             traverseAlgo.traverse(predicates.getQuick(i), this);
-            if (i != n - 1) {
-                putOperator(OR_SC);
-            }
+            putOperator(OR);
+            putOperator(OR_SC);
         }
     }
 

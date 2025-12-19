@@ -505,11 +505,9 @@ namespace questdb::avx2 {
         auto rhs = args.second;
         switch (instr.opcode) {
             case opcodes::And:
-            case opcodes::And_Sc: // Short-circuit AND treated as regular AND in SIMD path
                 values.append(bin_and(c, lhs, rhs));
                 break;
             case opcodes::Or:
-            case opcodes::Or_Sc:  // Short-circuit OR treated as regular OR in SIMD path
                 values.append(bin_or(c, lhs, rhs));
                 break;
             case opcodes::Eq:
@@ -577,6 +575,9 @@ namespace questdb::avx2 {
                     break;
                 case opcodes::Not:
                     values.append(bin_not(c, get_argument(values)));
+                    break;
+                case opcodes::And_Sc: // Short-circuit AND and OR are treated as no-op in SIMD path
+                case opcodes::Or_Sc:
                     break;
                 default:
                     emit_bin_op(c, instr, values, ncheck);

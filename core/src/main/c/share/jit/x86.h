@@ -821,31 +821,9 @@ namespace questdb::x86 {
             case opcodes::And:
                 values.append(bin_and(c, lhs, rhs));
                 break;
-            case opcodes::And_Sc: {
-                // Short-circuit AND: perform AND, then jump to next row if result is false
-                auto result = bin_and(c, lhs, rhs);
-                values.append(result);
-                if (has_short_circuit_label) {
-                    // Test result and jump to next row if zero
-                    c.test(result.gp().r32(), result.gp().r32());
-                    c.jz(l_next_row);
-                }
-                break;
-            }
             case opcodes::Or:
                 values.append(bin_or(c, lhs, rhs));
                 break;
-            case opcodes::Or_Sc: {
-                // Short-circuit OR: perform OR, then jump to next row if result is true
-                auto result = bin_or(c, lhs, rhs);
-                values.append(result);
-                if (has_short_circuit_label) {
-                    // Test result and jump to next row if non-zero
-                    c.test(result.gp().r32(), result.gp().r32());
-                    c.jnz(l_next_row);
-                }
-                break;
-            }
             case opcodes::Gt:
                 values.append(cmp_gt(c, lhs, rhs, null_check));
                 break;
@@ -913,6 +891,26 @@ namespace questdb::x86 {
                 case opcodes::Not:
                     values.append(bin_not(c, get_argument(c, values)));
                     break;
+                case opcodes::And_Sc: {
+                    // Short-circuit AND: jump to next row if argument is false
+                    auto arg = get_argument(c, values);
+                    if (has_short_circuit_label) {
+                        // Test result and jump to next row if zero
+                        c.test(arg.gp().r32(), arg.gp().r32());
+                        c.jz(l_next_row);
+                    }
+                    break;
+                }
+                case opcodes::Or_Sc: {
+                    // Short-circuit OR: jump to next row if argument is true
+                    auto arg = get_argument(c, values);
+                    if (has_short_circuit_label) {
+                        // Test result and jump to next row if non-zero
+                        c.test(arg.gp().r32(), arg.gp().r32());
+                        c.jnz(l_next_row);
+                    }
+                    break;
+                }
                 default:
                     emit_bin_op(c, instr, values, null_check, l_next_row, has_short_circuit_label);
                     break;
