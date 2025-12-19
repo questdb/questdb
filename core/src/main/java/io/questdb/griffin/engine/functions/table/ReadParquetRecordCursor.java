@@ -34,6 +34,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
@@ -77,6 +78,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
     private long addr = 0;
+    private boolean buffersInitialised;
     private int currentRowInRowGroup;
     private long fd = -1;
     private long fileSize = 0;
@@ -90,7 +92,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.decoder = new PartitionDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
-            this.record = new ParquetRecord(metadata.getColumnCount());
+            record = new ParquetRecord(metadata.getColumnCount());
+
         } catch (Throwable th) {
             close();
             throw th;
@@ -103,12 +106,22 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return true;
         }
 
-        int metadataIndex = 0;
-        for (int parquetIndex = 0, n = parquetMetadata.getColumnCount(); parquetIndex < n; parquetIndex++) {
+        for (int metadataIndex = 0; metadataIndex < metadata.getColumnCount(); metadataIndex++) {
+            final int metadataType = metadata.getColumnType(metadataIndex);
+            final CharSequence metadataName = metadata.getColumnName(metadataIndex);
+            final int parquetIndex = parquetMetadata.getColumnIndex(metadataName);
+
+            if (parquetIndex < 0) {
+                return true; // column not present in parquet
+            }
+
             final int parquetType = parquetMetadata.getColumnType(parquetIndex);
-            // If the column is not recognized by the decoder, we have to skip it.
+
             if (ColumnType.isUndefined(parquetType)) {
-                continue;
+                // this column came from metadata, so we 100% need to be able to read it. We should error
+                throw CairoException.nonCritical().put("could not decode parquet column [name=").put(metadataName)
+                        .put(", expected=").put(ColumnType.nameOf(metadataType))
+                        .put(", actual=").put(ColumnType.nameOf(parquetType));
             }
             if (metadataIndex >= metadata.getColumnCount()) {
                 return true;
@@ -116,15 +129,19 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             if (!Chars.equalsIgnoreCase(parquetMetadata.getColumnName(parquetIndex), metadata.getColumnName(metadataIndex))) {
                 return true;
             }
-            final int metadataType = metadata.getColumnType(metadataIndex);
             final boolean symbolRemappingDetected = (metadataType == ColumnType.VARCHAR && parquetType == ColumnType.SYMBOL);
-            // No need to compare column types if we deal with symbol remapping.
+
             if (!symbolRemappingDetected && metadataType != parquetType) {
                 return true;
             }
-            metadataIndex++;
         }
-        return metadataIndex != metadata.getColumnCount();
+
+        return false;
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        counter.add(decoder.metadata().getRowCount());
     }
 
     @Override
@@ -150,6 +167,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() throws DataUnavailableException {
+        if (addr == 0) {
+            return false;
+        }
+
         if (++currentRowInRowGroup < rowGroupRowCount) {
             return true;
         }
@@ -161,31 +182,118 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
+    public void initBuffers() {
+        rowGroupBuffers.reopen();
+        columns.reopen();
+        final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
+
+        columns.setCapacity(2L * metadata.getColumnCount());
+        for (int metadataIndex = 0, n = metadata.getColumnCount(); metadataIndex < n; metadataIndex++) {
+            final CharSequence metadataName = metadata.getColumnName(metadataIndex);
+            final int parquetIndex = parquetMetadata.getColumnIndex(metadataName);
+            final int parquetType = parquetMetadata.getColumnType(parquetIndex);
+            columns.add(parquetIndex);
+            columns.add(parquetType);
+        }
+        buffersInitialised = true;
+    }
+
+    public boolean maybeSkipRestOfRowGroup(Counter rowCount) {
+        if (this.currentRowInRowGroup >= 0 && this.rowGroupIndex >= 0) {
+            final long rowGroupCount = decoder.metadata().getRowGroupCount();
+            long remaining = rowGroupCount - currentRowInRowGroup;
+            if (remaining <= rowCount.get()) {
+                rowCount.dec(remaining);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean maybeSkipWholeFile(Counter rowCount) {
+        if (this.currentRowInRowGroup <= 0 && rowGroupIndex <= 0) {
+            final long totalRowCount = decoder.metadata().getRowCount();
+            if (totalRowCount <= rowCount.get()) {
+                rowCount.dec(totalRowCount);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean maybeSkipWholeRowGroup(Counter rowCount) {
+        if (this.currentRowInRowGroup <= 0 && rowGroupIndex < decoder.metadata().getRowGroupCount()) {
+            if (this.rowGroupIndex < 0) {
+                this.rowGroupIndex = 0;
+            }
+            final long rowGroupCount = decoder.metadata().getRowGroupSize(rowGroupIndex);
+            if (rowGroupCount <= rowCount.get()) {
+                rowCount.dec(rowGroupCount);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void maybeSkipWithinRowGroup(Counter rowCount) {
+        if (currentRowInRowGroup >= 0 && rowGroupIndex >= 0) {
+            int prior_offset = currentRowInRowGroup;
+            switchToRowGroup(rowGroupIndex);
+            currentRowInRowGroup = prior_offset;
+            while (rowCount.get() > 0 && hasNext()) {
+                rowCount.dec();
+            }
+            currentRowInRowGroup--;
+        }
+    }
+
     public void of(LPSZ path) {
         try {
-            // Reopen the file, it could have changed
-            this.fd = TableUtils.openRO(ff, path, LOG);
-            this.fileSize = ff.length(fd);
-            this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            ofMetadata(path);
+            initBuffers();
+            toTop();
+        } catch (DataUnavailableException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void ofMetadata(LPSZ path) {
+        // Close old resources FIRST to prevent FD leak when switching files
+        if (fd != -1) {
+            ff.close(fd);
+            fd = -1;
+        }
+        if (addr != 0) {
+            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            addr = 0;
+        }
+
+        // Reopen the file, it could have changed
+        long newFd = -1;
+        long newAddr = 0;
+        long newFileSize = 0;
+        try {
+            newFd = TableUtils.openRO(ff, path, LOG);
+            newFileSize = ff.length(newFd);
+            newAddr = TableUtils.mapRO(ff, newFd, newFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            decoder.of(newAddr, newFileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             if (metadataHasChanged(metadata, decoder)) {
                 // We need to recompile the factory as the Parquet metadata has changed.
                 throw TableReferenceOutOfDateException.of(path);
             }
-            rowGroupBuffers.reopen();
-            columns.reopen();
-            final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
-            columns.setCapacity(2L * parquetMetadata.getColumnCount());
-            for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
-                final int columnType = parquetMetadata.getColumnType(i);
-                if (!ColumnType.isUndefined(columnType)) {
-                    columns.add(i);
-                    columns.add(columnType);
-                }
+            // Metadata is valid, keep the new resources
+            this.fd = newFd;
+            this.fileSize = newFileSize;
+            this.addr = newAddr;
+        } catch (Throwable e) {
+            // Clean up newly opened resources if anything fails
+            if (newFd != -1) {
+                ff.close(newFd);
             }
-            toTop();
-        } catch (DataUnavailableException e) {
-            throw new RuntimeException(e);
+            if (newAddr != 0) {
+                ff.munmap(newAddr, newFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            throw e;
         }
     }
 
@@ -197,6 +305,23 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public long size() throws DataUnavailableException {
         return decoder.metadata().getRowCount();
+    }
+
+    @Override
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        maybeSkipRestOfRowGroup(rowCount);
+
+        if (maybeSkipWholeFile(rowCount)) {
+            return;
+        }
+
+        while (maybeSkipWholeRowGroup(rowCount)) {
+            currentRowInRowGroup = 0;
+            rowGroupIndex++;
+        }
+
+        initBuffers();
+        maybeSkipWithinRowGroup(rowCount);
     }
 
     @Override
@@ -214,13 +339,34 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean switchToNextRowGroup() {
+        if (!buffersInitialised) {
+            initBuffers();
+        }
+
         dataPtrs.clear();
         auxPtrs.clear();
         if (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {
             final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
             rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
 
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            for (int i = 0, n = (int) (columns.size() / 2); i < n; i++) {
+                dataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));
+                auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(i));
+            }
+            currentRowInRowGroup = 0;
+            return true;
+        }
+        return false;
+    }
+
+    private boolean switchToRowGroup(int index) {
+        dataPtrs.clear();
+        auxPtrs.clear();
+        if (index < decoder.metadata().getRowGroupCount()) {
+            final int rowGroupSize = decoder.metadata().getRowGroupSize(index);
+            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, index, 0, rowGroupSize);
+
+            for (int i = 0, n = (int) (columns.size() / 2); i < n; i++) {
                 dataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));
                 auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(i));
             }

@@ -186,7 +186,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     public void of(PageFrameAddressCache addressCache) {
         this.addressCache = addressCache;
         frameMemory.clear();
-        Misc.free(parquetDecoder);
+        // Don't free the decoder here - it will be reused across frames within the same query
+        // and only freed at the end of the query in close()
+        // todo(nwoolmer): check if this is necessary, Andrei fixed some of the issues around efficiency of page frames
+        // previously, they were being reopened for every row group.
     }
 
     @Override
@@ -257,9 +260,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private void openParquet(int frameIndex) {
         final long addr = addressCache.getParquetAddr(frameIndex);
         final long fileSize = addressCache.getParquetFileSize(frameIndex);
+
+        // Only reinitialize decoder if file changed
+        // todo(nwoolmer): check if this is necessary, Andrei fixed some of the issues around efficiency of page frames
+        // previously, they were being reopened for every row group.
         if (parquetDecoder.getFileAddr() != addr || parquetDecoder.getFileSize() != fileSize) {
             parquetDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
+
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
         if (parquetMetadata.getColumnCount() < addressCache.getColumnCount()) {
             throw CairoException.nonCritical().put("parquet column count is less than number of queried table columns [parquetColumnCount=")
@@ -290,13 +298,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         parquetColumns.reopen();
         parquetColumns.clear();
         fromParquetColumnIndexes.clear();
-        fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
+        fromParquetColumnIndexes.setAll(metadataIndex, -1);
         for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
             final int columnIndex = addressCache.getColumnIndexes().getQuick(i);
-            final int parquetColumnIndex = toParquetColumnIndexes.getQuick(columnIndex);
             final int columnType = addressCache.getColumnTypes().getQuick(i);
-            parquetColumns.add(parquetColumnIndex);
-            fromParquetColumnIndexes.setQuick(parquetColumnIndex, i);
+            parquetColumns.add(columnIndex);
+            fromParquetColumnIndexes.extendAndSet(columnIndex, i);
             parquetColumns.add(columnType);
         }
     }

@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -42,16 +41,22 @@ public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory 
     private ReadParquetRecordCursor cursor;
     private Path path;
 
-    public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata, FilesFacade ff) {
+    public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata) {
         super(metadata);
         this.path = new Path().of(path);
-        this.cursor = new ReadParquetRecordCursor(ff, metadata);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (this.cursor == null) {
+            this.cursor = new ReadParquetRecordCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        }
         cursor.of(path.$());
         return cursor;
+    }
+
+    public Path getPath() {
+        return path;
     }
 
     @Override

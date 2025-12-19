@@ -285,11 +285,20 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                             " from long_sequence(1))"
             );
 
+            execute(
+                    "create table z as (select" +
+                            " x::int id," +
+                            " timestamp_sequence(0,10000) as ts," +
+                            " timestamp_sequence(0,10000)::timestamp_ns as ns" +
+                            " from long_sequence(1))"
+            );
+
             try (
                     Path path = new Path();
                     PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader readerX = engine.getReader("x");
-                    TableReader readerY = engine.getReader("y")
+                    TableReader readerY = engine.getReader("y");
+                    TableReader readerZ = engine.getReader("z")
             ) {
                 path.of(root).concat("table.parquet").$();
                 PartitionEncoder.populateFromTableReader(readerX, partitionDescriptor, 0);
@@ -310,6 +319,17 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         PartitionEncoder.encode(partitionDescriptor, path);
 
                         // Query the data once again - this time the Parquet schema is different.
+                        // But the addition of an extra column does not prevent the original projection
+                        // from succeeding to read the file
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+
+                        // only when the breakage is to the projection i.e. a changed column type, should it break
+                        engine.getConfiguration().getFilesFacade().remove(path.$());
+                        PartitionEncoder.populateFromTableReader(readerZ, partitionDescriptor, 0);
+                        PartitionEncoder.encode(partitionDescriptor, path);
+
                         try {
                             try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
                                 Assert.fail();
@@ -319,6 +339,82 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         }
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testGlobMultipleFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create multiple tables and convert them to parquet files
+            execute("create table t1 as (select" +
+                    " cast(x as int) id," +
+                    " 'file1' as source" +
+                    " from long_sequence(5))");
+
+            execute("create table t2 as (select" +
+                    " cast(x+5 as int) id," +
+                    " 'file2' as source" +
+                    " from long_sequence(5))");
+
+            execute("create table t3 as (select" +
+                    " cast(x+10 as int) id," +
+                    " 'file3' as source" +
+                    " from long_sequence(5))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader1 = engine.getReader("t1");
+                    TableReader reader2 = engine.getReader("t2");
+                    TableReader reader3 = engine.getReader("t3")
+            ) {
+                // Export all tables to parquet files with pattern matching names
+                path.of(root).concat("data_1.parquet");
+                PartitionEncoder.populateFromTableReader(reader1, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                partitionDescriptor.clear();
+                path.of(root).concat("data_2.parquet");
+                PartitionEncoder.populateFromTableReader(reader2, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                partitionDescriptor.clear();
+                path.of(root).concat("data_3.parquet");
+                PartitionEncoder.populateFromTableReader(reader3, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Now test reading all files with a glob pattern
+                // Use absolute path to ensure proper path handling
+                String absoluteGlobPath = root + "/data_*.parquet";
+                sink.clear();
+                sink.put("select * from read_parquet('" + absoluteGlobPath + "') order by id");
+                assertQueryNoLeakCheck(
+                        """
+                                id\tsource
+                                1\tfile1
+                                2\tfile1
+                                3\tfile1
+                                4\tfile1
+                                5\tfile1
+                                6\tfile2
+                                7\tfile2
+                                8\tfile2
+                                9\tfile2
+                                10\tfile2
+                                11\tfile3
+                                12\tfile3
+                                13\tfile3
+                                14\tfile3
+                                15\tfile3
+                                """,
+                        sink.toString(),
+                        null,
+                        true
+                );
             }
         });
     }

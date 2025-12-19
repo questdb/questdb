@@ -138,8 +138,12 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         columnIndexes.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            columnIndexes.add(i);
+
+        for (int metadataIndex = 0, n = metadata.getColumnCount(); metadataIndex < n; metadataIndex++) {
+            final CharSequence metadataName = metadata.getColumnName(metadataIndex);
+            final int parquetIndex = decoder.metadata().getColumnIndex(metadataName);
+            assert parquetIndex >= 0;
+            columnIndexes.add(parquetIndex);
         }
         this.rowCount = decoder.metadata().getRowCount();
         this.rowGroupCount = decoder.metadata().getRowGroupCount();

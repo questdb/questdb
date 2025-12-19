@@ -3472,7 +3472,7 @@ public class SqlOptimiser implements Mutable {
             @NotNull SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final RecordCursorFactory tableFactory;
+        RecordCursorFactory tableFactory;
         TableToken tableToken;
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
@@ -7327,6 +7327,7 @@ public class SqlOptimiser implements Mutable {
             if (!sqlExecutionContext.isValidationOnly()) {
                 authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             }
+            authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed

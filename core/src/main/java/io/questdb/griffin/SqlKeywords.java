@@ -1706,6 +1706,22 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'e';
     }
 
+    public static boolean isReadParquetKeyword(CharSequence tok) {
+        return tok.length() == 12
+                && (tok.charAt(0) | 32) == 'r'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'a'
+                && (tok.charAt(3) | 32) == 'd'
+                && tok.charAt(4) == '_'
+                && (tok.charAt(5) | 32) == 'p'
+                && (tok.charAt(6) | 32) == 'a'
+                && (tok.charAt(7) | 32) == 'r'
+                && (tok.charAt(8) | 32) == 'q'
+                && (tok.charAt(9) | 32) == 'u'
+                && (tok.charAt(10) | 32) == 'e'
+                && (tok.charAt(11) | 32) == 't';
+    }
+
     public static boolean isRefreshKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'r'
