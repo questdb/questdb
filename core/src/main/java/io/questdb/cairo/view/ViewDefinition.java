@@ -62,11 +62,13 @@ public class ViewDefinition implements Mutable {
      * cycle detection, and schema validation.
      */
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+    private long seqTxn = -1L;
     private String viewSql;
     private TableToken viewToken;
 
     public static void append(@NotNull ViewDefinition viewDefinition, @NotNull AppendableBlock block) {
         block.putStr(viewDefinition.getViewSql());
+        block.putLong(viewDefinition.getSeqTxn());
 
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
         final ObjList<CharSequence> tableNames = dependencies.keys();
@@ -119,11 +121,16 @@ public class ViewDefinition implements Mutable {
     public void clear() {
         viewToken = null;
         viewSql = null;
+        seqTxn = -1L;
         dependencies.clear();
     }
 
     public LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> getDependencies() {
         return dependencies;
+    }
+
+    public long getSeqTxn() {
+        return seqTxn;
     }
 
     public String getViewSql() {
@@ -136,18 +143,21 @@ public class ViewDefinition implements Mutable {
 
     public void init(
             @NotNull TableToken viewToken,
-            @NotNull String viewSql
+            @NotNull String viewSql,
+            long seqTxn
     ) {
         this.viewToken = viewToken;
         this.viewSql = viewSql;
+        this.seqTxn = seqTxn;
     }
 
     public void init(
             @NotNull TableToken viewToken,
             @NotNull String viewSql,
-            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            long seqTxn
     ) {
-        init(viewToken, viewSql);
+        init(viewToken, viewSql, seqTxn);
 
         // shallow copy
         this.dependencies.putAll(dependencies);
@@ -172,6 +182,9 @@ public class ViewDefinition implements Mutable {
         offset += Vm.getStorageLength(viewSql);
         final String viewSqlStr = Chars.toString(viewSql);
 
+        final long seqTxn = block.getLong(offset);
+        offset += Long.BYTES;
+
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = destDefinition.getDependencies();
         final int numOfDependencies = block.getInt(offset);
         offset += Integer.BYTES;
@@ -193,9 +206,6 @@ public class ViewDefinition implements Mutable {
             dependencies.put(tableName, columns);
         }
 
-        destDefinition.init(
-                viewToken,
-                viewSqlStr
-        );
+        destDefinition.init(viewToken, viewSqlStr, seqTxn);
     }
 }

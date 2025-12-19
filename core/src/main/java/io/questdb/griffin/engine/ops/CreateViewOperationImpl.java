@@ -179,7 +179,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     public void init(TableToken viewToken) {
         viewDefinition.init(
                 viewToken,
-                Chars.toString(createTableOperation.getSelectText())
+                Chars.toString(createTableOperation.getSelectText()),
+                0L
         );
     }
 

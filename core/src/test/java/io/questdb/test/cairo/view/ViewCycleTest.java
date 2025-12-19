@@ -377,22 +377,22 @@ public class ViewCycleTest extends AbstractViewTest {
             // Verify the view works
             assertQueryNoLeakCheck(
                     """
-                            ts	k	k2	v
-                            1970-01-01T00:00:00.000000Z	k0	k2_0	0
-                            1970-01-01T00:00:10.000000Z	k1	k2_1	1
-                            1970-01-01T00:00:20.000000Z	k2	k2_2	2
-                            1970-01-01T00:00:30.000000Z	k3	k2_3	3
-                            1970-01-01T00:00:40.000000Z	k4	k2_4	4
-                            1970-01-01T00:00:50.000000Z	k5	k2_5	5
-                            1970-01-01T00:01:00.000000Z	k6	k2_6	6
-                            1970-01-01T00:01:10.000000Z	k7	k2_7	7
-                            1970-01-01T00:01:20.000000Z	k8	k2_8	8
+                            ts\tk\tv
+                            1970-01-01T00:00:00.000000Z\tk0\t0
+                            1970-01-01T00:00:10.000000Z\tk1\t1
+                            1970-01-01T00:00:20.000000Z\tk2\t2
+                            1970-01-01T00:00:30.000000Z\tk3\t3
+                            1970-01-01T00:00:40.000000Z\tk4\t4
+                            1970-01-01T00:00:50.000000Z\tk5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
                     null,
                     "ts",
-                    true,
-                    true
+                    false,
+                    false
             );
         });
     }
@@ -416,22 +416,18 @@ public class ViewCycleTest extends AbstractViewTest {
             // All views should still work
             assertQueryNoLeakCheck(
                     """
-                            ts	k	k2	v
-                            1970-01-01T00:00:00.000000Z	k0	k2_0	0
-                            1970-01-01T00:00:10.000000Z	k1	k2_1	1
-                            1970-01-01T00:00:20.000000Z	k2	k2_2	2
-                            1970-01-01T00:00:30.000000Z	k3	k2_3	3
-                            1970-01-01T00:00:40.000000Z	k4	k2_4	4
-                            1970-01-01T00:00:50.000000Z	k5	k2_5	5
-                            1970-01-01T00:01:00.000000Z	k6	k2_6	6
-                            1970-01-01T00:01:10.000000Z	k7	k2_7	7
-                            1970-01-01T00:01:20.000000Z	k8	k2_8	8
+                            ts\tk\tv
+                            1970-01-01T00:00:40.000000Z\tk4\t4
+                            1970-01-01T00:00:50.000000Z\tk5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
                     null,
                     "ts",
                     true,
-                    true
+                    false
             );
         });
     }
@@ -452,21 +448,30 @@ public class ViewCycleTest extends AbstractViewTest {
             // Verify the view works (should have rows from both tables)
             assertQueryNoLeakCheck(
                     """
-                            ts	k	k2	v
-                            1970-01-01T00:00:00.000000Z	k0	k2_0	0
-                            1970-01-01T00:00:10.000000Z	k1	k2_1	1
-                            1970-01-01T00:00:20.000000Z	k2	k2_2	2
-                            1970-01-01T00:00:30.000000Z	k3	k2_3	3
-                            1970-01-01T00:00:40.000000Z	k4	k2_4	4
-                            1970-01-01T00:00:50.000000Z	k5	k2_5	5
-                            1970-01-01T00:01:00.000000Z	k6	k2_6	6
-                            1970-01-01T00:01:10.000000Z	k7	k2_7	7
-                            1970-01-01T00:01:20.000000Z	k8	k2_8	8
+                            ts\tk\tk2\tv
+                            1970-01-01T00:00:00.000000Z\tk0\tk2_0\t0
+                            1970-01-01T00:00:10.000000Z\tk1\tk2_1\t1
+                            1970-01-01T00:00:20.000000Z\tk2\tk2_2\t2
+                            1970-01-01T00:00:30.000000Z\tk3\tk2_3\t3
+                            1970-01-01T00:00:40.000000Z\tk4\tk2_4\t4
+                            1970-01-01T00:00:50.000000Z\tk5\tk2_5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\tk2_6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\tk2_7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\tk2_8\t8
+                            1970-01-01T00:00:00.000000Z\tk0\tk2_0\t0
+                            1970-01-01T00:00:10.000000Z\tk1\tk2_1\t1
+                            1970-01-01T00:00:20.000000Z\tk2\tk2_2\t2
+                            1970-01-01T00:00:30.000000Z\tk3\tk2_3\t3
+                            1970-01-01T00:00:40.000000Z\tk4\tk2_4\t4
+                            1970-01-01T00:00:50.000000Z\tk5\tk2_5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\tk2_6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\tk2_7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\tk2_8\t8
                             """,
                     VIEW1,
                     null,
-                    "ts",
-                    true,
+                    null,
+                    false,
                     true
             );
         });
@@ -526,6 +531,23 @@ public class ViewCycleTest extends AbstractViewTest {
             } catch (SqlException e) {
                 // View doesn't exist yet, so this should fail with "view does not exist"
                 TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
+            }
+        });
+    }
+
+    @Test
+    public void testCycleDetectionNoWalApply() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createView(VIEW1, "select * from " + TABLE1, TABLE1);
+            createView(VIEW2, "select * from " + TABLE1, TABLE1);
+
+            try {
+                execute("CREATE OR REPLACE VIEW " + VIEW1 + " AS (" + VIEW2 + ")");
+                execute("CREATE OR REPLACE VIEW " + VIEW2 + " AS (" + VIEW1 + ")");
+                Assert.fail("expected SqlException due to cycle in view definitions");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "circular dependency detected: 'view2' cannot depend on 'view1' because 'view1' already depends on 'view2'");
             }
         });
     }

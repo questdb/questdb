@@ -40,7 +40,6 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
@@ -742,23 +741,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 lastCommittedRows = 0;
                 return 1;
             case VIEW_DEFINITION:
+                final TableToken viewToken = writer.getTableToken();
                 try (WalEventReader eventReader = walEventReader) {
                     final Path path = Path.PATH2.get();
-                    final TableToken token = writer.getTableToken();
-                    path.of(engine.getConfiguration().getDbRoot()).concat(token);
-                    int pathLen = path.size();
+                    path.of(engine.getConfiguration().getDbRoot()).concat(viewToken);
                     path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
                     final WalEventCursor.ViewDefinitionInfo info = walEventCursor.getViewDefinitionInfo();
-
-                    final TableToken viewToken = writer.getTableToken();
-                    final ViewDefinition viewDefinition = new ViewDefinition();
-                    viewDefinition.init(viewToken, info.getViewSql(), info.getViewDependencies());
-
-                    updateViewDefinition(viewDefinition, path, pathLen);
-                    engine.enqueueCompileView(viewToken);
+                    engine.updateViewDefinition(viewToken, info.getViewSql(), info.getViewDependencies(), seqTxn, blockFileWriter, path);
                 } catch (CairoException e) {
-                    LOG.error().$("could not update view definition [view=").$(writer.getTableToken())
+                    LOG.error().$("could not update view definition [view=").$(viewToken)
                             .$(", msg=").$safe(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .I$();
@@ -894,18 +886,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     stateWriter
             );
         }
-    }
-
-    private void updateViewDefinition(ViewDefinition newDefinition, Path path, int pathLen) {
-        path.trimTo(pathLen);
-        try (BlockFileWriter definitionWriter = blockFileWriter) {
-            definitionWriter.of(path.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
-            ViewDefinition.append(newDefinition, definitionWriter);
-        } finally {
-            path.trimTo(pathLen);
-        }
-
-        engine.getViewGraph().updateView(newDefinition);
     }
 
     /**

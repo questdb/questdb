@@ -1651,7 +1651,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         executionContext.getSecurityContext().authorizeAlterView(viewToken);
-        engine.replaceViewDefinition(viewToken, viewSql, dependencies);
+        engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
         compiledQuery.ofReplaceView();
     }
 

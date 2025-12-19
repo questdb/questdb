@@ -1527,15 +1527,20 @@ public class CairoEngine implements Closeable, WriterSource {
     public void replaceViewDefinition(
             TableToken viewToken,
             @NotNull String viewSql,
-            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            BlockFileWriter blockFileWriter,
+            Path path
     ) {
+        final long seqTxn;
         try (WalWriter walWriter = getWalWriter(viewToken)) {
-            long seqTxn = walWriter.replaceViewDefinition(viewSql, dependencies);
-            LOG.info().$("replacing view definition [view='").$(viewToken)
-                    .$("', sql='").$safe(viewSql)
-                    .$("', wal=").$(walWriter.getWalId())
-                    .$("', seqTxn=").$(seqTxn)
-                    .I$();
+            try {
+                seqTxn = walWriter.replaceViewDefinition(viewSql, dependencies);
+                updateViewDefinition(viewToken, viewSql, dependencies, seqTxn, blockFileWriter, path);
+                walWriter.commit();
+            } catch (Throwable th) {
+                walWriter.rollback();
+                throw th;
+            }
         }
     }
 
@@ -1668,6 +1673,20 @@ public class CairoEngine implements Closeable, WriterSource {
                     throw ex;
                 }
             }
+        }
+    }
+
+    public void updateViewDefinition(
+            TableToken viewToken,
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            long seqTxn,
+            BlockFileWriter blockFileWriter,
+            Path path
+    ) {
+        path.of(configuration.getDbRoot());
+        if (viewGraph.updateView(viewToken, viewSql, dependencies, seqTxn, blockFileWriter, path)) {
+            viewStateStore.enqueueCompile(viewToken);
         }
     }
 

@@ -26,6 +26,7 @@ package io.questdb.cairo.view;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
@@ -34,6 +35,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -46,8 +48,8 @@ import java.util.function.Function;
  */
 public class ViewGraph implements Mutable {
     private static final BiConsumer<ObjList<TableToken>, TableToken> ADD = ObjList::add;
-    private static final BiConsumer<ObjList<TableToken>, TableToken> REMOVE = ObjList::remove;
     private static final Function<CharSequence, ViewDependencyList> CREATE_DEPENDENCY_LIST = name -> new ViewDependencyList();
+    private static final BiConsumer<ObjList<TableToken>, TableToken> REMOVE = ObjList::remove;
     private final ConcurrentHashMap<ViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
 
@@ -98,18 +100,37 @@ public class ViewGraph implements Mutable {
         updateDependencies(viewToken, viewDefinition, REMOVE);
     }
 
-    public synchronized boolean updateView(ViewDefinition viewDefinition) {
-        final TableToken viewToken = viewDefinition.getViewToken();
-        final ViewDefinition prevDefinition = definitionsByTableDirName.get(viewToken.getDirName());
-        if (prevDefinition == null) {
+    public synchronized boolean updateView(
+            TableToken viewToken,
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            long seqTxn,
+            BlockFileWriter blockFileWriter,
+            Path path
+    ) {
+        final ViewDefinition currentDefinition = getViewDefinition(viewToken);
+        if (currentDefinition == null) {
             // view has been dropped concurrently
             return false;
         }
+        if (seqTxn <= currentDefinition.getSeqTxn()) {
+            // view has been updated to a higher txn, or called from primary wal apply job
+            return false;
+        }
 
-        definitionsByTableDirName.put(viewToken.getDirName(), viewDefinition);
+        final ViewDefinition newDefinition = new ViewDefinition();
+        newDefinition.init(viewToken, viewSql, dependencies, seqTxn);
 
-        updateDependencies(viewToken, prevDefinition, REMOVE);
-        updateDependencies(viewToken, viewDefinition, ADD);
+        try (BlockFileWriter definitionWriter = blockFileWriter) {
+            path.concat(viewToken).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+            definitionWriter.of(path.$());
+            ViewDefinition.append(newDefinition, definitionWriter);
+        }
+
+        definitionsByTableDirName.put(viewToken.getDirName(), newDefinition);
+
+        updateDependencies(viewToken, currentDefinition, REMOVE);
+        updateDependencies(viewToken, newDefinition, ADD);
         return true;
     }
 
