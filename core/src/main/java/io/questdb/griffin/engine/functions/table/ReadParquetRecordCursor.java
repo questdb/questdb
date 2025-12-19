@@ -34,6 +34,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
@@ -149,6 +150,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        counter.add(decoder.metadata().getRowCount());
+    }
+
+    @Override
     public void close() {
         Misc.free(decoder);
         Misc.free(rowGroupBuffers);
@@ -215,6 +221,34 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public long size() throws DataUnavailableException {
         return decoder.metadata().getRowCount();
+    }
+
+    @Override
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        long toSkip = rowCount.get();
+
+        while (toSkip > 0) {
+            if (currentRowInRowGroup + 1 >= rowGroupRowCount) {
+                try {
+                    if (!switchToNextRowGroup()) {
+                        return;
+                    }
+                } catch (CairoException ex) {
+                    throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
+                }
+                toSkip--;
+                rowCount.dec();
+                if (toSkip == 0) {
+                    return;
+                }
+            }
+
+            long availableToSkip = rowGroupRowCount - currentRowInRowGroup - 1;
+            long skipNow = Math.min(toSkip, availableToSkip);
+            currentRowInRowGroup += (int) skipNow;
+            toSkip -= skipNow;
+            rowCount.dec(skipNow);
+        }
     }
 
     @Override
