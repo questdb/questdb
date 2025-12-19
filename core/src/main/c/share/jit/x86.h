@@ -731,7 +731,8 @@ namespace questdb::x86 {
         return convert(c, args.first, args.second, null_check);
     }
 
-    void emit_bin_op(Compiler &c, const instruction_t &instr, ZoneStack<jit_value_t> &values, bool null_check) {
+    void emit_bin_op(Compiler &c, const instruction_t &instr, ZoneStack<jit_value_t> &values, bool null_check,
+                     const Label &l_next_row, bool has_short_circuit_label) {
         auto args = get_arguments(c, values, null_check);
         auto lhs = args.first;
         auto rhs = args.second;
@@ -739,6 +740,17 @@ namespace questdb::x86 {
             case opcodes::And:
                 values.append(bin_and(c, lhs, rhs));
                 break;
+            case opcodes::And_Sc: {
+                // Short-circuit AND: perform AND, then jump to next row if result is false
+                auto result = bin_and(c, lhs, rhs);
+                values.append(result);
+                if (has_short_circuit_label) {
+                    // Test result and jump to next row if zero
+                    c.test(result.gp().r32(), result.gp().r32());
+                    c.jz(l_next_row);
+                }
+                break;
+            }
             case opcodes::Or:
                 values.append(bin_or(c, lhs, rhs));
                 break;
@@ -783,7 +795,9 @@ namespace questdb::x86 {
               const Gp &data_ptr,
               const Gp &varsize_aux_ptr,
               const Gp &vars_ptr,
-              const Gp &input_index) {
+              const Gp &input_index,
+              const Label &l_next_row,
+              bool has_short_circuit_label) {
 
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
@@ -814,10 +828,22 @@ namespace questdb::x86 {
                     values.append(bin_not(c, get_argument(c, values)));
                     break;
                 default:
-                    emit_bin_op(c, instr, values, null_check);
+                    emit_bin_op(c, instr, values, null_check, l_next_row, has_short_circuit_label);
                     break;
             }
         }
+    }
+
+    // Overload for backward compatibility (no short-circuit)
+    void
+    emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values,
+              bool null_check,
+              const Gp &data_ptr,
+              const Gp &varsize_aux_ptr,
+              const Gp &vars_ptr,
+              const Gp &input_index) {
+        Label dummy_label;
+        emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, dummy_label, false);
     }
 }
 

@@ -86,6 +86,7 @@ struct Function {
     void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
+        Label l_next_row = c.newLabel();  // Label for short-circuit jumps
 
         c.cmp(input_index, stop);
         c.jge(l_exit);
@@ -93,7 +94,8 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index);
+            // Pass the short-circuit label to emit_code
+            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, l_next_row, true);
 
             auto mask = values.pop();
 
@@ -104,6 +106,9 @@ struct Function {
             c.and_(mask.gp(), 1);
             c.add(output_index, mask.gp().r64());
         }
+
+        // Short-circuit jumps land here, skipping the row storage above
+        c.bind(l_next_row);
         c.add(input_index, unroll_factor);
 
         c.cmp(input_index, stop);

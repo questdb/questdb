@@ -74,6 +74,7 @@ import java.util.Arrays;
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     public static final int ADD = 14; // a + b
     public static final int AND = 6;  // a && b
+    public static final int AND_SC = 18; // a && b with short-circuit (jump to next row if false)
     public static final int BINARY_HEADER_TYPE = 8;
     public static final int DIV = 17; // a / b
     public static final int EQ = 8;   // a == b
@@ -111,8 +112,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
+    private static final int PRIORITY_INT_EQ = 1;
+    // Predicate priority for short-circuit evaluation
+    private static final int PRIORITY_LONG_EQ = 0;  // highest priority
+    private static final int PRIORITY_OTHER = 2;    // lowest priority
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
+    // List to collect predicates from AND chains for reordering
+    private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
     private final PredicateContext predicateContext = new PredicateContext();
     private final StringSink sink = new StringSink();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
@@ -134,6 +141,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         forceScalarMode = false;
         predicateContext.clear();
         backfillNodes.clear();
+        collectedPredicates.clear();
     }
 
     @Override
@@ -202,26 +210,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
-        traverseAlgo.traverse(node, this);
+        // Check if we can apply predicate reordering for short-circuit evaluation
+        if (isPureAndChain(node)) {
+            collectedPredicates.clear();
+            collectAndPredicates(node, collectedPredicates);
+            if (collectedPredicates.size() > 1) {
+                sortPredicatesByPriority(collectedPredicates);
+                serializeReorderedPredicates(collectedPredicates);
+            } else {
+                // Single predicate, no reordering needed
+                traverseAlgo.traverse(node, this);
+            }
+        } else {
+            // Not a pure AND chain, use normal serialization
+            traverseAlgo.traverse(node, this);
+        }
         putOperator(RET);
 
         ensureOnlyVarSizeHeaderChecks();
-        TypesObserver typesObserver = predicateContext.globalTypesObserver;
-        int options = debug ? 1 : 0;
-        int typeSize = typesObserver.maxSize();
-        if (typeSize > 0) {
-            // typeSize is 2^n, so the number of trailing zeros is equal to log2
-            int log2 = Integer.numberOfTrailingZeros(typeSize);
-            options = options | (log2 << 1);
-        }
-        if (!scalar && !forceScalarMode) {
-            int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
-            options = options | (executionHint << 4);
-        }
-
-        options = options | ((nullChecks ? 1 : 0) << 6);
-
-        return options;
+        return getOptions(scalar, debug, nullChecks);
     }
 
     @Override
@@ -270,73 +277,34 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private static byte bindVariableTypeCode(int columnTypeTag) {
-        switch (columnTypeTag) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-                return I1_TYPE;
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-            case ColumnType.CHAR:
-                return I2_TYPE;
-            case ColumnType.INT:
-            case ColumnType.IPv4:
-            case ColumnType.GEOINT:
-            case ColumnType.STRING: // symbol variables are represented with the string type
-                return I4_TYPE;
-            case ColumnType.FLOAT:
-                return F4_TYPE;
-            case ColumnType.LONG:
-            case ColumnType.GEOLONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                return I8_TYPE;
-            case ColumnType.DOUBLE:
-                return F8_TYPE;
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-                return I16_TYPE;
-            default:
-                return UNDEFINED_CODE;
-        }
+        return switch (columnTypeTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
+            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR -> I2_TYPE;
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT,
+                 ColumnType.STRING -> // symbol variables are represented with the string type
+                    I4_TYPE;
+            case ColumnType.FLOAT -> F4_TYPE;
+            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.DATE, ColumnType.TIMESTAMP -> I8_TYPE;
+            case ColumnType.DOUBLE -> F8_TYPE;
+            case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
+            default -> UNDEFINED_CODE;
+        };
     }
 
     private static int columnTypeCode(int columnTypeTag) {
-        switch (columnTypeTag) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-                return I1_TYPE;
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-            case ColumnType.CHAR:
-                return I2_TYPE;
-            case ColumnType.INT:
-            case ColumnType.IPv4:
-            case ColumnType.GEOINT:
-            case ColumnType.SYMBOL:
-                return I4_TYPE;
-            case ColumnType.FLOAT:
-                return F4_TYPE;
-            case ColumnType.LONG:
-            case ColumnType.GEOLONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                return I8_TYPE;
-            case ColumnType.DOUBLE:
-                return F8_TYPE;
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-                return I16_TYPE;
-            case ColumnType.STRING:
-                return STRING_HEADER_TYPE;
-            case ColumnType.BINARY:
-                return BINARY_HEADER_TYPE;
-            case ColumnType.VARCHAR:
-                return VARCHAR_HEADER_TYPE;
-            default:
-                return UNDEFINED_CODE;
-        }
+        return switch (columnTypeTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
+            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR -> I2_TYPE;
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL -> I4_TYPE;
+            case ColumnType.FLOAT -> F4_TYPE;
+            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.DATE, ColumnType.TIMESTAMP -> I8_TYPE;
+            case ColumnType.DOUBLE -> F8_TYPE;
+            case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
+            case ColumnType.STRING -> STRING_HEADER_TYPE;
+            case ColumnType.BINARY -> BINARY_HEADER_TYPE;
+            case ColumnType.VARCHAR -> VARCHAR_HEADER_TYPE;
+            default -> UNDEFINED_CODE;
+        };
     }
 
     private static boolean isArithmeticOperation(ExpressionNode node) {
@@ -357,31 +325,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private static boolean isGeoHash(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-            case ColumnType.GEOLONG:
-                return true;
-            default:
-                return false;
-        }
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
+            default -> false;
+        };
     }
 
     // Stands for PredicateType.NUMERIC
     private static boolean isNumeric(int columnTypeTag) {
-        switch (columnTypeTag) {
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.FLOAT:
-            case ColumnType.DOUBLE:
-            case ColumnType.LONG128:
-                return true;
-            default:
-                return false;
-        }
+        return switch (columnTypeTag) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
+                 ColumnType.DOUBLE, ColumnType.LONG128 -> true;
+            default -> false;
+        };
     }
 
     private static boolean isTopLevelOperation(ExpressionNode node) {
@@ -484,6 +440,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperand(offset, VAR, typeCode, index);
     }
 
+    /**
+     * Collects all predicates from an AND chain into the provided list.
+     */
+    private void collectAndPredicates(ExpressionNode node, ObjList<ExpressionNode> predicates) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isAndKeyword(node.token)) {
+            collectAndPredicates(node.lhs, predicates);
+            collectAndPredicates(node.rhs, predicates);
+        } else {
+            predicates.add(node);
+        }
+    }
+
     private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
         typeStack.clear();
         for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
@@ -515,6 +486,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     typeStack.push(typeCode);
             }
         }
+    }
+
+    /**
+     * Finds the column type involved in an expression.
+     * Returns UNDEFINED if no column is found.
+     */
+    private int findColumnType(ExpressionNode node) {
+        if (node == null) {
+            return ColumnType.UNDEFINED;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            int index = metadata.getColumnIndexQuiet(node.token);
+            if (index != -1) {
+                return ColumnType.tagOf(metadata.getColumnType(index));
+            }
+        }
+        // Recursively search children
+        int leftType = findColumnType(node.lhs);
+        if (leftType != ColumnType.UNDEFINED) {
+            return leftType;
+        }
+        return findColumnType(node.rhs);
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
@@ -559,6 +552,51 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return bindVariableService;
     }
 
+    private int getOptions(boolean scalar, boolean debug, boolean nullChecks) {
+        final TypesObserver typesObserver = predicateContext.globalTypesObserver;
+        int options = debug ? 1 : 0;
+        final int typeSize = typesObserver.maxSize();
+        if (typeSize > 0) {
+            // typeSize is 2^n, so the number of trailing zeros is equal to log2
+            final int log2 = Integer.numberOfTrailingZeros(typeSize);
+            options = options | (log2 << 1);
+        }
+        if (!scalar && !forceScalarMode) {
+            final int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
+            options = options | (executionHint << 4);
+        }
+
+        options = options | ((nullChecks ? 1 : 0) << 6);
+        return options;
+    }
+
+    /**
+     * Determines the priority of a predicate for short-circuit evaluation.
+     * Lower value = higher priority (evaluated first).
+     * Priority: long equality > int equality > others
+     */
+    private int getPredicatePriority(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.OPERATION) {
+            return PRIORITY_OTHER;
+        }
+        // Check if it's an equality operation
+        if (!Chars.equals(node.token, '=')) {
+            return PRIORITY_OTHER;
+        }
+        // Find the column type involved in this equality
+        int columnType = findColumnType(node);
+        if (columnType == ColumnType.LONG || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE) {
+            return PRIORITY_LONG_EQ;
+        }
+        if (columnType == ColumnType.INT || columnType == ColumnType.IPv4) {
+            return PRIORITY_INT_EQ;
+        }
+        // TODO(puzpuzpuz): consider adding other 32 and 64 bit types
+        // TODO(puzpuzpuz): estimate symbol priority here; if there are many symbol keys, treat it as PRIORITY_SYM_EQ
+        // TODO(puzpuzpuz): add != int and != long as lower priority ops
+        return PRIORITY_OTHER;
+    }
+
     private boolean isBooleanColumn(ExpressionNode node) {
         if (node.type != ExpressionNode.LITERAL) {
             return false;
@@ -579,6 +617,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // check predicate type is timestamp
         return ColumnType.isTimestamp(predicateContext.columnType);
+    }
+
+    /**
+     * Checks if the expression tree is a pure AND chain (no OR at top level).
+     */
+    private boolean isPureAndChain(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION) {
+            if (SqlKeywords.isAndKeyword(node.token)) {
+                return isPureAndChain(node.lhs) && isPureAndChain(node.rhs);
+            }
+            return !SqlKeywords.isOrKeyword(node.token);
+        }
+        // Leaf predicate or non-OR operation
+        return true;
     }
 
     private boolean isTopLevelBooleanColumn(ExpressionNode node) {
@@ -1085,6 +1140,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         throw SqlException.position(position).put("invalid operator: ").put(token);
     }
 
+    /**
+     * Serializes predicates in priority order with short-circuit ANDs for high-priority ones.
+     */
+    private void serializeReorderedPredicates(ObjList<ExpressionNode> predicates) throws SqlException {
+        int n = predicates.size();
+        if (n == 0) {
+            return;
+        }
+
+        // Serialize all predicates in the priority order with short-circuit ANDs
+        for (int i = 0; i < n; i++) {
+            traverseAlgo.traverse(predicates.getQuick(i), this);
+            if (i != n - 1) {
+                putOperator(AND_SC);
+            }
+        }
+    }
+
     private void serializeSymbolConstant(long offset, int position, final CharSequence token) throws SqlException {
         final int len = token.length();
         CharSequence symbol = token;
@@ -1149,6 +1222,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
+    }
+
+    /**
+     * Sorts predicates by priority using simple insertion sort.
+     * Stable sort to preserve original order for equal priorities.
+     */
+    private void sortPredicatesByPriority(ObjList<ExpressionNode> predicates) {
+        int n = predicates.size();
+        for (int i = 1; i < n; i++) {
+            ExpressionNode key = predicates.getQuick(i);
+            int keyPriority = getPredicatePriority(key);
+            int j = i - 1;
+            while (j >= 0 && getPredicatePriority(predicates.getQuick(j)) > keyPriority) {
+                predicates.setQuick(j + 1, predicates.getQuick(j));
+                j--;
+            }
+            predicates.setQuick(j + 1, key);
+        }
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -1266,29 +1357,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         private int indexToTypeCode(int index) {
-            switch (index) {
-                case I1_INDEX:
-                    return I1_TYPE;
-                case I2_INDEX:
-                    return I2_TYPE;
-                case I4_INDEX:
-                    return I4_TYPE;
-                case F4_INDEX:
-                    return F4_TYPE;
-                case I8_INDEX:
-                    return I8_TYPE;
-                case F8_INDEX:
-                    return F8_TYPE;
-                case I16_INDEX:
-                    return I16_TYPE;
-                case STRING_HEADER_INDEX:
-                    return STRING_HEADER_TYPE;
-                case BINARY_HEADER_INDEX:
-                    return BINARY_HEADER_TYPE;
-                case VARCHAR_HEADER_INDEX:
-                    return VARCHAR_HEADER_TYPE;
-            }
-            return UNDEFINED_CODE;
+            return switch (index) {
+                case I1_INDEX -> I1_TYPE;
+                case I2_INDEX -> I2_TYPE;
+                case I4_INDEX -> I4_TYPE;
+                case F4_INDEX -> F4_TYPE;
+                case I8_INDEX -> I8_TYPE;
+                case F8_INDEX -> F8_TYPE;
+                case I16_INDEX -> I16_TYPE;
+                case STRING_HEADER_INDEX -> STRING_HEADER_TYPE;
+                case BINARY_HEADER_INDEX -> BINARY_HEADER_TYPE;
+                case VARCHAR_HEADER_INDEX -> VARCHAR_HEADER_TYPE;
+                default -> UNDEFINED_CODE;
+            };
         }
     }
 

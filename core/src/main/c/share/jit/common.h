@@ -56,16 +56,16 @@ enum class opcodes : int32_t {
     And = 6,
     Or = 7,
     Eq = 8,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Rem,
+    Ne = 9,
+    Lt = 10,
+    Le = 11,
+    Gt = 12,
+    Ge = 13,
+    Add = 14,
+    Sub = 15,
+    Mul = 16,
+    Div = 17,
+    And_Sc = 18, // Short-circuit AND: same as And but jumps to next row if result is false
 };
 
 struct instruction_t {
