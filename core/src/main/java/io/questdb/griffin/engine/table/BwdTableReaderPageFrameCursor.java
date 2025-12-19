@@ -369,6 +369,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
+        public PartitionDecoder getParquetPartitionDecoder() {
+            assert reenterParquetDecoder != null || format != PartitionFormat.PARQUET;
+            return reenterParquetDecoder;
+        }
+
+        @Override
         public int getParquetRowGroup() {
             return rowGroupIndex;
         }

@@ -56,10 +56,14 @@ public class PartitionDecoder implements QuietCloseable {
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
+    private long decodeContextPtr;
     private long fileAddr; // mmapped parquet file's address
     private long fileSize; // mmapped parquet file's size
+    private boolean owned;
     private long ptr;
     private long rowGroupSizesPtr;
+
+    public static native long createDecodeContext(long addr, long fileSize);
 
     public static boolean decodeNoNeedToDecodeFlag(long encodedIndex) {
         return (encodedIndex & 1) == 1;
@@ -68,6 +72,8 @@ public class PartitionDecoder implements QuietCloseable {
     public static int decodeRowGroupIndex(long encodedIndex) {
         return (int) ((encodedIndex >> 1) - 1);
     }
+
+    public static native void destroyDecodeContext(long decodeContextPtr);
 
     @Override
     public void close() {
@@ -84,8 +90,13 @@ public class PartitionDecoder implements QuietCloseable {
             int rowHi // high row index within the row group, exclusive
     ) {
         assert ptr != 0;
+        if (decodeContextPtr == 0) {
+            // lazy init
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
+        }
         return decodeRowGroup( // throws CairoException on error
                 ptr,
+                decodeContextPtr,
                 rowGroupBuffers.ptr(),
                 columns.getAddress(),
                 (int) (columns.size() >>> 1),
@@ -144,6 +155,7 @@ public class PartitionDecoder implements QuietCloseable {
         assert addr != 0;
         assert fileSize > 0;
         destroy();
+        this.owned = true;
         this.fileAddr = addr;
         this.fileSize = fileSize;
         final long allocator = Unsafe.getNativeAllocator(memoryTag);
@@ -151,6 +163,20 @@ public class PartitionDecoder implements QuietCloseable {
         columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
         rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
         metadata.init();
+    }
+
+    public void of(PartitionDecoder other) {
+        this.fileAddr = other.fileAddr;
+        this.fileSize = other.fileSize;
+        this.ptr = other.ptr;
+        if (decodeContextPtr != 0) {
+            destroyDecodeContext(decodeContextPtr);
+            decodeContextPtr = 0;
+        }
+        this.columnsPtr = other.columnsPtr;
+        this.rowGroupSizesPtr = other.rowGroupSizesPtr;
+        this.metadata.of(other.metadata);
+        owned = false;
     }
 
     public void readRowGroupStats(
@@ -186,6 +212,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native int decodeRowGroup(
             long decoderPtr,
+            long decodeContextPtr,
             long rowGroupBuffersPtr,
             long columnsPtr,
             int columnCount,
@@ -221,11 +248,15 @@ public class PartitionDecoder implements QuietCloseable {
     private static native long timestampIndexOffset();
 
     private void destroy() {
-        if (ptr != 0) {
+        if (owned && ptr != 0) {
             destroy(ptr);
             ptr = 0;
             columnsPtr = 0;
             rowGroupSizesPtr = 0;
+        }
+        if (decodeContextPtr != 0) {
+            destroyDecodeContext(decodeContextPtr);
+            decodeContextPtr = 0;
         }
     }
 
@@ -337,6 +368,11 @@ public class PartitionDecoder implements QuietCloseable {
                 columnNames.add(str);
                 currentColumnPtr += COLUMN_STRUCT_SIZE;
             }
+        }
+
+        void of(Metadata other) {
+            this.columnNames.clear();
+            this.columnNames.addAll(other.columnNames);
         }
     }
 

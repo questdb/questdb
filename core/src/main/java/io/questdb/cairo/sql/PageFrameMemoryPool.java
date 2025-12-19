@@ -252,10 +252,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void openParquet(int frameIndex) {
-        final long addr = addressCache.getParquetAddr(frameIndex);
-        final long fileSize = addressCache.getParquetFileSize(frameIndex);
-        if (parquetDecoder.getFileAddr() != addr || parquetDecoder.getFileSize() != fileSize) {
-            parquetDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        final PartitionDecoder frameDecoder = addressCache.getParquetPartitionDecoder(frameIndex);
+        if (parquetDecoder.getFileAddr() != frameDecoder.getFileAddr() || parquetDecoder.getFileSize() != frameDecoder.getFileSize()) {
+            parquetDecoder.of(frameDecoder);
         }
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
         if (parquetMetadata.getColumnCount() < addressCache.getColumnCount()) {

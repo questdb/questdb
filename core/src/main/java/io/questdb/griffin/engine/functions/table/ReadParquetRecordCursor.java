@@ -101,7 +101,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
      * Validates that metadata columns can be projected from parquet and optionally populates column mappings.
      *
      * @param columns       if not null, will be populated with (parquetIndex, parquetType) pairs
-     * @param columnIndexes if not null, will be populated with metadata column indexes (0, 1, 2, ...)
+     * @param columnIndexes if not null, will be populated with metadata column indexes
      * @return true if projection is possible, false otherwise
      */
     public static boolean canProjectMetadata(

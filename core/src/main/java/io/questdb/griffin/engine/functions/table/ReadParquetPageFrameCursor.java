@@ -218,6 +218,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
+        public PartitionDecoder getParquetPartitionDecoder() {
+            return decoder;
+        }
+
+        @Override
         public int getParquetRowGroup() {
             return rowGroupIndex;
         }

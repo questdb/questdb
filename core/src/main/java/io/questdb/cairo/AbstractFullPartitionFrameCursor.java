@@ -33,7 +33,6 @@ import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
-    protected PartitionDecoder parquetDecoder;
     protected int partitionHi;
     protected int partitionIndex;
     protected TableReader reader;
@@ -45,7 +44,6 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         if (reader != null && reader.isActive()) {
             reader = Misc.free(reader);
         }
-        Misc.free(parquetDecoder);
     }
 
     @Override
