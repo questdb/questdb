@@ -112,9 +112,9 @@ public class PageFrameAddressCache implements Mutable {
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(frame.getFormat());
-        parquetPartitionDecoders.add(frame.getParquetPartitionDecoder());
-        final long fileSize = frame.getParquetFileSize();
-        assert fileSize > 0 || frame.getFormat() != PartitionFormat.PARQUET;
+        PartitionDecoder decoder = frame.getParquetPartitionDecoder();
+        parquetPartitionDecoders.add(decoder);
+        assert (decoder != null && (decoder.getFileSize() > 0)) || frame.getFormat() != PartitionFormat.PARQUET;
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());

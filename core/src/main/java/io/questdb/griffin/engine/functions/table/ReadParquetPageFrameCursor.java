@@ -208,16 +208,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getParquetAddr() {
-            return addr;
-        }
-
-        @Override
-        public long getParquetFileSize() {
-            return fileSize;
-        }
-
-        @Override
         public PartitionDecoder getParquetPartitionDecoder() {
             return decoder;
         }

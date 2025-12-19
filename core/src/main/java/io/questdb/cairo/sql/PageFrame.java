@@ -96,19 +96,6 @@ public interface PageFrame {
      */
     long getPageSize(int columnIndex);
 
-    /**
-     * Return Parquet partition's mmapped file address or 0 in case of a native partition.
-     */
-    long getParquetAddr();
-
-    /**
-     * Return the Parquet partition's read size or -1 in case of a native partition.
-     * Specifying the read size allows us to find a specific metadata at the end of the read size
-     * (rather than the end of the file) should we have performed an O3 operation that extended
-     * the file size.
-     */
-    long getParquetFileSize();
-
     PartitionDecoder getParquetPartitionDecoder();
 
     /**
