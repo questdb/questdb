@@ -7211,7 +7211,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         with\s
                             starts as ((telemetry_users where event = 100 order by created) timestamp(created)),
                             stops as ((telemetry_users where event = 101 order by created) timestamp(created))
-                                                
+                        
                         select * from (select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000
                         """,
                 modelOf("telemetry_users")
@@ -7230,7 +7230,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         with\s
                             starts as ((telemetry_users where event = 100 order by created) timestamp(created)),
                             stops as ((telemetry_users where event = 101 order by created) timestamp(created))
-                                                
+                        
                         select distinct id from (select a.created ts_stop, a.id, b.created ts_start, b.id \
                         from stops a \
                         lt join starts b on (id)) \
