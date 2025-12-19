@@ -66,6 +66,7 @@ enum class opcodes : int32_t {
     Mul = 16,
     Div = 17,
     And_Sc = 18, // Short-circuit AND: same as And but jumps to next row if result is false
+    Or_Sc = 19,  // Short-circuit OR: same as Or but jumps to next row if result is true
 };
 
 struct instruction_t {

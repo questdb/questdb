@@ -509,6 +509,7 @@ namespace questdb::avx2 {
                 values.append(bin_and(c, lhs, rhs));
                 break;
             case opcodes::Or:
+            case opcodes::Or_Sc:  // Short-circuit OR treated as regular OR in SIMD path
                 values.append(bin_or(c, lhs, rhs));
                 break;
             case opcodes::Eq:

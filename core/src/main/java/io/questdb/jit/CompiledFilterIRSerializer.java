@@ -101,6 +101,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int NEG = 4;  // -a
     public static final int NOT = 5;  // !a
     public static final int OR = 7;   // a || b
+    public static final int OR_SC = 19;  // a || b with short-circuit (jump to next row if true)
     // Opcodes:
     // Return code. Breaks the loop
     public static final int RET = 0;  // ret
@@ -112,10 +113,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
-    private static final int PRIORITY_INT_EQ = 1;
     // Predicate priority for short-circuit evaluation
-    private static final int PRIORITY_LONG_EQ = 0;  // highest priority
-    private static final int PRIORITY_OTHER = 2;    // lowest priority
+    private static final int PRIORITY_I4_EQ = 1;
+    private static final int PRIORITY_I4_NEQ = 5;
+    private static final int PRIORITY_I8_EQ = 0;  // highest priority
+    private static final int PRIORITY_I8_NEQ = 6; // lowest priority
+    private static final int PRIORITY_OTHER = 3;
+    private static final int PRIORITY_SYM_EQ = 2;
+    private static final int PRIORITY_SYM_NEQ = 4;
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
@@ -216,7 +221,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             collectAndPredicates(node, collectedPredicates);
             if (collectedPredicates.size() > 1) {
                 sortPredicatesByPriority(collectedPredicates);
-                serializeReorderedPredicates(collectedPredicates);
+                serializePredicatesAndSc(collectedPredicates);
+            } else {
+                // Single predicate, no reordering needed
+                traverseAlgo.traverse(node, this);
+            }
+        } else if (isPureOrChain(node)) {
+            collectedPredicates.clear();
+            collectOrPredicates(node, collectedPredicates);
+            if (collectedPredicates.size() > 1) {
+                sortPredicatesByInvertedPriority(collectedPredicates);
+                serializePredicatesOrSc(collectedPredicates);
             } else {
                 // Single predicate, no reordering needed
                 traverseAlgo.traverse(node, this);
@@ -455,6 +470,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    /**
+     * Collects all predicates from an OR chain into the provided list.
+     */
+    private void collectOrPredicates(ExpressionNode node, ObjList<ExpressionNode> predicates) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isOrKeyword(node.token)) {
+            collectOrPredicates(node.lhs, predicates);
+            collectOrPredicates(node.rhs, predicates);
+        } else {
+            predicates.add(node);
+        }
+    }
+
     private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
         typeStack.clear();
         for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
@@ -489,10 +519,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Finds the column type involved in an expression.
+     * Finds the column type involved in an operation.
      * Returns UNDEFINED if no column is found.
      */
-    private int findColumnType(ExpressionNode node) {
+    private int findOperandColumnType(ExpressionNode node) {
         if (node == null) {
             return ColumnType.UNDEFINED;
         }
@@ -503,11 +533,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
         // Recursively search children
-        int leftType = findColumnType(node.lhs);
+        int leftType = findOperandColumnType(node.lhs);
         if (leftType != ColumnType.UNDEFINED) {
             return leftType;
         }
-        return findColumnType(node.rhs);
+        return findOperandColumnType(node.rhs);
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
@@ -573,27 +603,40 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Determines the priority of a predicate for short-circuit evaluation.
      * Lower value = higher priority (evaluated first).
-     * Priority: long equality > int equality > others
+     * Priority: long eq > int eq > symbol eq > others > symbol neq > int neq > long neq
      */
     private int getPredicatePriority(ExpressionNode node) {
         if (node == null || node.type != ExpressionNode.OPERATION) {
             return PRIORITY_OTHER;
         }
         // Check if it's an equality operation
-        if (!Chars.equals(node.token, '=')) {
-            return PRIORITY_OTHER;
+        if (Chars.equals(node.token, '=')) {
+            // Find the column type involved in this equality
+            final int columnType = findOperandColumnType(node);
+            if (columnType == ColumnType.DOUBLE || columnType == ColumnType.LONG
+                    || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE) {
+                return PRIORITY_I8_EQ;
+            }
+            if (columnType == ColumnType.FLOAT || columnType == ColumnType.INT || columnType == ColumnType.IPv4) {
+                return PRIORITY_I4_EQ;
+            }
+            if (columnType == ColumnType.SYMBOL) {
+                return PRIORITY_SYM_EQ;
+            }
+        } else if (Chars.equals(node.token, "<>") || Chars.equals(node.token, "!=")) {
+            // Find the column type involved in this inequality
+            final int columnType = findOperandColumnType(node);
+            if (columnType == ColumnType.DOUBLE || columnType == ColumnType.LONG
+                    || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE) {
+                return PRIORITY_I8_NEQ;
+            }
+            if (columnType == ColumnType.FLOAT || columnType == ColumnType.INT || columnType == ColumnType.IPv4) {
+                return PRIORITY_I4_NEQ;
+            }
+            if (columnType == ColumnType.SYMBOL) {
+                return PRIORITY_SYM_NEQ;
+            }
         }
-        // Find the column type involved in this equality
-        int columnType = findColumnType(node);
-        if (columnType == ColumnType.LONG || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE) {
-            return PRIORITY_LONG_EQ;
-        }
-        if (columnType == ColumnType.INT || columnType == ColumnType.IPv4) {
-            return PRIORITY_INT_EQ;
-        }
-        // TODO(puzpuzpuz): consider adding other 32 and 64 bit types
-        // TODO(puzpuzpuz): estimate symbol priority here; if there are many symbol keys, treat it as PRIORITY_SYM_EQ
-        // TODO(puzpuzpuz): add != int and != long as lower priority ops
         return PRIORITY_OTHER;
     }
 
@@ -633,6 +676,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return !SqlKeywords.isOrKeyword(node.token);
         }
         // Leaf predicate or non-OR operation
+        return true;
+    }
+
+    /**
+     * Checks if the expression tree is a pure OR chain (no AND at top level).
+     */
+    private boolean isPureOrChain(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION) {
+            if (SqlKeywords.isOrKeyword(node.token)) {
+                return isPureOrChain(node.lhs) && isPureOrChain(node.rhs);
+            }
+            return !SqlKeywords.isAndKeyword(node.token);
+        }
+        // Leaf predicate or non-AND operation
         return true;
     }
 
@@ -1143,7 +1203,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Serializes predicates in priority order with short-circuit ANDs for high-priority ones.
      */
-    private void serializeReorderedPredicates(ObjList<ExpressionNode> predicates) throws SqlException {
+    private void serializePredicatesAndSc(ObjList<ExpressionNode> predicates) throws SqlException {
         int n = predicates.size();
         if (n == 0) {
             return;
@@ -1154,6 +1214,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             traverseAlgo.traverse(predicates.getQuick(i), this);
             if (i != n - 1) {
                 putOperator(AND_SC);
+            }
+        }
+    }
+
+    /**
+     * Serializes predicates in priority order with short-circuit ORs for low-priority ones.
+     */
+    private void serializePredicatesOrSc(ObjList<ExpressionNode> predicates) throws SqlException {
+        int n = predicates.size();
+        if (n == 0) {
+            return;
+        }
+
+        // Serialize all predicates in the inverted priority order with short-circuit ORs
+        for (int i = 0; i < n; i++) {
+            traverseAlgo.traverse(predicates.getQuick(i), this);
+            if (i != n - 1) {
+                putOperator(OR_SC);
             }
         }
     }
@@ -1225,14 +1303,30 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
+     * Sorts predicates by inverted priority using simple insertion sort.
+     * Stable sort to preserve original order for equal priorities.
+     */
+    private void sortPredicatesByInvertedPriority(ObjList<ExpressionNode> predicates) {
+        for (int i = 1, n = predicates.size(); i < n; i++) {
+            final ExpressionNode key = predicates.getQuick(i);
+            final int keyPriority = getPredicatePriority(key);
+            int j = i - 1;
+            while (j >= 0 && getPredicatePriority(predicates.getQuick(j)) < keyPriority) {
+                predicates.setQuick(j + 1, predicates.getQuick(j));
+                j--;
+            }
+            predicates.setQuick(j + 1, key);
+        }
+    }
+
+    /**
      * Sorts predicates by priority using simple insertion sort.
      * Stable sort to preserve original order for equal priorities.
      */
     private void sortPredicatesByPriority(ObjList<ExpressionNode> predicates) {
-        int n = predicates.size();
-        for (int i = 1; i < n; i++) {
-            ExpressionNode key = predicates.getQuick(i);
-            int keyPriority = getPredicatePriority(key);
+        for (int i = 1, n = predicates.size(); i < n; i++) {
+            final ExpressionNode key = predicates.getQuick(i);
+            final int keyPriority = getPredicatePriority(key);
             int j = i - 1;
             while (j >= 0 && getPredicatePriority(predicates.getQuick(j)) > keyPriority) {
                 predicates.setQuick(j + 1, predicates.getQuick(j));

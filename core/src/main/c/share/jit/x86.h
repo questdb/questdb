@@ -761,11 +761,17 @@ namespace questdb::x86 {
         return convert(c, args.first, args.second, null_check);
     }
 
+    inline bool is_number(data_type_t dt) {
+        return dt == data_type_t::i8 || dt == data_type_t::i16 ||
+               dt == data_type_t::i32 || dt == data_type_t::i64 ||
+               dt == data_type_t::f32 || dt == data_type_t::f64;
+    }
+
     inline bool is_imm_int_zero(const jit_value_t &v) {
         if (!v.op().isImm()) {
             return false;
         }
-        if (!is_int_type(v.dtype())) {
+        if (!is_number(v.dtype())) {
             return false;
         }
         return v.op().as<Imm>().valueAs<int64_t>() == 0;
@@ -829,6 +835,17 @@ namespace questdb::x86 {
             case opcodes::Or:
                 values.append(bin_or(c, lhs, rhs));
                 break;
+            case opcodes::Or_Sc: {
+                // Short-circuit OR: perform OR, then jump to next row if result is true
+                auto result = bin_or(c, lhs, rhs);
+                values.append(result);
+                if (has_short_circuit_label) {
+                    // Test result and jump to next row if non-zero
+                    c.test(result.gp().r32(), result.gp().r32());
+                    c.jnz(l_next_row);
+                }
+                break;
+            }
             case opcodes::Gt:
                 values.append(cmp_gt(c, lhs, rhs, null_check));
                 break;
