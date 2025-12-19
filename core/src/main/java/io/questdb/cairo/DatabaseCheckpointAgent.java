@@ -728,6 +728,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         }
                     }
             );
+            recoveryAgent.finalizeParallelTasks();
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())
