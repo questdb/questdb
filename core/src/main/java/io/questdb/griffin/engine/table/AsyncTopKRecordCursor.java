@@ -54,9 +54,10 @@ class AsyncTopKRecordCursor implements RecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        buildChainConditionally();
-        final AsyncTopKAtom atom = frameSequence.getAtom();
-        counter.add(atom.getOwnerChain().size() - consumedCount);
+        ensureChainBuilt();
+        long size = size();
+        counter.add(size - consumedCount);
+        consumedCount = size;
     }
 
     @Override
@@ -95,7 +96,10 @@ class AsyncTopKRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        buildChainConditionally();
+        ensureChainBuilt();
+        if (consumedCount == size()) {
+            return false;
+        }
         if (chainCursor.hasNext()) {
             recordAt(recordA, chainCursor.next());
             consumedCount++;
@@ -190,7 +194,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
         mergeChains();
     }
 
-    private void buildChainConditionally() {
+    private void ensureChainBuilt() {
         if (!isChainBuilt) {
             buildChain();
             isChainBuilt = true;
