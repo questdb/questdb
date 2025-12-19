@@ -406,6 +406,22 @@ namespace questdb::x86 {
         return r.as<Gpd>();
     }
 
+    inline Gpd int32_eq_zero(Compiler &c, const Gpd &lhs) {
+        Gp r = c.newInt32();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.sete(r.r8Lo());
+        return r.as<Gpd>();
+    }
+
+    inline Gpd int32_ne_zero(Compiler &c, const Gpd &lhs) {
+        Gp r = c.newInt32();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.setne(r.r8Lo());
+        return r.as<Gpd>();
+    }
+
     inline Gpd int32_lt_gt(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool gt, bool check_null) {
         if (!check_null) {
             Gp r = c.newInt32();
@@ -497,6 +513,22 @@ namespace questdb::x86 {
         Gp r = c.newInt64();
         c.xor_(r, r);
         c.cmp(lhs, rhs);
+        c.setne(r.r8Lo());
+        return r.as<Gpq>();
+    }
+
+    inline Gpq int64_eq_zero(Compiler &c, const Gpq &lhs) {
+        Gp r = c.newInt64();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.sete(r.r8Lo());
+        return r.as<Gpq>();
+    }
+
+    inline Gpq int64_ne_zero(Compiler &c, const Gpq &lhs) {
+        Gp r = c.newInt64();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
         c.setne(r.r8Lo());
         return r.as<Gpq>();
     }

@@ -382,6 +382,36 @@ namespace questdb::x86 {
         }
     }
 
+    jit_value_t cmp_eq_zero(Compiler &c, const jit_value_t &lhs) {
+        auto dt = lhs.dtype();
+        auto dk = lhs.dkind();
+        switch (dt) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_eq_zero(c, lhs.gp().r32()), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_eq_zero(c, lhs.gp()), data_type_t::i32, dk};
+            default:
+                __builtin_unreachable();
+        }
+    }
+
+    jit_value_t cmp_ne_zero(Compiler &c, const jit_value_t &lhs) {
+        auto dt = lhs.dtype();
+        auto dk = lhs.dkind();
+        switch (dt) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_ne_zero(c, lhs.gp().r32()), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_ne_zero(c, lhs.gp()), data_type_t::i32, dk};
+            default:
+                __builtin_unreachable();
+        }
+    }
+
     jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
@@ -731,8 +761,53 @@ namespace questdb::x86 {
         return convert(c, args.first, args.second, null_check);
     }
 
+    inline bool is_imm_int_zero(const jit_value_t &v) {
+        if (!v.op().isImm()) {
+            return false;
+        }
+        if (!is_int_type(v.dtype())) {
+            return false;
+        }
+        return v.op().as<Imm>().valueAs<int64_t>() == 0;
+    }
+
     void emit_bin_op(Compiler &c, const instruction_t &instr, ZoneStack<jit_value_t> &values, bool null_check,
                      const Label &l_next_row, bool has_short_circuit_label) {
+        // Special case: comparison with immediate zero can use TEST instead of CMP
+        if (instr.opcode == opcodes::Eq || instr.opcode == opcodes::Ne) {
+            auto lhs_raw = values.pop();
+            auto rhs_raw = values.pop();
+
+            bool lhs_is_zero = is_imm_int_zero(lhs_raw);
+            bool rhs_is_zero = is_imm_int_zero(rhs_raw);
+
+            if (lhs_is_zero || rhs_is_zero) {
+                // Use TEST instruction for comparison with zero
+                const jit_value_t &non_zero = lhs_is_zero ? rhs_raw : lhs_raw;
+                auto loaded = load_register(c, non_zero);
+
+                if (instr.opcode == opcodes::Eq) {
+                    values.append(cmp_eq_zero(c, loaded));
+                } else {
+                    values.append(cmp_ne_zero(c, loaded));
+                }
+                return;
+            }
+
+            // Not a zero comparison, proceed with normal path
+            auto args = load_registers(c, lhs_raw, rhs_raw);
+            auto converted = convert(c, args.first, args.second, null_check);
+            auto lhs = converted.first;
+            auto rhs = converted.second;
+
+            if (instr.opcode == opcodes::Eq) {
+                values.append(cmp_eq(c, lhs, rhs));
+            } else {
+                values.append(cmp_ne(c, lhs, rhs));
+            }
+            return;
+        }
+
         auto args = get_arguments(c, values, null_check);
         auto lhs = args.first;
         auto rhs = args.second;
@@ -753,12 +828,6 @@ namespace questdb::x86 {
             }
             case opcodes::Or:
                 values.append(bin_or(c, lhs, rhs));
-                break;
-            case opcodes::Eq:
-                values.append(cmp_eq(c, lhs, rhs));
-                break;
-            case opcodes::Ne:
-                values.append(cmp_ne(c, lhs, rhs));
                 break;
             case opcodes::Gt:
                 values.append(cmp_gt(c, lhs, rhs, null_check));
