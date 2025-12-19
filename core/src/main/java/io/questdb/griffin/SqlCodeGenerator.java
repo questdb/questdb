@@ -434,8 +434,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
-    private final IntList tempColumnIndexes = new IntList();
-    private final IntList tempColumnSizeShifts = new IntList();
     private final ObjList<QueryColumn> tempColumnsList = new ObjList<>();
     private final ObjList<ExpressionNode> tempExpressionNodeList = new ObjList<>();
     private final ObjList<Function> tempInnerProjectionFunctions = new ObjList<>();
@@ -1040,8 +1038,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Transient RecordMetadata metadata,
             int readerTimestampIndex,
             boolean requiresTimestamp,
-            IntList columnIndexes,
-            IntList columnSizeShifts
+            @Nullable IntList columnIndexes,
+            @Nullable IntList columnSizeShifts
     ) throws SqlException {
         final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
         final int topDownColumnCount = topDownColumns.size();
@@ -1063,9 +1061,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw SqlException.invalidColumn(column.getAst().position, column.getName());
                     }
                     int type = metadata.getColumnType(columnIndex);
-                    int typeSize = ColumnType.sizeOf(type);
-                    columnIndexes.add(columnIndex);
-                    columnSizeShifts.add(Numbers.msb(typeSize));
+
+                    if (columnIndexes != null) {
+                        columnIndexes.add(columnIndex);
+                    }
+                    if (columnSizeShifts != null) {
+                        int typeSize = ColumnType.sizeOf(type);
+                        columnSizeShifts.add(Numbers.msb(typeSize));
+                    }
 
                     queryMeta.add(new TableColumnMetadata(
                             metadata.getColumnName(columnIndex),
@@ -1088,15 +1091,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // select timestamp when it is required but not already selected
                 if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
+                    int timestampType = metadata.getColumnType(readerTimestampIndex);
                     queryMeta.add(new TableColumnMetadata(
                             metadata.getColumnName(readerTimestampIndex),
-                            metadata.getColumnType(readerTimestampIndex),
+                            timestampType,
                             metadata.getMetadata(readerTimestampIndex)
                     ));
                     queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
 
-                    columnIndexes.add(readerTimestampIndex);
-                    columnSizeShifts.add(Numbers.msb(ColumnType.TIMESTAMP));
+                    if (columnIndexes != null) {
+                        columnIndexes.add(readerTimestampIndex);
+                    }
+
+                    if (columnSizeShifts != null) {
+                        columnSizeShifts.add(Numbers.msb(ColumnType.sizeOf(timestampType)));
+                    }
                 }
             }
         } finally {
@@ -2915,8 +2924,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     tableFactory.getMetadata(),
                     readerTimestampIndex,
                     requiresTimestamp,
-                    tempColumnIndexes,
-                    tempColumnSizeShifts
+                    null,
+                    null
             ));
         }
 
