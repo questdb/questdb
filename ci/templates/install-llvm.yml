@@ -5,8 +5,10 @@ steps:
   - bash: |
       set -eux
       rustup component add llvm-tools-preview
-      LLVM_TOOLS_PATH=$(dirname $(find $HOME/.rustup -name llvm-profdata))
+      LLVM_TOOLS_PATH=$(dirname $(rustup which llvm-profdata 2>/dev/null || find $HOME/.rustup/toolchains -name llvm-profdata -print -quit))
       export PATH=$LLVM_TOOLS_PATH:$PATH
+      # Download tool to convert LLVM's LCOV format to Cobertura
+      curl -o lcov_cobertura.py https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
       set +x
       llvm-profdata --version
       llvm-cov --version
