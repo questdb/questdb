@@ -56,7 +56,7 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 /**
  * Shared helper class for restoring table files from checkpoint or backup.
- * Used by both DatabaseCheckpointAgent and DatabaseRestoreAgent.
+ * Used by both DatabaseCheckpointAgent and BackupRestoreAgent.
  */
 public class TableSnapshotRestore implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSnapshotRestore.class);

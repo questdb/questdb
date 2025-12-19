@@ -233,13 +233,10 @@ stages:
               # Merge partial profdata files from all jobs into the complete report
               llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
 
-              OBJECTS=""
-              PATH_EQUIV_ARGS=""
-              for dir in $(Pipeline.Workspace)/rust-llvm-coverage/*/; do
-                OBJECTS="$OBJECTS --object $dir/libquestdbr.so --object $dir/questdbr-test-binary"
-                ORIG_PATH=$(strings ${dir}/libquestdbr.so | grep -oE '/azp/_work/[0-9]+/s' | head -n 1 || true)
-                PATH_EQUIV_ARGS="$PATH_EQUIV_ARGS --path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
-              done
+              COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
+              OBJECTS="--object $COVERAGE_DIR/libquestdbr.so --object $COVERAGE_DIR/questdbr-test-binary"
+              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '/azp/_work/[0-9]+/s' | head -n 1 || true)
+              PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
               echo "Objects args: $OBJECTS"
 
               # Export the merged coverage report to LCOV format
