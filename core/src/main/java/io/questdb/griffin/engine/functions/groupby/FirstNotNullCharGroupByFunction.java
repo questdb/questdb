@@ -29,12 +29,27 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
 
     public FirstNotNullCharGroupByFunction(@NotNull Function arg) {
         super(arg);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final long hi = ptr + count * (long) Character.BYTES;
+            for (; ptr < hi; ptr += Character.BYTES) {
+                char value = Unsafe.getUnsafe().getChar(ptr);
+                if (value != CharConstant.ZERO.getChar(null)) {
+                    mapValue.putChar(valueIndex + 1, value);
+                    break;
+                }
+            }
+        }
     }
 
     @Override

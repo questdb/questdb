@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +42,14 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     public MaxDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final double batchMax = Vect.maxDouble(ptr, count);
+            mapValue.putDouble(valueIndex, batchMax);
+        }
     }
 
     @Override
@@ -120,6 +129,11 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override
