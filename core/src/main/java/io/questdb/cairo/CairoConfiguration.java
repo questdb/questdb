@@ -596,6 +596,10 @@ public interface CairoConfiguration {
 
     long getSqlSmallMapPageSize();
 
+    int getSqlSmallPageFrameMaxRows();
+
+    int getSqlSmallPageFrameMinRows();
+
     int getSqlSortKeyMaxPages();
 
     long getSqlSortKeyPageSize();
@@ -783,6 +787,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelReadParquetEnabled();
 
     boolean isSqlParallelTopKEnabled();
+
+    boolean isSqlParallelWindowJoinEnabled();
 
     boolean isTableTypeConversionEnabled();
 

@@ -66,6 +66,19 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof TernaryFunction that) {
+            return getLeft().isEquivalentTo(that.getLeft())
+                    && getCenter().isEquivalentTo(that.getCenter())
+                    && getRight().isEquivalentTo(that.getRight());
+        }
+        return false;
+    }
+
+    @Override
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getCenter().isNonDeterministic() || getRight().isNonDeterministic();
     }

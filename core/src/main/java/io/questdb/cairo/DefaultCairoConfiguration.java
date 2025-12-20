@@ -1053,6 +1053,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSmallPageFrameMaxRows() {
+        return 1_000;
+    }
+
+    @Override
+    public int getSqlSmallPageFrameMinRows() {
+        return 5;
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return 1024;
     }
@@ -1448,6 +1458,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelTopKEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowJoinEnabled() {
         return true;
     }
 
