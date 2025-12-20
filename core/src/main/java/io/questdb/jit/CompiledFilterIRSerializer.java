@@ -465,8 +465,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (node.type == ExpressionNode.OPERATION && SqlKeywords.isAndKeyword(node.token)) {
-            collectAndPredicates(node.lhs, predicates);
             collectAndPredicates(node.rhs, predicates);
+            collectAndPredicates(node.lhs, predicates);
         } else {
             predicates.add(node);
         }
@@ -480,8 +480,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (node.type == ExpressionNode.OPERATION && SqlKeywords.isOrKeyword(node.token)) {
-            collectOrPredicates(node.lhs, predicates);
             collectOrPredicates(node.rhs, predicates);
+            collectOrPredicates(node.lhs, predicates);
         } else {
             predicates.add(node);
         }
@@ -586,7 +586,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private int getOptions(boolean scalar, boolean debug, boolean nullChecks) {
         final TypesObserver typesObserver = predicateContext.globalTypesObserver;
-        debug = true;
         int options = debug ? 1 : 0;
         final int typeSize = typesObserver.maxSize();
         if (typeSize > 0) {
@@ -1234,7 +1233,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         for (int i = 1; i < n; i++) {
             traverseAlgo.traverse(predicates.getQuick(i), this);
             putOperator(AND);
-            putOperator(AND_SC);
+            if (i != n - 1) {
+                putOperator(AND_SC);
+            }
         }
     }
 
@@ -1253,7 +1254,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         for (int i = 1; i < n; i++) {
             traverseAlgo.traverse(predicates.getQuick(i), this);
             putOperator(OR);
-            putOperator(OR_SC);
+            if (i != n - 1) {
+                putOperator(OR_SC);
+            }
         }
     }
 

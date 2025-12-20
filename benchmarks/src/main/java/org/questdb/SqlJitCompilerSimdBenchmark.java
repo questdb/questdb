@@ -54,9 +54,9 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Benchmark)
-@BenchmarkMode(Mode.AverageTime)
+@BenchmarkMode(Mode.SingleShotTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
-public class SqlJitCompilerBenchmark {
+public class SqlJitCompilerSimdBenchmark {
     private static final int LONG_COLUMN_SIZE_MB = 512;
     private static final int NUM_ROWS = (LONG_COLUMN_SIZE_MB * 1024 * 1024) / Long.BYTES;
 
@@ -66,7 +66,7 @@ public class SqlJitCompilerBenchmark {
     @Param({"SIMD", "SCALAR", "DISABLED"})
     public JitMode jitMode;
     @Param({"EQ", "NEQ"})
-    public Operation operation;
+    public Predicate predicate;
     private SqlCompilerImpl compiler;
     private SqlExecutionContextImpl ctx;
     private CairoEngine engine;
@@ -98,9 +98,9 @@ public class SqlJitCompilerBenchmark {
         }
 
         Options opt = new OptionsBuilder()
-                .include(SqlJitCompilerBenchmark.class.getSimpleName())
-                .warmupIterations(2)
-                .measurementIterations(3)
+                .include(SqlJitCompilerSimdBenchmark.class.getSimpleName())
+                .warmupIterations(3)
+                .measurementIterations(10)
                 .forks(1)
                 .build();
         new Runner(opt).run();
@@ -129,7 +129,7 @@ public class SqlJitCompilerBenchmark {
                 break;
         }
         compiler = new SqlCompilerImpl(engine);
-        final String query = "select * from x where " + column + (operation == Operation.EQ ? " = " : " != ") + "0;";
+        final String query = "select * from x where " + column + (predicate == Predicate.EQ ? " = " : " != ") + "0;";
         factory = compiler.compile(query, ctx).getRecordCursorFactory();
         if (factory.usesCompiledFilter() != jitShouldBeEnabled) {
             throw new IllegalStateException("Unexpected JIT usage reported by factory: " +
@@ -146,7 +146,7 @@ public class SqlJitCompilerBenchmark {
     }
 
     @Benchmark
-    public void testSingleColumnFilter() throws SqlException {
+    public void testFilter() throws SqlException {
         try (RecordCursor cursor = factory.getCursor(ctx)) {
             final Record ignored = cursor.getRecord();
             // noinspection StatementWithEmptyBody
@@ -160,7 +160,7 @@ public class SqlJitCompilerBenchmark {
         SIMD, SCALAR, DISABLED
     }
 
-    public enum Operation {
+    public enum Predicate {
         EQ, NEQ
     }
 }

@@ -177,12 +177,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                         " or adouble = :adouble" // f64
         );
         assertIR(
-                "(f64 :0)(f64 adouble)(=)(f32 :1)(f32 afloat)(=)(i64 :2)(i64 atimestampns)(=)(i64 :3)" +
-                        "(i64 atimestamp)(=)(i64 :4)(i64 ageolong)(=)(i64 :5)(i64 adate)(=)(i64 :6)(i64 along)(=)(i32 :7)" +
-                        "(i32 asymbol)(=)(i32 :8)(i32 ageoint)(=)(i32 :9)(i32 anint)(=)(i16 :10)" +
-                        "(i16 achar)(=)(i16 :11)(i16 ageoshort)(=)(i16 :12)(i16 ashort)(=)(i8 :13)(i8 ageobyte)(=)" +
-                        "(i8 :14)(i8 abyte)(=)(i8 :15)(i8 aboolean)(=)(i128 :16)(i128 auuid)" +
-                        "(=)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(ret)");
+                "(i16 :0)(i16 achar)(=)(or_sc)(i16 :1)(i16 ageoshort)(=)(||)" +
+                        "(or_sc)(i16 :2)(i16 ashort)(=)(||)(or_sc)(i8 :3)(i8 ageobyte)(=)(||)(or_sc)" +
+                        "(i8 :4)(i8 abyte)(=)(||)(or_sc)(i8 :5)(i8 aboolean)(=)(||)(or_sc)(i32 :6)(i32 asymbol)(=)(||)(or_sc)" +
+                        "(f32 :7)(f32 afloat)(=)(||)(or_sc)(i32 :8)(i32 ageoint)(=)(||)(or_sc)(i32 :9)(i32 anint)(=)(||)(or_sc)" +
+                        "(f64 :10)(f64 adouble)(=)(||)(or_sc)(i64 :11)(i64 atimestampns)(=)(||)(or_sc)(i64 :12)(i64 atimestamp)(=)(||)(or_sc)" +
+                        "(i64 :13)(i64 ageolong)(=)(||)(or_sc)(i64 :14)(i64 adate)(=)(||)(or_sc)(i64 :15)(i64 along)(=)(||)" +
+                        "(or_sc)(i128 :16)(i128 auuid)(=)(||)(ret)");
 
         Assert.assertEquals(17, bindVarFunctions.size());
     }
@@ -190,27 +191,29 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testBindVariablesMixed() throws Exception {
         bindVariableService.clear();
-        bindVariableService.setInt("anint", 1);
-        bindVariableService.setLong(0, 2);
+        bindVariableService.setShort("ashort", (short) 1);
+        bindVariableService.setInt("anint", 2);
+        bindVariableService.setLong(0, 3);
 
-        serialize("anint = :anint or along = $1");
-        assertIR("(i64 :0)(i64 along)(=)(i32 :1)(i32 anint)(=)(||)(ret)");
+        serialize("anint = :anint or along = $1 or ashort = :ashort");
+        assertIR("(i16 :0)(i16 ashort)(=)(or_sc)(i32 :1)(i32 anint)(=)(||)(or_sc)(i64 :2)(i64 along)(=)(||)(ret)");
 
-        Assert.assertEquals(2, bindVarFunctions.size());
-        Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(0).getType());
+        Assert.assertEquals(3, bindVarFunctions.size());
+        Assert.assertEquals(ColumnType.SHORT, bindVarFunctions.get(0).getType());
         Assert.assertEquals(ColumnType.INT, bindVarFunctions.get(1).getType());
+        Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(2).getType());
     }
 
     @Test
     public void testBooleanConstant() throws Exception {
         serialize("aboolean = true or not aboolean = not false");
-        assertIR("(i8 0L)(!)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
+        assertIR("(i8 0L)(!)(i8 aboolean)(=)(!)(or_sc)(i8 1L)(i8 aboolean)(=)(||)(ret)");
     }
 
     @Test
     public void testBooleanOperators() throws Exception {
         serialize("anint = 0 and not (abyte = 0) or along = 0");
-        assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(=)(!)(i32 0L)(i32 anint)(=)(&)(|)(ret)");
+        assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(=)(!)(i32 0L)(i32 anint)(=)(&&)(||)(ret)");
     }
 
     @Test
@@ -347,7 +350,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("anint IN (-1, 0, 1)");
         assertIR("(i32 1L)(i32 anint)(=)(i32 0L)(i32 anint)(=)(i32 -1L)(i32 anint)(=)(||)(||)(ret)");
         serialize("anint <> NULL AND anint IN (4, 5)");
-        assertIR("(i32 5L)(i32 anint)(=)(i32 4L)(i32 anint)(=)(||)(i32 -2147483648L)(i32 anint)(<>)(&&)(ret)");
+        assertIR("(i32 5L)(i32 anint)(=)(i32 4L)(i32 anint)(=)(||)(and_sc)(i32 -2147483648L)(i32 anint)(<>)(&&)(ret)");
         serialize("-anint IN (-1)");
         assertIR("(i32 -1L)(i32 anint)(neg)(=)(ret)");
         serialize("anint NOT IN (1, 2, 3)");
@@ -395,7 +398,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testKnownSymbolConstant() throws Exception {
         serialize("asymbol = '" + KNOWN_SYMBOL_1 + "' or anothersymbol = '" + KNOWN_SYMBOL_2 + "'");
-        assertIR("(i32 0L)(i32 anothersymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 anothersymbol)(=)(or_sc)(i32 0L)(i32 asymbol)(=)(||)(ret)");
     }
 
     @Test
@@ -427,10 +430,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "(i64 1577836798000000000L)(i64 atimestampns)(>=)(i64 1577836802999999999L)(i64 atimestampns)(<=)(&&)" +
                 "(i64 1577923198000000000L)(i64 atimestampns)(>=)(i64 1577923202999999999L)(i64 atimestampns)(<=)(&&)(||)(||)(ret)");
         serialize("along = 42 and atimestampns in '2020-01-01T23:59:58;4s;-1d;3'");
-        assertIR("(i64 1577750398000000000L)(i64 atimestampns)(>=)(i64 1577750402999999999L)(i64 atimestampns)(<=)(&&)" +
+        assertIR("(i64 42L)(i64 along)(=)(and_sc)" +
+                "(i64 1577750398000000000L)(i64 atimestampns)(>=)(i64 1577750402999999999L)(i64 atimestampns)(<=)(&&)" +
                 "(i64 1577836798000000000L)(i64 atimestampns)(>=)(i64 1577836802999999999L)(i64 atimestampns)(<=)(&&)" +
-                "(i64 1577923198000000000L)(i64 atimestampns)(>=)(i64 1577923202999999999L)(i64 atimestampns)(<=)(&&)" +
-                "(||)(||)(i64 42L)(i64 along)(=)(&&)(ret)");
+                "(i64 1577923198000000000L)(i64 atimestampns)(>=)(i64 1577923202999999999L)(i64 atimestampns)(<=)(&&)(||)(||)(&&)(ret)");
     }
 
     @Test
@@ -477,24 +480,20 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testNullConstantMixedFloatIntegerColumns() throws Exception {
-        serialize("afloat + along <> null and null <> along + afloat");
-        assertIR("(f32 afloat)(i64 along)(+)(f64 NaND)(<>)" +
-                "(f64 NaND)(i64 along)(f32 afloat)(+)(<>)" +
-                "(&&)(ret)");
+        serialize("afloat + anint <> null and null <> along + adouble");
+        assertIR("(f32 NaND)(i32 anint)(f32 afloat)(+)(<>)(and_sc)(f64 adouble)(i64 along)(+)(f64 NaND)(<>)(&&)(ret)");
     }
 
     @Test
     public void testNullConstantMixedIntegerColumns() throws Exception {
         serialize("anint + along <> null or null <> along + anint");
-        assertIR("(i32 anint)(i64 along)(+)(i64 " + Numbers.LONG_NULL + "L)(<>)" +
-                "(i64 " + Numbers.LONG_NULL + "L)(i64 along)(i32 anint)(+)(<>)" +
-                "(||)(ret)");
+        assertIR("(i32 anint)(i64 along)(+)(i64 -9223372036854775808L)(<>)(or_sc)(i64 -9223372036854775808L)(i64 along)(i32 anint)(+)(<>)(||)(ret)");
     }
 
     @Test
     public void testNullConstantMultiplePredicates() throws Exception {
         serialize("ageoint <> null and along <> null");
-        assertIR("(i64 -9223372036854775808L)(i64 along)(<>)(i32 -1L)(i32 ageoint)(<>)(&&)(ret)");
+        assertIR("(i32 -1L)(i32 ageoint)(<>)(and_sc)(i64 -9223372036854775808L)(i64 along)(<>)(&&)(ret)");
     }
 
     @Test
@@ -630,7 +629,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testSingleBooleanColumn() throws Exception {
         serialize("aboolean or not aboolean");
-        assertIR("(i8 1L)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
+        assertIR("(i8 1L)(i8 aboolean)(=)(!)(or_sc)(i8 1L)(i8 aboolean)(=)(||)(ret)");
     }
 
     @Test
@@ -660,10 +659,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
                 "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)(||)(||)(ret)");
         serialize("along = 42 and atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
-        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
+        assertIR("(i64 42L)(i64 along)(=)(and_sc)(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
                 "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
-                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)" +
-                "(||)(||)(i64 42L)(i64 along)(=)(&&)(ret)");
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)(||)(||)(&&)(ret)");
     }
 
     @Test(expected = SqlException.class)
