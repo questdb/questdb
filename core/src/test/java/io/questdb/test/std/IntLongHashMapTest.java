@@ -30,9 +30,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class IntLongHashMapTest {
+
     @Test
     public void testAll() {
-
         Rnd rnd = new Rnd();
         // populate map
         IntLongHashMap map = new IntLongHashMap();

@@ -56,6 +56,7 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.Chars;
@@ -731,8 +732,30 @@ public class SqlParser {
         return false;
     }
 
+    private boolean isExcludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (isExcludeKeyword(tok)) {
+            tok = tok(lexer, "'prevailing'");
+            if (isPrevailingKeyword(tok)) {
+                return true;
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "'prevailing' expected");
+        }
+        return false;
+    }
+
     private boolean isFieldTerm(CharSequence tok) {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
+    }
+
+    private boolean isIncludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (isIncludeKeyword(tok)) {
+            tok = tok(lexer, "'prevailing'");
+            if (isPrevailingKeyword(tok)) {
+                return true;
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "'prevailing' expected");
+        }
+        return false;
     }
 
     private boolean isUnboundedPreceding(GenericLexer lexer, CharSequence tok) throws SqlException {
@@ -1495,7 +1518,7 @@ public class SqlParser {
 
         final ExpressionNode partitionByExpr = parseCreateTablePartition(lexer, tok);
         if (partitionByExpr != null) {
-            // timestamp may be can infered from select query.
+            // timestamp may be inferred from select query.
             if (builder.getSelectText() == null && builder.getTimestampExpr() == null) {
                 throw SqlException.$(partitionByExpr.position, "partitioning is possible only on tables with designated timestamps");
             }
@@ -2336,7 +2359,7 @@ public class SqlParser {
                         throw SqlException.$(lexer.lastTokenPosition(), "JOIN is not supported on UPDATE statement");
                     }
                     // expect multiple [[inner | outer | cross] join]
-                    nestedModel.addJoinModel(parseJoin(lexer, tok, joinType, topLevelWithModel, sqlParserCallback, decls));
+                    nestedModel.addJoinModel(parseJoin(lexer, fromModel, tok, joinType, topLevelWithModel, sqlParserCallback, decls));
                     tok = optTok(lexer);
                 }
             } else if (tok != null && isSemicolon(tok)) {
@@ -2506,8 +2529,13 @@ public class SqlParser {
 
         // expect multiple [[inner | outer | cross] join]
         int joinType;
+        boolean hasWindowJoin = false;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
-            model.addJoinModel(parseJoin(lexer, tok, joinType, masterModel.getWithClauses(), sqlParserCallback, model.getDecls()));
+            if (hasWindowJoin && joinType != QueryModel.JOIN_WINDOW) {
+                throw SqlException.$((lexer.lastTokenPosition()), "no other join types allowed after window join");
+            }
+            hasWindowJoin = joinType == QueryModel.JOIN_WINDOW;
+            model.addJoinModel(parseJoin(lexer, model, tok, joinType, masterModel.getWithClauses(), sqlParserCallback, model.getDecls()));
             tok = optTok(lexer);
         }
 
@@ -2904,6 +2932,7 @@ public class SqlParser {
 
     private QueryModel parseJoin(
             GenericLexer lexer,
+            QueryModel model,
             CharSequence tok,
             int joinType,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parent,
@@ -2918,7 +2947,7 @@ public class SqlParser {
 
         if (isNotJoinKeyword(tok) && !Chars.equals(tok, ',')) {
             // not already a join?
-            // was it "left", "right" or "full"?
+            // was it "left", "right", "full" or window?
             if (isLeftKeyword(tok)) {
                 tok = tok(lexer, "join");
                 joinType = QueryModel.JOIN_LEFT_OUTER;
@@ -2937,6 +2966,9 @@ public class SqlParser {
                 if (isOuterKeyword(tok)) {
                     tok = tok(lexer, "join");
                 }
+            } else if (isWindowKeyword(tok)) {
+                tok = tok(lexer, "join");
+                joinType = QueryModel.JOIN_WINDOW;
             } else {
                 tok = tok(lexer, "join");
             }
@@ -2971,6 +3003,7 @@ public class SqlParser {
             case QueryModel.JOIN_ASOF:
             case QueryModel.JOIN_LT:
             case QueryModel.JOIN_SPLICE:
+            case QueryModel.JOIN_WINDOW:
                 if (tok == null || !isOnKeyword(tok)) {
                     lexer.unparseLast();
                     break;
@@ -3020,6 +3053,94 @@ public class SqlParser {
         }
 
         tok = optTok(lexer);
+        if (joinType == QueryModel.JOIN_WINDOW) {
+            expectTok(lexer, tok, "range");
+            tok = optTok(lexer);
+            expectTok(lexer, tok, "between");
+            tok = tok(lexer, "'unbounded', 'current' or expression");
+            WindowJoinContext context = joinModel.getWindowJoinContext();
+
+            // lo
+            if (isUnboundedPreceding(lexer, tok)) {
+                context.setLoKind(WindowJoinContext.PRECEDING, lexer.lastTokenPosition());
+            } else if (isCurrentRow(lexer, tok)) {
+                context.setLoKind(WindowJoinContext.CURRENT, lexer.lastTokenPosition());
+            } else if (isPrecedingKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
+            } else {
+                int pos = lexer.lastTokenPosition();
+                lexer.unparseLast();
+                context.setLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
+                char timeUnit = parseTimeUnit(lexer);
+                if (timeUnit != 0) {
+                    context.setLoExprTimeUnit(timeUnit);
+                }
+
+                tok = tok(lexer, "'preceding' or 'following'");
+                if (isPrecedingKeyword(tok)) {
+                    context.setLoKind(WindowJoinContext.PRECEDING, lexer.lastTokenPosition());
+                } else if (isFollowingKeyword(tok)) {
+                    context.setLoKind(WindowJoinContext.FOLLOWING, lexer.lastTokenPosition());
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
+                }
+            }
+
+            tok = optTok(lexer);
+            expectTok(lexer, tok, "and");
+            tok = tok(lexer, "'unbounded', 'current' or expression");
+            // hi
+            if (isUnboundedKeyword(tok)) {
+                tok = tok(lexer, "'following'");
+                if (isFollowingKeyword(tok)) {
+                    context.setHiKind(WindowJoinContext.FOLLOWING, lexer.lastTokenPosition());
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'following' expected");
+                }
+            } else if (isCurrentRow(lexer, tok)) {
+                context.setHiKind(WindowJoinContext.CURRENT, lexer.lastTokenPosition());
+            } else if (isPrecedingKeyword(tok) || isFollowingKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
+            } else {
+                int pos = lexer.lastTokenPosition();
+                lexer.unparseLast();
+                context.setHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
+                char timeUnit = parseTimeUnit(lexer);
+                if (timeUnit != 0) {
+                    context.setHiExprTimeUnit(timeUnit);
+                }
+
+                tok = tok(lexer, "'preceding'  'following'");
+                if (isPrecedingKeyword(tok)) {
+                    if (context.getLoKind() == WindowJoinContext.CURRENT) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row must not be PRECEDING");
+                    }
+                    if (context.getLoKind() == WindowJoinContext.FOLLOWING) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row must not be PRECEDING");
+                    }
+                    context.setHiKind(WindowJoinContext.PRECEDING, lexer.lastTokenPosition());
+                } else if (isFollowingKeyword(tok)) {
+                    context.setHiKind(WindowJoinContext.FOLLOWING, lexer.lastTokenPosition());
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
+                }
+            }
+
+            tok = optTok(lexer);
+            if (tok != null) {
+                if (isIncludePrevailing(lexer, tok)) {
+                    context.setIncludePrevailing(true, lexer.lastTokenPosition());
+                } else if (isExcludePrevailing(lexer, tok)) {
+                    context.setIncludePrevailing(false, lexer.lastTokenPosition());
+                } else {
+                    lexer.unparseLast();
+                }
+            } else {
+                lexer.unparseLast();
+            }
+            return joinModel;
+        }
+
         if (tok == null || !SqlKeywords.isToleranceKeyword(tok)) {
             lexer.unparseLast();
             return joinModel;
@@ -3302,11 +3423,11 @@ public class SqlParser {
                             throw SqlException.$(lexer.lastTokenPosition(), "'rows', 'groups', 'range' or ')' expected");
                         }
 
-                    /* PG documentation:
-                       The default framing option is RANGE UNBOUNDED PRECEDING, which is the same as RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
-                       With ORDER BY, this sets the frame to be all rows from the partition start up through the current row's last ORDER BY peer.
-                       Without ORDER BY, this means all rows of the partition are included in the window frame, since all rows become peers of the current row.
-                     */
+                        /* PG documentation:
+                           The default framing option is RANGE UNBOUNDED PRECEDING, which is the same as RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
+                           With ORDER BY, this sets the frame to be all rows from the partition start up through the current row's last ORDER BY peer.
+                           Without ORDER BY, this means all rows of the partition are included in the window frame, since all rows become peers of the current row.
+                         */
 
                         if (framingMode != -1) {
                             winCol.setFramingMode(framingMode);
@@ -3420,10 +3541,10 @@ public class SqlParser {
                                             if (winCol.getRowsLoKind() == WindowColumn.CURRENT) {
                                                 // As a start point, CURRENT ROW specifies that the window begins at the current row.
                                                 // In this case the end point cannot be value_expr PRECEDING.
-                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row not must be PRECEDING");
+                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row must not be PRECEDING");
                                             }
                                             if (winCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
-                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row not must be PRECEDING");
+                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row must not be PRECEDING");
                                             }
                                             winCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                         } else if (isFollowingKeyword(tok)) {
@@ -4663,6 +4784,8 @@ public class SqlParser {
         tableAliasStop.add("tolerance");
         tableAliasStop.add("right");
         tableAliasStop.add("full");
+        tableAliasStop.add("range");
+        tableAliasStop.add("window");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
@@ -4683,6 +4806,7 @@ public class SqlParser {
         joinStartSet.put("join", QueryModel.JOIN_INNER);
         joinStartSet.put("inner", QueryModel.JOIN_INNER);
         joinStartSet.put("left", QueryModel.JOIN_LEFT_OUTER);
+        joinStartSet.put("window", QueryModel.JOIN_WINDOW);
         joinStartSet.put("right", QueryModel.JOIN_RIGHT_OUTER);
         joinStartSet.put("full", QueryModel.JOIN_FULL_OUTER);
         joinStartSet.put("cross", QueryModel.JOIN_CROSS);
