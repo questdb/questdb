@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.ops.PluginOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Transient;
@@ -69,7 +70,8 @@ public interface CompiledQuery {
     short TABLE_SUSPEND = CANCEL_QUERY + 1; // 31
     short CREATE_MAT_VIEW = TABLE_SUSPEND + 1; // 32
     short REFRESH_MAT_VIEW = CREATE_MAT_VIEW + 1; // 33
-    short EMPTY = REFRESH_MAT_VIEW + 1;
+    short PLUGIN_OPERATION = REFRESH_MAT_VIEW + 1; // 34
+    short EMPTY = PLUGIN_OPERATION + 1;
     short TYPES_COUNT = EMPTY;
 
     void closeAllButSelect();
@@ -118,6 +120,9 @@ public interface CompiledQuery {
     short getType();
 
     UpdateOperation getUpdateOperation();
+
+    @Transient
+    PluginOperation getPluginOperation();
 
     /**
      * Returns and move ownership of the current insertion operation.

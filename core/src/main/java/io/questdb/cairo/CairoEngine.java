@@ -76,6 +76,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.PluginManager;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -147,6 +148,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
+    private final PluginManager pluginManager;
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -184,6 +186,13 @@ public class CairoEngine implements Closeable, WriterSource {
     public CairoEngine(CairoConfiguration configuration) {
         try {
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
+            this.pluginManager = new PluginManager(configuration, ffCache);
+            try {
+                this.pluginManager.scanPlugins();
+            } catch (Exception e) {
+                LOG.error().$("Failed to scan plugins: ").$(e).$();
+                // Continue - plugin system failure should not prevent startup
+            }
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyImportContext = new CopyImportContext(this, configuration);
@@ -495,6 +504,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(scoreboardPool);
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
+        Misc.free(pluginManager);
         Misc.free(frameFactory);
     }
 
@@ -706,6 +716,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return ffCache;
+    }
+
+    public PluginManager getPluginManager() {
+        return pluginManager;
     }
 
     public TableRecordMetadata getLegacyMetadata(TableToken tableToken) {

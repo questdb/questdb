@@ -317,6 +317,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull CharSequence getPluginRoot() {
+        return dbRoot + "/" + "plugins";
+    }
+
+    @Override
     public boolean getDebugWalApplyBlockFailureNoRetry() {
         return true;
     }

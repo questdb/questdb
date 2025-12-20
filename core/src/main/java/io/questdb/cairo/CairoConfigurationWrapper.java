@@ -287,6 +287,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull CharSequence getPluginRoot() {
+        return getDelegate().getPluginRoot();
+    }
+
+    @Override
     public boolean getDebugWalApplyBlockFailureNoRetry() {
         return getDelegate().getDebugWalApplyBlockFailureNoRetry();
     }

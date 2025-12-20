@@ -100,6 +100,8 @@ import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.engine.ops.InsertAsSelectOperationImpl;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.ops.PluginOperation;
+import io.questdb.griffin.engine.ops.PluginOperationImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -494,6 +496,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 break;
             case OperationCodes.DROP_ALL:
                 executeDropAllTables(executionContext);
+                break;
+            case OperationCodes.LOAD_PLUGIN:
+                executeLoadPlugin((PluginOperation) op, executionContext);
+                break;
+            case OperationCodes.UNLOAD_PLUGIN:
+                executeUnloadPlugin((PluginOperation) op, executionContext);
                 break;
             default:
                 throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
@@ -3068,6 +3076,70 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRefreshMatView();
     }
 
+    private void compileLoadPlugin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // Parse: LOAD PLUGIN 'name'
+        // LOAD keyword already consumed by keywordBasedExecutor
+
+        CharSequence tok = expectToken(lexer, "'PLUGIN' keyword");
+        if (!isPluginKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'PLUGIN' expected");
+        }
+
+        tok = expectToken(lexer, "plugin name");
+        if (tok == null || isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "plugin name expected");
+        }
+
+        // Plugin name can be quoted or unquoted
+        final String pluginName;
+        if (Chars.isQuoted(tok)) {
+            pluginName = unquote(tok).toString();
+        } else {
+            pluginName = tok.toString();
+        }
+
+        // Verify no extra tokens after plugin name
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+
+        final PluginOperation operation = new PluginOperationImpl(pluginName, true);
+        compiledQuery.ofPluginOperation(operation);
+    }
+
+    private void compileUnloadPlugin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // Parse: UNLOAD PLUGIN 'name'
+        // UNLOAD keyword already consumed by keywordBasedExecutor
+
+        CharSequence tok = expectToken(lexer, "'PLUGIN' keyword");
+        if (!isPluginKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'PLUGIN' expected");
+        }
+
+        tok = expectToken(lexer, "plugin name");
+        if (tok == null || isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "plugin name expected");
+        }
+
+        // Plugin name can be quoted or unquoted
+        final String pluginName;
+        if (Chars.isQuoted(tok)) {
+            pluginName = unquote(tok).toString();
+        } else {
+            pluginName = tok.toString();
+        }
+
+        // Verify no extra tokens after plugin name
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+
+        final PluginOperation operation = new PluginOperationImpl(pluginName, false);
+        compiledQuery.ofPluginOperation(operation);
+    }
+
     private void compileReindex(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
 
         if (executionContext.isValidationOnly()) {
@@ -3955,6 +4027,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void executeLoadPlugin(PluginOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final String pluginName = op.getPluginName();
+        try {
+            engine.getPluginManager().loadPlugin(pluginName);
+        } catch (SqlException e) {
+            throw e;
+        } catch (Exception e) {
+            throw SqlException.position(0).put("Failed to load plugin '").put(pluginName).put("': ").put(e.getMessage());
+        }
+    }
+
+    private void executeUnloadPlugin(PluginOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final String pluginName = op.getPluginName();
+        try {
+            engine.getPluginManager().unloadPlugin(pluginName);
+        } catch (SqlException e) {
+            throw e;
+        } catch (Exception e) {
+            throw SqlException.position(0).put("Failed to unload plugin '").put(pluginName).put("': ").put(e.getMessage());
+        }
+    }
+
     private int filterApply(
             Function filter,
             int functionPosition,
@@ -4440,6 +4534,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("deallocate", this::compileDeallocate);
         keywordBasedExecutors.put("cancel", this::compileCancel);
         keywordBasedExecutors.put("refresh", this::compileRefresh);
+        keywordBasedExecutors.put("load", this::compileLoadPlugin);
+        keywordBasedExecutors.put("unload", this::compileUnloadPlugin);
     }
 
     protected void unknownDropColumnSuffix(

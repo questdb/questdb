@@ -1125,6 +1125,14 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'r';
     }
 
+    public static boolean isLoadKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'l'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'a'
+                && (tok.charAt(3) | 32) == 'd';
+    }
+
     public static boolean isListKeyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'l'
@@ -1668,6 +1676,16 @@ public class SqlKeywords {
                 && (tok.charAt(lo + 5) | 32) == 'c';
     }
 
+    public static boolean isPluginKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'p'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'u'
+                && (tok.charAt(3) | 32) == 'g'
+                && (tok.charAt(4) | 32) == 'i'
+                && (tok.charAt(5) | 32) == 'n';
+    }
+
     public static boolean isQuarterKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'q'
@@ -2168,6 +2186,16 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'i'
                 && (tok.charAt(3) | 32) == 'o'
                 && (tok.charAt(4) | 32) == 'n';
+    }
+
+    public static boolean isUnloadKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'u'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 'l'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'd';
     }
 
     public static boolean isUpdateKeyword(CharSequence tok) {

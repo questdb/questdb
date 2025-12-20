@@ -83,7 +83,7 @@ case $QDB_OS in
 esac
 
 function usage {
-    echo "Usage: $0 start|status|stop [-f] [-n] [-p] [-d path] [-t tag] [-- agent-params]"
+    echo "Usage: $0 start|status|stop [-f] [-n] [-p] [-d path] [-t tag] [--plugins path] [-- agent-params]"
     echo "       $0 profile [-t tag] -- [profiler-args]"
     echo ""
     echo "Commands:"
@@ -93,11 +93,12 @@ function usage {
     echo "  profile  Profile a running QuestDB instance with async-profiler"
     echo ""
     echo "Options:"
-    echo "  -f    Force overwrite public directory"
-    echo "  -n    Disable HUP handler"
-    echo "  -p    Enable async profiler at startup - continuous profiling"
-    echo "  -d    Set QuestDB root directory"
-    echo "  -t    Set process tag for identification"
+    echo "  -f         Force overwrite public directory"
+    echo "  -n         Disable HUP handler"
+    echo "  -p         Enable async profiler at startup - continuous profiling"
+    echo "  -d path    Set QuestDB root directory"
+    echo "  -t tag     Set process tag for identification"
+    echo "  --plugins path    Set path to plugins directory containing JAR files"
     echo ""
     echo "Profiling modes:"
     echo "  1. Attach to running instance (profile command):"
@@ -194,6 +195,7 @@ function export_args {
     export QDB_CONTAINER_MODE=""
     export QDB_PROFILING_ENABLED=""
     export QDB_ROOT=${QDB_DEFAULT_ROOT}
+    export QDB_PLUGINS=""
 
     while [[ $# -gt 0 ]]; do
         key="$1"
@@ -225,6 +227,14 @@ function export_args {
                     exit 55
                 fi
                 export QDB_PROCESS_LABEL="QuestDB-Runtime-$2"
+                shift
+                ;;
+            --plugins)
+                if [[ $# -eq 1 ]]; then
+                    echo "Expected: --plugins <path>"
+                    exit 55
+                fi
+                export QDB_PLUGINS="$2"
                 shift
                 ;;
             *)
@@ -289,6 +299,26 @@ function start {
     fi
 
     JAVA_LIB="$BASE/questdb.jar"
+
+    # Build plugins classpath if plugins directory is specified
+    PLUGINS_CLASSPATH=""
+    if [ -n "$QDB_PLUGINS" ]; then
+        if [ -d "$QDB_PLUGINS" ]; then
+            echo "Loading plugins from: $QDB_PLUGINS"
+            for jar in "$QDB_PLUGINS"/*.jar; do
+                if [ -f "$jar" ]; then
+                    if [ -z "$PLUGINS_CLASSPATH" ]; then
+                        PLUGINS_CLASSPATH="$jar"
+                    else
+                        PLUGINS_CLASSPATH="$PLUGINS_CLASSPATH:$jar"
+                    fi
+                    echo "  - $(basename $jar)"
+                fi
+            done
+        else
+            echo "Warning: Plugins directory not found: $QDB_PLUGINS"
+        fi
+    fi
 
     # if we are a full platform-specific distribution
     # we should load binary libraries from the lib directory instead of copying them to a temporary directory
@@ -380,14 +410,22 @@ function start {
     DATE=`date +%Y-%m-%dT%H-%M-%S`
     HELLO_FILE=${QDB_ROOT}/hello.txt
     rm ${HELLO_FILE} 2> /dev/null
+
+    # Build Java command with or without plugins classpath
+    if [ -n "$PLUGINS_CLASSPATH" ]; then
+        JAVA_CMD="${JAVA} ${JAVA_OPTS} -cp ${PLUGINS_CLASSPATH} -p ${JAVA_LIB} -m ${JAVA_MAIN}"
+    else
+        JAVA_CMD="${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN}"
+    fi
+
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
+        ${JAVA_CMD} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
+        ${JAVA_CMD} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
         $BASE/print-hello.sh ${HELLO_FILE}
     else
         $BASE/print-hello.sh ${HELLO_FILE} &
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
+        ${JAVA_CMD} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     fi
 }
 

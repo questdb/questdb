@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 public enum PropertyKey implements ConfigPropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
+    CAIRO_PLUGIN_ROOT("cairo.plugin.root"),
     CAIRO_VOLUMES("cairo.volumes"),
     CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),

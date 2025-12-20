@@ -222,6 +222,9 @@ public interface CairoConfiguration {
     @NotNull
     String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
+    @NotNull
+    CharSequence getPluginRoot(); // plugin directory, defaults to <db_root>/plugins
+
     boolean getDebugWalApplyBlockFailureNoRetry();
 
     @NotNull

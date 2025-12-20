@@ -34,9 +34,12 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class FunctionFactoryCache {
 
@@ -48,6 +51,17 @@ public class FunctionFactoryCache {
     private final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceHashSet windowFunctionNames = new LowerCaseCharSequenceHashSet();
+
+    // Plugin function support - namespaced plugin functions separate from core functions
+    // Structure: pluginName -> functionName -> List<FunctionFactoryDescriptor>
+    private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>>> pluginFunctions =
+            new LowerCaseCharSequenceObjHashMap<>();
+
+    // Track loaded plugins (case-insensitive)
+    private final LowerCaseCharSequenceHashSet loadedPlugins = new LowerCaseCharSequenceHashSet();
+
+    // Thread safety for plugin function modifications (read lock for lookups, write lock for add/remove)
+    private final ReentrantReadWriteLock pluginLock = new ReentrantReadWriteLock();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         boolean enableTestFactories = configuration.enableTestFactories();
@@ -183,5 +197,129 @@ public class FunctionFactoryCache {
 
     private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
         return new ArgSwappingFunctionFactory(name, factory);
+    }
+
+    /**
+     * Adds plugin functions to the cache under a namespaced plugin name.
+     * Functions are stored separately from core functions to allow namespace isolation.
+     * Thread-safe with write lock.
+     *
+     * @param pluginName the plugin name (normalized, no .jar suffix)
+     * @param factories iterable of FunctionFactory implementations from the plugin
+     * @throws SqlException if plugin name is invalid or already loaded
+     */
+    public void addPluginFunctions(String pluginName, Iterable<FunctionFactory> factories) throws SqlException {
+        pluginLock.writeLock().lock();
+        try {
+            // Validate plugin name
+            if (pluginName == null || pluginName.isEmpty()) {
+                throw SqlException.position(0).put("Invalid plugin name: empty");
+            }
+            if (pluginName.length() > 64) {
+                throw SqlException.position(0).put("Plugin name too long (max 64 chars): ").put(pluginName);
+            }
+
+            // Check if already loaded (idempotent - just return)
+            if (loadedPlugins.contains(pluginName)) {
+                LOG.info().$("Plugin already loaded: ").$(pluginName).$();
+                return;
+            }
+
+            // Create function map for this plugin
+            final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> pluginFactoryMap =
+                    new LowerCaseCharSequenceObjHashMap<>();
+
+            // Add each factory to the plugin's function map
+            for (FunctionFactory factory : factories) {
+                try {
+                    final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);
+                    addFactoryToList(pluginFactoryMap, descriptor);
+                } catch (SqlException e) {
+                    LOG.error().$("Failed to register plugin function: ")
+                            .$("[signature=").$safe(factory.getSignature())
+                            .$(", plugin=").$(pluginName)
+                            .$(", class=").$safe(factory.getClass().getName())
+                            .$("]").$((Sinkable) e).$();
+                }
+            }
+
+            // Store plugin's function map and mark as loaded
+            if (pluginFactoryMap.size() > 0) {
+                final int index = pluginFunctions.keyIndex(pluginName);
+                if (index >= 0) {
+                    pluginFunctions.putAt(index, pluginName, pluginFactoryMap);
+                }
+            }
+
+            loadedPlugins.add(pluginName);
+            LOG.info().$("Added plugin functions for: ").$(pluginName).$(", count=")
+                    .$(pluginFactoryMap.size()).$();
+        } finally {
+            pluginLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Removes all functions for a plugin from the cache.
+     * Thread-safe with write lock.
+     *
+     * @param pluginName the plugin name
+     * @throws SqlException if plugin is not loaded
+     */
+    public void removePluginFunctions(String pluginName) throws SqlException {
+        pluginLock.writeLock().lock();
+        try {
+            if (!loadedPlugins.contains(pluginName)) {
+                throw SqlException.position(0).put("Plugin not loaded: ").put(pluginName);
+            }
+
+            // Remove plugin's function map
+            pluginFunctions.remove(pluginName);
+            loadedPlugins.remove(pluginName);
+
+            LOG.info().$("Removed plugin functions for: ").$(pluginName).$();
+        } finally {
+            pluginLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Returns whether a plugin is currently loaded.
+     * Thread-safe with read lock.
+     *
+     * @param pluginName the plugin name
+     * @return true if the plugin is loaded
+     */
+    public boolean isPluginLoaded(String pluginName) {
+        pluginLock.readLock().lock();
+        try {
+            return loadedPlugins.contains(pluginName);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Gets the function overload list for a qualified plugin function name.
+     * Thread-safe with read lock.
+     *
+     * @param pluginName the plugin name
+     * @param functionName the function name
+     * @return the overload list, or null if plugin/function not found
+     */
+    public ObjList<FunctionFactoryDescriptor> getPluginFunction(String pluginName, CharSequence functionName) {
+        pluginLock.readLock().lock();
+        try {
+            final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> pluginFactoryMap =
+                    pluginFunctions.get(pluginName);
+
+            if (pluginFactoryMap == null) {
+                return null;
+            }
+
+            return pluginFactoryMap.get(functionName);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
     }
 }

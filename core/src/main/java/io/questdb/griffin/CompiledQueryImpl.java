@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
+import io.questdb.griffin.engine.ops.PluginOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
@@ -54,6 +55,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private InsertOperation insertOp;
     private boolean isExecutedAtParseTime;
     private Operation operation;
+    private PluginOperation pluginOp;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
     private String sqlStatement;
@@ -200,6 +202,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     @Override
     public UpdateOperation getUpdateOperation() {
         return updateOp;
+    }
+
+    @Override
+    public PluginOperation getPluginOperation() {
+        return pluginOp;
     }
 
     public void ofAlter(AlterOperation alterOp) {
@@ -362,6 +369,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void ofUpdate(UpdateOperation updateOperation) {
         this.updateOp = updateOperation;
         this.type = UPDATE;
+        this.isExecutedAtParseTime = false;
+    }
+
+    public void ofPluginOperation(PluginOperation pluginOp) {
+        this.pluginOp = pluginOp;
+        this.type = PLUGIN_OPERATION;
         this.isExecutedAtParseTime = false;
     }
 

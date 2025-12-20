@@ -201,6 +201,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbDirectory;
     private final String dbLogName;
     private final String dbRoot;
+    private final String pluginRoot;
     private final boolean debugWalApplyBlockFailureNoRetry;
     private final int decimalAdapterPoolCapacity;
     private final int defaultSeqPartTxnCount;
@@ -862,6 +863,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             tmpRoot = new File(installRoot, TMP_DIRECTORY).getAbsolutePath();
         }
 
+        // Initialize plugin directory
+        String configuredPluginRoot = getString(properties, env, PropertyKey.CAIRO_PLUGIN_ROOT, "plugins");
+        if (!Chars.empty(configuredPluginRoot)) {
+            if (new File(configuredPluginRoot).isAbsolute()) {
+                this.pluginRoot = configuredPluginRoot;
+            } else {
+                if (absDbDir) {
+                    this.pluginRoot = rootSubdir(this.dbRoot, configuredPluginRoot);
+                } else {
+                    this.pluginRoot = new File(installRoot, configuredPluginRoot).getAbsolutePath();
+                }
+            }
+        } else {
+            this.pluginRoot = rootSubdir(this.dbRoot, "plugins");
+        }
 
         String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
         if (!Chars.empty(configuredCairoSqlCopyRoot)) {
@@ -3177,6 +3193,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getDbRoot() {
             return dbRoot;
+        }
+
+        @Override
+        public @NotNull CharSequence getPluginRoot() {
+            return pluginRoot;
         }
 
         @Override
