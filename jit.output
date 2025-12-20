@@ -1,0 +1,63 @@
+.section .text {#0}
+L1:                                         ; L1: i64@rax Func(u64@rdi data_ptr, i64@rsi data_size, u64@rdx varsize_aux_ptr, i64@rcx vars_ptr, u64@r8 vars_size, i64@r9 rows_ptr, u64@[0] rows_size, i64@[8] rows_id_start_offset, i64@[16] <none>)
+push rbx
+push rbp
+mov r8, qword ptr [rsp+24]
+mov r10, qword ptr [rsp+32]
+mov rsi, 0                                  ; mov input_index, 0
+mov rax, 0                                  ; mov output_index, 0
+cmp rsi, r8                                 ; cmp input_index, rows_size
+jge L3                                      ; jge L3
+L2:                                         ; L2:
+mov rcx, qword ptr [rdi+32]                 ; mov column_address, qword ptr [data_ptr+32]
+mov rbx, qword ptr [rcx+rsi*8]              ; mov i64_mem, qword ptr [column_address+input_index*8]
+movabs rdx, 3594120000172545465             ; movabs i64_imm 40457657, 3594120000172545465
+xor rcx, rcx                                ; xor %13, %13
+cmp rbx, rdx                                ; cmp i64_mem, i64_imm 40457657
+sete cl                                     ; sete %13@gpb
+test ecx, ecx                               ; test %13@gpd, %13@gpd
+jz L4                                       ; jz L4
+mov rcx, qword ptr [rdi]                    ; mov column_address, qword ptr [data_ptr]
+mov ebx, dword ptr [rcx+rsi*4]              ; mov i32_mem, dword ptr [column_address+input_index*4]
+mov edx, 62                                 ; mov i32_imm 62, 62
+xor ecx, ecx                                ; xor %17, %17
+cmp ebx, edx                                ; cmp i32_mem, i32_imm 62
+sete cl                                     ; sete %17@gpb
+test ecx, ecx                               ; test %17, %17
+jz L4                                       ; jz L4
+mov rcx, qword ptr [rdi+16]                 ; mov column_address, qword ptr [data_ptr+16]
+movsx edx, byte ptr [rcx+rsi]               ; movsx i8_mem, byte ptr [column_address+input_index]
+xor ecx, ecx                                ; xor %20, %20
+test edx, edx                               ; test i8_mem, i8_mem
+sete cl                                     ; sete %20@gpb
+test ecx, ecx                               ; test %20, %20
+jz L4                                       ; jz L4
+mov rcx, qword ptr [rdi+24]                 ; mov column_address, qword ptr [data_ptr+24]
+mov edx, dword ptr [rcx+rsi*4]              ; mov i32_mem, dword ptr [column_address+input_index*4]
+mov ecx, 6                                  ; mov i32_imm 6, 6
+xor ebp, ebp                                ; xor %24, %24
+cmp edx, ecx                                ; cmp i32_mem, i32_imm 6
+rex sete bpl                                ; sete %24@gpb
+mov rcx, qword ptr [rdi+24]                 ; mov column_address, qword ptr [data_ptr+24]
+mov ebx, dword ptr [rcx+rsi*4]              ; mov i32_mem, dword ptr [column_address+input_index*4]
+mov edx, -1                                 ; mov i32_imm -1, -1
+xor ecx, ecx                                ; xor %28, %28
+cmp ebx, edx                                ; cmp i32_mem, i32_imm -1
+sete cl                                     ; sete %28@gpb
+; int32_or_start
+or ecx, ebp                                 ; or %28, %24
+; int32_or_stop
+test ecx, ecx                               ; test %28, %28
+jz L4                                       ; jz L4
+lea rcx, [rsi+r10]                          ; lea input_index_+_rows_id_start_offset, [input_index+rows_id_start_offset]
+mov qword ptr [r9+rax*8], rcx               ; mov qword ptr [rows_ptr+output_index*8], input_index_+_rows_id_start_offset
+add rax, 1                                  ; add output_index, 1
+L4:                                         ; L4:
+add rsi, 1                                  ; add input_index, 1
+cmp rsi, r8                                 ; cmp input_index, rows_size
+jl L2                                       ; jl L2
+L3:                                         ; L3:
+L0:                                         ; L0:
+pop rbp
+pop rbx
+ret

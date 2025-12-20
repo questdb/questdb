@@ -119,14 +119,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // Predicate priority for short-circuit evaluation
     private static final int PRIORITY_I16_EQ = 0;  // highest priority
-    private static final int PRIORITY_I16_NEQ = 8; // lowest priority
+    private static final int PRIORITY_I16_NEQ = 10; // lowest priority
     private static final int PRIORITY_I4_EQ = 2;
-    private static final int PRIORITY_I4_NEQ = 6;
+    private static final int PRIORITY_I4_NEQ = 8;
     private static final int PRIORITY_I8_EQ = 1;
-    private static final int PRIORITY_I8_NEQ = 7;
-    private static final int PRIORITY_OTHER = 4;
+    private static final int PRIORITY_I8_NEQ = 9;
+    private static final int PRIORITY_OTHER = 5;
+    private static final int PRIORITY_OTHER_EQ = 4;
+    private static final int PRIORITY_OTHER_NEQ = 6;
     private static final int PRIORITY_SYM_EQ = 3;
-    private static final int PRIORITY_SYM_NEQ = 5;
+    private static final int PRIORITY_SYM_NEQ = 7;
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
@@ -611,7 +613,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Determines the priority of a predicate for short-circuit evaluation.
      * Lower value = higher priority (evaluated first).
-     * Priority: uuid eq > long eq > int eq > symbol eq > others > symbol neq > int neq > long neq > uuid neq
+     * Priority: uuid eq > long eq > ... > others > ... > long neq > uuid neq
      */
     private int getPredicatePriority(ExpressionNode node) {
         if (node == null || node.type != ExpressionNode.OPERATION) {
@@ -621,45 +623,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (Chars.equals(node.token, '=')) {
             // Find the column type involved in this equality
             final int columnType = findOperandColumnType(node);
-            switch (columnType) {
-                case ColumnType.UUID:
-                case ColumnType.LONG128:
-                    return PRIORITY_I16_EQ;
-                case ColumnType.DOUBLE:
-                case ColumnType.LONG:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DATE:
-                case ColumnType.GEOLONG:
-                    return PRIORITY_I8_EQ;
-                case ColumnType.FLOAT:
-                case ColumnType.INT:
-                case ColumnType.IPv4:
-                case ColumnType.GEOINT:
-                    return PRIORITY_I4_EQ;
-                case ColumnType.SYMBOL:
-                    return PRIORITY_SYM_EQ;
-            }
+            return switch (columnType) {
+                case ColumnType.UUID, ColumnType.LONG128 -> PRIORITY_I16_EQ;
+                case ColumnType.DOUBLE, ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                        PRIORITY_I8_EQ;
+                case ColumnType.FLOAT, ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> PRIORITY_I4_EQ;
+                case ColumnType.SYMBOL -> PRIORITY_SYM_EQ;
+                default -> PRIORITY_OTHER_EQ;
+            };
         } else if (Chars.equals(node.token, "<>") || Chars.equals(node.token, "!=")) {
             // Find the column type involved in this inequality
             final int columnType = findOperandColumnType(node);
-            switch (columnType) {
-                case ColumnType.UUID:
-                case ColumnType.LONG128:
-                    return PRIORITY_I16_NEQ;
-                case ColumnType.DOUBLE:
-                case ColumnType.LONG:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DATE:
-                case ColumnType.GEOLONG:
-                    return PRIORITY_I8_NEQ;
-                case ColumnType.FLOAT:
-                case ColumnType.INT:
-                case ColumnType.IPv4:
-                case ColumnType.GEOINT:
-                    return PRIORITY_I4_NEQ;
-                case ColumnType.SYMBOL:
-                    return PRIORITY_SYM_NEQ;
-            }
+            return switch (columnType) {
+                case ColumnType.UUID, ColumnType.LONG128 -> PRIORITY_I16_NEQ;
+                case ColumnType.DOUBLE, ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                        PRIORITY_I8_NEQ;
+                case ColumnType.FLOAT, ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> PRIORITY_I4_NEQ;
+                case ColumnType.SYMBOL -> PRIORITY_SYM_NEQ;
+                default -> PRIORITY_OTHER_NEQ;
+            };
         }
         return PRIORITY_OTHER;
     }
