@@ -374,6 +374,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofPluginOperation(PluginOperation pluginOp) {
         this.pluginOp = pluginOp;
+        this.operation = pluginOp;
         this.type = PLUGIN_OPERATION;
         this.isExecutedAtParseTime = false;
     }

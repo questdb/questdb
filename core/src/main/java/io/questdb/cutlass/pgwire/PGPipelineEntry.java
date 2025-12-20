@@ -647,6 +647,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         engine.getMetrics().pgWireMetrics().markComplete();
                     }
                     break;
+                case CompiledQuery.PLUGIN_OPERATION:
+                    engine.getMetrics().pgWireMetrics().markStart();
+                    try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
+                        fut.await();
+                    } finally {
+                        engine.getMetrics().pgWireMetrics().markComplete();
+                    }
+                    break;
                 default:
                     // execute statements that either have not been parse-executed
                     // or we are re-executing it from a prepared statement
@@ -3097,6 +3105,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.CREATE_MAT_VIEW:
                 // fall-through
             case CompiledQuery.CREATE_TABLE:
+                // fall-through
+            case CompiledQuery.PLUGIN_OPERATION:
                 operation = cq.getOperation();
                 sqlTag = TAG_OK;
                 break;

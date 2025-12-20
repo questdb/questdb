@@ -851,9 +851,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             @Transient ObjList<Function> args,
             @Transient IntList argPositions
     ) throws SqlException {
-        final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
-        if (overload == null) {
-            throw invalidFunction(node, args);
+        // Check if this is a qualified plugin function name (contains a dot)
+        // Split on the LAST dot to support plugin names with dots (e.g., questdb-plugin-example-1.0.0)
+        ObjList<FunctionFactoryDescriptor> overload = null;
+        final int lastDotIndex = Chars.lastIndexOf(node.token, 0, node.token.length(), '.');
+
+        if (lastDotIndex > 0 && lastDotIndex < node.token.length() - 1) {
+            // Qualified name: plugin_name.function_name
+            final String tokenStr = node.token.toString();
+            String pluginName = tokenStr.substring(0, lastDotIndex);
+            if (pluginName.contains("\"")) {
+                pluginName = pluginName.substring(1, pluginName.length() - 1);
+            }
+            final String functionName = tokenStr.substring(lastDotIndex + 1);
+            overload = functionFactoryCache.getPluginFunction(pluginName, functionName);
+
+            if (overload == null) {
+                throw SqlException.$(node.position, "plugin function not found")
+                        .put(" [plugin=").put(pluginName)
+                        .put(", function=").put(functionName).put(']');
+            }
+        } else {
+            // Regular core function name
+            overload = functionFactoryCache.getOverloadList(node.token);
+            if (overload == null) {
+                throw invalidFunction(node, args);
+            }
         }
 
         final int argCount = args == null ? 0 : args.size();
