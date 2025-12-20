@@ -31,6 +31,32 @@
 namespace questdb::x86 {
     using namespace asmjit::x86;
 
+    // Pre-scan instruction stream and load column addresses before the loop.
+    // This hoists column address loads out of the hot loop.
+    void preload_column_addresses(Compiler &c,
+                                   const instruction_t *istream,
+                                   size_t size,
+                                   const Gp &data_ptr,
+                                   ColumnAddressCache &cache) {
+        for (size_t i = 0; i < size; ++i) {
+            auto &instr = istream[i];
+            if (instr.opcode == opcodes::Mem) {
+                auto type = static_cast<data_type_t>(instr.options);
+                // Only cache fixed-size column addresses (not variable-size like string/binary/varchar)
+                if (type != data_type_t::string_header &&
+                    type != data_type_t::binary_header &&
+                    type != data_type_t::varchar_header) {
+                    auto column_idx = static_cast<int32_t>(instr.ipayload.lo);
+                    if (!cache.has(column_idx)) {
+                        Gp column_address = c.newInt64("col_addr_%d", column_idx);
+                        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+                        cache.set(column_idx, column_address);
+                    }
+                }
+            }
+        }
+    }
+
     jit_value_t
     read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
         auto shift = type_shift(type);
@@ -105,7 +131,8 @@ namespace questdb::x86 {
 
     jit_value_t read_mem(
             Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr,
-            const Gp &varsize_aux_ptr, const Gp &input_index
+            const Gp &varsize_aux_ptr, const Gp &input_index,
+            const ColumnAddressCache &cache
     ) {
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
@@ -127,9 +154,14 @@ namespace questdb::x86 {
         }
 
         // Simple case: column has fixed-length data.
-
-        Gp column_address = c.newInt64("column_address");
-        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+        // Use cached column address if available.
+        Gp column_address;
+        if (cache.has(column_idx)) {
+            column_address = cache.get(column_idx);
+        } else {
+            column_address = c.newInt64("column_address");
+            c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+        }
 
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
@@ -861,7 +893,8 @@ namespace questdb::x86 {
               const Gp &vars_ptr,
               const Gp &input_index,
               const Label &l_next_row,
-              bool has_short_circuit_label) {
+              bool has_short_circuit_label,
+              const ColumnAddressCache &col_cache) {
 
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
@@ -879,7 +912,7 @@ namespace questdb::x86 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index));
+                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, col_cache));
                 }
                     break;
                 case opcodes::Imm:
@@ -920,17 +953,6 @@ namespace questdb::x86 {
         }
     }
 
-    // Overload for backward compatibility (no short-circuit)
-    void
-    emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values,
-              bool null_check,
-              const Gp &data_ptr,
-              const Gp &varsize_aux_ptr,
-              const Gp &vars_ptr,
-              const Gp &input_index) {
-        Label dummy_label;
-        emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, dummy_label, false);
-    }
 }
 
 #endif //QUESTDB_JIT_X86_H

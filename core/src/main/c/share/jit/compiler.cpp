@@ -62,6 +62,11 @@ struct Function {
         values.init(&allocator);
     };
 
+    // Preload column addresses before entering the loop
+    void preload_columns(const instruction_t *istream, size_t size) {
+        questdb::x86::preload_column_addresses(c, istream, size, data_ptr, col_cache);
+    }
+
     void compile(const instruction_t *istream, size_t size, uint32_t options) {
         auto features = CpuInfo::host().features().as<x86::Features>();
         enum type_size : uint32_t {
@@ -94,8 +99,8 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            // Pass the short-circuit label to emit_code
-            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, l_next_row, true);
+            // Pass the short-circuit label and column cache to emit_code
+            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, l_next_row, true, col_cache);
 
             auto mask = values.pop();
 
@@ -120,6 +125,9 @@ struct Function {
     }
 
     void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1) {
+        // Preload column addresses before the loop
+        preload_columns(istream, size);
+
         if (unroll_factor > 1) {
             x86::Gp stop = c.newInt64("stop");
             c.mov(stop, rows_size);
@@ -134,6 +142,9 @@ struct Function {
 
     void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1) {
         using namespace asmjit::x86;
+
+        // Preload column addresses before the loop (for scalar tail)
+        preload_columns(istream, size);
 
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
@@ -169,7 +180,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index);
+            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, col_cache);
 
             auto mask = values.pop();
 
@@ -253,6 +264,7 @@ struct Function {
     x86::Gp input_index;
     x86::Gp output_index;
     x86::Gp rows_id_start_offset;
+    ColumnAddressCache col_cache;
 };
 
 void fillJitErrorObject(JNIEnv *e, jobject error, uint32_t code, const char *msg) {

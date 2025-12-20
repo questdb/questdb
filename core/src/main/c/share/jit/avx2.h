@@ -240,7 +240,8 @@ namespace questdb::avx2 {
     }
 
     jit_value_t
-    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index) {
+    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index,
+             const ColumnAddressCache &cache) {
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
         }
@@ -261,9 +262,14 @@ namespace questdb::avx2 {
         }
 
         // Simple case: a fixed-width column
-
-        Gp column_address = c.newInt64("column_address");
-        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+        // Use cached column address if available
+        Gp column_address;
+        if (cache.has(column_idx)) {
+            column_address = cache.get(column_idx);
+        } else {
+            column_address = c.newInt64("column_address");
+            c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+        }
 
         Mem m;
         uint32_t shift = type_shift(type);
@@ -546,7 +552,8 @@ namespace questdb::avx2 {
 
     void
     emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values, bool ncheck,
-              const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index) {
+              const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index,
+              const ColumnAddressCache &col_cache) {
         for (size_t i = 0; i < size; ++i) {
             auto instr = istream[i];
             switch (instr.opcode) {
@@ -563,7 +570,7 @@ namespace questdb::avx2 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index));
+                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, col_cache));
                 }
                     break;
                 case opcodes::Imm:
@@ -585,6 +592,7 @@ namespace questdb::avx2 {
             }
         }
     }
+
 }
 
 #endif //QUESTDB_JIT_AVX2_H

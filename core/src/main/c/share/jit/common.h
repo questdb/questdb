@@ -136,4 +136,34 @@ inline data_kind_t dst_kind(const jit_value_t &lhs, const jit_value_t &rhs) {
     return dk;
 }
 
+// Cache for pre-loaded column addresses to avoid redundant loads inside the loop
+struct ColumnAddressCache {
+    static constexpr size_t MAX_COLUMNS = 8;
+
+    ColumnAddressCache() {
+        for (size_t i = 0; i < MAX_COLUMNS; ++i) {
+            valid[i] = false;
+        }
+    }
+
+    bool has(int32_t column_idx) const {
+        return column_idx >= 0 && static_cast<size_t>(column_idx) < MAX_COLUMNS && valid[column_idx];
+    }
+
+    asmjit::x86::Gp get(int32_t column_idx) const {
+        return addresses[column_idx];
+    }
+
+    void set(int32_t column_idx, asmjit::x86::Gp reg) {
+        if (column_idx >= 0 && static_cast<size_t>(column_idx) < MAX_COLUMNS) {
+            addresses[column_idx] = reg;
+            valid[column_idx] = true;
+        }
+    }
+
+private:
+    asmjit::x86::Gp addresses[MAX_COLUMNS];
+    bool valid[MAX_COLUMNS];
+};
+
 #endif //QUESTDB_JIT_COMMON_H
