@@ -899,7 +899,7 @@ namespace questdb::x86 {
                         c.test(arg.gp().r32(), arg.gp().r32());
                         c.jz(l_next_row);
                     }
-                    values.append(arg);
+                    // consume the argument since the above short-circuit jump acts as AND
                     break;
                 }
                 case opcodes::Or_Sc: {
@@ -910,7 +910,7 @@ namespace questdb::x86 {
                         c.test(arg.gp().r32(), arg.gp().r32());
                         c.jnz(l_next_row);
                     }
-                    values.append(arg);
+                    // consume the argument since the above short-circuit jump acts as OR
                     break;
                 }
                 default:

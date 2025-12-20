@@ -58,6 +58,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -123,6 +124,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int PRIORITY_OTHER = 4;
     private static final int PRIORITY_SYM_EQ = 3;
     private static final int PRIORITY_SYM_NEQ = 5;
+    private static int EXEC_HINT_MIXED_SIZE_TYPE = 2;
+    private static int EXEC_HINT_SCALAR = 0;
+    private static int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
@@ -197,10 +201,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Writes IR of the filter described by the given expression tree to memory.
      *
-     * @param node       filter expression tree's root node.
-     * @param scalar     set use only scalar instruction set execution hint in the returned options.
-     * @param debug      set enable the debug flag in the returned options.
-     * @param nullChecks a flag for JIT, allowing or disallowing generation of null check
+     * @param node        filter expression tree's root node.
+     * @param forceScalar set use only scalar instruction set execution hint in the returned options.
+     * @param debug       set enable the debug flag in the returned options.
+     * @param nullChecks  a flag for JIT, allowing or disallowing generation of null check
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
      * <li>1 LSB - debug flag</li>
@@ -216,36 +220,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * </ul>
      * @throws SqlException thrown when IR serialization failed.
      */
-    public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
+    public int serialize(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
         // Check if we can apply predicate reordering for short-circuit evaluation
         if (isPureAndChain(node)) {
             collectedPredicates.clear();
             collectAndPredicates(node, collectedPredicates);
             if (collectedPredicates.size() > 1) {
                 sortPredicatesByPriority(collectedPredicates);
-                serializePredicatesAndSc(collectedPredicates);
-            } else {
-                // Single predicate, no reordering needed
-                traverseAlgo.traverse(node, this);
+                return serializePredicatesAndSc(collectedPredicates, forceScalar, debug, nullChecks);
             }
-        } else if (isPureOrChain(node)) {
+        }
+        if (isPureOrChain(node)) {
             collectedPredicates.clear();
             collectOrPredicates(node, collectedPredicates);
             if (collectedPredicates.size() > 1) {
                 sortPredicatesByInvertedPriority(collectedPredicates);
-                serializePredicatesOrSc(collectedPredicates);
-            } else {
-                // Single predicate, no reordering needed
-                traverseAlgo.traverse(node, this);
+                return serializePredicatesOrSc(collectedPredicates, forceScalar, debug, nullChecks);
             }
-        } else {
-            // Not a pure AND chain, use normal serialization
-            traverseAlgo.traverse(node, this);
         }
+
+        // Not a pure AND/OR chain, use normal serialization
+        traverseAlgo.traverse(node, this);
         putOperator(RET);
 
         ensureOnlyVarSizeHeaderChecks();
-        return getOptions(scalar, debug, nullChecks);
+        return getOptions(forceScalar, debug, nullChecks);
     }
 
     @Override
@@ -584,7 +583,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return bindVariableService;
     }
 
-    private int getOptions(boolean scalar, boolean debug, boolean nullChecks) {
+    private int getExecHint(boolean forceScalar) {
+        final TypesObserver typesObserver = predicateContext.globalTypesObserver;
+        if (!forceScalar && !forceScalarMode) {
+            return typesObserver.hasMixedSizes() ? EXEC_HINT_MIXED_SIZE_TYPE : EXEC_HINT_SINGLE_SIZE_TYPE;
+        }
+        return EXEC_HINT_SCALAR;
+    }
+
+    private int getOptions(boolean forceScalar, boolean debug, boolean nullChecks) {
         final TypesObserver typesObserver = predicateContext.globalTypesObserver;
         int options = debug ? 1 : 0;
         final int typeSize = typesObserver.maxSize();
@@ -593,10 +600,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int log2 = Integer.numberOfTrailingZeros(typeSize);
             options = options | (log2 << 1);
         }
-        if (!scalar && !forceScalarMode) {
-            final int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
-            options = options | (executionHint << 4);
-        }
+
+        final int execHint = getExecHint(forceScalar);
+        options = options | (execHint << 4);
 
         options = options | ((nullChecks ? 1 : 0) << 6);
         return options;
@@ -1221,11 +1227,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Serializes predicates in priority order with short-circuit ANDs for high-priority ones.
      */
-    private void serializePredicatesAndSc(ObjList<ExpressionNode> predicates) throws SqlException {
+    private int serializePredicatesAndSc(
+            @NotNull ObjList<ExpressionNode> predicates,
+            boolean forceScalar,
+            boolean debug,
+            boolean nullChecks
+    ) throws SqlException {
         final int n = predicates.size();
-        if (n == 0) {
-            return;
-        }
+        assert n > 0;
 
         // Serialize all predicates in the priority order with short-circuit ANDs
         for (int i = 0; i < n; i++) {
@@ -1234,19 +1243,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 putOperator(AND_SC);
             }
         }
-        for (int i = 0; i < n - 1; i++) {
-            putOperator(AND);
+
+        // Check if the backend is going to use SIMD and, hence, we need to emit trailing ANDs.
+        final int execHint = getExecHint(forceScalar);
+        if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+            for (int i = 0; i < n - 1; i++) {
+                putOperator(AND);
+            }
         }
+
+        putOperator(RET);
+
+        ensureOnlyVarSizeHeaderChecks();
+        return getOptions(forceScalar, debug, nullChecks);
     }
 
     /**
      * Serializes predicates in priority order with short-circuit ORs for low-priority ones.
      */
-    private void serializePredicatesOrSc(ObjList<ExpressionNode> predicates) throws SqlException {
+    private int serializePredicatesOrSc(
+            @NotNull ObjList<ExpressionNode> predicates,
+            boolean forceScalar,
+            boolean debug,
+            boolean nullChecks
+    ) throws SqlException {
         final int n = predicates.size();
-        if (n == 0) {
-            return;
-        }
+        assert n > 0;
 
         // Serialize all predicates in the inverted priority order with short-circuit ORs
         for (int i = 0; i < n; i++) {
@@ -1255,9 +1277,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 putOperator(OR_SC);
             }
         }
-        for (int i = 0; i < n - 1; i++) {
-            putOperator(OR);
+
+        // Check if the backend is going to use SIMD and, hence, we need to emit trailing ORs.
+        final int execHint = getExecHint(forceScalar);
+        if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+            for (int i = 0; i < n - 1; i++) {
+                putOperator(OR);
+            }
         }
+
+        putOperator(RET);
+
+        ensureOnlyVarSizeHeaderChecks();
+        return getOptions(forceScalar, debug, nullChecks);
     }
 
     private void serializeSymbolConstant(long offset, int position, final CharSequence token) throws SqlException {
