@@ -62,9 +62,10 @@ struct Function {
         values.init(&allocator);
     };
 
-    // Preload column addresses before entering the loop
-    void preload_columns(const instruction_t *istream, size_t size) {
+    // Preload column addresses and constants before entering the loop
+    void preload_columns_and_constants(const instruction_t *istream, size_t size) {
         questdb::x86::preload_column_addresses(c, istream, size, data_ptr, col_cache);
+        questdb::x86::preload_constants(c, istream, size, const_cache);
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options) {
@@ -99,8 +100,8 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            // Pass the short-circuit label and column cache to emit_code
-            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, l_next_row, true, col_cache);
+            // Pass the short-circuit label, column cache and constant cache to emit_code
+            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, l_next_row, true, col_cache, const_cache);
 
             auto mask = values.pop();
 
@@ -125,8 +126,8 @@ struct Function {
     }
 
     void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1) {
-        // Preload column addresses before the loop
-        preload_columns(istream, size);
+        // Preload column addresses and constants before the loop
+        preload_columns_and_constants(istream, size);
 
         if (unroll_factor > 1) {
             x86::Gp stop = c.newInt64("stop");
@@ -143,8 +144,8 @@ struct Function {
     void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1) {
         using namespace asmjit::x86;
 
-        // Preload column addresses before the loop (for scalar tail)
-        preload_columns(istream, size);
+        // Preload column addresses and constants before the loop (for scalar tail)
+        preload_columns_and_constants(istream, size);
 
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
@@ -265,6 +266,7 @@ struct Function {
     x86::Gp output_index;
     x86::Gp rows_id_start_offset;
     ColumnAddressCache col_cache;
+    ConstantCache const_cache;
 };
 
 void fillJitErrorObject(JNIEnv *e, jobject error, uint32_t code, const char *msg) {

@@ -166,4 +166,61 @@ private:
     bool valid[MAX_COLUMNS];
 };
 
+// Cache for pre-loaded constants to avoid redundant loads inside the loop
+struct ConstantCache {
+    static constexpr size_t MAX_CONSTANTS = 16;
+
+    ConstantCache() : count(0) {}
+
+    // Find an integer constant and return its register
+    bool findInt(int64_t value, asmjit::x86::Gp &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (!is_float[i] && int_values[i] == value) {
+                out_reg = gp_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Find a float constant and return its register
+    bool findFloat(double value, asmjit::x86::Xmm &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (is_float[i] && float_values[i] == value) {
+                out_reg = xmm_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Add an integer constant
+    void addInt(int64_t value, asmjit::x86::Gp reg) {
+        if (count < MAX_CONSTANTS) {
+            is_float[count] = false;
+            int_values[count] = value;
+            gp_regs[count] = reg;
+            count++;
+        }
+    }
+
+    // Add a float constant
+    void addFloat(double value, asmjit::x86::Xmm reg) {
+        if (count < MAX_CONSTANTS) {
+            is_float[count] = true;
+            float_values[count] = value;
+            xmm_regs[count] = reg;
+            count++;
+        }
+    }
+
+private:
+    size_t count;
+    bool is_float[MAX_CONSTANTS];
+    int64_t int_values[MAX_CONSTANTS];
+    double float_values[MAX_CONSTANTS];
+    asmjit::x86::Gp gp_regs[MAX_CONSTANTS];
+    asmjit::x86::Xmm xmm_regs[MAX_CONSTANTS];
+};
+
 #endif //QUESTDB_JIT_COMMON_H

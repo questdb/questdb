@@ -57,6 +57,50 @@ namespace questdb::x86 {
         }
     }
 
+    // Pre-scan instruction stream and load constants into registers before the loop.
+    // This hoists constant loads out of the hot loop.
+    void preload_constants(Compiler &c,
+                           const instruction_t *istream,
+                           size_t size,
+                           ConstantCache &cache) {
+        for (size_t i = 0; i < size; ++i) {
+            auto &instr = istream[i];
+            if (instr.opcode == opcodes::Imm) {
+                auto type = static_cast<data_type_t>(instr.options);
+                switch (type) {
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
+                    case data_type_t::i64: {
+                        int64_t value = instr.ipayload.lo;
+                        Gp dummy;
+                        if (!cache.findInt(value, dummy)) {
+                            Gp reg = c.newInt64("const_%lld", value);
+                            c.mov(reg, value);
+                            cache.addInt(value, reg);
+                        }
+                        break;
+                    }
+                    case data_type_t::f32:
+                    case data_type_t::f64: {
+                        double value = instr.dpayload;
+                        Xmm dummy;
+                        if (!cache.findFloat(value, dummy)) {
+                            Xmm reg = c.newXmmSd("const_f_%f", value);
+                            Mem mem = c.newDoubleConst(ConstPool::kScopeLocal, value);
+                            c.movsd(reg, mem);
+                            cache.addFloat(value, reg);
+                        }
+                        break;
+                    }
+                    default:
+                        // i128 constants are rare, skip caching
+                        break;
+                }
+            }
+        }
+    }
+
     jit_value_t
     read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
         auto shift = type_shift(type);
@@ -219,13 +263,18 @@ namespace questdb::x86 {
         }
     }
 
-    jit_value_t read_imm(Compiler &c, const instruction_t &instr) {
+    jit_value_t read_imm(Compiler &c, const instruction_t &instr, const ConstantCache &cache) {
         auto type = static_cast<data_type_t>(instr.options);
         switch (type) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::i64: {
+                // Check if constant is already in a register
+                Gp reg;
+                if (cache.findInt(instr.ipayload.lo, reg)) {
+                    return {reg, type, data_kind_t::kConst};
+                }
                 return {imm(instr.ipayload.lo), type, data_kind_t::kConst};
             }
             case data_type_t::i128: {
@@ -237,6 +286,11 @@ namespace questdb::x86 {
             }
             case data_type_t::f32:
             case data_type_t::f64: {
+                // Check if constant is already in a register
+                Xmm reg;
+                if (cache.findFloat(instr.dpayload, reg)) {
+                    return {reg, type, data_kind_t::kConst};
+                }
                 return {imm(instr.dpayload), type, data_kind_t::kConst};
             }
             default:
@@ -894,7 +948,8 @@ namespace questdb::x86 {
               const Gp &input_index,
               const Label &l_next_row,
               bool has_short_circuit_label,
-              const ColumnAddressCache &col_cache) {
+              const ColumnAddressCache &col_cache,
+              const ConstantCache &const_cache) {
 
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
@@ -916,7 +971,7 @@ namespace questdb::x86 {
                 }
                     break;
                 case opcodes::Imm:
-                    values.append(read_imm(c, instr));
+                    values.append(read_imm(c, instr, const_cache));
                     break;
                 case opcodes::Neg:
                     values.append(neg(c, get_argument(c, values), null_check));
