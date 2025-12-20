@@ -38,4 +38,6 @@ public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable
     LongList calculateIntervals(SqlExecutionContext sqlExecutionContext) throws SqlException;
 
     TimestampDriver getTimestampDriver();
+
+    boolean isStatic();
 }

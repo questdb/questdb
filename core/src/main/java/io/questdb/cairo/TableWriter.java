@@ -144,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -2108,11 +2108,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         columnsIndexes.sort();
-        for (int i = 0, j = 0; i < columnCount && j < columnsIndexes.size(); i++) {
-            if (i == columnsIndexes.getQuick(j)) {
-                // Set dedup key flag for the column
-                metadata.getColumnMetadata(i).setDedupKeyFlag(true);
-                // Go to the next dedup column index
+        for (int i = 0, j = 0; i < columnCount; i++) {
+            boolean isNewDedupCol = j < columnsIndexes.size() && i == columnsIndexes.getQuick(j);
+            metadata.getColumnMetadata(i).setDedupKeyFlag(isNewDedupCol);
+            if (isNewDedupCol) {
                 j++;
             }
         }

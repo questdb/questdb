@@ -59,6 +59,26 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof MultiArgFunction that) {
+            ObjList<Function> thatArgs = that.args();
+            ObjList<Function> thisArgs = args();
+            if (thatArgs.size() == thisArgs.size()) {
+                for (int i = 0, n = thisArgs.size(); i < n; i++) {
+                    if (!thisArgs.getQuick(i).isEquivalentTo(thatArgs.getQuick(i))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
     default boolean isNonDeterministic() {
         final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {

@@ -51,6 +51,6 @@ public class LastShortGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new LastShortGroupByFunction(position, args.getQuick(0));
+        return new LastShortGroupByFunction(args.getQuick(0));
     }
 }

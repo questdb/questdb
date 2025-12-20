@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
@@ -41,6 +42,17 @@ public class Decimal8Constant extends Decimal8Function implements ConstantFuncti
     @Override
     public byte getDecimal8(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Decimal8Constant that) {
+            return this.value == that.value && this.type == that.type;
+        }
+        return false;
     }
 
     @Override
