@@ -44,6 +44,6 @@ public class LastNotNullCharGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastNotNullCharGroupByFunction(position, args.getQuick(0));
+        return new LastNotNullCharGroupByFunction(args.getQuick(0));
     }
 }

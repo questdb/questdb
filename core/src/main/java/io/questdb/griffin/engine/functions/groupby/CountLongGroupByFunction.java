@@ -28,12 +28,23 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class CountLongGroupByFunction extends AbstractCountGroupByFunction {
 
     public CountLongGroupByFunction(@NotNull Function arg) {
         super(arg);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final long nonNullCount = Vect.countLong(ptr, count);
+            if (nonNullCount > 0) {
+                mapValue.addLong(valueIndex, nonNullCount);
+            }
+        }
     }
 
     @Override
@@ -52,5 +63,10 @@ public class CountLongGroupByFunction extends AbstractCountGroupByFunction {
         if (value != Numbers.LONG_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 }

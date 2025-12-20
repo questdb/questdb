@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IPv4Function;
@@ -45,6 +46,17 @@ public class IPv4Constant extends IPv4Function implements ConstantFunction {
     @Override
     public int getIPv4(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof IPv4Constant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override

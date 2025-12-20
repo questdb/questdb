@@ -244,7 +244,10 @@ public class SqlKeywordsTest {
         specialCases.put("isIgnoreWord", "ignore");
         specialCases.put("isNullsWord", "nulls");
         specialCases.put("isTimestampNsKeyword", "timestamp_ns");
+        specialCases.put("isExcluding", "excluding");
+        specialCases.put("isIncluding", "including");
 
         excludedCases.add("isPublicKeyword");
+        excludedCases.add("isWindowKeyword");
     }
 }
