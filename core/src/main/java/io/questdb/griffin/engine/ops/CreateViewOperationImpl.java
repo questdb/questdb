@@ -102,17 +102,17 @@ public class CreateViewOperationImpl implements CreateViewOperation {
 
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
-        return createTableOperation.getIndexBlockCapacity(columnIndex);
+        return 0;
     }
 
     @Override
     public int getMaxUncommittedRows() {
-        return -1;
+        return 0;
     }
 
     @Override
     public long getO3MaxLag() {
-        return -1;
+        return 0L;
     }
 
     @Override
@@ -137,12 +137,12 @@ public class CreateViewOperationImpl implements CreateViewOperation {
 
     @Override
     public boolean getSymbolCacheFlag(int index) {
-        return createTableOperation.getSymbolCacheFlag(index);
+        return false;
     }
 
     @Override
     public int getSymbolCapacity(int index) {
-        return createTableOperation.getSymbolCapacity(index);
+        return 0;
     }
 
     @Override
@@ -191,7 +191,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
 
     @Override
     public boolean isIndexed(int index) {
-        return createTableOperation.isIndexed(index);
+        return false;
     }
 
     @Override
