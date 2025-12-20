@@ -15,7 +15,6 @@ import os
 import time
 import shutil
 import subprocess  # nosec - not for untrusted input
-import shutil
 
 from xml.dom import minidom  # nosec - not for untrusted input
 from optparse import OptionParser
