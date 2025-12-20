@@ -3503,7 +3503,7 @@ public class SqlOptimiser implements Mutable {
                 case QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
                     tableFactory = new ShowTransactionIsolationLevelCursorFactory();
                     break;
-                case SHOW_DEFAULT_TRANSACTION_READ_ONLY:
+                case QueryModel.SHOW_DEFAULT_TRANSACTION_READ_ONLY:
                     tableFactory = new ShowDefaultTransactionReadOnlyCursorFactory();
                     break;
                 case QueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
