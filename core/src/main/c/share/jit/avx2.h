@@ -488,8 +488,7 @@ namespace questdb::avx2 {
     }
 
     inline jit_value_t get_argument(ZoneStack<jit_value_t> &values) {
-        auto arg = values.pop();
-        return arg;
+        return values.pop();
     }
 
     inline std::pair<jit_value_t, jit_value_t>
@@ -578,6 +577,7 @@ namespace questdb::avx2 {
                     break;
                 case opcodes::And_Sc: // Short-circuit AND and OR are treated as no-op in SIMD path
                 case opcodes::Or_Sc:
+                    values.append(get_argument(values));
                     break;
                 default:
                     emit_bin_op(c, instr, values, ncheck);

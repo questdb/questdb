@@ -177,13 +177,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                         " or adouble = :adouble" // f64
         );
         assertIR(
-                "(i16 :0)(i16 achar)(=)(or_sc)(i16 :1)(i16 ageoshort)(=)(||)" +
-                        "(or_sc)(i16 :2)(i16 ashort)(=)(||)(or_sc)(i8 :3)(i8 ageobyte)(=)(||)(or_sc)" +
-                        "(i8 :4)(i8 abyte)(=)(||)(or_sc)(i8 :5)(i8 aboolean)(=)(||)(or_sc)(i32 :6)(i32 asymbol)(=)(||)(or_sc)" +
-                        "(f32 :7)(f32 afloat)(=)(||)(or_sc)(i32 :8)(i32 ageoint)(=)(||)(or_sc)(i32 :9)(i32 anint)(=)(||)(or_sc)" +
-                        "(f64 :10)(f64 adouble)(=)(||)(or_sc)(i64 :11)(i64 atimestampns)(=)(||)(or_sc)(i64 :12)(i64 atimestamp)(=)(||)(or_sc)" +
-                        "(i64 :13)(i64 ageolong)(=)(||)(or_sc)(i64 :14)(i64 adate)(=)(||)(or_sc)(i64 :15)(i64 along)(=)(||)" +
-                        "(or_sc)(i128 :16)(i128 auuid)(=)(||)(ret)");
+                "(i16 :0)(i16 achar)(=)(or_sc)(i16 :1)(i16 ageoshort)(=)(or_sc)" +
+                        "(i16 :2)(i16 ashort)(=)(or_sc)(i8 :3)(i8 ageobyte)(=)(or_sc)" +
+                        "(i8 :4)(i8 abyte)(=)(or_sc)(i8 :5)(i8 aboolean)(=)(or_sc)" +
+                        "(i32 :6)(i32 asymbol)(=)(or_sc)(f32 :7)(f32 afloat)(=)(or_sc)" +
+                        "(i32 :8)(i32 ageoint)(=)(or_sc)(i32 :9)(i32 anint)(=)(or_sc)" +
+                        "(f64 :10)(f64 adouble)(=)(or_sc)(i64 :11)(i64 atimestampns)(=)(or_sc)" +
+                        "(i64 :12)(i64 atimestamp)(=)(or_sc)(i64 :13)(i64 ageolong)(=)(or_sc)" +
+                        "(i64 :14)(i64 adate)(=)(or_sc)(i64 :15)(i64 along)(=)(or_sc)" +
+                        "(i128 :16)(i128 auuid)(=)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(ret)"
+        );
 
         Assert.assertEquals(17, bindVarFunctions.size());
     }
@@ -196,7 +199,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         bindVariableService.setLong(0, 3);
 
         serialize("anint = :anint or along = $1 or ashort = :ashort");
-        assertIR("(i16 :0)(i16 ashort)(=)(or_sc)(i32 :1)(i32 anint)(=)(||)(or_sc)(i64 :2)(i64 along)(=)(||)(ret)");
+        assertIR("(i16 :0)(i16 ashort)(=)(or_sc)(i32 :1)(i32 anint)(=)(or_sc)(i64 :2)(i64 along)(=)(||)(||)(ret)");
 
         Assert.assertEquals(3, bindVarFunctions.size());
         Assert.assertEquals(ColumnType.SHORT, bindVarFunctions.get(0).getType());

@@ -1227,15 +1227,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
 
-        traverseAlgo.traverse(predicates.getQuick(0), this);
-        putOperator(AND_SC);
         // Serialize all predicates in the priority order with short-circuit ANDs
-        for (int i = 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             traverseAlgo.traverse(predicates.getQuick(i), this);
-            putOperator(AND);
             if (i != n - 1) {
                 putOperator(AND_SC);
             }
+        }
+        for (int i = 0; i < n - 1; i++) {
+            putOperator(AND);
         }
     }
 
@@ -1248,15 +1248,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
 
-        traverseAlgo.traverse(predicates.getQuick(0), this);
-        putOperator(OR_SC);
         // Serialize all predicates in the inverted priority order with short-circuit ORs
-        for (int i = 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             traverseAlgo.traverse(predicates.getQuick(i), this);
-            putOperator(OR);
             if (i != n - 1) {
                 putOperator(OR_SC);
             }
+        }
+        for (int i = 0; i < n - 1; i++) {
+            putOperator(OR);
         }
     }
 
