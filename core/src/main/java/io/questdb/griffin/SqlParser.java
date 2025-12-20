@@ -2060,6 +2060,8 @@ public class SqlParser {
                     validateShowTransactions(lexer);
                 } else if (isTransactionIsolation(tok)) {
                     showKind = QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL;
+                } else if (isDefaultTransactionReadOnly(tok)) {
+                    showKind = QueryModel.SHOW_DEFAULT_TRANSACTION_READ_ONLY;
                 } else if (isMaxIdentifierLength(tok)) {
                     showKind = QueryModel.SHOW_MAX_IDENTIFIER_LENGTH;
                 } else if (isStandardConformingStrings(tok)) {
