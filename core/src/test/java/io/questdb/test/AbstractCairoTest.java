@@ -696,6 +696,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sqlExecutionContext.resetFlags();
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
+        sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());
+        sqlExecutionContext.setParallelWindowJoinEnabled(configuration.isSqlParallelWindowJoinEnabled());
         sqlExecutionContext.setParallelReadParquetEnabled(configuration.isSqlParallelReadParquetEnabled());
         // 30% chance to enable paranoia checking FD mode
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
@@ -1876,7 +1878,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertFactoryCursor(
-            String expected,
+            CharSequence expected,
             String expectedTimestamp,
             RecordCursorFactory factory,
             boolean supportsRandomAccess,
@@ -1928,7 +1930,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQuery(expected, query, null, null, true, expectSize);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+    protected void assertQuery(CharSequence expected, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false));
     }
 
@@ -1967,7 +1969,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertQueryAndPlan(String expected, String expectedPlan, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+    protected void assertQueryAndPlan(CharSequence expected, CharSequence expectedPlan, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck(query, expectedPlan);
             assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
@@ -1992,7 +1994,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         });
     }
 
-    protected void assertQueryFullFatNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {
+    protected void assertQueryFullFatNoLeakCheck(CharSequence expected, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoin);
             assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
@@ -2001,8 +2003,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertQueryNoLeakCheck(
             SqlCompiler compiler,
-            String expected,
-            String query,
+            CharSequence expected,
+            CharSequence query,
             String expectedTimestamp,
             SqlExecutionContext sqlExecutionContext,
             boolean supportsRandomAccess,

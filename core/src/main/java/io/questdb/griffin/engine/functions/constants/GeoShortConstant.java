@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GeoShortFunction;
@@ -44,6 +45,17 @@ public class GeoShortConstant extends GeoShortFunction implements ConstantFuncti
     @Override
     public short getGeoShort(Record rec) {
         return hash;
+    }
+
+    @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof GeoShortConstant that) {
+            return this.hash == that.hash;
+        }
+        return false;
     }
 
     @Override

@@ -239,7 +239,7 @@ public class OrderedMap implements Map, Reopenable {
 
             if (keySize + valueSize >= heapLimit - heapAddr) {
                 throw CairoException.nonCritical()
-                        .put("page size is too small to fit a single key. consider increasing `cairo.sql.small.map.page.size` [expected=")
+                        .put("page size is too small to fit a single key, consider increasing `cairo.sql.small.map.page.size` [expected=")
                         .put(keySize + valueSize).put(", actual=")
                         .put(heapLimit - heapAddr)
                         .put(']');
