@@ -114,13 +114,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     static final int UNDEFINED_CODE = -1;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // Predicate priority for short-circuit evaluation
-    private static final int PRIORITY_I4_EQ = 1;
-    private static final int PRIORITY_I4_NEQ = 5;
-    private static final int PRIORITY_I8_EQ = 0;  // highest priority
-    private static final int PRIORITY_I8_NEQ = 6; // lowest priority
-    private static final int PRIORITY_OTHER = 3;
-    private static final int PRIORITY_SYM_EQ = 2;
-    private static final int PRIORITY_SYM_NEQ = 4;
+    private static final int PRIORITY_I16_EQ = 0;  // highest priority
+    private static final int PRIORITY_I16_NEQ = 8; // lowest priority
+    private static final int PRIORITY_I4_EQ = 2;
+    private static final int PRIORITY_I4_NEQ = 6;
+    private static final int PRIORITY_I8_EQ = 1;
+    private static final int PRIORITY_I8_NEQ = 7;
+    private static final int PRIORITY_OTHER = 4;
+    private static final int PRIORITY_SYM_EQ = 3;
+    private static final int PRIORITY_SYM_NEQ = 5;
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
@@ -604,39 +606,54 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Determines the priority of a predicate for short-circuit evaluation.
      * Lower value = higher priority (evaluated first).
-     * Priority: long eq > int eq > symbol eq > others > symbol neq > int neq > long neq
+     * Priority: uuid eq > long eq > int eq > symbol eq > others > symbol neq > int neq > long neq > uuid neq
      */
     private int getPredicatePriority(ExpressionNode node) {
         if (node == null || node.type != ExpressionNode.OPERATION) {
             return PRIORITY_OTHER;
         }
-        // TODO(puzpuzpuz): add priorities for UUID
         // Check if it's an equality operation
         if (Chars.equals(node.token, '=')) {
             // Find the column type involved in this equality
             final int columnType = findOperandColumnType(node);
-            if (columnType == ColumnType.DOUBLE || columnType == ColumnType.LONG
-                    || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE) {
-                return PRIORITY_I8_EQ;
-            }
-            if (columnType == ColumnType.FLOAT || columnType == ColumnType.INT || columnType == ColumnType.IPv4) {
-                return PRIORITY_I4_EQ;
-            }
-            if (columnType == ColumnType.SYMBOL) {
-                return PRIORITY_SYM_EQ;
+            switch (columnType) {
+                case ColumnType.UUID:
+                case ColumnType.LONG128:
+                    return PRIORITY_I16_EQ;
+                case ColumnType.DOUBLE:
+                case ColumnType.LONG:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.DATE:
+                case ColumnType.GEOLONG:
+                    return PRIORITY_I8_EQ;
+                case ColumnType.FLOAT:
+                case ColumnType.INT:
+                case ColumnType.IPv4:
+                case ColumnType.GEOINT:
+                    return PRIORITY_I4_EQ;
+                case ColumnType.SYMBOL:
+                    return PRIORITY_SYM_EQ;
             }
         } else if (Chars.equals(node.token, "<>") || Chars.equals(node.token, "!=")) {
             // Find the column type involved in this inequality
             final int columnType = findOperandColumnType(node);
-            if (columnType == ColumnType.DOUBLE || columnType == ColumnType.LONG
-                    || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE) {
-                return PRIORITY_I8_NEQ;
-            }
-            if (columnType == ColumnType.FLOAT || columnType == ColumnType.INT || columnType == ColumnType.IPv4) {
-                return PRIORITY_I4_NEQ;
-            }
-            if (columnType == ColumnType.SYMBOL) {
-                return PRIORITY_SYM_NEQ;
+            switch (columnType) {
+                case ColumnType.UUID:
+                case ColumnType.LONG128:
+                    return PRIORITY_I16_NEQ;
+                case ColumnType.DOUBLE:
+                case ColumnType.LONG:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.DATE:
+                case ColumnType.GEOLONG:
+                    return PRIORITY_I8_NEQ;
+                case ColumnType.FLOAT:
+                case ColumnType.INT:
+                case ColumnType.IPv4:
+                case ColumnType.GEOINT:
+                    return PRIORITY_I4_NEQ;
+                case ColumnType.SYMBOL:
+                    return PRIORITY_SYM_NEQ;
             }
         }
         return PRIORITY_OTHER;
