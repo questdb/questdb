@@ -78,6 +78,10 @@ public class GroupByLongList {
         }
     }
 
+    public long dataPtr() {
+        return ptr + HEADER_SIZE;
+    }
+
     public long get(long index) {
         return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + 8L * index);
     }

@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Rows;
 
 /**
@@ -109,7 +109,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         return true;
     }
 
-    public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+    public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
         super.of(masterCursor, slaveCursor);
         this.circuitBreaker = circuitBreaker;
     }
