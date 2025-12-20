@@ -625,9 +625,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnType = findOperandColumnType(node);
             return switch (columnType) {
                 case ColumnType.UUID, ColumnType.LONG128 -> PRIORITY_I16_EQ;
-                case ColumnType.DOUBLE, ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
-                        PRIORITY_I8_EQ;
-                case ColumnType.FLOAT, ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> PRIORITY_I4_EQ;
+                case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG -> PRIORITY_I8_EQ;
+                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> PRIORITY_I4_EQ;
                 case ColumnType.SYMBOL -> PRIORITY_SYM_EQ;
                 default -> PRIORITY_OTHER_EQ;
             };
@@ -636,9 +635,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnType = findOperandColumnType(node);
             return switch (columnType) {
                 case ColumnType.UUID, ColumnType.LONG128 -> PRIORITY_I16_NEQ;
-                case ColumnType.DOUBLE, ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
-                        PRIORITY_I8_NEQ;
-                case ColumnType.FLOAT, ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> PRIORITY_I4_NEQ;
+                case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG -> PRIORITY_I8_NEQ;
+                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> PRIORITY_I4_NEQ;
                 case ColumnType.SYMBOL -> PRIORITY_SYM_NEQ;
                 default -> PRIORITY_OTHER_NEQ;
             };

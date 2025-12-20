@@ -863,8 +863,15 @@ namespace questdb::x86 {
         return v.op().as<Imm>().valueAs<int64_t>() == 0;
     }
 
+    // Check if a type supports flag-based short-circuit optimization
+    inline bool supports_flag_optimization(data_type_t dt) {
+        return dt == data_type_t::i8 || dt == data_type_t::i16 ||
+               dt == data_type_t::i32 || dt == data_type_t::i64 ||
+               dt == data_type_t::i128;
+    }
+
     void emit_bin_op(Compiler &c, const instruction_t &instr, ZoneStack<jit_value_t> &values, bool null_check,
-                     const Label &l_next_row, bool has_short_circuit_label) {
+                     const Label &l_next_row, bool has_short_circuit_label, opcodes next_opcode) {
         // Special case: comparison with immediate zero can use TEST instead of CMP
         if (instr.opcode == opcodes::Eq || instr.opcode == opcodes::Ne) {
             auto lhs_raw = values.pop();
@@ -891,6 +898,40 @@ namespace questdb::x86 {
             auto converted = convert(c, args.first, args.second, null_check);
             auto lhs = converted.first;
             auto rhs = converted.second;
+
+            // Optimization: if next instruction is And_Sc or Or_Sc, emit only CMP and push flag marker
+            // This avoids boolean materialization (SETE/SETNE + TEST + JZ/JNZ)
+            if (has_short_circuit_label &&
+                (next_opcode == opcodes::And_Sc || next_opcode == opcodes::Or_Sc) &&
+                supports_flag_optimization(lhs.dtype())) {
+                auto dt = lhs.dtype();
+                // Emit only CMP, no SETE/SETNE
+                switch (dt) {
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
+                        c.cmp(lhs.gp().r32(), rhs.gp().r32());
+                        break;
+                    case data_type_t::i64:
+                        c.cmp(lhs.gp(), rhs.gp());
+                        break;
+                    case data_type_t::i128: {
+                        // For i128, use pcmpeqb + pmovmskb + cmp (same as int128_cmp)
+                        Gp mask = c.newInt16();
+                        c.pcmpeqb(lhs.xmm(), rhs.xmm());
+                        c.pmovmskb(mask, lhs.xmm());
+                        c.cmp(mask, 0xffff);
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                // Push a dummy register with flag marker kind
+                Gp dummy = c.newInt32("flags_marker");
+                auto flag_kind = (instr.opcode == opcodes::Eq) ? data_kind_t::kFlagsEq : data_kind_t::kFlagsNe;
+                values.append({dummy, data_type_t::i32, flag_kind});
+                return;
+            }
 
             if (instr.opcode == opcodes::Eq) {
                 values.append(cmp_eq(c, lhs, rhs));
@@ -981,29 +1022,56 @@ namespace questdb::x86 {
                     break;
                 case opcodes::And_Sc: {
                     // Short-circuit AND: jump to next row if argument is false
-                    auto arg = get_argument(c, values);
+                    auto arg = values.pop();
                     if (has_short_circuit_label) {
-                        // Test result and jump to next row if zero
-                        c.test(arg.gp().r32(), arg.gp().r32());
-                        c.jz(l_next_row);
+                        // Check if argument has flag marker (from optimized Eq/Ne)
+                        if (arg.dkind() == data_kind_t::kFlagsEq) {
+                            // Flags set by CMP for equality check
+                            // For AND short-circuit with Eq: skip if NOT equal (ZF=0)
+                            c.jne(l_next_row);
+                        } else if (arg.dkind() == data_kind_t::kFlagsNe) {
+                            // Flags set by CMP for inequality check
+                            // For AND short-circuit with Ne: skip if equal (ZF=1)
+                            c.je(l_next_row);
+                        } else {
+                            // Normal path: load register and test
+                            auto loaded = load_register(c, arg);
+                            c.test(loaded.gp().r32(), loaded.gp().r32());
+                            c.jz(l_next_row);
+                        }
                     }
                     // consume the argument since the above short-circuit jump acts as AND
                     break;
                 }
                 case opcodes::Or_Sc: {
                     // Short-circuit OR: jump to next row if argument is true
-                    auto arg = get_argument(c, values);
+                    auto arg = values.pop();
                     if (has_short_circuit_label) {
-                        // Test result and jump to next row if non-zero
-                        c.test(arg.gp().r32(), arg.gp().r32());
-                        c.jnz(l_next_row);
+                        // Check if argument has flag marker (from optimized Eq/Ne)
+                        if (arg.dkind() == data_kind_t::kFlagsEq) {
+                            // Flags set by CMP for equality check
+                            // For OR short-circuit with Eq: skip if equal (ZF=1)
+                            c.je(l_next_row);
+                        } else if (arg.dkind() == data_kind_t::kFlagsNe) {
+                            // Flags set by CMP for inequality check
+                            // For OR short-circuit with Ne: skip if not equal (ZF=0)
+                            c.jne(l_next_row);
+                        } else {
+                            // Normal path: load register and test
+                            auto loaded = load_register(c, arg);
+                            c.test(loaded.gp().r32(), loaded.gp().r32());
+                            c.jnz(l_next_row);
+                        }
                     }
                     // consume the argument since the above short-circuit jump acts as OR
                     break;
                 }
-                default:
-                    emit_bin_op(c, instr, values, null_check, l_next_row, has_short_circuit_label);
+                default: {
+                    // Get next opcode for lookahead optimization
+                    opcodes next_op = (i + 1 < size) ? istream[i + 1].opcode : opcodes::Ret;
+                    emit_bin_op(c, instr, values, null_check, l_next_row, has_short_circuit_label, next_op);
                     break;
+                }
             }
         }
     }

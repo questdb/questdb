@@ -43,6 +43,8 @@ enum class data_type_t : uint8_t {
 enum class data_kind_t : uint8_t {
     kMemory,
     kConst,
+    kFlagsEq,  // CMP emitted for equality; use JNE to skip if not equal
+    kFlagsNe,  // CMP emitted for inequality; use JE to skip if equal
 };
 
 enum class opcodes : int32_t {
@@ -168,7 +170,7 @@ private:
 
 // Cache for pre-loaded constants to avoid redundant loads inside the loop
 struct ConstantCache {
-    static constexpr size_t MAX_CONSTANTS = 16;
+    static constexpr size_t MAX_CONSTANTS = 8;
 
     ConstantCache() : count(0) {}
 
