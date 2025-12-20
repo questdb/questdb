@@ -719,6 +719,32 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMetadataAfterColumnTypeChange() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            assertCairoMetadata(xMetaString);
+
+            final TableToken tt = engine.getTableTokenIfExists("x");
+            assertTimestamp(tt, 3);
+            execute("alter table x alter column i type long");
+            assertTimestamp(tt, 3);
+        });
+    }
+
+    @Test
+    public void testMetadataAfterDropColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            assertCairoMetadata(xMetaString);
+
+            final TableToken tt = engine.getTableTokenIfExists("x");
+            assertTimestamp(tt, 3);
+            execute("alter table x drop column i");
+            assertTimestamp(tt, 2);
+        });
+    }
+
+    @Test
     public void testMetadataUpdatedCorrectlyWhenRenamingTables() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, x int) timestamp(ts) partition by day wal;");
@@ -808,6 +834,16 @@ public class MetadataCacheTest extends AbstractCairoTest {
             sink.clear();
             ro.toSink(sink);
             TestUtils.assertEquals(expected, sink);
+        }
+    }
+
+    private static void assertTimestamp(TableToken tt, int timestampIndex) {
+        try (MetadataCacheReader reader = engine.getMetadataCache().readLock()) {
+            final CairoTable table = reader.getTable(tt);
+            Assert.assertNotNull(table);
+            final int tsIndex = table.getTimestampIndex();
+            Assert.assertEquals(timestampIndex, tsIndex);
+            Assert.assertEquals("timestamp", table.getTimestampName());
         }
     }
 
