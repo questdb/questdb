@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -44,9 +45,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class SqlExecutionContextStub implements SqlExecutionContext {
-    private final CairoEngine engine;
-
+public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutionContext {
     public SqlExecutionContextStub(@NotNull CairoEngine engine) {
         this.engine = engine;
     }
@@ -183,6 +182,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int hasInterval() {
+        return 0;
+    }
+
+    @Override
     public void initNow() {
     }
 
@@ -212,6 +216,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelWindowJoinEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return false;
     }
@@ -227,7 +236,28 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public RuntimeIntrinsicIntervalModel peekIntervalModel() {
+        return null;
+    }
+
+    @Override
+    public void popHasInterval() {
+    }
+
+    @Override
+    public void popIntervalModel() {
+    }
+
+    @Override
     public void popTimestampRequiredFlag() {
+    }
+
+    @Override
+    public void pushHasInterval(int hasInterval) {
+    }
+
+    @Override
+    public void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel) {
     }
 
     @Override
@@ -280,6 +310,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+    }
+
+    @Override
+    public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
     }
 
     @Override
