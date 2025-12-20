@@ -436,23 +436,27 @@ public class SqlOptimiser implements Mutable {
             QueryModel baseModel
     ) throws SqlException {
         if (baseModel != null) {
-            final CharSequence refColumn = column.getAst().token;
-            final int dot = Chars.indexOfLastUnquoted(refColumn, '.');
-            validateColumnAndGetModelIndex(baseModel, innerVirtualModel, refColumn, dot, column.getAst().position, false);
-            // when we have only one model, e.g. this is not a join,
-            // and there is a table alias to lookup column;
-            // we will remove this alias as unneeded
-            if (dot != -1 && baseModel.getJoinModels().size() == 1) {
-                ExpressionNode base = column.getAst();
-                column.of(
-                        column.getAlias(),
-                        expressionNodePool.next().of(
-                                base.type,
-                                base.token.subSequence(dot + 1, base.token.length()),
-                                base.precedence,
-                                base.position
-                        )
-                );
+            final ExpressionNode ast = column.getAst();
+            // Skip table alias resolution for function nodes (e.g., plugin functions like plugin_name.func_name)
+            // Functions are already resolved by FunctionParser and shouldn't be interpreted as table.column references
+            if (ast.type != ExpressionNode.FUNCTION) {
+                final CharSequence refColumn = ast.token;
+                final int dot = Chars.indexOfLastUnquoted(refColumn, '.');
+                validateColumnAndGetModelIndex(baseModel, innerVirtualModel, refColumn, dot, ast.position, false);
+                // when we have only one model, e.g. this is not a join,
+                // and there is a table alias to lookup column;
+                // we will remove this alias as unneeded
+                if (dot != -1 && baseModel.getJoinModels().size() == 1) {
+                    column.of(
+                            column.getAlias(),
+                            expressionNodePool.next().of(
+                                    ast.type,
+                                    ast.token.subSequence(dot + 1, ast.token.length()),
+                                    ast.precedence,
+                                    ast.position
+                            )
+                    );
+                }
             }
         }
         translatingModel.addBottomUpColumn(column);

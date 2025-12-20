@@ -31,6 +31,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -147,7 +148,24 @@ public class FunctionFactoryCache {
     }
 
     public boolean isGroupBy(CharSequence name) {
-        return name != null && groupByFunctionNames.contains(name);
+        if (name == null) {
+            return false;
+        }
+        if (groupByFunctionNames.contains(name)) {
+            return true;
+        }
+        // For qualified plugin function names, try unquoting the plugin name part
+        final int lastDot = Chars.lastIndexOf(name, 0, name.length(), '.');
+        if (lastDot > 0 && lastDot < name.length() - 1) {
+            String pluginName = name.subSequence(0, lastDot).toString();
+            if (pluginName.startsWith("\"") && pluginName.endsWith("\"")) {
+                pluginName = pluginName.substring(1, pluginName.length() - 1);
+            }
+            final String functionName = name.subSequence(lastDot + 1, name.length()).toString();
+            final String qualifiedName = pluginName + "." + functionName;
+            return groupByFunctionNames.contains(qualifiedName);
+        }
+        return false;
     }
 
     public boolean isRuntimeConstant(CharSequence name) {
@@ -233,7 +251,23 @@ public class FunctionFactoryCache {
             for (FunctionFactory factory : factories) {
                 try {
                     final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);
+                    final CharSequence name = descriptor.getName();
                     addFactoryToList(pluginFactoryMap, descriptor);
+
+                    // Track plugin GROUP BY functions with qualified name (plugin_name.function_name)
+                    if (factory.isGroupBy()) {
+                        final String qualifiedName = pluginName + "." + name;
+                        groupByFunctionNames.add(qualifiedName);
+                    } else if (factory.isCursor()) {
+                        final String qualifiedName = pluginName + "." + name;
+                        cursorFunctionNames.add(qualifiedName);
+                    } else if (factory.isWindow()) {
+                        final String qualifiedName = pluginName + "." + name;
+                        windowFunctionNames.add(qualifiedName);
+                    } else if (factory.isRuntimeConstant()) {
+                        final String qualifiedName = pluginName + "." + name;
+                        runtimeConstantFunctionNames.add(qualifiedName);
+                    }
                 } catch (SqlException e) {
                     LOG.error().$("Failed to register plugin function: ")
                             .$("[signature=").$safe(factory.getSignature())
