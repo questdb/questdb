@@ -99,12 +99,15 @@ struct Function {
 
             auto mask = values.pop();
 
+            // Skip row storage if the last predicate failed
+            c.test(mask.gp().r32(), mask.gp().r32());
+            c.jz(l_next_row);
+
             x86::Gp adjusted_id = c.newInt64("input_index_+_rows_id_start_offset");
             c.lea(adjusted_id, ptr(input_index, rows_id_start_offset)); // input_index + rows_id_start_offset
             c.mov(qword_ptr(rows_ptr, output_index, 3), adjusted_id);
 
-            c.and_(mask.gp(), 1);
-            c.add(output_index, mask.gp().r64());
+            c.add(output_index, 1);
         }
 
         // Short-circuit jumps land here, skipping the row storage above
@@ -117,7 +120,7 @@ struct Function {
     }
 
     void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1) {
-        if(unroll_factor > 1) {
+        if (unroll_factor > 1) {
             x86::Gp stop = c.newInt64("stop");
             c.mov(stop, rows_size);
             c.sub(stop, unroll_factor - 1);

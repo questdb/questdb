@@ -113,6 +113,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int VARCHAR_HEADER_TYPE = 9;
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
+    private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
+    private static final int EXEC_HINT_SCALAR = 0;
+    private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // Predicate priority for short-circuit evaluation
     private static final int PRIORITY_I16_EQ = 0;  // highest priority
@@ -124,9 +127,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int PRIORITY_OTHER = 4;
     private static final int PRIORITY_SYM_EQ = 3;
     private static final int PRIORITY_SYM_NEQ = 5;
-    private static int EXEC_HINT_MIXED_SIZE_TYPE = 2;
-    private static int EXEC_HINT_SCALAR = 0;
-    private static int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
