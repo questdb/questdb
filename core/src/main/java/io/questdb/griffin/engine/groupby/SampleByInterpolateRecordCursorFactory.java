@@ -171,9 +171,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);
 
             // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
+            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, configuration);
             entityColumnFilter.of(keyTypes.getColumnCount());
-            this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter);
+            this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, configuration);
 
             this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         } catch (Throwable th) {
