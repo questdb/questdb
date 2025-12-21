@@ -90,6 +90,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 .col("ageoshort", ColumnType.GEOSHORT)
                 .col("achar", ColumnType.CHAR)
                 .col("anint", ColumnType.INT)
+                .col("anipv4", ColumnType.IPv4)
                 .col("ageoint", ColumnType.GEOINT)
                 .col("asymbol", ColumnType.SYMBOL)
                 .col("anothersymbol", ColumnType.SYMBOL)
@@ -128,6 +129,75 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @After
     public void tearDown2() {
         factory.close();
+    }
+
+    @Test
+    public void testAndChainShortCircuit() throws Exception {
+        // Pure AND chain with mixed sizes -> short-circuit with predicate reordering
+        serialize("along = 1 and anint = 2");
+        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i32 2L)(i32 anint)(=)(ret)");
+
+        serialize("along = 1 and anint = 2 and ashort = 3");
+        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i32 2L)(i32 anint)(=)(&&_sc)(i16 3L)(i16 ashort)(=)(ret)");
+
+        // With NOT operator
+        serialize("along = 1 and not anint = 2");
+        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i32 2L)(i32 anint)(=)(!)(ret)");
+
+        // With arithmetic
+        serialize("along + 1 > 0 and anint - 2 < 10");
+        assertIR("(i64 0L)(i64 1L)(i64 along)(+)(>)(&&_sc)(i32 10L)(i32 2L)(i32 anint)(-)(<)(ret)");
+    }
+
+    @Test
+    public void testAndChainShortCircuitAllPriorities() throws Exception {
+        // AND chain covering all 11 priority levels (0-10)
+        // Predicates are sorted by ascending priority (lower value = evaluated first)
+        // Priority order: i128= < i64= < i32= < sym= < other= < other_cmp < other!= < sym!= < i32!= < i64!= < i128!=
+        serialize(
+                "auuid = '11111111-1111-1111-1111-111111111111' " + // priority 0: i128 eq
+                        "and along = 1 " + // priority 1: i64 eq
+                        "and anint = 2 " + // priority 2: i32 eq
+                        "and asymbol = 'ABC' " + // priority 3: sym eq
+                        "and ashort = 3 " + // priority 4: other eq (i16 is "other")
+                        "and abyte > 0 " + // priority 5: other comparison (non-eq/neq)
+                        "and achar != 'x' " + // priority 6: other neq
+                        "and anothersymbol != 'DEF' " + // priority 7: sym neq
+                        "and ageoint != #sp05 " + // priority 8: i32 neq
+                        "and adate != '1980-01-01' " + // priority 9: i64 neq
+                        "and auuid != '22222222-2222-2222-2222-222222222222'" // priority 10: i128 neq
+        );
+        // Expected order: priority 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
+        assertIR(
+                "(i128 1229782938247303441 1229782938247303441L)(i128 auuid)(=)(&&_sc)" + // priority 0: auuid =
+                        "(i64 1L)(i64 along)(=)(&&_sc)" + // priority 1: along =
+                        "(i32 2L)(i32 anint)(=)(&&_sc)" + // priority 2: anint =
+                        "(i32 0L)(i32 asymbol)(=)(&&_sc)" + // priority 3: asymbol = (key 0 for 'ABC')
+                        "(i16 3L)(i16 ashort)(=)(&&_sc)" + // priority 4: ashort =
+                        "(i8 0L)(i8 abyte)(>)(&&_sc)" + // priority 5: abyte >
+                        "(i16 120L)(i16 achar)(<>)(&&_sc)" + // priority 6: achar != ('x' = 120)
+                        "(i32 0L)(i32 anothersymbol)(<>)(&&_sc)" + // priority 7: anothersymbol != (key 0 for 'DEF')
+                        "(i32 807941L)(i32 ageoint)(<>)(&&_sc)" + // priority 8: ageoint !=
+                        "(i64 315532800000L)(i64 adate)(<>)(&&_sc)" + // priority 9: adate !=
+                        "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(ret)" // priority 10: auuid !=
+        );
+    }
+
+    @Test
+    public void testAndChainShortCircuitSamePriorityOrder() throws Exception {
+        // Predicates with the same priority (same type size) should preserve their original order
+        // Here along and adate are both i64, anint and ageoint are both i32
+        serialize("along = 1 and adate = '1980-01-01' and anint = 3");
+        // anint (i32) comes first due to smaller size, then along and adate in original order
+        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i64 315532800000L)(i64 adate)(=)(&&_sc)(i32 3L)(i32 anint)(=)(ret)");
+
+        serialize("adate = '1980-01-01' and along = 2 and anipv4 = null and anint = 4");
+        // i64 columns (adate, along) in original order, then i32 columns (anipv4, anint) first in original order
+        assertIR("(i64 315532800000L)(i64 adate)(=)(&&_sc)(i64 2L)(i64 along)(=)(&&_sc)(i32 0L)(i32 anipv4)(=)(&&_sc)(i32 4L)(i32 anint)(=)(ret)");
+
+        // Three predicates of same size - order should be preserved
+        serialize("along = 1 and adate = '1980-01-01' and atimestamp = '1980-01-02' and anint = 4");
+        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i64 315532800000L)(i64 adate)(=)(&&_sc)(i64 315619200000000L)(i64 atimestamp)(=)(&&_sc)(i32 4L)(i32 anint)(=)(ret)");
     }
 
     @Test
@@ -177,12 +247,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                         " or adouble = :adouble" // f64
         );
         assertIR(
-                "(f64 :0)(f64 adouble)(=)(||_sc)(f32 :1)(f32 afloat)(=)(||_sc)(i16 :2)(i16 achar)(=)(||_sc)" +
-                        "(i16 :3)(i16 ageoshort)(=)(||_sc)(i16 :4)(i16 ashort)(=)(||_sc)(i8 :5)(i8 ageobyte)(=)(||_sc)" +
-                        "(i8 :6)(i8 abyte)(=)(||_sc)(i8 :7)(i8 aboolean)(=)(||_sc)(i32 :8)(i32 asymbol)(=)(||_sc)" +
-                        "(i32 :9)(i32 ageoint)(=)(||_sc)(i32 :10)(i32 anint)(=)(||_sc)(i64 :11)(i64 atimestampns)(=)(||_sc)" +
-                        "(i64 :12)(i64 atimestamp)(=)(||_sc)(i64 :13)(i64 ageolong)(=)(||_sc)(i64 :14)(i64 adate)(=)(||_sc)" +
-                        "(i64 :15)(i64 along)(=)(||_sc)(i128 :16)(i128 auuid)(=)(ret)"
+                "(i8 :0)(i8 aboolean)(=)(||_sc)(i8 :1)(i8 abyte)(=)(||_sc)(i8 :2)(i8 ageobyte)(=)(||_sc)" +
+                        "(i16 :3)(i16 ashort)(=)(||_sc)(i16 :4)(i16 ageoshort)(=)(||_sc)(i16 :5)(i16 achar)(=)(||_sc)" +
+                        "(f32 :6)(f32 afloat)(=)(||_sc)(f64 :7)(f64 adouble)(=)(||_sc)(i32 :8)(i32 asymbol)(=)(||_sc)" +
+                        "(i32 :9)(i32 anint)(=)(||_sc)(i32 :10)(i32 ageoint)(=)(||_sc)(i64 :11)(i64 along)(=)(||_sc)" +
+                        "(i64 :12)(i64 adate)(=)(||_sc)(i64 :13)(i64 ageolong)(=)(||_sc)(i64 :14)(i64 atimestamp)(=)(||_sc)" +
+                        "(i64 :15)(i64 atimestampns)(=)(||_sc)(i128 :16)(i128 auuid)(=)(ret)"
         );
 
         Assert.assertEquals(17, bindVarFunctions.size());
@@ -214,6 +284,20 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testBooleanOperators() throws Exception {
         serialize("anint = 0 and not (abyte = 0) or along = 0");
         assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(=)(!)(i32 0L)(i32 anint)(=)(&&)(||)(ret)");
+    }
+
+    @Test
+    public void testBracketsBreakChain() throws Exception {
+        // Brackets around sub-expressions break pure chain detection
+        serialize("(along = 1 and anint = 2) or ashort = 3");
+        assertIR("(i16 3L)(i16 ashort)(=)(i32 2L)(i32 anint)(=)(i64 1L)(i64 along)(=)(&&)(||)(ret)");
+
+        serialize("along = 1 and (anint = 2 or ashort = 3)");
+        assertIR("(i16 3L)(i16 ashort)(=)(i32 2L)(i32 anint)(=)(||)(i64 1L)(i64 along)(=)(&&)(ret)");
+
+        // Nested brackets
+        serialize("(along = 1) and ((anint = 2) and (ashort = 3))");
+        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i32 2L)(i32 anint)(=)(&&_sc)(i16 3L)(i16 ashort)(=)(ret)");
     }
 
     @Test
@@ -361,6 +445,104 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 1577836800000000000L)(i64 atimestampns)(=)(ret)");
     }
 
+    @Test
+    public void testInShortCircuit() throws Exception {
+        // IN() short-circuit is enabled when:
+        // 1. We're in a pure AND chain with mixed column sizes (scalar mode)
+        // 2. IN() is the top-level/root predicate in the chain
+
+        // Single value IN() in AND chain - simple equality, no special short-circuit opcodes
+        serialize("along = 1 and anint IN (2)");
+        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i32 2L)(i32 anint)(=)(&&_sc)(ret)");
+
+        // Multiple value IN() in AND chain - uses BEGIN_SC(2), OR_SC(2), AND_SC(0), END_SC(2)
+        // Label 0 = next_row (default for AND_SC), Label 2 = success (IN match)
+        // Note: IN values are serialized in reverse order (last to first)
+        serialize("along = 1 and anint IN (2, 3)");
+        assertIR(
+                "(i64 1L)(i64 along)(=)(&&_sc)" +
+                        "(begin_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+        );
+
+        // Three values in IN() - more OR_SC opcodes
+        serialize("along = 1 and anint IN (2, 3, 4)");
+        assertIR(
+                "(i64 1L)(i64 along)(=)(&&_sc)" +
+                        "(begin_sc 2)(i32 4L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+        );
+
+        // IN() at the start of AND chain (still top-level) - sorted by priority so along comes first
+        serialize("anint IN (2, 3) and along = 1");
+        assertIR(
+                "(i64 1L)(i64 along)(=)(&&_sc)" +
+                        "(begin_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+        );
+    }
+
+    @Test
+    public void testInShortCircuitDisabledInOrChain() throws Exception {
+        // IN() in an OR chain should NOT use short-circuit (uses regular || operators)
+        serialize("along = 1 or anint IN (2, 3)");
+        assertIR(
+                "(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(||)(||_sc)" +
+                        "(i64 1L)(i64 along)(=)(ret)"
+        );
+    }
+
+    @Test
+    public void testInShortCircuitDisabledWhenNested() throws Exception {
+        // Nested IN() (wrapped by NOT) should NOT use short-circuit for IN itself
+        // The NOT wraps the IN, so IN is not the root of its predicate
+        serialize("along = 1 and not anint IN (2, 3)");
+        assertIR(
+                "(i64 1L)(i64 along)(=)(&&_sc)" +
+                        "(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(||)(!)(ret)"
+        );
+    }
+
+    @Test
+    public void testInShortCircuitMultipleIn() throws Exception {
+        // Multiple IN() predicates in same AND chain - each uses short-circuit
+        // Sorted by priority: along (i64, priority 1) before anint (i32, priority 2)
+        serialize("anint IN (3, 4) and along IN (1, 2)");
+        assertIR(
+                "(begin_sc 2)(i32 4L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(&&_sc)(end_sc 2)(&&_sc)" +
+                        "(begin_sc 2)(i64 2L)(i64 along)(=)(||_sc 2)(i64 1L)(i64 along)(=)(&&_sc)(end_sc 2)(ret)"
+        );
+    }
+
+    @Test
+    public void testInShortCircuitNotIn() throws Exception {
+        // NOT IN() in AND chain - NOT wraps IN, so IN doesn't use short-circuit internally
+        // but the whole predicate participates in AND chain short-circuit
+        serialize("along = 1 and anint NOT IN (2, 3)");
+        assertIR(
+                "(i64 1L)(i64 along)(=)(&&_sc)" +
+                        "(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(||)(!)(ret)"
+        );
+    }
+
+    @Test
+    public void testInShortCircuitTwoValues() throws Exception {
+        // Two-value IN() - boundary case for the args loop (args.size() = 3)
+        serialize("along = 1 and anint IN (2, 3)");
+        assertIR(
+                "(i64 1L)(i64 along)(=)(&&_sc)" +
+                        "(begin_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+        );
+    }
+
+    @Test
+    public void testInShortCircuitWithComparison() throws Exception {
+        // IN() combined with comparison operator (priority 5: OTHER)
+        // Priority order: along = (priority 1), abyte > (priority 5), anint IN (priority 5)
+        serialize("abyte > 0 and anint IN (1, 2) and along = 3");
+        assertIR(
+                "(i64 3L)(i64 along)(=)(&&_sc)(i8 0L)(i8 abyte)(>)(&&_sc)" +
+                        "(begin_sc 2)(i32 2L)(i32 anint)(=)(||_sc 2)(i32 1L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+        );
+    }
+
     @Test(expected = SqlException.class)
     public void testInSubSelect() throws Exception {
         serialize("asymbol in (select asymbol from tab limit 1)");
@@ -399,6 +581,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testKnownSymbolConstant() throws Exception {
         serialize("asymbol = '" + KNOWN_SYMBOL_1 + "' or anothersymbol = '" + KNOWN_SYMBOL_2 + "'");
         assertIR("(i32 0L)(i32 anothersymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+    }
+
+    @Test
+    public void testMixedAndOrNoShortCircuit() throws Exception {
+        // Mixed AND/OR is not a pure chain -> no short-circuit, just regular operators
+        serialize("along = 1 and anint = 2 or ashort = 3");
+        assertIR("(i16 3L)(i16 ashort)(=)(i32 2L)(i32 anint)(=)(i64 1L)(i64 along)(=)(&&)(||)(ret)");
+
+        serialize("along = 1 or anint = 2 and ashort = 3");
+        assertIR("(i16 3L)(i16 ashort)(=)(i32 2L)(i32 anint)(=)(&&)(i64 1L)(i64 along)(=)(||)(ret)");
     }
 
     @Test
@@ -627,9 +819,97 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testOrChainShortCircuit() throws Exception {
+        // Pure OR chain with mixed sizes -> short-circuit with predicate reordering (inverted priority)
+        serialize("along = 1 or anint = 2");
+        assertIR("(i32 2L)(i32 anint)(=)(||_sc)(i64 1L)(i64 along)(=)(ret)");
+
+        serialize("along = 1 or anint = 2 or ashort = 3");
+        assertIR("(i16 3L)(i16 ashort)(=)(||_sc)(i32 2L)(i32 anint)(=)(||_sc)(i64 1L)(i64 along)(=)(ret)");
+
+        // With NOT operator
+        serialize("along = 1 or not anint = 2");
+        assertIR("(i32 2L)(i32 anint)(=)(!)(||_sc)(i64 1L)(i64 along)(=)(ret)");
+    }
+
+    @Test
+    public void testOrChainShortCircuitAllPriorities() throws Exception {
+        // OR chain covering all 11 priority levels (0-10)
+        // Predicates are sorted by descending (inverted) priority (higher value = evaluated first)
+        // Inverted order: i128!= > i64!= > i32!= > sym!= > other!= > other_cmp > other= > sym= > i32= > i64= > i128=
+        serialize(
+                "auuid = '11111111-1111-1111-1111-111111111111' " + // priority 0: i128 eq
+                        "or along = 1 " + // priority 1: i64 eq
+                        "or anint = 2 " + // priority 2: i32 eq
+                        "or asymbol = 'ABC' " + // priority 3: sym eq
+                        "or ashort = 3 " + // priority 4: other eq (i16 is "other")
+                        "or abyte > 0 " + // priority 5: other comparison (non-eq/neq)
+                        "or achar != 'x' " + // priority 6: other neq
+                        "or anothersymbol != 'DEF' " + // priority 7: sym neq
+                        "or ageoint != #sp05 " + // priority 8: i32 neq
+                        "or adate != '1980-01-01' " + // priority 9: i64 neq
+                        "or auuid != '22222222-2222-2222-2222-222222222222'" // priority 10: i128 neq
+        );
+        // Expected order: priority 10 -> 9 -> 8 -> 7 -> 6 -> 5 -> 4 -> 3 -> 2 -> 1 -> 0
+        assertIR(
+                "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(||_sc)" + // priority 10: auuid !=
+                        "(i64 315532800000L)(i64 adate)(<>)(||_sc)" + // priority 9: adate !=
+                        "(i32 807941L)(i32 ageoint)(<>)(||_sc)" + // priority 8: ageoint !=
+                        "(i32 0L)(i32 anothersymbol)(<>)(||_sc)" + // priority 7: anothersymbol != (key 0 for 'DEF')
+                        "(i16 120L)(i16 achar)(<>)(||_sc)" + // priority 6: achar != ('x' = 120)
+                        "(i8 0L)(i8 abyte)(>)(||_sc)" + // priority 5: abyte >
+                        "(i16 3L)(i16 ashort)(=)(||_sc)" + // priority 4: ashort =
+                        "(i32 0L)(i32 asymbol)(=)(||_sc)" + // priority 3: asymbol = (key 0 for 'ABC')
+                        "(i32 2L)(i32 anint)(=)(||_sc)" + // priority 2: anint =
+                        "(i64 1L)(i64 along)(=)(||_sc)" + // priority 1: along =
+                        "(i128 1229782938247303441 1229782938247303441L)(i128 auuid)(=)(ret)" // priority 0: auuid =
+        );
+    }
+
+    @Test
+    public void testOrChainShortCircuitSamePriorityOrder() throws Exception {
+        // Predicates with the same priority (same type size) should preserve their original order
+        // OR chain uses inverted priority (larger sizes first for early success)
+        serialize("anint = 1 or adate = '1980-01-01' or along = 3");
+        // i64 columns (adate, along) first in original order, then anint (i32)
+        assertIR("(i32 1L)(i32 anint)(=)(||_sc)(i64 315532800000L)(i64 adate)(=)(||_sc)(i64 3L)(i64 along)(=)(ret)");
+
+        serialize("anipv4 = null or anint = 2 or adate = '1980-01-01' or along = 4");
+        // i32 columns (anipv4, anint) in original order, then i64 columns (adate, along) first in original order
+        assertIR("(i32 0L)(i32 anipv4)(=)(||_sc)(i32 2L)(i32 anint)(=)(||_sc)(i64 315532800000L)(i64 adate)(=)(||_sc)(i64 4L)(i64 along)(=)(ret)");
+
+        // Three predicates of same size - order should be preserved
+        serialize("anint = 1 or along = 2 or adate = '1980-01-01' or atimestamp = '1980-01-02'");
+        assertIR("(i32 1L)(i32 anint)(=)(||_sc)(i64 2L)(i64 along)(=)(||_sc)(i64 315532800000L)(i64 adate)(=)(||_sc)(i64 315619200000000L)(i64 atimestamp)(=)(ret)");
+    }
+
+    @Test
+    public void testSameSizeNoShortCircuit() throws Exception {
+        // Same size columns -> SIMD possible -> no short-circuit
+        serialize("along = 1 and adouble = 2.0");
+        assertIR("(f64 2.0D)(f64 adouble)(=)(i64 1L)(i64 along)(=)(&&)(ret)");
+
+        serialize("along = 1 or adouble = 2.0");
+        assertIR("(f64 2.0D)(f64 adouble)(=)(i64 1L)(i64 along)(=)(||)(ret)");
+
+        serialize("anint = 1 and afloat = 2.0");
+        assertIR("(f32 2.0D)(f32 afloat)(=)(i32 1L)(i32 anint)(=)(&&)(ret)");
+    }
+
+    @Test
     public void testSingleBooleanColumn() throws Exception {
         serialize("aboolean or not aboolean");
         assertIR("(i8 1L)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
+    }
+
+    @Test
+    public void testSinglePredicateNoShortCircuit() throws Exception {
+        // Single predicate doesn't need short-circuit
+        serialize("along = 1");
+        assertIR("(i64 1L)(i64 along)(=)(ret)");
+
+        serialize("not along = 1");
+        assertIR("(i64 1L)(i64 along)(=)(!)(ret)");
     }
 
     @Test
@@ -1149,10 +1429,24 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         }
 
         private void appendOperator(int operator) {
-            irMem.getLong(offset);
+            long payload = irMem.getLong(offset);
             offset += 2 * Long.BYTES;
             sb.append("(");
             sb.append(operatorName(operator));
+            // Include label index for short-circuit opcodes when it differs from default:
+            // - AND_SC default label is 0 (next_row)
+            // - OR_SC default label is 1 (store_row)
+            // - BEGIN_SC/END_SC always show label
+            boolean showLabel = switch (operator) {
+                case BEGIN_SC, END_SC -> true;
+                case AND_SC -> payload != 0;
+                case OR_SC -> payload != 1;
+                default -> false;
+            };
+            if (showLabel) {
+                sb.append(" ");
+                sb.append(payload);
+            }
             sb.append(")");
         }
 

@@ -482,8 +482,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (node.type == ExpressionNode.OPERATION && SqlKeywords.isAndKeyword(node.token)) {
-            collectAndPredicates(node.rhs, predicates);
             collectAndPredicates(node.lhs, predicates);
+            collectAndPredicates(node.rhs, predicates);
         } else {
             predicates.add(node);
         }
@@ -497,8 +497,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (node.type == ExpressionNode.OPERATION && SqlKeywords.isOrKeyword(node.token)) {
-            collectOrPredicates(node.rhs, predicates);
             collectOrPredicates(node.lhs, predicates);
+            collectOrPredicates(node.rhs, predicates);
         } else {
             predicates.add(node);
         }
@@ -1004,24 +1004,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // back to boolean ORs because AND_SC(0) would incorrectly skip the row.
         final boolean isTopLevelIn = predicateContext.inOperationNode == predicateContext.rootNode;
         if (predicateContext.shortCircuitMode == PredicateContext.SC_AND && isTopLevelIn) {
-            final int valueCount = args.size() - 1; // last arg is the column
-
-            if (valueCount < 2) {
-                // Single value: just emit a simple equality check
-                traverseAlgo.traverse(args.getQuick(0), this);
-                traverseAlgo.traverse(args.getLast(), this);
+            if (args.size() < 3) {
+                // Single value: short-circuit, unrolled version of the below loop
+                // Two values: short-circuit, unrolled version of the below loop
+                traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+                traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
                 putOperator(EQ);
+                putOperatorWithLabel(AND_SC, 0); // if false, jump to next_row
             } else {
                 // Multiple values: BEGIN_SC(2), [EQ, OR_SC(2)]*, EQ, AND_SC(0), END_SC(2)
                 // Label 0 = next_row (skip this row) - reserved by backend
                 // Label 1 = store_row (accept row) - reserved by backend
                 // Label 2 = success (at least one IN match)
                 putOperatorWithLabel(BEGIN_SC, 2); // create success label
-                for (int i = 0; i < valueCount; i++) {
+                for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
                     traverseAlgo.traverse(args.get(i), this);
                     traverseAlgo.traverse(args.getLast(), this);
                     putOperator(EQ);
-                    if (i < valueCount - 1) {
+                    if (i < n - 1) {
                         putOperatorWithLabel(OR_SC, 2); // if true, jump to success
                     } else {
                         putOperatorWithLabel(AND_SC, 0); // if false, jump to next_row
@@ -1040,7 +1040,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         int orCount = -1;
-        for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; i++) {
+        for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
             traverseAlgo.traverse(args.get(i), this);
             traverseAlgo.traverse(args.getLast(), this);
             putOperator(EQ);
