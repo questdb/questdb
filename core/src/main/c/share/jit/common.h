@@ -69,6 +69,9 @@ enum class opcodes : int32_t {
     Div = 17,
     And_Sc = 18, // Short-circuit AND: jumps to next row if argument is false
     Or_Sc = 19,  // Short-circuit OR: jumps to next row if argument is true
+    Or_Begin = 20,   // Start of OR group (e.g., IN operator): push forward label
+    Or_Branch = 21,  // If true, jump to Or_End label (skip remaining OR checks)
+    Or_End_Sc = 22,  // End of OR group with short-circuit: bind label; if false, jump to next predicate
 };
 
 struct instruction_t {

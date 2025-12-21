@@ -60,6 +60,7 @@ struct Function {
     explicit Function(x86::Compiler &cc)
             : c(cc), zone(4094 - Zone::kBlockOverhead), allocator(&zone) {
         values.init(&allocator);
+        or_labels.init(&allocator);
     };
 
     // Preload column addresses and constants before entering the loop
@@ -102,15 +103,19 @@ struct Function {
         for (int i = 0; i < unroll_factor; ++i) {
             // Clear value cache at the start of each row iteration
             value_cache.clear();
-            // Pass the short-circuit label, column cache, constant cache and value cache to emit_code
+            // Pass the short-circuit label, caches, and or_labels stack to emit_code
             questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                    input_index, l_next_row, true, addr_cache, const_cache, value_cache);
+                                    input_index, l_next_row, true, or_labels, addr_cache, const_cache, value_cache);
 
-            auto mask = values.pop();
+            // If stack is empty, all predicates were resolved via short-circuit jumps
+            // (e.g., Or_End_Sc followed by RET). No final test needed.
+            if (!values.empty()) {
+                auto mask = values.pop();
 
-            // Skip row storage if the last predicate failed
-            c.test(mask.gp().r32(), mask.gp().r32());
-            c.jz(l_next_row);
+                // Skip row storage if the last predicate failed
+                c.test(mask.gp().r32(), mask.gp().r32());
+                c.jz(l_next_row);
+            }
 
             x86::Gp adjusted_id = c.newInt64("input_index_+_rows_id_start_offset");
             c.lea(adjusted_id, ptr(input_index, rows_id_start_offset)); // input_index + rows_id_start_offset
@@ -161,7 +166,6 @@ struct Function {
 
         c.cmp(input_index, stop);
         c.jge(l_exit);
-
 
         Ymm row_ids_reg = c.newYmm("rows_ids");
         Ymm row_ids_step = c.newYmm("rows_ids_step");
@@ -257,6 +261,7 @@ struct Function {
     Zone zone;
     ZoneAllocator allocator;
     ZoneStack<jit_value_t> values;
+    ZoneStack<Label> or_labels;  // Stack for Or_Begin/Or_Branch/Or_End_Sc labels
 
     x86::Gp data_ptr;
     x86::Gp data_size;

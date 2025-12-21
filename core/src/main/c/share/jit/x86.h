@@ -962,10 +962,11 @@ namespace questdb::x86 {
             auto lhs = converted.first;
             auto rhs = converted.second;
 
-            // Optimization: if next instruction is And_Sc or Or_Sc, emit only CMP and push flag marker
+            // Optimization: if next instruction is a short-circuit op, emit only CMP and push flag marker
             // This avoids boolean materialization (SETE/SETNE + TEST + JZ/JNZ)
             if (has_short_circuit_label &&
-                (next_opcode == opcodes::And_Sc || next_opcode == opcodes::Or_Sc) &&
+                (next_opcode == opcodes::And_Sc || next_opcode == opcodes::Or_Sc ||
+                 next_opcode == opcodes::Or_Branch || next_opcode == opcodes::Or_End_Sc) &&
                 supports_flag_optimization(lhs.dtype())) {
                 auto dt = lhs.dtype();
                 // Emit only CMP, no SETE/SETNE
@@ -1052,6 +1053,7 @@ namespace questdb::x86 {
               const Gp &input_index,
               const Label &l_next_row,
               bool has_short_circuit_label,
+              ZoneStack<Label> &or_labels,
               const ColumnAddressCache &addr_cache,
               const ConstantCache &const_cache,
               ColumnValueCache &value_cache) {
@@ -1128,6 +1130,69 @@ namespace questdb::x86 {
                         }
                     }
                     // consume the argument since the above short-circuit jump acts as OR
+                    break;
+                }
+                case opcodes::Or_Begin: {
+                    // Start of OR group (e.g., IN operator): create forward label and push to stack
+                    Label l_or_end = c.newLabel();
+                    or_labels.append(l_or_end);
+                    break;
+                }
+                case opcodes::Or_Branch: {
+                    // If true, jump to Or_End label (skip remaining OR checks)
+                    auto arg = values.pop();
+                    if (has_short_circuit_label && !or_labels.empty()) {
+                        // Pop and push back to peek (ZoneStack has no top() method)
+                        Label l_or_end = or_labels.pop();
+                        or_labels.append(l_or_end);
+                        if (arg.dkind() == data_kind_t::kFlagsEq) {
+                            // Flags set by CMP for equality: jump if equal
+                            c.je(l_or_end);
+                        } else if (arg.dkind() == data_kind_t::kFlagsNe) {
+                            // Flags set by CMP for inequality: jump if not equal
+                            c.jne(l_or_end);
+                        } else {
+                            // Normal path: test and jump if true
+                            auto loaded = load_register(c, arg);
+                            c.test(loaded.gp().r32(), loaded.gp().r32());
+                            c.jnz(l_or_end);
+                        }
+                    }
+                    break;
+                }
+                case opcodes::Or_End_Sc: {
+                    // End of OR group with short-circuit: bind label; if false, jump to next predicate
+                    auto arg = values.pop();
+                    if (has_short_circuit_label) {
+                        // First, handle the final OR check (same as And_Sc: skip row if false)
+                        if (arg.dkind() == data_kind_t::kFlagsEq) {
+                            // Flags set by CMP for equality: skip row if NOT equal
+                            c.jne(l_next_row);
+                        } else if (arg.dkind() == data_kind_t::kFlagsNe) {
+                            // Flags set by CMP for inequality: skip row if equal
+                            c.je(l_next_row);
+                        } else {
+                            // Normal path: test and skip row if false
+                            auto loaded = load_register(c, arg);
+                            c.test(loaded.gp().r32(), loaded.gp().r32());
+                            c.jz(l_next_row);
+                        }
+                        // Now bind the Or_End label (where Or_Branch jumps land)
+                        if (!or_labels.empty()) {
+                            Label l_or_end = or_labels.pop();
+                            c.bind(l_or_end);
+                        }
+                        // Check if next opcode is RET - if so, no need to push result
+                        // (the short-circuit jumps already handle success/failure)
+                        opcodes next_op = (i + 1 < size) ? istream[i + 1].opcode : opcodes::Ret;
+                        if (next_op != opcodes::Ret) {
+                            // Push "true" (1) to indicate the OR group succeeded
+                            // This is needed if there's an AND_SC or other operator after the OR group
+                            Gp true_val = c.newInt32("or_result");
+                            c.mov(true_val, 1);
+                            values.append({true_val, data_type_t::i32, data_kind_t::kMemory});
+                        }
+                    }
                     break;
                 }
                 default: {

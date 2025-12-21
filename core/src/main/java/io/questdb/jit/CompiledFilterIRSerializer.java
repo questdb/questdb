@@ -102,6 +102,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int NEG = 4;  // -a
     public static final int NOT = 5;  // !a
     public static final int OR = 7;   // a || b
+    public static final int OR_BEGIN = 20;   // start of OR group (e.g., IN operator): push forward label
+    public static final int OR_BRANCH = 21;  // if true, jump to Or_End label (skip remaining OR checks)
+    public static final int OR_END_SC = 22;  // end of OR group with short-circuit: bind label; if false, jump to next predicate
     public static final int OR_SC = 19;  // short-circuit (jump to next row if true)
     // Opcodes:
     // Return code. Breaks the loop
@@ -968,6 +971,33 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(", actual=").put(args.size()).put(']');
         }
 
+        // Short-circuit mode: use Or_Begin/Or_Branch/Or_End_Sc for efficient evaluation
+        if (predicateContext.shortCircuitMode) {
+            final int valueCount = args.size() - 1; // last arg is the column
+
+            if (valueCount < 2) {
+                // Single value: just emit a simple equality check
+                traverseAlgo.traverse(args.getQuick(0), this);
+                traverseAlgo.traverse(args.getLast(), this);
+                putOperator(EQ);
+            } else {
+                // Multiple values: use Or_Begin/Or_Branch/Or_End_Sc
+                putOperator(OR_BEGIN);
+                for (int i = 0; i < valueCount; ++i) {
+                    traverseAlgo.traverse(args.get(i), this);
+                    traverseAlgo.traverse(args.getLast(), this);
+                    putOperator(EQ);
+                    if (i < valueCount - 1) {
+                        putOperator(OR_BRANCH);
+                    } else {
+                        putOperator(OR_END_SC);
+                    }
+                }
+            }
+            return;
+        }
+
+        // Non-short-circuit mode: use traditional boolean ORs
         if (args.size() < 3) {
             traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
             traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
@@ -1216,26 +1246,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int n = predicates.size();
         assert n > 0;
 
-        // Serialize all predicates in the priority order with short-circuit ANDs
-        for (int i = 0; i < n; i++) {
-            traverseAlgo.traverse(predicates.getQuick(i), this);
-            if (i != n - 1) {
-                putOperator(AND_SC);
+        // Enable short-circuit mode for IN() optimization
+        predicateContext.shortCircuitMode = true;
+        try {
+            // Serialize all predicates in the priority order with short-circuit ANDs
+            for (int i = 0; i < n; i++) {
+                traverseAlgo.traverse(predicates.getQuick(i), this);
+                if (i != n - 1) {
+                    putOperator(AND_SC);
+                }
             }
-        }
 
-        // Check if the backend is going to use SIMD and, hence, we need to emit trailing ANDs.
-        final int execHint = getExecHint(forceScalar);
-        if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
-            for (int i = 0; i < n - 1; i++) {
-                putOperator(AND);
+            // Check if the backend is going to use SIMD and, hence, we need to emit trailing ANDs.
+            final int execHint = getExecHint(forceScalar);
+            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+                for (int i = 0; i < n - 1; i++) {
+                    putOperator(AND);
+                }
             }
+
+            putOperator(RET);
+
+            ensureOnlyVarSizeHeaderChecks();
+            return getOptions(forceScalar, debug, nullChecks);
+        } finally {
+            predicateContext.shortCircuitMode = false;
         }
-
-        putOperator(RET);
-
-        ensureOnlyVarSizeHeaderChecks();
-        return getOptions(forceScalar, debug, nullChecks);
     }
 
     /**
@@ -1250,26 +1286,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int n = predicates.size();
         assert n > 0;
 
-        // Serialize all predicates in the inverted priority order with short-circuit ORs
-        for (int i = 0; i < n; i++) {
-            traverseAlgo.traverse(predicates.getQuick(i), this);
-            if (i != n - 1) {
-                putOperator(OR_SC);
+        // Enable short-circuit mode for IN() optimization
+        predicateContext.shortCircuitMode = true;
+        try {
+            // Serialize all predicates in the inverted priority order with short-circuit ORs
+            for (int i = 0; i < n; i++) {
+                traverseAlgo.traverse(predicates.getQuick(i), this);
+                if (i != n - 1) {
+                    putOperator(OR_SC);
+                }
             }
-        }
 
-        // Check if the backend is going to use SIMD and, hence, we need to emit trailing ORs.
-        final int execHint = getExecHint(forceScalar);
-        if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
-            for (int i = 0; i < n - 1; i++) {
-                putOperator(OR);
+            // Check if the backend is going to use SIMD and, hence, we need to emit trailing ORs.
+            final int execHint = getExecHint(forceScalar);
+            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+                for (int i = 0; i < n - 1; i++) {
+                    putOperator(OR);
+                }
             }
+
+            putOperator(RET);
+
+            ensureOnlyVarSizeHeaderChecks();
+            return getOptions(forceScalar, debug, nullChecks);
+        } finally {
+            predicateContext.shortCircuitMode = false;
         }
-
-        putOperator(RET);
-
-        ensureOnlyVarSizeHeaderChecks();
-        return getOptions(forceScalar, debug, nullChecks);
     }
 
     private void serializeSymbolConstant(long offset, int position, final CharSequence token) throws SqlException {
@@ -1527,6 +1569,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private final LongList inIntervals = new LongList();
         int columnType;
         boolean hasArithmeticOperations;
+        boolean shortCircuitMode = false; // true when serializing predicates for short-circuit evaluation
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
@@ -1647,6 +1690,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             currentInSerialization = false;
             inOperationNode = null;
             inIntervals.clear();
+            // Note: shortCircuitMode is NOT reset here; it's managed by serializePredicates*Sc methods
         }
 
         private void updateType(int position, int columnType0) throws SqlException {
