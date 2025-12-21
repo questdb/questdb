@@ -553,7 +553,7 @@ namespace questdb::avx2 {
     void
     emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values, bool ncheck,
               const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index,
-              const ColumnAddressCache &col_cache) {
+              const ColumnAddressCache &addr_cache) {
         for (size_t i = 0; i < size; ++i) {
             auto instr = istream[i];
             switch (instr.opcode) {
@@ -570,7 +570,7 @@ namespace questdb::avx2 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, col_cache));
+                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache));
                 }
                     break;
                 case opcodes::Imm:

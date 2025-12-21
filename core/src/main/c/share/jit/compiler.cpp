@@ -64,7 +64,7 @@ struct Function {
 
     // Preload column addresses and constants before entering the loop
     void preload_columns_and_constants(const instruction_t *istream, size_t size) {
-        questdb::x86::preload_column_addresses(c, istream, size, data_ptr, col_cache);
+        questdb::x86::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::x86::preload_constants(c, istream, size, const_cache);
     }
 
@@ -100,8 +100,11 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            // Pass the short-circuit label, column cache and constant cache to emit_code
-            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, l_next_row, true, col_cache, const_cache);
+            // Clear value cache at the start of each row iteration
+            value_cache.clear();
+            // Pass the short-circuit label, column cache, constant cache and value cache to emit_code
+            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
+                                    input_index, l_next_row, true, addr_cache, const_cache, value_cache);
 
             auto mask = values.pop();
 
@@ -181,7 +184,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, col_cache);
+            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, addr_cache);
 
             auto mask = values.pop();
 
@@ -265,8 +268,9 @@ struct Function {
     x86::Gp input_index;
     x86::Gp output_index;
     x86::Gp rows_id_start_offset;
-    ColumnAddressCache col_cache;
+    ColumnAddressCache addr_cache;
     ConstantCache const_cache;
+    ColumnValueCache value_cache;
 };
 
 void fillJitErrorObject(JNIEnv *e, jobject error, uint32_t code, const char *msg) {

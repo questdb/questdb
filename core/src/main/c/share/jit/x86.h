@@ -176,7 +176,8 @@ namespace questdb::x86 {
     jit_value_t read_mem(
             Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr,
             const Gp &varsize_aux_ptr, const Gp &input_index,
-            const ColumnAddressCache &cache
+            const ColumnAddressCache &addr_cache,
+            ColumnValueCache &value_cache
     ) {
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
@@ -197,11 +198,24 @@ namespace questdb::x86 {
             return read_mem_varsize(c, header_size, column_idx, data_ptr, varsize_aux_ptr, input_index);
         }
 
+        // Check if value is already cached
+        Gp cached_gp;
+        Xmm cached_xmm;
+        if (type == data_type_t::f32 || type == data_type_t::f64) {
+            if (value_cache.findXmm(column_idx, type, cached_xmm)) {
+                return {cached_xmm, type, data_kind_t::kMemory};
+            }
+        } else {
+            if (value_cache.find(column_idx, type, cached_gp)) {
+                return {cached_gp, type, data_kind_t::kMemory};
+            }
+        }
+
         // Simple case: column has fixed-length data.
         // Use cached column address if available.
         Gp column_address;
-        if (cache.has(column_idx)) {
-            column_address = cache.get(column_idx);
+        if (addr_cache.has(column_idx)) {
+            column_address = addr_cache.get(column_idx);
         } else {
             column_address = c.newInt64("column_address");
             c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
@@ -209,13 +223,62 @@ namespace questdb::x86 {
 
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
-        if (type_size <= 8) {
-            return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
-        } else {
-            Gp offset = c.newInt64("row_offset");
-            c.mov(offset, input_index);
-            c.sal(offset, shift);
-            return {Mem(column_address, offset, 0, 0, type_size), type, data_kind_t::kMemory};
+
+        // Load value into register and cache it
+        Mem mem_op = (type_size <= 8)
+            ? Mem(column_address, input_index, shift, 0, type_size)
+            : [&]() {
+                Gp offset = c.newInt64("row_offset");
+                c.mov(offset, input_index);
+                c.sal(offset, shift);
+                return Mem(column_address, offset, 0, 0, type_size);
+            }();
+
+        switch (type) {
+            case data_type_t::i8: {
+                Gp reg = c.newGpd("col_%d_i8", column_idx);
+                c.movsx(reg, mem_op);
+                value_cache.add(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::i16: {
+                Gp reg = c.newGpd("col_%d_i16", column_idx);
+                c.movsx(reg, mem_op);
+                value_cache.add(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::i32: {
+                Gp reg = c.newGpd("col_%d_i32", column_idx);
+                c.mov(reg, mem_op);
+                value_cache.add(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::i64: {
+                Gp reg = c.newGpq("col_%d_i64", column_idx);
+                c.mov(reg, mem_op);
+                value_cache.add(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::i128: {
+                Xmm reg = c.newXmm("col_%d_i128", column_idx);
+                c.movdqu(reg, mem_op);
+                value_cache.addXmm(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::f32: {
+                Xmm reg = c.newXmmSs("col_%d_f32", column_idx);
+                c.movss(reg, mem_op);
+                value_cache.addXmm(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::f64: {
+                Xmm reg = c.newXmmSd("col_%d_f64", column_idx);
+                c.movsd(reg, mem_op);
+                value_cache.addXmm(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            default:
+                __builtin_unreachable();
         }
     }
 
@@ -989,8 +1052,9 @@ namespace questdb::x86 {
               const Gp &input_index,
               const Label &l_next_row,
               bool has_short_circuit_label,
-              const ColumnAddressCache &col_cache,
-              const ConstantCache &const_cache) {
+              const ColumnAddressCache &addr_cache,
+              const ConstantCache &const_cache,
+              ColumnValueCache &value_cache) {
 
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
@@ -1008,7 +1072,7 @@ namespace questdb::x86 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, col_cache));
+                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache, value_cache));
                 }
                     break;
                 case opcodes::Imm:

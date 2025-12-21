@@ -225,4 +225,68 @@ private:
     asmjit::x86::Xmm xmm_regs[MAX_CONSTANTS];
 };
 
+// Cache for loaded column values to avoid redundant loads within a single row iteration
+struct ColumnValueCache {
+    static constexpr size_t MAX_VALUES = 8;
+
+    ColumnValueCache() : count(0) {}
+
+    // Find a cached value for a column
+    bool find(int32_t column_idx, data_type_t type, asmjit::x86::Gp &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (column_idxs[i] == column_idx && types[i] == type && !is_xmm[i]) {
+                out_reg = gp_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Find a cached float/double value for a column
+    bool findXmm(int32_t column_idx, data_type_t type, asmjit::x86::Xmm &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (column_idxs[i] == column_idx && types[i] == type && is_xmm[i]) {
+                out_reg = xmm_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Add an integer column value
+    void add(int32_t column_idx, data_type_t type, asmjit::x86::Gp reg) {
+        if (count < MAX_VALUES) {
+            column_idxs[count] = column_idx;
+            types[count] = type;
+            is_xmm[count] = false;
+            gp_regs[count] = reg;
+            count++;
+        }
+    }
+
+    // Add a float/double column value
+    void addXmm(int32_t column_idx, data_type_t type, asmjit::x86::Xmm reg) {
+        if (count < MAX_VALUES) {
+            column_idxs[count] = column_idx;
+            types[count] = type;
+            is_xmm[count] = true;
+            xmm_regs[count] = reg;
+            count++;
+        }
+    }
+
+    // Clear cache (call at start of each row iteration if needed)
+    void clear() {
+        count = 0;
+    }
+
+private:
+    size_t count;
+    int32_t column_idxs[MAX_VALUES];
+    data_type_t types[MAX_VALUES];
+    bool is_xmm[MAX_VALUES];
+    asmjit::x86::Gp gp_regs[MAX_VALUES];
+    asmjit::x86::Xmm xmm_regs[MAX_VALUES];
+};
+
 #endif //QUESTDB_JIT_COMMON_H
