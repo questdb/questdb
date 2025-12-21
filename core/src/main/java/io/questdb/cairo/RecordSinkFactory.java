@@ -430,9 +430,16 @@ public class RecordSinkFactory {
         for (int i = 0; i < n; i++) {
             int index = columnFilter.getColumnIndex(i);
             int factor = columnFilter.getIndexFactor(index);
-            index = index * factor - 1;
-            int type = columnTypes.getColumnType(index);
-            int colSize = estimateColumnBytecodeSize(type);
+
+            int colSize;
+            if (factor < 0) {
+                // Skip columns generate: aload + iconst + invokeInterface = ~9 bytes
+                colSize = 9;
+            } else {
+                index = index * factor - 1;
+                int type = columnTypes.getColumnType(index);
+                colSize = estimateColumnBytecodeSize(type);
+            }
 
             if (currentSize + colSize > CHUNK_TARGET_SIZE && currentSize > 0) {
                 boundaries.add(i);
