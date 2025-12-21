@@ -933,8 +933,32 @@ namespace questdb::x86 {
                dt == data_type_t::i128;
     }
 
+    // Label array for short-circuit evaluation
+    // Index 0 is reserved for l_next_row (skip current row)
+    // Indices 1+ are for user-defined labels (e.g., OR success in IN())
+    struct LabelArray {
+        static constexpr size_t MAX_LABELS = 8;
+        Label labels[MAX_LABELS];
+        bool valid[MAX_LABELS] = {false};
+
+        void set(size_t index, Label label) {
+            if (index < MAX_LABELS) {
+                labels[index] = label;
+                valid[index] = true;
+            }
+        }
+
+        Label get(size_t index) const {
+            return labels[index];
+        }
+
+        bool has(size_t index) const {
+            return index < MAX_LABELS && valid[index];
+        }
+    };
+
     void emit_bin_op(Compiler &c, const instruction_t &instr, ZoneStack<jit_value_t> &values, bool null_check,
-                     const Label &l_next_row, bool has_short_circuit_label, opcodes next_opcode) {
+                     bool has_short_circuit_label, opcodes next_opcode) {
         // Special case: comparison with immediate zero can use TEST instead of CMP
         if (instr.opcode == opcodes::Eq || instr.opcode == opcodes::Ne) {
             auto lhs_raw = values.pop();
@@ -965,8 +989,7 @@ namespace questdb::x86 {
             // Optimization: if next instruction is a short-circuit op, emit only CMP and push flag marker
             // This avoids boolean materialization (SETE/SETNE + TEST + JZ/JNZ)
             if (has_short_circuit_label &&
-                (next_opcode == opcodes::And_Sc || next_opcode == opcodes::Or_Sc ||
-                 next_opcode == opcodes::Or_Branch || next_opcode == opcodes::Or_End_Sc) &&
+                (next_opcode == opcodes::And_Sc || next_opcode == opcodes::Or_Sc) &&
                 supports_flag_optimization(lhs.dtype())) {
                 auto dt = lhs.dtype();
                 // Emit only CMP, no SETE/SETNE
@@ -1051,9 +1074,7 @@ namespace questdb::x86 {
               const Gp &varsize_aux_ptr,
               const Gp &vars_ptr,
               const Gp &input_index,
-              const Label &l_next_row,
-              bool has_short_circuit_label,
-              ZoneStack<Label> &or_labels,
+              LabelArray &labels,
               const ColumnAddressCache &addr_cache,
               const ConstantCache &const_cache,
               ColumnValueCache &value_cache) {
@@ -1087,118 +1108,66 @@ namespace questdb::x86 {
                     values.append(bin_not(c, get_argument(c, values)));
                     break;
                 case opcodes::And_Sc: {
-                    // Short-circuit AND: jump to next row if argument is false
+                    // Short-circuit AND: if false, jump to label[index]
+                    auto label_idx = static_cast<size_t>(instr.ipayload.lo);
                     auto arg = values.pop();
-                    if (has_short_circuit_label) {
-                        // Check if argument has flag marker (from optimized Eq/Ne)
+                    if (labels.has(label_idx)) {
+                        Label target = labels.get(label_idx);
                         if (arg.dkind() == data_kind_t::kFlagsEq) {
-                            // Flags set by CMP for equality check
-                            // For AND short-circuit with Eq: skip if NOT equal (ZF=0)
-                            c.jne(l_next_row);
+                            // Flags set by CMP for equality: jump if NOT equal
+                            c.jne(target);
                         } else if (arg.dkind() == data_kind_t::kFlagsNe) {
-                            // Flags set by CMP for inequality check
-                            // For AND short-circuit with Ne: skip if equal (ZF=1)
-                            c.je(l_next_row);
+                            // Flags set by CMP for inequality: jump if equal
+                            c.je(target);
                         } else {
-                            // Normal path: load register and test
+                            // Normal path: test and jump if zero (false)
                             auto loaded = load_register(c, arg);
                             c.test(loaded.gp().r32(), loaded.gp().r32());
-                            c.jz(l_next_row);
+                            c.jz(target);
                         }
                     }
-                    // consume the argument since the above short-circuit jump acts as AND
                     break;
                 }
                 case opcodes::Or_Sc: {
-                    // Short-circuit OR: jump to next row if argument is true
+                    // Short-circuit OR: if true, jump to label[index]
+                    auto label_idx = static_cast<size_t>(instr.ipayload.lo);
                     auto arg = values.pop();
-                    if (has_short_circuit_label) {
-                        // Check if argument has flag marker (from optimized Eq/Ne)
-                        if (arg.dkind() == data_kind_t::kFlagsEq) {
-                            // Flags set by CMP for equality check
-                            // For OR short-circuit with Eq: skip if equal (ZF=1)
-                            c.je(l_next_row);
-                        } else if (arg.dkind() == data_kind_t::kFlagsNe) {
-                            // Flags set by CMP for inequality check
-                            // For OR short-circuit with Ne: skip if not equal (ZF=0)
-                            c.jne(l_next_row);
-                        } else {
-                            // Normal path: load register and test
-                            auto loaded = load_register(c, arg);
-                            c.test(loaded.gp().r32(), loaded.gp().r32());
-                            c.jnz(l_next_row);
-                        }
-                    }
-                    // consume the argument since the above short-circuit jump acts as OR
-                    break;
-                }
-                case opcodes::Or_Begin: {
-                    // Start of OR group (e.g., IN operator): create forward label and push to stack
-                    Label l_or_end = c.newLabel();
-                    or_labels.append(l_or_end);
-                    break;
-                }
-                case opcodes::Or_Branch: {
-                    // If true, jump to Or_End label (skip remaining OR checks)
-                    auto arg = values.pop();
-                    if (has_short_circuit_label && !or_labels.empty()) {
-                        // Pop and push back to peek (ZoneStack has no top() method)
-                        Label l_or_end = or_labels.pop();
-                        or_labels.append(l_or_end);
+                    if (labels.has(label_idx)) {
+                        Label target = labels.get(label_idx);
                         if (arg.dkind() == data_kind_t::kFlagsEq) {
                             // Flags set by CMP for equality: jump if equal
-                            c.je(l_or_end);
+                            c.je(target);
                         } else if (arg.dkind() == data_kind_t::kFlagsNe) {
                             // Flags set by CMP for inequality: jump if not equal
-                            c.jne(l_or_end);
+                            c.jne(target);
                         } else {
-                            // Normal path: test and jump if true
+                            // Normal path: test and jump if non-zero (true)
                             auto loaded = load_register(c, arg);
                             c.test(loaded.gp().r32(), loaded.gp().r32());
-                            c.jnz(l_or_end);
+                            c.jnz(target);
                         }
                     }
                     break;
                 }
-                case opcodes::Or_End_Sc: {
-                    // End of OR group with short-circuit: bind label; if false, jump to next predicate
-                    auto arg = values.pop();
-                    if (has_short_circuit_label) {
-                        // First, handle the final OR check (same as And_Sc: skip row if false)
-                        if (arg.dkind() == data_kind_t::kFlagsEq) {
-                            // Flags set by CMP for equality: skip row if NOT equal
-                            c.jne(l_next_row);
-                        } else if (arg.dkind() == data_kind_t::kFlagsNe) {
-                            // Flags set by CMP for inequality: skip row if equal
-                            c.je(l_next_row);
-                        } else {
-                            // Normal path: test and skip row if false
-                            auto loaded = load_register(c, arg);
-                            c.test(loaded.gp().r32(), loaded.gp().r32());
-                            c.jz(l_next_row);
-                        }
-                        // Now bind the Or_End label (where Or_Branch jumps land)
-                        if (!or_labels.empty()) {
-                            Label l_or_end = or_labels.pop();
-                            c.bind(l_or_end);
-                        }
-                        // Check if next opcode is RET - if so, no need to push result
-                        // (the short-circuit jumps already handle success/failure)
-                        opcodes next_op = (i + 1 < size) ? istream[i + 1].opcode : opcodes::Ret;
-                        if (next_op != opcodes::Ret) {
-                            // Push "true" (1) to indicate the OR group succeeded
-                            // This is needed if there's an AND_SC or other operator after the OR group
-                            Gp true_val = c.newInt32("or_result");
-                            c.mov(true_val, 1);
-                            values.append({true_val, data_type_t::i32, data_kind_t::kMemory});
-                        }
+                case opcodes::Begin_Sc: {
+                    // Create label at index
+                    auto label_idx = static_cast<size_t>(instr.ipayload.lo);
+                    Label label = c.newLabel();
+                    labels.set(label_idx, label);
+                    break;
+                }
+                case opcodes::End_Sc: {
+                    // Bind label at index
+                    auto label_idx = static_cast<size_t>(instr.ipayload.lo);
+                    if (labels.has(label_idx)) {
+                        c.bind(labels.get(label_idx));
                     }
                     break;
                 }
                 default: {
                     // Get next opcode for lookahead optimization
                     opcodes next_op = (i + 1 < size) ? istream[i + 1].opcode : opcodes::Ret;
-                    emit_bin_op(c, instr, values, null_check, l_next_row, has_short_circuit_label, next_op);
+                    emit_bin_op(c, instr, values, null_check, labels.has(0), next_op);
                     break;
                 }
             }

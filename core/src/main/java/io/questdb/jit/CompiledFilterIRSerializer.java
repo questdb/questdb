@@ -75,9 +75,11 @@ import java.util.Arrays;
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     public static final int ADD = 14; // a + b
     public static final int AND = 6;  // a && b
-    public static final int AND_SC = 18; // short-circuit (jump to next row if false)
+    public static final int AND_SC = 18; // short-circuit AND: if false, jump to label[payload] (0 = next_row)
+    public static final int BEGIN_SC = 20; // create label at index payload
     public static final int BINARY_HEADER_TYPE = 8;
     public static final int DIV = 17; // a / b
+    public static final int END_SC = 21;   // bind label at index payload
     public static final int EQ = 8;   // a == b
     public static final int F4_TYPE = 3;
     public static final int F8_TYPE = 5;
@@ -102,10 +104,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int NEG = 4;  // -a
     public static final int NOT = 5;  // !a
     public static final int OR = 7;   // a || b
-    public static final int OR_BEGIN = 20;   // start of OR group (e.g., IN operator): push forward label
-    public static final int OR_BRANCH = 21;  // if true, jump to Or_End label (skip remaining OR checks)
-    public static final int OR_END_SC = 22;  // end of OR group with short-circuit: bind label; if false, jump to next predicate
-    public static final int OR_SC = 19;  // short-circuit (jump to next row if true)
+    public static final int OR_SC = 19;  // short-circuit OR: if true, jump to label[payload] (0 = next_row)
     // Opcodes:
     // Return code. Breaks the loop
     public static final int RET = 0;  // ret
@@ -120,6 +119,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
+    // Maximum number of labels supported by the backend (must match LabelArray::MAX_LABELS in x86.h)
+    private static final int MAX_LABELS = 8;
     // Predicate priority for short-circuit evaluation
     private static final int PRIORITY_I16_EQ = 0;  // highest priority
     private static final int PRIORITY_I16_NEQ = 10; // lowest priority
@@ -137,6 +138,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
     private final PredicateContext predicateContext = new PredicateContext();
+    private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
     private final StringSink sink = new StringSink();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntStack typeStack = new IntStack();
@@ -226,25 +228,36 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
-        // Check if we can apply predicate reordering for short-circuit evaluation
-        if (isPureAndChain(node)) {
-            collectedPredicates.clear();
-            collectAndPredicates(node, collectedPredicates);
-            if (collectedPredicates.size() > 1) {
-                sortPredicatesByPriority(collectedPredicates);
-                return serializePredicatesAndSc(collectedPredicates, forceScalar, debug, nullChecks);
-            }
+        // Detect if scalar mode is guaranteed by checking for mixed column sizes.
+        // Short-circuit optimizations (including IN() short-circuit) only work correctly
+        // in scalar mode, so we only enable them when scalar mode is certain.
+        boolean scalarModeDetected = forceScalar;
+        if (!scalarModeDetected) {
+            scalarModeDetector.clear();
+            traverseAlgo.traverse(node, scalarModeDetector);
+            scalarModeDetected = scalarModeDetector.hasMixedSizes();
         }
-        if (isPureOrChain(node)) {
-            collectedPredicates.clear();
-            collectOrPredicates(node, collectedPredicates);
-            if (collectedPredicates.size() > 1) {
-                sortPredicatesByInvertedPriority(collectedPredicates);
-                return serializePredicatesOrSc(collectedPredicates, forceScalar, debug, nullChecks);
+
+        // Check if we can apply predicate reordering for short-circuit evaluation
+        if (scalarModeDetected) {
+            if (isPureAndChain(node)) {
+                collectedPredicates.clear();
+                collectAndPredicates(node, collectedPredicates);
+                if (collectedPredicates.size() > 1) {
+                    sortPredicatesByPriority(collectedPredicates);
+                    return serializePredicatesAndSc(collectedPredicates, forceScalar, debug, nullChecks);
+                }
+            } else if (isPureOrChain(node)) {
+                collectedPredicates.clear();
+                collectOrPredicates(node, collectedPredicates);
+                if (collectedPredicates.size() > 1) {
+                    sortPredicatesByInvertedPriority(collectedPredicates);
+                    return serializePredicatesOrSc(collectedPredicates, forceScalar, debug, nullChecks);
+                }
             }
         }
 
-        // Not a pure AND/OR chain, use normal serialization
+        // Not a pure AND/OR chain or SIMD mode possible, use normal serialization
         traverseAlgo.traverse(node, this);
         putOperator(RET);
 
@@ -749,6 +762,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putLong(0L);
     }
 
+    // Emit operator with label index in payload (for short-circuit opcodes)
+    // Label conventions:
+    // - Label 0 (l_next_row): skip row storage, move to next row (used by AND_SC on false)
+    // - Label 1 (l_store_row): store row, then move to next row (used by OR_SC on true)
+    // - Labels 2+: user-defined labels for IN() short-circuit, etc.
+    private void putOperatorWithLabel(int opcode, int labelIndex) {
+        // Currently we use up to 3 labels simultaneously
+        assert labelIndex >= 0 && labelIndex < MAX_LABELS : "label index out of bounds: " + labelIndex;
+        memory.putInt(opcode);
+        memory.putInt(0); // options unused
+        memory.putLong(labelIndex); // payload.lo = label index
+        memory.putLong(0L); // payload.hi unused
+    }
+
     private void rejectSymbol(final CharSequence token, int position) throws SqlException {
         // >, >=, < and <= for symbols should use string and not int value comparison
         // since string is not supported in JIT, we reject it here and allow code generator to fall back to non-JIT implementation
@@ -971,8 +998,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(", actual=").put(args.size()).put(']');
         }
 
-        // Short-circuit mode: use Or_Begin/Or_Branch/Or_End_Sc for efficient evaluation
-        if (predicateContext.shortCircuitMode) {
+        // Short-circuit mode: only use when IN() is the root of the predicate (top-level) AND
+        // we're in an AND chain. For OR chains, the l_next_row label skips row storage which is
+        // wrong when IN() matches (we want to store the row). For nested IN() we must also fall
+        // back to boolean ORs because AND_SC(0) would incorrectly skip the row.
+        final boolean isTopLevelIn = predicateContext.inOperationNode == predicateContext.rootNode;
+        if (predicateContext.shortCircuitMode == PredicateContext.SC_AND && isTopLevelIn) {
             final int valueCount = args.size() - 1; // last arg is the column
 
             if (valueCount < 2) {
@@ -981,16 +1012,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 traverseAlgo.traverse(args.getLast(), this);
                 putOperator(EQ);
             } else {
-                // Multiple values: use Or_Begin/Or_Branch/Or_End_Sc
-                putOperator(OR_BEGIN);
-                for (int i = 0; i < valueCount; ++i) {
+                // Multiple values: BEGIN_SC(2), [EQ, OR_SC(2)]*, EQ, AND_SC(0), END_SC(2)
+                // Label 0 = next_row (skip this row) - reserved by backend
+                // Label 1 = store_row (accept row) - reserved by backend
+                // Label 2 = success (at least one IN match)
+                putOperatorWithLabel(BEGIN_SC, 2); // create success label
+                for (int i = 0; i < valueCount; i++) {
                     traverseAlgo.traverse(args.get(i), this);
                     traverseAlgo.traverse(args.getLast(), this);
                     putOperator(EQ);
                     if (i < valueCount - 1) {
-                        putOperator(OR_BRANCH);
+                        putOperatorWithLabel(OR_SC, 2); // if true, jump to success
                     } else {
-                        putOperator(OR_END_SC);
+                        putOperatorWithLabel(AND_SC, 0); // if false, jump to next_row
+                        putOperatorWithLabel(END_SC, 2); // bind success label
                     }
                 }
             }
@@ -1005,14 +1040,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         int orCount = -1;
-        for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
+        for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; i++) {
             traverseAlgo.traverse(args.get(i), this);
             traverseAlgo.traverse(args.getLast(), this);
             putOperator(EQ);
             orCount++;
         }
 
-        for (int i = 0; i < orCount; ++i) {
+        for (int i = 0; i < orCount; i++) {
             putOperator(OR);
         }
     }
@@ -1047,7 +1082,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             orCount++;
         }
 
-        for (int i = 0; i < orCount; ++i) {
+        for (int i = 0; i < orCount; i++) {
             putOperator(OR);
         }
     }
@@ -1236,6 +1271,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     /**
      * Serializes predicates in priority order with short-circuit ANDs for high-priority ones.
+     * Must be used only in scalar compilation mode.
      */
     private int serializePredicatesAndSc(
             @NotNull ObjList<ExpressionNode> predicates,
@@ -1246,23 +1282,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int n = predicates.size();
         assert n > 0;
 
-        // Enable short-circuit mode for IN() optimization
-        predicateContext.shortCircuitMode = true;
+        // Enable AND short-circuit mode for IN() optimization
+        predicateContext.shortCircuitMode = PredicateContext.SC_AND;
         try {
             // Serialize all predicates in the priority order with short-circuit ANDs
             for (int i = 0; i < n; i++) {
                 traverseAlgo.traverse(predicates.getQuick(i), this);
                 if (i != n - 1) {
-                    putOperator(AND_SC);
+                    putOperatorWithLabel(AND_SC, 0); // label 0 = next_row
                 }
             }
 
-            // Check if the backend is going to use SIMD and, hence, we need to emit trailing ANDs.
+            // Check if the backend is going to use SIMD, although we expected scalar mode.
             final int execHint = getExecHint(forceScalar);
             if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
-                for (int i = 0; i < n - 1; i++) {
-                    putOperator(AND);
-                }
+                // We could handle this via the non-short-circuit code path, but if we get here,
+                // it means that scalarModeDetector did a false-positive scalar mode detection.
+                // In such case, it's a bug we should fix, so let's fail JIT compilation to flag that.
+                throw SqlException.position(0).put("expected scalar compilation mode, got: ").put(execHint);
             }
 
             putOperator(RET);
@@ -1270,12 +1307,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             ensureOnlyVarSizeHeaderChecks();
             return getOptions(forceScalar, debug, nullChecks);
         } finally {
-            predicateContext.shortCircuitMode = false;
+            predicateContext.shortCircuitMode = PredicateContext.SC_NONE;
         }
     }
 
     /**
      * Serializes predicates in priority order with short-circuit ORs for low-priority ones.
+     * Must be used only in scalar compilation mode.
      */
     private int serializePredicatesOrSc(
             @NotNull ObjList<ExpressionNode> predicates,
@@ -1286,23 +1324,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int n = predicates.size();
         assert n > 0;
 
-        // Enable short-circuit mode for IN() optimization
-        predicateContext.shortCircuitMode = true;
+        // Enable OR short-circuit mode (IN() should NOT use short-circuit in OR chains)
+        predicateContext.shortCircuitMode = PredicateContext.SC_OR;
         try {
             // Serialize all predicates in the inverted priority order with short-circuit ORs
             for (int i = 0; i < n; i++) {
                 traverseAlgo.traverse(predicates.getQuick(i), this);
                 if (i != n - 1) {
-                    putOperator(OR_SC);
+                    putOperatorWithLabel(OR_SC, 1); // label 1 = store_row (accept row on true)
                 }
             }
 
-            // Check if the backend is going to use SIMD and, hence, we need to emit trailing ORs.
+            // Check if the backend is going to use SIMD, although we expected scalar mode.
             final int execHint = getExecHint(forceScalar);
             if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
-                for (int i = 0; i < n - 1; i++) {
-                    putOperator(OR);
-                }
+                // We could handle this via the non-short-circuit code path, but if we get here,
+                // it means that scalarModeDetector did a false-positive scalar mode detection.
+                // In such case, it's a bug we should fix, so let's fail JIT compilation to flag that.
+                throw SqlException.position(0).put("expected scalar compilation mode, got: ").put(execHint);
             }
 
             putOperator(RET);
@@ -1310,7 +1349,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             ensureOnlyVarSizeHeaderChecks();
             return getOptions(forceScalar, debug, nullChecks);
         } finally {
-            predicateContext.shortCircuitMode = false;
+            predicateContext.shortCircuitMode = PredicateContext.SC_NONE;
         }
     }
 
@@ -1493,42 +1532,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         public void observe(int code) {
-            switch (code) {
-                case I1_TYPE:
-                    sizes[I1_INDEX] = 1;
-                    break;
-                case I2_TYPE:
-                    sizes[I2_INDEX] = 2;
-                    break;
-                case I4_TYPE:
-                    sizes[I4_INDEX] = 4;
-                    break;
-                case F4_TYPE:
-                    sizes[F4_INDEX] = 4;
-                    break;
-                case I8_TYPE:
-                    sizes[I8_INDEX] = 8;
-                    break;
-                case F8_TYPE:
-                    sizes[F8_INDEX] = 8;
-                    break;
-                case I16_TYPE:
-                    sizes[I16_INDEX] = 16;
-                    break;
-                case STRING_HEADER_TYPE:
-                    sizes[STRING_HEADER_INDEX] = 8;
-                    break;
-                case BINARY_HEADER_TYPE:
-                    sizes[BINARY_HEADER_INDEX] = 8;
-                    break;
-                case VARCHAR_HEADER_TYPE:
-                    // We only read the first 8 bytes from the aux vector.
-                    sizes[VARCHAR_HEADER_TYPE] = 8;
-                    break;
+            int index = typeCodeToIndex(code);
+            if (index >= 0) {
+                sizes[index] = typeSizeBytes(code);
             }
         }
 
-        private int indexToTypeCode(int index) {
+        private static int indexToTypeCode(int index) {
             return switch (index) {
                 case I1_INDEX -> I1_TYPE;
                 case I2_INDEX -> I2_TYPE;
@@ -1541,6 +1551,36 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case BINARY_HEADER_INDEX -> BINARY_HEADER_TYPE;
                 case VARCHAR_HEADER_INDEX -> VARCHAR_HEADER_TYPE;
                 default -> UNDEFINED_CODE;
+            };
+        }
+
+        private static int typeCodeToIndex(int code) {
+            return switch (code) {
+                case I1_TYPE -> I1_INDEX;
+                case I2_TYPE -> I2_INDEX;
+                case I4_TYPE -> I4_INDEX;
+                case F4_TYPE -> F4_INDEX;
+                case I8_TYPE -> I8_INDEX;
+                case F8_TYPE -> F8_INDEX;
+                case I16_TYPE -> I16_INDEX;
+                case STRING_HEADER_TYPE -> STRING_HEADER_INDEX;
+                case BINARY_HEADER_TYPE -> BINARY_HEADER_INDEX;
+                case VARCHAR_HEADER_TYPE -> VARCHAR_HEADER_INDEX;
+                default -> -1;
+            };
+        }
+
+        /**
+         * Returns the size in bytes for a given type code.
+         */
+        private static byte typeSizeBytes(int typeCode) {
+            return switch (typeCode) {
+                case I1_TYPE -> 1;
+                case I2_TYPE -> 2;
+                case I4_TYPE, F4_TYPE -> 4;
+                case I8_TYPE, F8_TYPE, STRING_HEADER_TYPE, BINARY_HEADER_TYPE, VARCHAR_HEADER_TYPE -> 8;
+                case I16_TYPE -> 16;
+                default -> 0;
             };
         }
     }
@@ -1564,12 +1604,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * </pre>
      */
     private class PredicateContext implements Mutable {
+        static final int SC_AND = 1;   // AND chain short-circuit (scalar only)
+        static final int SC_NONE = 0;  // not in short-circuit mode
+        static final int SC_OR = 2;    // OR chain short-circuit (scalar only)
+
         final TypesObserver globalTypesObserver = new TypesObserver();
         final TypesObserver localTypesObserver = new TypesObserver();
         private final LongList inIntervals = new LongList();
         int columnType;
         boolean hasArithmeticOperations;
-        boolean shortCircuitMode = false; // true when serializing predicates for short-circuit evaluation
+        int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
@@ -1772,6 +1816,40 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     columnType = columnType0;
                     break;
             }
+        }
+    }
+
+    /**
+     * A lightweight visitor that collects column type sizes to detect scalar mode.
+     * If columns of different sizes are found, scalar mode will be used.
+     */
+    private class ScalarModeDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+        private final TypesObserver typesObserver = new TypesObserver();
+
+        @Override
+        public void clear() {
+            typesObserver.clear();
+        }
+
+        @Override
+        public boolean descend(ExpressionNode node) {
+            return true; // Always descend
+        }
+
+        @Override
+        public void visit(ExpressionNode node) {
+            if (node.type == ExpressionNode.LITERAL) {
+                int columnIndex = metadata.getColumnIndexQuiet(node.token);
+                if (columnIndex != -1) {
+                    int columnType = metadata.getColumnType(columnIndex);
+                    int typeCode = columnTypeCode(ColumnType.tagOf(columnType));
+                    typesObserver.observe(typeCode);
+                }
+            }
+        }
+
+        boolean hasMixedSizes() {
+            return typesObserver.hasMixedSizes();
         }
     }
 }

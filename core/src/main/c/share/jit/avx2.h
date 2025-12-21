@@ -582,10 +582,11 @@ namespace questdb::avx2 {
                 case opcodes::Not:
                     values.append(bin_not(c, get_argument(values)));
                     break;
-                case opcodes::And_Sc: // AND and OR short-circuits are treated as no-op in SIMD path
+                case opcodes::And_Sc: // Short-circuit opcodes should never reach SIMD path
                 case opcodes::Or_Sc:
-                    values.append(get_argument(values));
-                    break;
+                case opcodes::Begin_Sc:
+                case opcodes::End_Sc:
+                    return; // Compilation error: short-circuit opcodes in SIMD path
                 default:
                     emit_bin_op(c, instr, values, ncheck);
                     break;

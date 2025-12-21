@@ -60,7 +60,6 @@ struct Function {
     explicit Function(x86::Compiler &cc)
             : c(cc), zone(4094 - Zone::kBlockOverhead), allocator(&zone) {
         values.init(&allocator);
-        or_labels.init(&allocator);
     };
 
     // Preload column addresses and constants before entering the loop
@@ -93,7 +92,15 @@ struct Function {
     void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
-        Label l_next_row = c.newLabel();  // Label for short-circuit jumps
+        Label l_next_row = c.newLabel();   // Label 0: skip row (AND failure)
+        Label l_store_row = c.newLabel();  // Label 1: store row (OR success)
+
+        // Initialize label array:
+        // - Index 0: l_next_row (skip row storage - used by AND_SC on false)
+        // - Index 1: l_store_row (store row - used by OR_SC on true)
+        questdb::x86::LabelArray labels;
+        labels.set(0, l_next_row);
+        labels.set(1, l_store_row);
 
         c.cmp(input_index, stop);
         c.jge(l_exit);
@@ -103,12 +110,12 @@ struct Function {
         for (int i = 0; i < unroll_factor; ++i) {
             // Clear value cache at the start of each row iteration
             value_cache.clear();
-            // Pass the short-circuit label, caches, and or_labels stack to emit_code
+            // Pass the label array and caches to emit_code
             questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                    input_index, l_next_row, true, or_labels, addr_cache, const_cache, value_cache);
+                                    input_index, labels, addr_cache, const_cache, value_cache);
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
-            // (e.g., Or_End_Sc followed by RET). No final test needed.
+            // No final test needed.
             if (!values.empty()) {
                 auto mask = values.pop();
 
@@ -117,6 +124,9 @@ struct Function {
                 c.jz(l_next_row);
             }
 
+            // OR_SC success jumps here to store the row
+            c.bind(l_store_row);
+
             x86::Gp adjusted_id = c.newInt64("input_index_+_rows_id_start_offset");
             c.lea(adjusted_id, ptr(input_index, rows_id_start_offset)); // input_index + rows_id_start_offset
             c.mov(qword_ptr(rows_ptr, output_index, 3), adjusted_id);
@@ -124,7 +134,7 @@ struct Function {
             c.add(output_index, 1);
         }
 
-        // Short-circuit jumps land here, skipping the row storage above
+        // AND_SC failure jumps here, skipping the row storage above
         c.bind(l_next_row);
         c.add(input_index, unroll_factor);
 
@@ -261,7 +271,6 @@ struct Function {
     Zone zone;
     ZoneAllocator allocator;
     ZoneStack<jit_value_t> values;
-    ZoneStack<Label> or_labels;  // Stack for Or_Begin/Or_Branch/Or_End_Sc labels
 
     x86::Gp data_ptr;
     x86::Gp data_size;
