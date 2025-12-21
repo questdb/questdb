@@ -98,16 +98,6 @@ public class RecordSinkFactory {
         return createSinkFromClass(clazz, keyFunctions);
     }
 
-    /**
-     * Legacy method: Creates an instance from a generated class.
-     * Does not support looping fallback (class must not be null).
-     *
-     * @deprecated Use {@link #createSink(Class, ColumnTypes, ColumnFilter, ObjList, IntList, BitSet, BitSet, BitSet)} instead.
-     */
-    public static RecordSink createSink(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
-        return createSinkFromClass(clazz, keyFunctions);
-    }
-
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
@@ -218,25 +208,6 @@ public class RecordSinkFactory {
         );
     }
 
-    /**
-     * Creates an instance of a record sink class previously generated via getInstanceClass().
-     * This legacy method only works with non-null classes (does not support looping fallback).
-     *
-     * @deprecated Use {@link #createSink(Class, ColumnTypes, ColumnFilter, ObjList, IntList, BitSet, BitSet, BitSet)} instead.
-     */
-    public static RecordSink createSinkFromClass(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
-        try {
-            final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
-            if (keyFunctions != null) {
-                sink.setFunctions(keyFunctions);
-            }
-            return sink;
-        } catch (Exception e) {
-            LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
-            throw BytecodeException.INSTANCE;
-        }
-    }
-
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
@@ -283,15 +254,28 @@ public class RecordSinkFactory {
     ) {
         // Phase 1: Get the class (or null for looping)
         Class<RecordSink> clazz = getInstanceClass(
-                asm, columnTypes, columnFilter, keyFunctions, skewIndex,
-                writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos,
-                configuration, methodSizeLimit
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos,
+                configuration,
+                methodSizeLimit
         );
 
         // Phase 2: Create the sink from the class (or looping if null)
         return createSink(
-                clazz, columnTypes, columnFilter, keyFunctions, skewIndex,
-                writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                clazz,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos
         );
     }
 
@@ -373,13 +357,25 @@ public class RecordSinkFactory {
         switch (copierType) {
             case SINK_TYPE_SINGLE:
                 return getSingleInstanceClass(
-                        asm, columnTypes, columnFilter, keyFunctions, skewIndex,
-                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                        asm,
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos
                 );
             case SINK_TYPE_CHUNKED:
                 Class<RecordSink> chunkedClass = getChunkedInstanceClassOrNull(
-                        asm, columnTypes, columnFilter, keyFunctions, skewIndex,
-                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos,
+                        asm,
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos,
                         methodSizeLimit
                 );
                 if (chunkedClass != null) {
@@ -405,12 +401,11 @@ public class RecordSinkFactory {
 
         // Path 2: Large schema with chunking enabled
         if (configuration.isCopierChunkedEnabled()) {
-            Class<RecordSink> chunkedClass = getChunkedInstanceClassOrNull(
+            return getChunkedInstanceClassOrNull(
                     asm, columnTypes, columnFilter, keyFunctions, skewIndex,
                     writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos,
                     methodSizeLimit
             );
-            return chunkedClass;
             // Fall through to null (looping) if chunking failed
         }
 
@@ -515,6 +510,23 @@ public class RecordSinkFactory {
     }
 
     /**
+     * Creates an instance of a record sink class previously generated via getInstanceClass().
+     * This legacy method only works with non-null classes (does not support looping fallback).
+     */
+    private static RecordSink createSinkFromClass(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
+        try {
+            final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
+            if (keyFunctions != null) {
+                sink.setFunctions(keyFunctions);
+            }
+            return sink;
+        } catch (Exception e) {
+            LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
+            throw BytecodeException.INSTANCE;
+        }
+    }
+
+    /**
      * Estimates the bytecode size for the copy method.
      */
     private static int estimateBytecodeSize(
@@ -586,64 +598,6 @@ public class RecordSinkFactory {
                 // 1+1+2+5+5 = 14 bytes
                     BASE_BYTECODE_PER_COLUMN;
         };
-    }
-
-    /**
-     * Returns a chunked RecordSink class with multiple private methods for columns.
-     * If only 1 chunk is needed, falls back to single-sink class (faster than looping).
-     * Returns null if bytecode generation fails, signaling that LoopingRecordSink should be used.
-     */
-    @Nullable
-    private static Class<RecordSink> getChunkedInstanceClassOrNull(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos,
-            int methodSizeLimit
-    ) {
-        IntList boundaries = calculateChunkBoundaries(columnTypes, columnFilter);
-        int numChunks = boundaries.size() - 1;
-
-        // If only one chunk needed, use single-sink (faster than chunked or looping)
-        if (numChunks <= 1) {
-            try {
-                return getSingleInstanceClass(
-                        asm,
-                        columnTypes,
-                        columnFilter,
-                        keyFunctions,
-                        skewIndex,
-                        writeSymbolAsString,
-                        writeStringAsVarchar,
-                        writeTimestampAsNanos
-                );
-            } catch (BytecodeException e) {
-                // Single-sink generation failed, signal to use looping
-                return null;
-            }
-        }
-
-        try {
-            return getChunkedInstanceClass(
-                    asm,
-                    columnTypes,
-                    columnFilter,
-                    keyFunctions,
-                    skewIndex,
-                    writeSymbolAsString,
-                    writeStringAsVarchar,
-                    writeTimestampAsNanos,
-                    boundaries,
-                    methodSizeLimit
-            );
-        } catch (BytecodeException e) {
-            // Chunking failed, signal to use looping
-            return null;
-        }
     }
 
     /**
@@ -1439,6 +1393,64 @@ public class RecordSinkFactory {
         asm.putShort(0);
 
         return asm.loadClass();
+    }
+
+    /**
+     * Returns a chunked RecordSink class with multiple private methods for columns.
+     * If only 1 chunk is needed, falls back to single-sink class (faster than looping).
+     * Returns null if bytecode generation fails, signaling that LoopingRecordSink should be used.
+     */
+    @Nullable
+    private static Class<RecordSink> getChunkedInstanceClassOrNull(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            int methodSizeLimit
+    ) {
+        IntList boundaries = calculateChunkBoundaries(columnTypes, columnFilter);
+        int numChunks = boundaries.size() - 1;
+
+        // If only one chunk needed, use single-sink (faster than chunked or looping)
+        if (numChunks <= 1) {
+            try {
+                return getSingleInstanceClass(
+                        asm,
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos
+                );
+            } catch (BytecodeException e) {
+                // Single-sink generation failed, signal to use looping
+                return null;
+            }
+        }
+
+        try {
+            return getChunkedInstanceClass(
+                    asm,
+                    columnTypes,
+                    columnFilter,
+                    keyFunctions,
+                    skewIndex,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos,
+                    boundaries,
+                    methodSizeLimit
+            );
+        } catch (BytecodeException e) {
+            // Chunking failed, signal to use looping
+            return null;
+        }
     }
 
     private static Class<RecordSink> getSingleInstanceClass(

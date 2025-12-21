@@ -172,13 +172,35 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     columnTypes,
                     listColumnFilter,
                     ownerKeyFunctions,
+                    null,
+                    null,
+                    null,
+                    null,
+                    configuration
+            );
+            ownerMapSink = RecordSinkFactory.createSink(
+                    sinkClass,
+                    columnTypes,
+                    listColumnFilter,
+                    ownerKeyFunctions,
+                    null,
+                    null,
+                    null,
                     null
             );
-            ownerMapSink = RecordSinkFactory.createSink(sinkClass, ownerKeyFunctions);
             if (perWorkerKeyFunctions != null) {
                 perWorkerMapSinks = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.createSink(sinkClass, perWorkerKeyFunctions.getQuick(i)));
+                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.createSink(
+                            sinkClass,
+                            columnTypes,
+                            listColumnFilter,
+                            perWorkerKeyFunctions.getQuick(i),
+                            null,
+                            null,
+                            null,
+                            null
+                    ));
                 }
             } else {
                 perWorkerMapSinks = null;

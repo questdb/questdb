@@ -105,9 +105,8 @@ public class RecordSinkBenchmark {
 
     @Param({"BYTECODE", "CHUNKED", "LOOP"})
     private String implementation;
-
-    private RecordSink sink;
     private MockRecord record;
+    private RecordSink sink;
     private MockRecordSinkSPI spi;
 
     public static void main(String[] args) throws RunnerException {
@@ -162,7 +161,11 @@ public class RecordSinkBenchmark {
                         new BytecodeAssembler(),
                         types,
                         columnFilter,
-                        null, null, null, null, null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
                         configNoChunking,
                         Integer.MAX_VALUE  // Very high limit to force single-method
                 );
@@ -179,7 +182,11 @@ public class RecordSinkBenchmark {
                         new BytecodeAssembler(),
                         types,
                         columnFilter,
-                        null, null, null, null, null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
                         configWithChunking,
                         RecordSinkFactory.DEFAULT_METHOD_SIZE_LIMIT
                 );
