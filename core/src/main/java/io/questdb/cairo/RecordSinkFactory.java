@@ -48,7 +48,7 @@ public class RecordSinkFactory {
     // Sink type constants for configuration (matching RecordToRowCopierUtils pattern)
     public static final int SINK_TYPE_CHUNKED = 2;  // Force chunked bytecode sink
     public static final int SINK_TYPE_LOOPING = 3;  // Force loop-based sink
-    public static final int SINK_TYPE_SINGLE = 1;   // Force single-method bytecode sink
+    public static final int SINK_TYPE_SINGLE_METHOD = 1;   // Force single-method bytecode sink
     // Bytecode size estimate for standard column types: aload + aload + iconst + invokeInterface x2
     // 1 + 1 + 2 + 5 + 5 = 14 bytes
     private static final int BASE_BYTECODE_PER_COLUMN = 14;
@@ -355,7 +355,7 @@ public class RecordSinkFactory {
 
         // Handle forced sink types (for testing)
         switch (copierType) {
-            case SINK_TYPE_SINGLE:
+            case SINK_TYPE_SINGLE_METHOD:
                 return getSingleInstanceClass(
                         asm,
                         columnTypes,
@@ -394,19 +394,37 @@ public class RecordSinkFactory {
         // Path 1: Small schema - use single-method approach
         if (estimatedSize <= methodSizeLimit) {
             return getSingleInstanceClass(
-                    asm, columnTypes, columnFilter, keyFunctions, skewIndex,
-                    writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                    asm,
+                    columnTypes,
+                    columnFilter,
+                    keyFunctions,
+                    skewIndex,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos
             );
         }
 
         // Path 2: Large schema with chunking enabled
         if (configuration.isCopierChunkedEnabled()) {
-            return getChunkedInstanceClassOrNull(
-                    asm, columnTypes, columnFilter, keyFunctions, skewIndex,
-                    writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos,
+            Class<RecordSink> chunkedClass = getChunkedInstanceClassOrNull(
+                    asm,
+                    columnTypes,
+                    columnFilter,
+                    keyFunctions,
+                    skewIndex,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos,
                     methodSizeLimit
             );
+            if (chunkedClass != null) {
+                return chunkedClass;
+            }
             // Fall through to null (looping) if chunking failed
+            LOG.info().$("chunked sink generation failed, falling back to looping sink [columnCount=").$(columnFilter.getColumnCount())
+                    .$(", estimatedBytecodeSize=").$(estimatedSize)
+                    .I$();
         }
 
         // Path 3: Return null to signal LoopingRecordSink should be used
