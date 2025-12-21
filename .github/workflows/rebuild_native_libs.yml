@@ -46,21 +46,18 @@ jobs:
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
           mkdir -p core/src/main/bin/darwin-aarch64/
           cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
-          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-aarch64/
       - name: Copy darwin-x86-64 CXX Library to the final directory
         if: ${{ matrix.os == 'macos-15-intel' }}
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-x86-64/
           mkdir -p core/src/main/bin/darwin-x86-64/
           cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-x86-64/
-          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-x86-64/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
-            core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Save darwin-x86-64 Libraries to Cache
         if: ${{ matrix.os == 'macos-15-intel' }}
@@ -68,7 +65,6 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
-            core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-x86-64:
     runs-on: ubuntu-latest
@@ -240,14 +236,12 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
-            core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Restore darwin-x86-64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
-            core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           key: nativelibs-osx-${{ github.sha }}
       - name: Restore linux-x86-64 Libraries from Cache
         uses: actions/cache/restore@v3
@@ -277,9 +271,7 @@ jobs:
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
           git config --global user.email 'jaromir@questdb.io'
           git add core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
-          git add core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           git add core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
-          git add core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           git add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
           git add core/src/main/bin/linux-x86-64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
@@ -294,8 +286,6 @@ jobs:
           
           git update-index --chmod=-x core/src/main/bin/linux-x86-64/libjemalloc.so
           git update-index --chmod=-x core/src/main/bin/linux-aarch64/libjemalloc.so
-          git update-index --chmod=-x core/src/main/bin/darwin-x86-64/libjemalloc.dylib
-          git update-index --chmod=-x core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           
           git commit -m "Rebuild CXX libraries"
       - name: Check git status after

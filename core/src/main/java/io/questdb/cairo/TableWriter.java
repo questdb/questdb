@@ -144,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -1050,7 +1050,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, firstPartitionTsm);
 
             if (ColumnType.isSymbol(newType)) {
-                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, columnIndex);
+                // Null flag will be set during conversion if source column contains nulls
+                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, false, columnIndex);
             } else {
                 // maintain a sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
@@ -2107,11 +2108,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         columnsIndexes.sort();
-        for (int i = 0, j = 0; i < columnCount && j < columnsIndexes.size(); i++) {
-            if (i == columnsIndexes.getQuick(j)) {
-                // Set dedup key flag for the column
-                metadata.getColumnMetadata(i).setDedupKeyFlag(true);
-                // Go to the next dedup column index
+        for (int i = 0, j = 0; i < columnCount; i++) {
+            boolean isNewDedupCol = j < columnsIndexes.size() && i == columnsIndexes.getQuick(j);
+            metadata.getColumnMetadata(i).setDedupKeyFlag(isNewDedupCol);
+            if (isNewDedupCol) {
                 j++;
             }
         }
@@ -3329,7 +3329,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (replaceColumnIndex < 0) {
             if (ColumnType.isSymbol(columnType)) {
                 try {
-                    createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, metadata.getColumnCount() - 1);
+                    boolean existingRowsHaveNull = getRowCount() > 0;
+                    createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, existingRowsHaveNull, metadata.getColumnCount() - 1);
                 } catch (CairoException e) {
                     try {
                         recoverFromSymbolMapWriterFailure(columnName);
@@ -4345,6 +4346,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnNameTxn,
             int symbolCapacity,
             boolean symbolCacheFlag,
+            boolean symbolNullFlag,
             int columnIndex
     ) {
         MapWriter.createSymbolMapFiles(ff, ddlMem, path, name, columnNameTxn, symbolCapacity, symbolCacheFlag);
@@ -4370,6 +4372,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw t;
         }
 
+        w.updateNullFlag(symbolNullFlag);
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
     }

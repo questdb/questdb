@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class SumIntGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +42,13 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
 
     public SumIntGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putLong(valueIndex, Vect.sumInt(ptr, count));
+        }
     }
 
     @Override
@@ -69,6 +77,11 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public int getComputeBatchArgType() {
+        return ColumnType.INT;
     }
 
     @Override
@@ -133,6 +146,11 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

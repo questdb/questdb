@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.FloatFunction;
@@ -44,6 +45,17 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     @Override
     public float getFloat(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof FloatConstant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override

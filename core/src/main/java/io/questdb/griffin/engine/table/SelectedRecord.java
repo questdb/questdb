@@ -35,7 +35,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
-class SelectedRecord implements Record {
+public class SelectedRecord implements Record {
     private final IntList columnCrossIndex;
     private Record base;
 
@@ -248,15 +248,15 @@ class SelectedRecord implements Record {
         return base.getVarcharSize(getColumnIndex(col));
     }
 
+    public void of(Record record) {
+        this.base = record;
+    }
+
     private int getColumnIndex(int columnIndex) {
         return columnCrossIndex.getQuick(columnIndex);
     }
 
     Record getBaseRecord() {
         return base;
-    }
-
-    void of(Record record) {
-        this.base = record;
     }
 }
