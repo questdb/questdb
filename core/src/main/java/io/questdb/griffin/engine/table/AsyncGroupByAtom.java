@@ -176,7 +176,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     null,
                     configuration
             );
-            ownerMapSink = RecordSinkFactory.createSink(
+            ownerMapSink = RecordSinkFactory.getInstance(
                     sinkClass,
                     columnTypes,
                     listColumnFilter,
@@ -189,7 +189,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             if (perWorkerKeyFunctions != null) {
                 perWorkerMapSinks = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.createSink(
+                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(
                             sinkClass,
                             columnTypes,
                             listColumnFilter,

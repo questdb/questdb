@@ -70,9 +70,6 @@ public class LoopingRecordSink implements RecordSink {
         this.strAsVarchar = new BoolList(columnCount);
         this.timestampAsNanos = new BoolList(columnCount);
 
-        boolean needsDecimal128 = false;
-        boolean needsDecimal256 = false;
-
         for (int i = 0; i < columnCount; i++) {
             final int index = columnFilter.getColumnIndex(i);
             final int factor = columnFilter.getIndexFactor(index);
@@ -98,14 +95,11 @@ public class LoopingRecordSink implements RecordSink {
             this.symAsString.extendAndSet(i, writeSymbolAsString != null && writeSymbolAsString.get(actualIndex));
             this.strAsVarchar.extendAndSet(i, writeStringAsVarchar != null && writeStringAsVarchar.get(actualIndex));
             this.timestampAsNanos.extendAndSet(i, writeTimestampAsNanos != null && writeTimestampAsNanos.get(actualIndex));
-
-            final int tag = ColumnType.tagOf(type);
-            needsDecimal128 |= tag == ColumnType.DECIMAL128;
-            needsDecimal256 |= tag == ColumnType.DECIMAL256;
         }
 
-        this.decimal128 = needsDecimal128 ? new Decimal128() : null;
-        this.decimal256 = needsDecimal256 ? new Decimal256() : null;
+        // Always create decimal objects - they may be needed by keyFunctions even if no columns use them
+        this.decimal128 = new Decimal128();
+        this.decimal256 = new Decimal256();
     }
 
     @Override
@@ -151,8 +145,20 @@ public class LoopingRecordSink implements RecordSink {
         return skewIndex.getQuick(src);
     }
 
+    /**
+     * Copies a column value from the record to the sink.
+     * <p>
+     * Note: This method is intentionally separate from copyFunction() despite similar switch structure.
+     * The key differences are:
+     * <ul>
+     *   <li>copyColumn reads from Record using column index (r.getInt(idx))</li>
+     *   <li>copyColumn handles conversion flags (symStr, strVar, tsNanos) for column-specific behavior</li>
+     *   <li>copyFunction reads from Function using record (func.getInt(r))</li>
+     *   <li>copyFunction always writes symbols as strings, no timestamp conversion</li>
+     * </ul>
+     * Merging these would require either boxing primitives or complex abstractions that hurt performance.
+     */
     private void copyColumn(Record r, RecordSinkSPI w, int type, int idx, boolean symStr, boolean strVar, boolean tsNanos) {
-        // Switch on tag (like single sink) to handle ARRAY types correctly
         switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
                 w.putInt(r.getInt(idx));
