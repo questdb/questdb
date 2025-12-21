@@ -81,12 +81,22 @@ namespace questdb::x86 {
                         }
                         break;
                     }
-                    case data_type_t::f32:
+                    case data_type_t::f32: {
+                        double value = instr.dpayload;
+                        Xmm dummy;
+                        if (!cache.findFloat(value, dummy)) {
+                            Xmm reg = c.newXmmSs("const_f_%f", value);
+                            Mem mem = c.newFloatConst(ConstPool::kScopeLocal, static_cast<float>(value));
+                            c.movss(reg, mem);
+                            cache.addFloat(value, reg);
+                        }
+                        break;
+                    }
                     case data_type_t::f64: {
                         double value = instr.dpayload;
                         Xmm dummy;
                         if (!cache.findFloat(value, dummy)) {
-                            Xmm reg = c.newXmmSd("const_f_%f", value);
+                            Xmm reg = c.newXmmSd("const_d_%f", value);
                             Mem mem = c.newDoubleConst(ConstPool::kScopeLocal, value);
                             c.movsd(reg, mem);
                             cache.addFloat(value, reg);
