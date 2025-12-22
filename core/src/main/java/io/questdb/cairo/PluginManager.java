@@ -93,7 +93,7 @@ public class PluginManager implements Closeable {
      *
      * @throws CairoException if plugin directory exists but is not readable
      */
-    public void scanPlugins() throws CairoException {
+    public synchronized void scanPlugins() throws CairoException {
         final CharSequence pluginRootPath = configuration.getPluginRoot();
         if (pluginRootPath == null || pluginRootPath.length() == 0) {
             LOG.info().$("Plugin root not configured").$();
@@ -278,7 +278,7 @@ public class PluginManager implements Closeable {
      * @return list of plugin names
      */
     @NotNull
-    public ObjList<CharSequence> getAvailablePlugins() {
+    public synchronized ObjList<CharSequence> getAvailablePlugins() {
         final ObjList<CharSequence> result = new ObjList<>(availablePlugins.size());
         for (int i = 0, n = availablePlugins.size(); i < n; i++) {
             result.add(availablePlugins.keys().getQuick(i));
@@ -292,7 +292,7 @@ public class PluginManager implements Closeable {
      * @return list of loaded plugin names
      */
     @NotNull
-    public ObjList<CharSequence> getLoadedPlugins() {
+    public synchronized ObjList<CharSequence> getLoadedPlugins() {
         final ObjList<CharSequence> result = new ObjList<>(pluginClassLoaders.size());
         for (int i = 0, n = pluginClassLoaders.size(); i < n; i++) {
             result.add(pluginClassLoaders.keys().getQuick(i));

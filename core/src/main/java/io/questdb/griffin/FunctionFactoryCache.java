@@ -144,32 +144,53 @@ public class FunctionFactoryCache {
     }
 
     public boolean isCursor(CharSequence name) {
-        return name != null && cursorFunctionNames.contains(name);
+        if (name == null) {
+            return false;
+        }
+        pluginLock.readLock().lock();
+        try {
+            return cursorFunctionNames.contains(name);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
     }
 
     public boolean isGroupBy(CharSequence name) {
         if (name == null) {
             return false;
         }
-        if (groupByFunctionNames.contains(name)) {
-            return true;
-        }
-        // For qualified plugin function names, try unquoting the plugin name part
-        final int lastDot = Chars.lastIndexOf(name, 0, name.length(), '.');
-        if (lastDot > 0 && lastDot < name.length() - 1) {
-            String pluginName = name.subSequence(0, lastDot).toString();
-            if (pluginName.startsWith("\"") && pluginName.endsWith("\"")) {
-                pluginName = pluginName.substring(1, pluginName.length() - 1);
+        pluginLock.readLock().lock();
+        try {
+            if (groupByFunctionNames.contains(name)) {
+                return true;
             }
-            final String functionName = name.subSequence(lastDot + 1, name.length()).toString();
-            final String qualifiedName = pluginName + "." + functionName;
-            return groupByFunctionNames.contains(qualifiedName);
+            // For qualified plugin function names, try unquoting the plugin name part
+            final int lastDot = Chars.lastIndexOf(name, 0, name.length(), '.');
+            if (lastDot > 0 && lastDot < name.length() - 1) {
+                String pluginName = name.subSequence(0, lastDot).toString();
+                if (pluginName.startsWith("\"") && pluginName.endsWith("\"")) {
+                    pluginName = pluginName.substring(1, pluginName.length() - 1);
+                }
+                final String functionName = name.subSequence(lastDot + 1, name.length()).toString();
+                final String qualifiedName = pluginName + "." + functionName;
+                return groupByFunctionNames.contains(qualifiedName);
+            }
+            return false;
+        } finally {
+            pluginLock.readLock().unlock();
         }
-        return false;
     }
 
     public boolean isRuntimeConstant(CharSequence name) {
-        return name != null && runtimeConstantFunctionNames.contains(name);
+        if (name == null) {
+            return false;
+        }
+        pluginLock.readLock().lock();
+        try {
+            return runtimeConstantFunctionNames.contains(name);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
     }
 
     public boolean isValidNoArgFunction(ExpressionNode node) {
@@ -189,7 +210,15 @@ public class FunctionFactoryCache {
     }
 
     public boolean isWindow(CharSequence name) {
-        return name != null && windowFunctionNames.contains(name);
+        if (name == null) {
+            return false;
+        }
+        pluginLock.readLock().lock();
+        try {
+            return windowFunctionNames.contains(name);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
     }
 
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
