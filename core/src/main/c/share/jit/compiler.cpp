@@ -180,12 +180,13 @@ struct Function {
         c.cmp(input_index, stop);
         c.jge(l_exit);
 
+        bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
         Ymm row_ids_reg = c.newYmm("rows_ids");
         Ymm row_ids_step = c.newYmm("rows_ids_step");
 
-        //mask compress optimization for longs
-        //init row_ids_reg out of loop
-        if (step == 4) {
+        // mask compress optimization for longs
+        // init row_ids_reg out of loop
+        if (step == 4 && !is_slow_zen) {
             int64_t rows_id_mem[4] = {0, 1, 2, 3};
             Mem mem = c.newConst(ConstPool::kScopeLocal, &rows_id_mem, 32);
 
@@ -206,19 +207,30 @@ struct Function {
 
             auto mask = values.pop();
 
-            //mask compress optimization for longs
-            bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
             if (step == 4 && !is_slow_zen) {
+                // mask compress optimization for longs
+                Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
+
+                // short-circuit: skip scatter if no matches
+                Label l_scatter_done = c.newLabel();
+                c.test(bits, bits);
+                c.jz(l_scatter_done);
+
                 Ymm compacted = questdb::avx2::compress_register(c, row_ids_reg, mask.ymm());
                 c.vmovdqu(ymmword_ptr(rows_ptr, output_index, 3), compacted);
-                Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
                 c.popcnt(bits, bits);
                 c.add(output_index, bits.r64());
+
+                c.bind(l_scatter_done);
                 c.vpaddq(row_ids_reg, row_ids_reg, row_ids_step);
             } else {
                 Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
-                questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset,
-                                              step);
+                // short-circuit: skip scatter if no matches
+                Label l_scatter_done = c.newLabel();
+                c.test(bits, bits);
+                c.jz(l_scatter_done);
+                questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset, step);
+                c.bind(l_scatter_done);
             }
             c.add(input_index, step); // index += step
         }
@@ -321,7 +333,6 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                     jint options,
                                                     jobject error) {
 #ifndef __aarch64__
-
     auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
     if (filterAddress <= 0 || size <= 0) {
         fillJitErrorObject(e, error, ErrorCode::kErrorInvalidArgument, "Invalid argument passed");
@@ -353,11 +364,11 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
 
     Error err = errorHandler.error;
 
-    if(err == ErrorCode::kErrorOk) {
+    if (err == ErrorCode::kErrorOk) {
         err = c.finalize();
     }
 
-    if(err == ErrorCode::kErrorOk) {
+    if (err == ErrorCode::kErrorOk) {
         err = gGlobalContext.rt.add(&fn, &code);
     }
 
