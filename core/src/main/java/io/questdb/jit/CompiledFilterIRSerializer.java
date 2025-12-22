@@ -1829,8 +1829,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * A lightweight visitor that collects column type sizes to detect scalar mode.
-     * If columns of different sizes are found, scalar mode will be used.
+     * A lightweight visitor that pre-scans the expression tree to detect if scalar mode
+     * will be used by the JIT backend.
+     * <p>
+     * This detector is run BEFORE predicate reordering and short-circuit serialization
+     * to determine if short-circuit optimizations can be safely applied. Short-circuit
+     * evaluation (AND_SC, OR_SC opcodes) only works correctly in scalar mode because
+     * SIMD processes multiple rows in parallel and cannot branch per-lane.
+     * <p>
+     * Scalar mode is guaranteed when columns of different sizes are found (mixed sizes),
+     * which sets exec_hint to EXEC_HINT_MIXED_SIZE_TYPE, forcing the scalar code path.
      */
     private class ScalarModeDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
         private final TypesObserver typesObserver = new TypesObserver();

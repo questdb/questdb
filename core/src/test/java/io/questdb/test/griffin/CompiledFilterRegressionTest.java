@@ -1002,6 +1002,111 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShortCircuitFlagOptimizationAndEq() throws Exception {
+        // Tests flag-based optimization for equality in AND chains.
+        // When EQ is followed by And_Sc, the backend emits CMP + JNE directly
+        // instead of CMP + SETE + TEST + JZ (kFlagsEq optimization).
+        final String query = "select * from x " +
+                "where i64 = 95 and i32 = 13 and i16 = 12107";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64," +
+                " rnd_int(0, 50, 0) i32," +
+                " rnd_short() i16" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitFlagOptimizationAndNeq() throws Exception {
+        // Tests flag-based optimization for inequality in AND chains.
+        // When NE is followed by And_Sc, the backend emits CMP + JE directly
+        // instead of CMP + SETNE + TEST + JZ (kFlagsNe optimization).
+        final String query = "select * from x " +
+                "where i64 != 50 and i32 != 25 and i16 != 10";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64," +
+                " rnd_int(0, 50, 0) i32," +
+                " rnd_short() i16" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitFlagOptimizationMixedEqNeq() throws Exception {
+        // Tests flag-based optimization with mixed EQ and NE in the same chain.
+        final String query = "select * from x " +
+                "where i64 = 26 and i32 != 42 and i16 = 6201";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64," +
+                " rnd_int(0, 50, 0) i32," +
+                " rnd_short() i16" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitFlagOptimizationOrEq() throws Exception {
+        // Tests flag-based optimization for equality in OR chains.
+        // When EQ is followed by Or_Sc, the backend emits CMP + JE directly
+        // instead of CMP + SETE + TEST + JNZ (kFlagsEq optimization).
+        final String query = "select * from x where " +
+                "i64 = 50 or i32 = 25 or i16 = 10";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64," +
+                " rnd_int(0, 50, 0) i32," +
+                " rnd_short() i16" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitFlagOptimizationOrNeq() throws Exception {
+        // Tests flag-based optimization for inequality in OR chains.
+        // When NE is followed by Or_Sc, the backend emits CMP + JNE directly
+        // instead of CMP + SETNE + TEST + JNZ (kFlagsNe optimization).
+        final String query = "select * from x where " +
+                "i64 != 50 or i32 != 25 or i16 != 10";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64," +
+                " rnd_int(0, 50, 0) i32," +
+                " rnd_short() i16" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitFlagOptimizationUuid() throws Exception {
+        // Tests flag-based optimization for UUID (i128) comparisons.
+        // UUID comparison uses pcmpeqb + pmovmskb + cmp, then JE/JNE.
+        final String query = "select * from x " +
+                "where uuid1 = 'd37facdc-c648-4f32-887c-c184027ff724' and i64 = 57";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_uuid4() uuid1," +
+                " rnd_long(0, 100, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitFlagOptimizationUuidNeq() throws Exception {
+        // Tests flag-based optimization for UUID (i128) inequality comparisons.
+        final String query = "select * from x where " +
+                "uuid1 != '11111111-1111-1111-1111-111111111111' and i64 = 50";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_uuid4() uuid1," +
+                " rnd_long(0, 100, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
     public void testShortCircuitMixedAndOr() throws Exception {
         // Tests mixed AND/OR chains with short-circuit evaluation
         final String query = "select * from x where " +
@@ -1162,6 +1267,21 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withEqualityOperator()
                 .withAnyOf("null");
         assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testUuidSameConstantAndChain() throws Exception {
+        final String query = "select * from x " +
+                "where uuid1 != '11111111-1111-1111-1111-111111111111'" +
+                "  and uuid2 != '11111111-1111-1111-1111-111111111111'" +
+                "  and uuid3 != '11111111-1111-1111-1111-111111111111'";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_uuid4() uuid1," +
+                " rnd_uuid4() uuid2," +
+                " rnd_uuid4() uuid3" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
