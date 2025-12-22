@@ -876,7 +876,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
             }
         } else {
-            this.pluginRoot = rootSubdir(this.dbRoot, "plugins");
+            if (absDbDir) {
+                this.pluginRoot = rootSubdir(this.dbRoot, "plugins");
+            } else {
+                this.pluginRoot = new File(installRoot, "plugins").getAbsolutePath();
+            }
         }
 
         String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
