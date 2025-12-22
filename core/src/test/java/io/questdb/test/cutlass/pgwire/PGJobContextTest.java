@@ -3930,7 +3930,7 @@ if __name__ == "__main__":
                     assertResultSet(
                             """
                                     QUERY PLAN[VARCHAR]
-                                    Limit lo: 10 skip-over-rows: 0 limit: 10
+                                    Limit value: 10 skip-rows: 0 take-rows: 10
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: xx

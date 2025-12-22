@@ -250,7 +250,7 @@ public class UnionTest extends AbstractCairoTest {
                         "except " +
                         "select 1  " +
                         "union all " +
-                        "select 3 from long_sequence(1) limit 1", null, null, false, true);
+                        "select 3 from long_sequence(1) limit 1", null, null, false, false);
     }
 
     @Test
@@ -270,7 +270,7 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
     }
 
     @Test
@@ -280,7 +280,7 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
     }
 
     @Test
@@ -291,7 +291,7 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x*2 limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
     }
 
     @Test
@@ -1676,11 +1676,11 @@ public class UnionTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(limitQuery, """
                     Union All
-                        Limit lo: 1 skip-over-rows: 0 limit: 1
+                        Limit value: 1 skip-rows: 0 take-rows: 1
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: trades
-                        Limit lo: -1 skip-over-rows: 2 limit: 1
+                        Limit value: -1 skip-rows: 2 take-rows: 1
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: trades
@@ -1701,11 +1701,11 @@ public class UnionTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(groupQuery, """
                     Union All
-                        Limit lo: 1 skip-over-rows: 0 limit: 1
+                        Limit value: 1 skip-rows: 0 take-rows: 1
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: trades
-                        Limit lo: 1 skip-over-rows: 0 limit: 1
+                        Limit value: 1 skip-rows: 0 take-rows: 1
                             SelectedRecord
                                 PageFrame
                                     Row backward scan
@@ -1722,6 +1722,6 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
     }
 }

@@ -125,7 +125,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             result++;
             nextRecordOffset = mem.getLong(nextRecordOffset);
         }
-
         counter.add(result);
     }
 

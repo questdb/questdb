@@ -347,7 +347,7 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                 "create table x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 true,
-                true
+                false
         );
     }
 

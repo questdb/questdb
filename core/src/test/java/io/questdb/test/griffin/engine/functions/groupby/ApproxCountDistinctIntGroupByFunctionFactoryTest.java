@@ -344,7 +344,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
                 "create table x as (select * from (select rnd_int(0, 16, 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 true,
-                true
+                false
         );
     }
 

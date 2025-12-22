@@ -1162,7 +1162,7 @@ public class O3Test extends AbstractO3Test {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "select * from " + tableName + " limit -5,5",
+                            "select * from " + tableName + " limit -5",
                             sink,
                             replaceTimestampSuffix1(
                                     "str\tts\n" +

@@ -6231,7 +6231,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ") timestamp(cal_timestamp_time) partition by hour",
                 "period_start_time",
                 false,
-                true
+                false
         );
     }
 
@@ -6290,7 +6290,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                true
+                false
         );
 
         assertQuery(
@@ -6322,7 +6322,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                true
+                false
         );
     }
 
