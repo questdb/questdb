@@ -1261,7 +1261,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                   window lo: 60000000 preceding (%s prevailing)
                                   window hi: 60000000 following
                                     Limit left: 5 right: 9 skip-rows-max: 5 take-rows-max: 4
-                                        Async Filter workers: 1
+                                        Async JIT Filter workers: 1
                                           filter: 5<price
                                             PageFrame
                                                 Row forward scan
