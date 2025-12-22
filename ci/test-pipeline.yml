@@ -182,6 +182,7 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
+            persistCredentials: true
           - download: current
             artifact: jacoco-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -272,8 +273,15 @@ stages:
               done
               [ -f cobertura.xml ] && COVER_ARGS="$COVER_ARGS -type cobertura --cover cobertura.xml"
 
+              # cover-checker is able to automatically retrieve the diff from the Github Rest API.
+              # Unfortunately, it happpens that the Rest API responses are missing the patch field for some files
+              # which excludes these files from being covered.
+              git fetch origin $(System.PullRequest.targetBranchName)
+              git diff origin/$(System.PullRequest.targetBranchName)..HEAD > pr.diff
+
               $JAVA_HOME_17_X64/bin/java -jar \
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
+                -dt file -d pr.diff \
                 $COVER_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
             displayName: "Post combined report to GitHub"
