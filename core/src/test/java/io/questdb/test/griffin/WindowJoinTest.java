@@ -1247,39 +1247,41 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('sym0', 9.0, '2023-01-01T09:00:04.000000Z');"
             );
 
+            String whatToDoWithPrevailing = includePrevailing ? "include" : "exclude";
             assertQueryAndPlan(
                     """
                             sym\tprice\tts\tfirst\tavg
                             """,
-                    """
+                    String.format("""
                             Sort
                               keys: [ts, sym]
                                 Window Fast Join
                                   vectorized: true
                                   symbol: sym=sym
-                            """ +
-                            "      window lo: 60000000 preceding" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
-                            """
-                                          window hi: 60000000 following
-                                            Limit lo: 5 hi: 9 skip-over-rows: 0 limit: 0
-                                                Async JIT Filter workers: 1
-                                                  filter: 5<price
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: trades
+                                  window lo: 60000000 preceding (%s prevailing)
+                                  window hi: 60000000 following
+                                    Limit left: 5 right: 9 skip-rows-max: 5 take-rows-max: 4
+                                        Async Filter workers: 1
+                                          filter: 5<price
                                             PageFrame
                                                 Row forward scan
-                                                Frame forward scan on: prices
+                                                Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """, whatToDoWithPrevailing),
+                    String.format("""
+                                    SELECT t.sym, t.price, t.ts, first(p.bid) AS first, avg(p.bid) AS avg
+                                    FROM (trades WHERE price > 5 LIMIT 5, 9) t
+                                    WINDOW JOIN prices p
+                                    ON (t.sym = p.sym)
+                                        RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts, t.sym
                                     """,
-                    "select t.sym, t.price, t.ts, first(p.bid) as first, avg(p.bid) as avg " +
-                            "from (trades where price > 5 limit 5, 9) t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
+                            whatToDoWithPrevailing),
                     "ts",
                     true,
-                    true
+                    false
             );
         });
 
@@ -3025,28 +3027,35 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
+            String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            String whatToDoWithPrevailing = includePrevailing ? "include" : "exclude";
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
-                            "  keys: [ts, sym]\n" +
-                            "    Window Fast Join\n" +
-                            "      vectorized: true\n" +
-                            "      symbol: sym=sym\n" +
-                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
-                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
-                            "        Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: trades\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from (trades limit 5) t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
+                    String.format("""
+                            Sort
+                              keys: [ts, sym]
+                                Window Fast Join
+                                  vectorized: true
+                                  symbol: sym=sym
+                                  window lo: 60000000%1$s preceding (%2$s prevailing)
+                                  window hi: 60000000%1$s following
+                                    Limit value: 5 skip-rows: 0 take-rows: 5
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """, nanoZeros, whatToDoWithPrevailing),
+                    String.format("""
+                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                                    FROM (trades LIMIT 5) t
+                                    WINDOW JOIN prices p
+                                    ON (t.sym = p.sym)
+                                       RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts, t.sym
+                                    """,
+                            whatToDoWithPrevailing),
                     "ts",
                     true,
                     true
@@ -3073,13 +3082,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from t 
-                                            left join prices p 
+                                            from t
+                                            left join prices p
                                             on t.sym = p.sym and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from t 
-                                            join prices p 
+                                            from t
+                                            join prices p
                                             on t.sym = p.sym and p.ts <= dateadd('m', 1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -3087,35 +3096,46 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
+            String whatToDoWithPrevailing = includePrevailing ? "include" : "exclude";
+            String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            boolean isLeftMicroTs = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType());
+            boolean isRightMicroTs = ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType());
+            String planFragment = includePrevailing
+                    ? "Frame forward scan on: prices"
+                    : String.format("""
+                            Interval forward scan on: prices
+                                          intervals: [("2023-01-01T08:59:00.00000%sZ","MAX")]""",
+                    isLeftMicroTs ? (isRightMicroTs ? "1" : "1000") : (isRightMicroTs ? "0" : "0001"));
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
-                            "  keys: [ts, sym]\n" +
-                            "    Window Fast Join\n" +
-                            "      vectorized: false\n" +
-                            "      symbol: sym=sym\n" +
-                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
-                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
-                            "        Limit lo: 1 hi: 4 skip-over-rows: 1 limit: 3\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Interval forward scan on: trades\n" +
-                            "                  intervals: [(\"2023-01-01T09:00:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000001" : "000000001") + "Z\",\"MAX\")]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            (includePrevailing ? "            Frame forward scan on: prices\n" :
-                                    "            Interval forward scan on: prices\n" +
-                                            "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
-                                            : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n"),
-                    "select t.sym, t.price, t.ts, max(concat(p.price, '000')) f " +
-                            "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
+                    String.format("""
+                            Sort
+                              keys: [ts, sym]
+                                Window Fast Join
+                                  vectorized: false
+                                  symbol: sym=sym
+                                  window lo: 60000000%1$s preceding (%2$s prevailing)
+                                  window hi: 60000000%1$s following
+                                    Limit left: 1 right: 4 skip-rows-max: 1 take-rows-max: 3
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("2023-01-01T09:00:00.%1$s000001Z","MAX")]
+                                    PageFrame
+                                        Row forward scan
+                                        %3$s
+                            """, nanoZeros, whatToDoWithPrevailing, planFragment),
+                    String.format("""
+                            SELECT t.sym, t.price, t.ts, max(concat(p.price, '000')) f
+                            FROM (trades WHERE ts > '2023-01-01T09:00:00Z' LIMIT 1, 4) t
+                            WINDOW JOIN prices p
+                            ON (t.sym = p.sym)
+                              RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts, t.sym
+                            """, whatToDoWithPrevailing),
                     "ts",
                     true,
-                    true
+                    false
             );
 
             // fast factory, vectorized
@@ -3133,13 +3153,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from t 
-                                            left join prices p 
+                                            from t
+                                            left join prices p
                                             on t.sym = p.sym and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from t 
-                                            join prices p 
+                                            from t
+                                            join prices p
                                             on t.sym = p.sym and p.ts <= dateadd('m', 1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -3149,64 +3169,66 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
-                            "  keys: [ts, sym]\n" +
-                            "    Window Fast Join\n" +
-                            "      vectorized: true\n" +
-                            "      symbol: sym=sym\n" +
-                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
-                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
-                            "        Limit lo: 1 hi: 4 skip-over-rows: 1 limit: 3\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Interval forward scan on: trades\n" +
-                            "                  intervals: [(\"2023-01-01T09:00:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000001" : "000000001") + "Z\",\"MAX\")]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            (includePrevailing ? "            Frame forward scan on: prices\n" :
-                                    "            Interval forward scan on: prices\n" +
-                                            "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
-                                            : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n"),
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price, count() as cnt " +
-                            "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
+                    String.format("""
+                            Sort
+                              keys: [ts, sym]
+                                Window Fast Join
+                                  vectorized: true
+                                  symbol: sym=sym
+                                  window lo: 60000000%1$s preceding (%2$s prevailing)
+                                  window hi: 60000000%1$s following
+                                    Limit left: 1 right: 4 skip-rows-max: 1 take-rows-max: 3
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("2023-01-01T09:00:00.%1$s000001Z","MAX")]
+                                    PageFrame
+                                        Row forward scan
+                                        %3$s
+                            """, nanoZeros, whatToDoWithPrevailing, planFragment),
+                    String.format("""
+                            SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price, count() AS cnt
+                            FROM (trades WHERE ts > '2023-01-01T09:00:00Z' LIMIT 1, 4) t
+                            WINDOW JOIN prices p
+                            ON (t.sym = p.sym)
+                              RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts, t.sym
+                            """, whatToDoWithPrevailing),
                     "ts",
                     true,
-                    true
+                    false
             );
 
             // non-fast factory
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
-                            "  keys: [ts, sym]\n" +
-                            "    Window Join\n" +
-                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
-                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
-                            "      join filter: concat([t.sym,'_0'])=concat([p.sym,'_0'])\n" +
-                            "        Limit lo: 1 hi: 4 skip-over-rows: 1 limit: 3\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Interval forward scan on: trades\n" +
-                            "                  intervals: [(\"2023-01-01T09:00:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000001" : "000000001") + "Z\",\"MAX\")]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            (includePrevailing ? "            Frame forward scan on: prices\n" :
-                                    "            Interval forward scan on: prices\n" +
-                                            "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
-                                            : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n"),
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price, count as cnt " +
-                            "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
-                            "window join prices p " +
-                            "on (concat(t.sym, '_0') = concat(p.sym, '_0')) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
+                    String.format("""
+                            Sort
+                              keys: [ts, sym]
+                                Window Join
+                                  window lo: 60000000%1$s preceding (%2$s prevailing)
+                                  window hi: 60000000%1$s following
+                                  join filter: concat([t.sym,'_0'])=concat([p.sym,'_0'])
+                                    Limit left: 1 right: 4 skip-rows-max: 1 take-rows-max: 3
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("2023-01-01T09:00:00.00000%1$s1Z","MAX")]
+                                    PageFrame
+                                        Row forward scan
+                                        %3$s
+                            """, nanoZeros, whatToDoWithPrevailing, planFragment),
+                    String.format("""
+                            SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price, count AS cnt
+                            FROM (trades WHERE ts > '2023-01-01T09:00:00Z' LIMIT 1, 4) t
+                            WINDOW JOIN prices p
+                            ON (concat(t.sym, '_0') = concat(p.sym, '_0'))
+                             RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts, t.sym
+                            """, whatToDoWithPrevailing),
                     "ts",
                     true,
-                    true
+                    false
             );
         });
     }
@@ -3397,45 +3419,52 @@ public class WindowJoinTest extends AbstractCairoTest {
                 printSql("""
                                 select sym,price,ts, avg(price1) window_price from
                                 (
-                                        select * from (
-                                            select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
-                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
-                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
-                                        ) order by ts
+                                    select * from (
+                                        select t.sym, t.price, t.ts, p.price, p.ts pts
+                                        from trades t
+                                        left join prices p
+                                        on (t.sym = p.sym) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                                    union 
+                                        select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                        from trades t 
+                                        join prices p 
+                                        on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
+                                    ) order by ts
                                 )
                                 order by ts limit 3;
                                 """,
                         sink);
             }
+            String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            String whatToDoWithPrevailing = includePrevailing ? "include" : "exclude";
             assertQueryAndPlan(
                     sink,
-                    "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
-                            "    Async Window Fast Join workers: 1\n" +
-                            "      vectorized: true\n" +
-                            "      symbol: sym=sym\n" +
-                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
-                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trades\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " limit 3",
+                    String.format("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                Async Window Fast Join workers: 1
+                                  vectorized: true
+                                  symbol: sym=sym
+                                  window lo: 60000000%1$s preceding (%2$s prevailing)
+                                  window hi: 60000000%1$s following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """, nanoZeros, whatToDoWithPrevailing),
+                    String.format("""
+                                    SELECT t.sym, t.price, t.ts, avg(p.price) AS window_price
+                                    FROM trades t
+                                    WINDOW JOIN prices p
+                                    ON (t.sym = p.sym)
+                                        RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    LIMIT 3
+                                    """,
+                            whatToDoWithPrevailing),
                     "ts",
                     false,
-                    true
+                    false
             );
         });
     }
