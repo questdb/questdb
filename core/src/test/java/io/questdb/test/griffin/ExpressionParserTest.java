@@ -1414,7 +1414,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a[f(i])",
                 3,
-                "unbalanced ("
+                "unbalanced parenthesis: missing closing ')'"
         );
     }
 
