@@ -796,6 +796,32 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGlobPathTraversalNotAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException(
+                    "select * from glob('../etc/passwd')",
+                    19,
+                    "path traversal '..' is not allowed in glob pattern"
+            );
+            assertException(
+                    "select * from glob('data/../secret.txt')",
+                    19,
+                    "path traversal '..' is not allowed in glob pattern"
+            );
+            assertException(
+                    "select * from glob('../**/*.parquet')",
+                    19,
+                    "path traversal '..' is not allowed in glob pattern"
+            );
+            assertException(
+                    "select * from glob('" + inputRoot + "/../secret.txt')",
+                    19,
+                    "path traversal '..' is not allowed in glob pattern"
+            );
+        });
+    }
+
+    @Test
     public void testGlobQuestionMark() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("cnt\n5\n", "select count(*) cnt from glob('data/file?.parquet')", null, false, true);

@@ -289,6 +289,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
 
         IntList globOffsets = new IntList();
         parseGlobPattern(glob, globOffsets);
+        validateNoPathTraversal(glob, globOffsets, argPositions.getQuick(0));
         int crawlCount = 0;
         for (int i = 0, n = globOffsets.size() / 2; i < n; i++) {
             if (isGlobStar(glob, globOffsets.getQuick(i * 2), globOffsets.getQuick(i * 2 + 1))) {
@@ -726,6 +727,16 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         } finally {
             basePathCopy.clear();
             Misc.releaseUtf8Sink();
+        }
+    }
+
+    private static void validateNoPathTraversal(Utf8Sequence glob, IntList offsets, int position) throws SqlException {
+        for (int i = 0, n = offsets.size() / 2; i < n; i++) {
+            int start = offsets.getQuick(i * 2);
+            int end = offsets.getQuick(i * 2 + 1);
+            if (end - start == 2 && glob.byteAt(start) == '.' && glob.byteAt(start + 1) == '.') {
+                throw SqlException.$(position, "path traversal '..' is not allowed in glob pattern");
+            }
         }
     }
 
