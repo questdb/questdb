@@ -116,7 +116,11 @@ public class SqlParser {
     private final ObjectPool<InsertModel> insertModelPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final ObjList<ViewDefinition> recordedViews = new ObjList<>();
+    // Map of view definitions encountered during query compilation.
+    // Using a map ensures consistent view definitions even if views are modified concurrently.
+    private final LowerCaseCharSequenceObjHashMap<ViewDefinition> recordedViews = new LowerCaseCharSequenceObjHashMap<>();
+    // Track views currently being compiled to detect cycles during query parsing
+    private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
@@ -455,19 +459,37 @@ public class SqlParser {
 
     private void clearRecordedViews() {
         recordedViews.clear();
+        viewsBeingCompiled.clear();
     }
 
     private void compileViewQuery(QueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
-        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
-        if (viewDefinition == null) {
-            throw SqlException.viewDoesNotExist(viewPosition, viewToken.getTableName());
-        }
-        recordedViews.add(viewDefinition);
+        final CharSequence viewName = viewToken.getTableName();
 
-        final QueryModel viewModel = compileViewQuery(viewDefinition, viewPosition, model.getDecls());
-        viewModel.copyDeclsFrom(model, false);
-        model.setNestedModel(viewModel);
-        model.setNestedModelIsSubQuery(true);
+        // Detect cycle: if we're already compiling this view, it's a circular reference
+        if (viewsBeingCompiled.contains(viewName)) {
+            throw SqlException.$(viewPosition, "circular view reference detected: ").put(viewName);
+        }
+
+        // Check if we already have this view definition (ensures consistent snapshot during compilation)
+        ViewDefinition viewDefinition = recordedViews.get(viewName);
+        if (viewDefinition == null) {
+            viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+            if (viewDefinition == null) {
+                throw SqlException.viewDoesNotExist(viewPosition, viewName);
+            }
+            recordedViews.put(viewName, viewDefinition);
+        }
+
+        // Track that we're compiling this view
+        viewsBeingCompiled.add(viewName);
+        try {
+            final QueryModel viewModel = compileViewQuery(viewDefinition, viewPosition, model.getDecls());
+            viewModel.copyDeclsFrom(model, false);
+            model.setNestedModel(viewModel);
+            model.setNestedModelIsSubQuery(true);
+        } finally {
+            viewsBeingCompiled.remove(viewName);
+        }
     }
 
     private QueryModel compileViewQuery(

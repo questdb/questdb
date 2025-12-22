@@ -1321,6 +1321,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return getParsedWhere();
     }
 
+    public void recordViews(LowerCaseCharSequenceObjHashMap<ViewDefinition> viewDefinitions) {
+        final ObjList<CharSequence> keys = viewDefinitions.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final ViewDefinition viewDefinition = viewDefinitions.get(keys.getQuick(i));
+            if (!referencedViews.contains(viewDefinition)) {
+                referencedViews.add(viewDefinition);
+            }
+        }
+    }
+
     public void recordViews(ObjList<ViewDefinition> viewDefinitions) {
         for (int i = 0, n = viewDefinitions.size(); i < n; i++) {
             final ViewDefinition viewDefinition = viewDefinitions.getQuick(i);
