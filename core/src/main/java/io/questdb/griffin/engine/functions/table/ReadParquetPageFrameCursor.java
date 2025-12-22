@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -73,7 +72,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
-        counter.add(rowCount);
+        counter.add(rowCount - frame.partitionHi);
     }
 
     @Override
@@ -148,7 +147,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public long size() throws DataUnavailableException {
+    public long size() {
         return rowCount;
     }
 

@@ -6211,7 +6211,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                 7
                                 8
                                 9
-                                10
                                 """,
                         factory,
                         true,

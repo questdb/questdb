@@ -181,7 +181,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: ts=cursor\s
-                                Limit lo: 2
+                                Limit value: 2
                                     VirtualRecord
                                       functions: [ts::varchar]
                                         PageFrame
@@ -415,7 +415,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: ts=cursor\s
-                                Limit lo: 2
+                                Limit value: 2
                                     VirtualRecord
                                       functions: [ts::varchar]
                                         PageFrame
