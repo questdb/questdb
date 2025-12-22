@@ -1305,14 +1305,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from t 
-                                            join prices p 
+                                            from t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
