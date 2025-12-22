@@ -151,7 +151,22 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        counter.add(decoder.metadata().getRowCount());
+        PartitionDecoder.Metadata meta = decoder.metadata();
+        if (rowGroupIndex < 0) {
+            counter.add(meta.getRowCount());
+        } else {
+            int rgCount = meta.getRowGroupCount();
+            long remaining = rowGroupRowCount - currentRowInRowGroup - 1;
+            counter.add(remaining);
+            for (int i = rowGroupIndex + 1; i < rgCount; i++) {
+                counter.add(meta.getRowGroupSize(i));
+            }
+        }
+
+        // move cursor to the end
+        rowGroupIndex = meta.getRowGroupCount();
+        rowGroupRowCount = 0;
+        currentRowInRowGroup = 0;
     }
 
     @Override
