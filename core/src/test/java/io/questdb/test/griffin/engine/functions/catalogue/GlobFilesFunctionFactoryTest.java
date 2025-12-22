@@ -238,18 +238,18 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGlobAbsolutePath() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n7\n", "select count(*) cnt from glob('" + inputRoot + "/data/*.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('" + inputRoot + "/data/*.parquet') where path like '%file1.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('" + inputRoot + "/data/*.parquet') where path like '%file2.parquet'");
+            assertQuery("cnt\n7\n", "select count(*) cnt from glob('" + inputRoot + "/data/*.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('" + inputRoot + "/data/*.parquet') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('" + inputRoot + "/data/*.parquet') where path like '%file2.parquet'", null, false, true);
         });
     }
 
     @Test
     public void testGlobAllColumns() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet') where diskSize > 0");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet') where modifiedTime > 0");
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet') where diskSize > 0", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet') where modifiedTime > 0", null, false, true);
         });
     }
 
@@ -265,28 +265,28 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
             // partitioned: 2 + 3 + 1 = 6
             // mixed: 10
             // Total: 12 + 12 + 6 + 1 + 5 + 6 + 10 = 52
-            assertSql("cnt\n52\n", "select count(*) cnt from glob('**/*.parquet')");
+            assertQuery("cnt\n52\n", "select count(*) cnt from glob('**/*.parquet')", null, false, true);
         });
     }
 
     @Test
     public void testGlobArchiveMultipleYears() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n6\n", "select count(*) cnt from glob('archive/**/*.parquet')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('archive/2022/**/*.parquet')");
-            assertSql("cnt\n4\n", "select count(*) cnt from glob('archive/2023/**/*.parquet')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('archive/2023/06/**/*.parquet')");
-            assertSql("cnt\n0\n", "select count(*) cnt from glob('archive/2023/07/**/*.parquet')");
+            assertQuery("cnt\n6\n", "select count(*) cnt from glob('archive/**/*.parquet')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2022/**/*.parquet')", null, false, true);
+            assertQuery("cnt\n4\n", "select count(*) cnt from glob('archive/2023/**/*.parquet')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2023/06/**/*.parquet')", null, false, true);
+            assertQuery("cnt\n0\n", "select count(*) cnt from glob('archive/2023/07/**/*.parquet')", null, false, true);
         });
     }
 
     @Test
     public void testGlobAsteriskInMiddle() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/f*1.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/f*1.parquet') where path like '%file1.parquet'");
-            assertSql("cnt\n0\n", "select count(*) cnt from glob('data/f*1.parquet') where path like '%file2.parquet'");
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/f*1.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/f*1.parquet') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/f*1.parquet') where path like '%file2.parquet'", null, false, true);
         });
     }
 
@@ -294,14 +294,14 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobAsteriskPattern() throws Exception {
         assertMemoryLeak(() -> {
             // Should match 7 parquet files: file1, file2, file3, fileA, fileB, test_2023, test_2024
-            assertSql("cnt\n7\n", "select count(*) cnt from glob('data/*.parquet')");
+            assertQuery("cnt\n7\n", "select count(*) cnt from glob('data/*.parquet')", null, false, true);
             // Verify each file is present
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%file1.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%file2.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%file3.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%fileA.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%fileB.parquet'");
-            assertSql("cnt\n0\n", "select count(*) cnt from glob('data/*.parquet') where path like '%readme.txt'");
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%file2.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%file3.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%fileA.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%fileB.parquet'", null, false, true);
+            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/*.parquet') where path like '%readme.txt'", null, false, true);
         });
     }
 
@@ -309,12 +309,12 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobBracketNegation() throws Exception {
         assertMemoryLeak(() -> {
             // [!1] should match file2, file3, fileA, fileB (any single char except '1')
-            assertSql("cnt\n4\n", "select count(*) cnt from glob('data/file[!1].parquet')");
-            assertSql("cnt\n0\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%file1.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%file2.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%file3.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%fileA.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%fileB.parquet'");
+            assertQuery("cnt\n4\n", "select count(*) cnt from glob('data/file[!1].parquet')", null, false, true);
+            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%file2.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%file3.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%fileA.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%fileB.parquet'", null, false, true);
         });
     }
 
@@ -322,10 +322,10 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobBracketPattern() throws Exception {
         assertMemoryLeak(() -> {
             // [12] should match file1 and file2, but not file3
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('data/file[12].parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file[12].parquet') where path like '%file1.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file[12].parquet') where path like '%file2.parquet'");
-            assertSql("cnt\n0\n", "select count(*) cnt from glob('data/file[12].parquet') where path like '%file3.parquet'");
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('data/file[12].parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[12].parquet') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[12].parquet') where path like '%file2.parquet'", null, false, true);
+            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/file[12].parquet') where path like '%file3.parquet'", null, false, true);
         });
     }
 
@@ -333,10 +333,10 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobBracketRange() throws Exception {
         assertMemoryLeak(() -> {
             // [1-3] should match file1, file2, and file3
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('data/file[1-3].parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file1.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file2.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file3.parquet'");
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('data/file[1-3].parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file2.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file3.parquet'", null, false, true);
         });
     }
 
@@ -344,10 +344,10 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobCombinedPatterns() throws Exception {
         assertMemoryLeak(() -> {
             // Combine * and ?: file?.p* should match file1.parquet, file2.parquet, file3.parquet, fileA.parquet, fileB.parquet
-            assertSql("cnt\n5\n", "select count(*) cnt from glob('data/file?.p*')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file?.p*') where path like '%file1.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file?.p*') where path like '%file2.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file?.p*') where path like '%fileA.parquet'");
+            assertQuery("cnt\n5\n", "select count(*) cnt from glob('data/file?.p*')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.p*') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.p*') where path like '%file2.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.p*') where path like '%fileA.parquet'", null, false, true);
         });
     }
 
@@ -355,19 +355,19 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobDeepLevel4() throws Exception {
         assertMemoryLeak(() -> {
             // Test 4 levels deep: data/nested/level3/level4/deepest.parquet
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/nested/level3/level4/*.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/**/level4/*.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/nested/**/deepest.parquet')");
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/nested/level3/level4/*.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**/level4/*.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/nested/**/deepest.parquet')", null, false, true);
         });
     }
 
     @Test
     public void testGlobDeepNesting() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('archive/2023/01/backup/*.parquet')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet') where path like '%data1.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet') where path like '%data2.parquet'");
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2023/01/backup/*.parquet')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet') where path like '%data1.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet') where path like '%data2.parquet'", null, false, true);
         });
     }
 
@@ -393,11 +393,11 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // ** at end should find all files recursively under data/
             // data/ has 9 files, nested/ has 3 files, level3/ has 2 files, level4/ has 1 file = 15 total
-            assertSql("cnt\n15\n", "select count(*) cnt from glob('data/**')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%file1.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%deep.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%level3.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%deepest.parquet'");
+            assertQuery("cnt\n15\n", "select count(*) cnt from glob('data/**')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%deep.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%level3.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%deepest.parquet'", null, false, true);
         });
     }
 
@@ -406,12 +406,12 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // ** in middle finds parquet files recursively under reports/
             // reports/ has 2 parquet, 2022/ has 4, 2023/ has 4, 2024/ has 2 = 12 total parquet
-            assertSql("cnt\n12\n", "select count(*) cnt from glob('reports/**/*.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%summary.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%overview.parquet'");
+            assertQuery("cnt\n12\n", "select count(*) cnt from glob('reports/**/*.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%summary.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%overview.parquet'", null, false, true);
             // q1.parquet appears in 2022, 2023, and 2024
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%q1.parquet'");
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%q2.parquet'");
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%q1.parquet'", null, false, true);
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%q2.parquet'", null, false, true);
         });
     }
 
@@ -420,18 +420,19 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // **/*.csv should find all csv files recursively from root
             // data/data.csv, data/nested/nested.csv, reports/metrics.csv, reports/2023/annual.csv, logs/app.csv = 5 total
-            assertSql("cnt\n5\n", "select count(*) cnt from glob('**/*.csv')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('**/*.csv') where path like '%data.csv'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('**/*.csv') where path like '%metrics.csv'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('**/*.csv') where path like '%annual.csv'");
+            assertQuery("cnt\n5\n", "select count(*) cnt from glob('**/*.csv')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('**/*.csv') where path like '%data.csv'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('**/*.csv') where path like '%metrics.csv'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('**/*.csv') where path like '%annual.csv'", null, false, true);
         });
     }
 
     @Test
     public void testGlobEmptyDirectory() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQuery(
                 "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
-                "select * from glob('empty/*.parquet')"
+                "select * from glob('empty/*.parquet')",
+                null, false, true
         ));
     }
 
@@ -446,18 +447,19 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testGlobEmptyResult() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQuery(
                 "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
-                "select * from glob('nonexistent/*.xyz')"
+                "select * from glob('nonexistent/*.xyz')",
+                null, false, true
         ));
     }
 
     @Test
     public void testGlobExactMatch() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet') where path like '%file1.parquet'");
-            assertSql("cnt\n0\n", "select count(*) cnt from glob('data/file1.parquet') where path like '%file2.parquet'");
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/file1.parquet') where path like '%file2.parquet'", null, false, true);
         });
     }
 
@@ -573,9 +575,9 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGlobLogsDaily() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('logs/daily/*.log')");
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('logs/daily/2023-01-0?.log')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('logs/daily/2023-01-0[12].log')");
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('logs/daily/*.log')", null, false, true);
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('logs/daily/2023-01-0?.log')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('logs/daily/2023-01-0[12].log')", null, false, true);
         });
     }
 
@@ -724,22 +726,22 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGlobMixedBracketPatterns() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('mixed/[abc].parquet')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('mixed/a[ab].parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('mixed/[x-z][x-z][x-z].parquet')");
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('mixed/[abc].parquet')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('mixed/a[ab].parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('mixed/[x-z][x-z][x-z].parquet')", null, false, true);
         });
     }
 
     @Test
     public void testGlobMixedDirectory() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n10\n", "select count(*) cnt from glob('mixed/*.parquet')");
+            assertQuery("cnt\n10\n", "select count(*) cnt from glob('mixed/*.parquet')", null, false, true);
             // Single character names
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('mixed/?.parquet')");
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('mixed/?.parquet')", null, false, true);
             // Two character names
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('mixed/??.parquet')");
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('mixed/??.parquet')", null, false, true);
             // Three character names
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('mixed/???.parquet')");
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('mixed/???.parquet')", null, false, true);
         });
     }
 
@@ -755,53 +757,53 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGlobMultipleExtensions() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('logs/*.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('logs/*.parquet') where path like '%app.parquet'");
-            assertSql("cnt\n0\n", "select count(*) cnt from glob('logs/*.parquet') where path like '%app.csv'");
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/*.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/*.parquet') where path like '%app.parquet'", null, false, true);
+            assertQuery("cnt\n0\n", "select count(*) cnt from glob('logs/*.parquet') where path like '%app.csv'", null, false, true);
 
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('logs/*.csv')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('logs/*.csv') where path like '%app.csv'");
-            assertSql("cnt\n0\n", "select count(*) cnt from glob('logs/*.csv') where path like '%app.parquet'");
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/*.csv')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/*.csv') where path like '%app.csv'", null, false, true);
+            assertQuery("cnt\n0\n", "select count(*) cnt from glob('logs/*.csv') where path like '%app.parquet'", null, false, true);
         });
     }
 
     @Test
     public void testGlobNestedDirectories() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('data/nested/*.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/nested/*.parquet') where path like '%deep.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/nested/*.parquet') where path like '%extra.parquet'");
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('data/nested/*.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/nested/*.parquet') where path like '%deep.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/nested/*.parquet') where path like '%extra.parquet'", null, false, true);
         });
     }
 
     @Test
     public void testGlobPartitionedDirectory() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n6\n", "select count(*) cnt from glob('partitioned/**/*.parquet')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('partitioned/year=2022/*.parquet')");
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('partitioned/year=2023/*.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('partitioned/year=2024/*.parquet')");
+            assertQuery("cnt\n6\n", "select count(*) cnt from glob('partitioned/**/*.parquet')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('partitioned/year=2022/*.parquet')", null, false, true);
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('partitioned/year=2023/*.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('partitioned/year=2024/*.parquet')", null, false, true);
         });
     }
 
     @Test
     public void testGlobPartitionedWithWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n6\n", "select count(*) cnt from glob('partitioned/year=*/*.parquet')");
-            assertSql("cnt\n6\n", "select count(*) cnt from glob('partitioned/year=202?/*.parquet')");
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('partitioned/year=202[3]/*.parquet')");
+            assertQuery("cnt\n6\n", "select count(*) cnt from glob('partitioned/year=*/*.parquet')", null, false, true);
+            assertQuery("cnt\n6\n", "select count(*) cnt from glob('partitioned/year=202?/*.parquet')", null, false, true);
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('partitioned/year=202[3]/*.parquet')", null, false, true);
         });
     }
 
     @Test
     public void testGlobQuestionMark() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n5\n", "select count(*) cnt from glob('data/file?.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%file1.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%file2.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%file3.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%fileA.parquet'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%fileB.parquet'");
+            assertQuery("cnt\n5\n", "select count(*) cnt from glob('data/file?.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%file1.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%file2.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%file3.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%fileA.parquet'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%fileB.parquet'", null, false, true);
         });
     }
 
@@ -809,20 +811,20 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobQuestionMarkMultiple() throws Exception {
         assertMemoryLeak(() -> {
             // app_??.log should match app_01.log and app_02.log, but not app_1.log (single digit)
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('logs/app_??.log')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('logs/app_??.log') where path like '%app_01.log'");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('logs/app_??.log') where path like '%app_02.log'");
-            assertSql("cnt\n0\n", "select count(*) cnt from glob('logs/app_??.log') where path like '%app_1.log'");
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('logs/app_??.log')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/app_??.log') where path like '%app_01.log'", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/app_??.log') where path like '%app_02.log'", null, false, true);
+            assertQuery("cnt\n0\n", "select count(*) cnt from glob('logs/app_??.log') where path like '%app_1.log'", null, false, true);
         });
     }
 
     @Test
     public void testGlobReportsYearPattern() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n4\n", "select count(*) cnt from glob('reports/2022/*.parquet')");
-            assertSql("cnt\n4\n", "select count(*) cnt from glob('reports/2023/*.parquet')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('reports/2024/*.parquet')");
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('reports/*/q1.parquet')");
+            assertQuery("cnt\n4\n", "select count(*) cnt from glob('reports/2022/*.parquet')", null, false, true);
+            assertQuery("cnt\n4\n", "select count(*) cnt from glob('reports/2023/*.parquet')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('reports/2024/*.parquet')", null, false, true);
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('reports/*/q1.parquet')", null, false, true);
         });
     }
 
@@ -830,18 +832,18 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobTempDirectory() throws Exception {
         assertMemoryLeak(() -> {
             // temp/ has 5 files, staging/ has 2 files
-            assertSql("cnt\n7\n", "select count(*) cnt from glob('temp/**')");
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('temp/data_*.parquet')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('temp/staging/*.parquet')");
+            assertQuery("cnt\n7\n", "select count(*) cnt from glob('temp/**')", null, false, true);
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('temp/data_*.parquet')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('temp/staging/*.parquet')", null, false, true);
         });
     }
 
     @Test
     public void testGlobTempNumberedFiles() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cnt\n3\n", "select count(*) cnt from glob('temp/data_???.parquet')");
-            assertSql("cnt\n1\n", "select count(*) cnt from glob('temp/data_001.parquet')");
-            assertSql("cnt\n2\n", "select count(*) cnt from glob('temp/data_00[12].parquet')");
+            assertQuery("cnt\n3\n", "select count(*) cnt from glob('temp/data_???.parquet')", null, false, true);
+            assertQuery("cnt\n1\n", "select count(*) cnt from glob('temp/data_001.parquet')", null, false, true);
+            assertQuery("cnt\n2\n", "select count(*) cnt from glob('temp/data_00[12].parquet')", null, false, true);
         });
     }
 

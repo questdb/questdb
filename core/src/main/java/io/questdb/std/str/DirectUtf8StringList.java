@@ -90,9 +90,7 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
         sink.setAscii(sink.isAscii() & us.isAscii());
         final int size = us.size();
         final long dest = sink.ensureCapacity(size);
-        for (int i = 0; i < size; i++) {
-            Unsafe.getUnsafe().putByte(dest + i, us.byteAt(i));
-        }
+        us.writeTo(dest, 0, size);
         sink.advance(size);
         setElem();
         return this;

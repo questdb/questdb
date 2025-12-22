@@ -25,7 +25,6 @@
 package io.questdb.std.str;
 
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
@@ -96,9 +95,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         setAscii(isAscii() & us.isAscii());
         final int size = us.size();
         final long dest = sink.ensureCapacity(size);
-        for (int i = 0; i < size; i++) {
-            Unsafe.getUnsafe().putByte(dest + i, us.byteAt(i));
-        }
+        us.writeTo(dest, 0, size);
         sink.advance(size);
         return this;
     }

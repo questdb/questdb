@@ -102,7 +102,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         for (int i = 0; i < n; i++) {
             int low = patternOffsets.getQuick(i * 2);
             int high = patternOffsets.getQuick(i * 2 + 1);
-            if (hasGlob(glob, low, high) || isCrawl(glob, low, high)) {
+            if (hasGlob(glob, low, high) || isGlobStar(glob, low, high)) {
                 firstGlobSegment = i;
                 break;
             }
@@ -138,7 +138,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
             int low = patternOffsets.getQuick(i * 2);
             int high = patternOffsets.getQuick(i * 2 + 1);
 
-            if (isCrawl(glob, low, high)) {
+            if (isGlobStar(glob, low, high)) {
                 // ** pattern: recursive directory matching
                 if (!isLastSegment) {
                     // ** can match zero directories, so keep current paths
@@ -291,7 +291,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         parseGlobPattern(glob, globOffsets);
         int crawlCount = 0;
         for (int i = 0, n = globOffsets.size() / 2; i < n; i++) {
-            if (isCrawl(glob, globOffsets.getQuick(i * 2), globOffsets.getQuick(i * 2 + 1))) {
+            if (isGlobStar(glob, globOffsets.getQuick(i * 2), globOffsets.getQuick(i * 2 + 1))) {
                 crawlCount++;
             }
         }
@@ -530,14 +530,12 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         // Windows absolute path
         if (glob.size() >= 2) {
             byte secondChar = glob.byteAt(1);
-            if (secondChar == ':' && ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))) {
-                return true;
-            }
+            return secondChar == ':' && ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'));
         }
         return false;
     }
 
-    private static boolean isCrawl(Utf8Sequence segment, int low, int high) {
+    private static boolean isGlobStar(Utf8Sequence segment, int low, int high) {
         return high - low == 2 && segment.byteAt(low) == '*' && segment.byteAt(low + 1) == '*';
     }
 
@@ -884,8 +882,6 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
                 record.of(path, size, modifiedTime);
                 return true;
             }
-            Misc.free(pendingFiles);
-            Misc.free(tempPaths);
             return false;
         }
 
