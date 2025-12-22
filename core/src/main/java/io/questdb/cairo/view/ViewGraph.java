@@ -44,7 +44,7 @@ import java.util.function.Function;
 
 /**
  * Holds view definitions.
- * This object is always in-use, even when views are disabled or the node is a read-only replica.
+ * This object is always in-use, even when the node is a read-only replica.
  */
 public class ViewGraph implements Mutable {
     private static final BiConsumer<ObjList<TableToken>, TableToken> ADD = ObjList::add;

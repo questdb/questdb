@@ -131,7 +131,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
                         final ViewState viewState = engine.getViewStateStore().getViewState(viewToken);
                         if (viewState == null) {
-                            continue; // view was dropped concurrently or views are disabled
+                            continue; // view was dropped concurrently
                         }
 
                         record.of(viewDefinition, viewState);

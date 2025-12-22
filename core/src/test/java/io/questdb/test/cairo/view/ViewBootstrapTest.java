@@ -518,15 +518,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         }
     }
 
-    private static void assertSqlFailureViaPG(String sql) {
-        try {
-            runSqlViaPG(sql);
-            fail("Expected SQLException missing");
-        } catch (SQLException e) {
-            assertContains(e.getMessage(), "views are disabled, set 'cairo.view.enabled=true' in the config to enable them");
-        }
-    }
-
     private static void assertSqlViaPG(String sql, String expectedResult) throws SQLException {
         try (
                 final Connection connection = getPGConnection();
