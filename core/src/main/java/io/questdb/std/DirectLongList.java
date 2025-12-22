@@ -109,6 +109,15 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         }
     }
 
+    // allocates space for the required number of long values
+    public void ensureCapacity(long required) {
+        final long requiredBytes = required << 3;
+        if (pos + requiredBytes <= limit) {
+            return;
+        }
+        setCapacityBytes(Math.max(capacity << 1, capacity + requiredBytes));
+    }
+
     public void fill(int v) {
         Vect.memset(address, capacity, v);
     }
@@ -120,6 +129,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     // base address of native memory
     public long getAddress() {
         return address;
+    }
+
+    public long getAppendAddress() {
+        return pos;
     }
 
     // capacity in LONGs
@@ -176,6 +189,11 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     public long size() {
         return (pos - address) >>> 3;
+    }
+
+    public void skip(long p) {
+        assert pos + p * Long.BYTES <= limit;
+        pos += p << 3;
     }
 
     public void sortAsUnsigned() {

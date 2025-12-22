@@ -46,6 +46,8 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     protected final IntList columnSizeShifts;
     protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
     protected TablePageFrameCursor pageFrameCursor;
+    protected int pageFrameMaxRows;
+    protected int pageFrameMinRows;
 
     public AbstractPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -58,6 +60,12 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         this.partitionFrameCursorFactory = partitionFrameCursorFactory;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
+    }
+
+    @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        this.pageFrameMinRows = minRows;
+        this.pageFrameMaxRows = maxRows;
     }
 
     @Override

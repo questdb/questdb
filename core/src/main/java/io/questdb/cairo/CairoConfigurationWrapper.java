@@ -1027,6 +1027,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSmallPageFrameMaxRows() {
+        return getDelegate().getSqlSmallPageFrameMaxRows();
+    }
+
+    @Override
+    public int getSqlSmallPageFrameMinRows() {
+        return getDelegate().getSqlSmallPageFrameMinRows();
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return getDelegate().getSqlSortKeyMaxPages();
     }
@@ -1322,6 +1332,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCopierChunkedEnabled() {
+        return getDelegate().isCopierChunkedEnabled();
+    }
+
+    @Override
+    public int getCopierType() {
+        return getDelegate().getCopierType();
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return getDelegate().isDevModeEnabled();
     }
@@ -1424,6 +1444,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelTopKEnabled() {
         return getDelegate().isSqlParallelTopKEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowJoinEnabled() {
+        return getDelegate().isSqlParallelWindowJoinEnabled();
     }
 
     @Override

@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -198,6 +199,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     WindowContext getWindowContext();
 
+    int hasInterval();
+
     void initNow();
 
     boolean isCacheHit();
@@ -215,6 +218,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelTopKEnabled();
 
+    boolean isParallelWindowJoinEnabled();
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -231,7 +236,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
     }
 
+    RuntimeIntrinsicIntervalModel peekIntervalModel();
+
+    void popHasInterval();
+
+    void popIntervalModel();
+
     void popTimestampRequiredFlag();
+
+    void pushHasInterval(int hasInterval);
+
+    void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel);
 
     void pushTimestampRequiredFlag(boolean flag);
 
@@ -258,6 +273,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
+    void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
 
     void setRandom(Rnd rnd);
 

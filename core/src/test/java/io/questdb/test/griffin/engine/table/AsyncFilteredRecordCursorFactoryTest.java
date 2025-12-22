@@ -53,6 +53,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -1287,6 +1288,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public int hasInterval() {
+            return sqlExecutionContext.hasInterval();
+        }
+
+        @Override
         public void initNow() {
             sqlExecutionContext.initNow();
         }
@@ -1317,6 +1323,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isParallelWindowJoinEnabled() {
+            return sqlExecutionContext.isParallelWindowJoinEnabled();
+        }
+
+        @Override
         public boolean isTimestampRequired() {
             return sqlExecutionContext.isTimestampRequired();
         }
@@ -1332,8 +1343,29 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public RuntimeIntrinsicIntervalModel peekIntervalModel() {
+            return sqlExecutionContext.peekIntervalModel();
+        }
+
+        public void popHasInterval() {
+            sqlExecutionContext.popHasInterval();
+        }
+
+        public void popIntervalModel() {
+            sqlExecutionContext.popIntervalModel();
+        }
+
+        @Override
         public void popTimestampRequiredFlag() {
             sqlExecutionContext.popTimestampRequiredFlag();
+        }
+
+        public void pushHasInterval(int hasInterval) {
+            sqlExecutionContext.pushHasInterval(hasInterval);
+        }
+
+        public void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel) {
+            sqlExecutionContext.pushIntervalModel(intervalModel);
         }
 
         @Override
@@ -1399,6 +1431,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
             sqlExecutionContext.setParallelTopKEnabled(parallelTopKEnabled);
+        }
+
+        @Override
+        public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
+            sqlExecutionContext.setParallelWindowJoinEnabled(parallelWindowJoinEnabled);
         }
 
         @Override
