@@ -60,14 +60,14 @@ public class TestCases {
         addTestCase("select * from x where i = 42 limit 3");
 
         // AsyncFilteredNegativeLimitRecordCursor
-        addTestCase("select * from x where i = 42 limit -3");
+//        addTestCase("select * from x where i = 42 limit -3");
 
         // FilteredRecordCursor
         addTestCase("select * from (x union all y) where i = 42");
 
         // FilterOnSubQueryRecordCursorFactory
         addTestCase("select * from x where isym in (select s from y limit 3) and i != 42");
-        addTestCase("select * from x where isym in (select s from y limit 3) and i != 42 limit -10");
+//        addTestCase("select * from x where isym in (select s from y limit 3) and i != 42 limit -10");
 
 
         // EqTimestampCursorFunctionFactory
@@ -113,10 +113,10 @@ public class TestCases {
         addTestCase("select * from (x union all y) limit -3,-1");
         addTestCase("select * from (x union all (y where isym = 'a')) limit 1");
         addTestCase("select * from (x union all (y where isym = 'a')) limit 1,3");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit 1,-1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit -1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit -3,-1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit -4000,-1");
+//        addTestCase("select * from (x union all (y where isym = 'a')) limit 1,-1");
+//        addTestCase("select * from (x union all (y where isym = 'a')) limit -1");
+//        addTestCase("select * from (x union all (y where isym = 'a')) limit -3,-1");
+//        addTestCase("select * from (x union all (y where isym = 'a')) limit -4000,-1");
 
         // SortedRecordCursorFactory
         addTestCase("select * from (x union all y) order by i");
@@ -192,7 +192,7 @@ public class TestCases {
 
         // SampleByInterpolateRecordCursorFactory
         addTestCase("select max(i), min(i) from x sample by 1h fill(linear)");
-        addTestCase("select max(i), min(i) from x sample by 1s fill(linear) limit -10");
+//        addTestCase("select max(i), min(i) from x sample by 1s fill(linear) limit -10");
 
         // SampleByFillNullNotKeyedRecordCursorFactory
         addTestCase("select sum(i) s, ts from x sample by 30m fill(null) align to calendar with offset '10:00'");

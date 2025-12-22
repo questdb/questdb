@@ -61,6 +61,7 @@ public class RecordArray extends RecordChain {
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         counter.add(size - nextRecordIndex);
+        nextRecordIndex = size;
     }
 
     @Override
