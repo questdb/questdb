@@ -229,22 +229,33 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // the following call overwrites the path
                                         final boolean matViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
                                         if (matViewStateExists) {
-                                            matViewFileReader.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                                            if (matViewStateReader == null) {
-                                                matViewStateReader = new MatViewStateReader();
+                                            boolean matViewStateValid = false;
+                                            try {
+                                                matViewFileReader.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                                matViewStateValid = true;
+                                            } catch (CairoException e) {
+                                                // ApplyWal2TableJob might be creating the mat view state file concurrently, to avoid any
+                                                // concurrency issues we skip copying the mat view state file in this case.
+                                                LOG.info().$("skipping, materialized view state file is not accessible [view=").$(tableToken).I$();
                                             }
-                                            matViewStateReader.of(matViewFileReader, tableToken);
-                                            mvBaseTableTxn = matViewStateReader.getLastRefreshBaseTxn();
-                                            // restore the path
-                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
-                                            matViewFileWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                                            MatViewState.append(matViewStateReader, matViewFileWriter);
+                                            if (matViewStateValid) {
+                                                if (matViewStateReader == null) {
+                                                    matViewStateReader = new MatViewStateReader();
+                                                }
+                                                matViewStateReader.of(matViewFileReader, tableToken);
+                                                mvBaseTableTxn = matViewStateReader.getLastRefreshBaseTxn();
+                                                // restore the path
+                                                path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
-                                            // Mark this mat view for potential interval update in phase 2
-                                            matViewsToUpdate.add(tableToken);
+                                                matViewFileWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                                MatViewState.append(matViewStateReader, matViewFileWriter);
 
-                                            LOG.info().$("materialized view state included in the checkpoint [view=").$(tableToken).I$();
+                                                // Mark this mat view for potential interval update in phase 2
+                                                matViewsToUpdate.add(tableToken);
+
+                                                LOG.info().$("materialized view state included in the checkpoint [view=").$(tableToken).I$();
+                                            }
                                         } else {
                                             LOG.info().$("materialized view state not found [view=").$(tableToken).I$();
                                         }
