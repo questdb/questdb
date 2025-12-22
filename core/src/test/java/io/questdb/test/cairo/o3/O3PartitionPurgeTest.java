@@ -227,7 +227,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 execute("insert into tbl select 4, '1970-01-10T09'");
 
                 // This should lock partition 1970-01-10.1 from being deleted from the disk
-                engine.checkpointCreate(sqlExecutionContext);
+                engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), false);
                 runPartitionPurgeJobs();
                 testPartitionExist(path, len, true, false, false);
 

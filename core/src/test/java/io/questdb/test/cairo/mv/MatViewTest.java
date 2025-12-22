@@ -3167,6 +3167,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testIncrementalRefreshRecoversWhenWalSegmentIsGone() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price ( " +

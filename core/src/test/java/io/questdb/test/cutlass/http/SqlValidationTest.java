@@ -148,13 +148,7 @@ public class SqlValidationTest extends AbstractCairoTest {
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"query\":\"backup table hello\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}",
-                                "backup table hello"
-                        );
-
-                        testHttpClient.assertGet(
-                                "/api/v1/sql/validate",
-                                "{\"query\":\"backup database\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}",
+                                "{\"query\":\"backup database\",\"error\":\"incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup\",\"position\":0}",
                                 "backup database"
                         );
 
