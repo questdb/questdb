@@ -81,6 +81,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         final byte format = reader.getPartitionFormat(frame.partitionIndex);
         if (format == PartitionFormat.PARQUET) {
             frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(frame.partitionIndex);
+            assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
             frame.format = PartitionFormat.PARQUET;
             return frame;
         }

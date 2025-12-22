@@ -165,6 +165,22 @@ public class PartitionDecoder implements QuietCloseable {
         metadata.init();
     }
 
+    /**
+     * Creates a non-owning shallow copy that shares native metadata with the source decoder.
+     * <p>
+     * This instance will reference the same native {@code ParquetDecoder} (via {@code ptr}) as
+     * {@code other}, but will create its own {@code DecodeContext} lazily when decoding.
+     * <p>
+     * <b>Lifetime requirement:</b> The source decoder ({@code other}) must remain open and valid
+     * for the entire lifetime of this instance. Closing or reinitializing {@code other} while
+     * this instance is in use will result in use-after-free of native memory.
+     * <p>
+     * Typical usage: {@code PageFrameMemoryPool} creates thread-local decoders that copy metadata
+     * from a shared decoder owned by {@code TableReader}. The TableReader must outlive all
+     * worker threads using the copied decoders.
+     *
+     * @param other the source decoder whose metadata will be shared (must remain valid)
+     */
     public void of(PartitionDecoder other) {
         this.fileAddr = other.fileAddr;
         this.fileSize = other.fileSize;
