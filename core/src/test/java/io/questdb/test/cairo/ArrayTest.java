@@ -2434,7 +2434,7 @@ public class ArrayTest extends AbstractCairoTest {
                             "\tSAMPLE BY 1m) LIMIT 5;",
                     "timestamp",
                     true,
-                    true);
+                    false);
         });
     }
 
