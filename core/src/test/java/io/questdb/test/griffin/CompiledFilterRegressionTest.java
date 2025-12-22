@@ -114,6 +114,77 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnAddressHoistingExceedsCacheCapacity() throws Exception {
+        // Tests column address hoisting with more than 8 columns (exceeds cache capacity)
+        // The backend address cache has capacity of 8 elements
+        final String query = "select * from x where " +
+                "c1 > 0 and c2 > 0 and c3 > 0 and c4 > 0 " +
+                "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0 " +
+                "and c9 > 0 and c10 > 0 and c11 > 0 and c12 > 0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long() c1," +
+                " rnd_long() c2," +
+                " rnd_long() c3," +
+                " rnd_long() c4," +
+                " rnd_long() c5," +
+                " rnd_long() c6," +
+                " rnd_long() c7," +
+                " rnd_long() c8," +
+                " rnd_long() c9," +
+                " rnd_long() c10," +
+                " rnd_long() c11," +
+                " rnd_long() c12" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnAddressHoistingMixedTypes() throws Exception {
+        // Tests column address hoisting with mixed types exceeding cache capacity
+        final String query = "select * from x where " +
+                "i1 > 0 and i2 > 0 and i3 > 0 and l1 > 0 and l2 > 0 and l3 > 0 " +
+                "and f1 > 0.0 and f2 > 0.0 and f3 > 0.0 " +
+                "and d1 > 0.0 and d2 > 0.0 and d3 > 0.0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int() i1," +
+                " rnd_int() i2," +
+                " rnd_int() i3," +
+                " rnd_long() l1," +
+                " rnd_long() l2," +
+                " rnd_long() l3," +
+                " rnd_float() f1," +
+                " rnd_float() f2," +
+                " rnd_float() f3," +
+                " rnd_double() d1," +
+                " rnd_double() d2," +
+                " rnd_double() d3" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnAddressHoistingWithinCacheCapacity() throws Exception {
+        // Tests column address hoisting with 8 columns (within cache capacity of 8)
+        final String query = "select * from x where " +
+                "c1 > 0 and c2 > 0 and c3 > 0 and c4 > 0 " +
+                "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long() c1," +
+                " rnd_long() c2," +
+                " rnd_long() c3," +
+                " rnd_long() c4," +
+                " rnd_long() c5," +
+                " rnd_long() c6," +
+                " rnd_long() c7," +
+                " rnd_long() c8" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
     public void testColumnArithmetics() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -233,6 +304,88 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnValueCacheExceedsCapacity() throws Exception {
+        // Tests when column value cache exceeds capacity (8 elements)
+        // Each column access creates a cache entry
+        final String query = "select * from x where " +
+                "c1 > 0 and c1 < 100 and c2 > 0 and c2 < 100 " +
+                "and c3 > 0 and c3 < 100 and c4 > 0 and c4 < 100 " +
+                "and c5 > 0 and c5 < 100";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 200, 0) c1," +
+                " rnd_long(0, 200, 0) c2," +
+                " rnd_long(0, 200, 0) c3," +
+                " rnd_long(0, 200, 0) c4," +
+                " rnd_long(0, 200, 0) c5" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnValueCachingInArithmetic() throws Exception {
+        // Tests column value caching when column is used in arithmetic expressions
+        final String query = "select * from x where " +
+                "i64 + i64 > 100 and i64 * 2 < 180";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnValueCachingMixedTypes() throws Exception {
+        // Tests column value caching with multiple columns of different types
+        final String query = "select * from x where " +
+                "i32 > 10 and i32 < 90 and i64 > 20 and i64 < 80 " +
+                "and f64 > 0.1 and f64 < 0.9";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(0, 100, 0) i32," +
+                " rnd_long(0, 100, 0) i64," +
+                " rnd_double() f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnValueCachingSameColumnMultipleTimes() throws Exception {
+        // Tests column value caching when the same column is used multiple times
+        // The backend caches loaded column values within a single row iteration
+        final String query = "select * from x where " +
+                "i64 > 10 and i64 < 90 and i64 != 50";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testCombinedHoistingExceedsBothCaches() throws Exception {
+        // Tests both constant and column address hoisting exceeding cache capacities
+        final String query = "select * from x where " +
+                "c1 > 1 and c2 > 2 and c3 > 3 and c4 > 4 " +
+                "and c5 > 5 and c6 > 6 and c7 > 7 and c8 > 8 " +
+                "and c9 > 9 and c10 > 10";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) c1," +
+                " rnd_long(0, 100, 0) c2," +
+                " rnd_long(0, 100, 0) c3," +
+                " rnd_long(0, 100, 0) c4," +
+                " rnd_long(0, 100, 0) c5," +
+                " rnd_long(0, 100, 0) c6," +
+                " rnd_long(0, 100, 0) c7," +
+                " rnd_long(0, 100, 0) c8," +
+                " rnd_long(0, 100, 0) c9," +
+                " rnd_long(0, 100, 0) c10" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
     public void testConstantColumnArithmetics() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -253,6 +406,51 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withAnyOf(" > 1");
         assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testConstantHoistingExceedsCacheCapacity() throws Exception {
+        // Tests constant hoisting with more than 8 constants (exceeds cache capacity)
+        // The backend constant cache has capacity of 8 elements
+        final String query = "select * from x where " +
+                "i64 > 1 and i64 < 100 and i64 != 10 and i64 != 20 " +
+                "and i64 != 30 and i64 != 40 and i64 != 50 and i64 != 60 " +
+                "and i64 != 70 and i64 != 80 and i64 != 90";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 200, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testConstantHoistingMixedTypes() throws Exception {
+        // Tests constant hoisting with mixed types exceeding cache capacity
+        final String query = "select * from x where " +
+                "i32 > 1 and i32 < 100 and i64 > 2 and i64 < 200 " +
+                "and f32 > 0.1 and f32 < 0.9 and f64 > 0.2 and f64 < 0.8 " +
+                "and i32 != 50 and i64 != 100 and f32 != 0.5 and f64 != 0.5";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(0, 200, 0) i32," +
+                " rnd_long(0, 300, 0) i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testConstantHoistingWithinCacheCapacity() throws Exception {
+        // Tests constant hoisting with 8 constants (within cache capacity of 8)
+        final String query = "select * from x where " +
+                "i64 > 1 and i64 < 100 and i64 != 50 and i64 != 51 " +
+                "and i64 != 52 and i64 != 53 and i64 != 54 and i64 != 55";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 200, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -338,31 +536,44 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInOperatorInt() throws Exception {
+    public void testHugeFilter() throws Exception {
+        final int N = 682; // depends on memory configuration for a jit IR
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(1, 10, 0) i32," +
-                " rnd_long(1, 10, 0) i64" +
+                " rnd_long() i64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("i32", "i64")
-                .withAnyOf(" in ", " not in ")
-                .withAnyOf("(1, 2, 3)", "(4, 5)", "(6, 7, 8, 9)");
+
+        FilterGenerator gen = new FilterGenerator();
+        for (int i = 0; i < N; i++) {
+            if (i > 0) {
+                gen.withAnyOf(" and ");
+            }
+            gen.withAnyOf("i64 != 0");
+        }
         assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
-    public void testInOperatorIntWithNull() throws Exception {
+    public void testInOperatorChained() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(1, 10, 5) i32," +
-                " rnd_long(1, 10, 5) i64" +
+                " rnd_int(1, 10, 0) a," +
+                " rnd_int(1, 10, 0) b," +
+                " rnd_int(1, 10, 0) c" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("i32", "i64")
+                .withAnyOf("a")
                 .withAnyOf(" in ", " not in ")
-                .withAnyOf("(1, 2, null)", "(null, 4, 5)", "(6, null)");
-        assertGeneratedQueryNullable(ddl, gen);
+                .withAnyOf("(1, 2)")
+                .withBooleanOperator()
+                .withAnyOf("b")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(3, 4)")
+                .withBooleanOperator()
+                .withAnyOf("c")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(5, 6)");
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -394,66 +605,56 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInOperatorWithBooleanOperators() throws Exception {
+    public void testInOperatorInt() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(1, 20, 0) i32," +
-                " rnd_long(1, 20, 0) i64," +
-                " rnd_float() f32," +
-                " rnd_double() f64" +
+                " rnd_int(1, 10, 0) i32," +
+                " rnd_long(1, 10, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
                 .withAnyOf("i32", "i64")
                 .withAnyOf(" in ", " not in ")
-                .withAnyOf("(1, 2, 3)", "(10, 11, 12)")
-                .withBooleanOperator()
-                .withAnyOf("f32", "f64")
-                .withComparisonOperator()
-                .withAnyOf("0.5");
+                .withAnyOf("(1, 2, 3)", "(4, 5)", "(6, 7, 8, 9)");
         assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
-    public void testInOperatorWithBooleanOperatorsAndNull() throws Exception {
+    public void testInOperatorIntWithNull() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(1, 20, 5) i32," +
-                " rnd_long(1, 20, 5) i64," +
-                " rnd_float(5) f32," +
-                " rnd_double(5) f64" +
+                " rnd_int(1, 10, 5) i32," +
+                " rnd_long(1, 10, 5) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
                 .withAnyOf("i32", "i64")
                 .withAnyOf(" in ", " not in ")
-                .withAnyOf("(1, 2, null)", "(null, 10, 11)")
-                .withBooleanOperator()
-                .withAnyOf("f32", "f64")
-                .withAnyOf(" = ", " <> ")
-                .withAnyOf("null");
+                .withAnyOf("(1, 2, null)", "(null, 4, 5)", "(6, null)");
         assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
-    public void testInOperatorChained() throws Exception {
+    public void testInOperatorManyValues() throws Exception {
+        // Tests IN operator with many values (exceeds typical unroll thresholds)
+        final String query = "select * from x where " +
+                "i64 in (1, 2, 3, 4, 5, 6, 7, 8, 9)";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(1, 20, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testInOperatorNestedWithAndOr() throws Exception {
+        // Tests IN operator nested within AND/OR expressions
+        final String query = "select * from x where " +
+                "(a in (1, 2) and b > 5) or (a in (8, 9) and b < 3)";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_int(1, 10, 0) a," +
-                " rnd_int(1, 10, 0) b," +
-                " rnd_int(1, 10, 0) c" +
+                " rnd_int(1, 10, 0) b" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("a")
-                .withAnyOf(" in ", " not in ")
-                .withAnyOf("(1, 2)")
-                .withBooleanOperator()
-                .withAnyOf("b")
-                .withAnyOf(" in ", " not in ")
-                .withAnyOf("(3, 4)")
-                .withBooleanOperator()
-                .withAnyOf("c")
-                .withAnyOf(" in ", " not in ")
-                .withAnyOf("(5, 6)");
-        assertGeneratedQueryNotNull(ddl, gen);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -470,6 +671,49 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("i32", "i64", "f32", "f64")
                 .withAnyOf(" in ", " not in ")
                 .withAnyOf("(5)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorSingleValueChained() throws Exception {
+        // Tests multiple single-value IN() conditions chained with AND/OR
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 5, 0) a," +
+                " rnd_int(1, 5, 0) b," +
+                " rnd_int(1, 5, 0) c" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("a")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(1)")
+                .withBooleanOperator()
+                .withAnyOf("b")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(2)")
+                .withBooleanOperator()
+                .withAnyOf("c")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(3)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorSingleValueWithBooleanOperators() throws Exception {
+        // Tests single-value IN() combined with AND/OR for short-circuit evaluation
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 0) i32," +
+                " rnd_long(1, 10, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(5)")
+                .withBooleanOperator()
+                .withAnyOf("i64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(7)");
         assertGeneratedQueryNotNull(ddl, gen);
     }
 
@@ -525,64 +769,57 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInOperatorSingleValueWithBooleanOperators() throws Exception {
-        // Tests single-value IN() combined with AND/OR for short-circuit evaluation
+    public void testInOperatorWithBooleanOperators() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(1, 10, 0) i32," +
-                " rnd_long(1, 10, 0) i64" +
+                " rnd_int(1, 20, 0) i32," +
+                " rnd_long(1, 20, 0) i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("i32")
+                .withAnyOf("i32", "i64")
                 .withAnyOf(" in ", " not in ")
-                .withAnyOf("(5)")
+                .withAnyOf("(1, 2, 3)", "(10, 11, 12)")
                 .withBooleanOperator()
-                .withAnyOf("i64")
-                .withAnyOf(" in ", " not in ")
-                .withAnyOf("(7)");
+                .withAnyOf("f32", "f64")
+                .withComparisonOperator()
+                .withAnyOf("0.5");
         assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
-    public void testInOperatorSingleValueChained() throws Exception {
-        // Tests multiple single-value IN() conditions chained with AND/OR
+    public void testInOperatorWithBooleanOperatorsAndNull() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(1, 5, 0) a," +
-                " rnd_int(1, 5, 0) b," +
-                " rnd_int(1, 5, 0) c" +
+                " rnd_int(1, 20, 5) i32," +
+                " rnd_long(1, 20, 5) i64," +
+                " rnd_float(5) f32," +
+                " rnd_double(5) f64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("a")
+                .withAnyOf("i32", "i64")
                 .withAnyOf(" in ", " not in ")
-                .withAnyOf("(1)")
+                .withAnyOf("(1, 2, null)", "(null, 10, 11)")
                 .withBooleanOperator()
-                .withAnyOf("b")
-                .withAnyOf(" in ", " not in ")
-                .withAnyOf("(2)")
-                .withBooleanOperator()
-                .withAnyOf("c")
-                .withAnyOf(" in ", " not in ")
-                .withAnyOf("(3)");
-        assertGeneratedQueryNotNull(ddl, gen);
+                .withAnyOf("f32", "f64")
+                .withAnyOf(" = ", " <> ")
+                .withAnyOf("null");
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
-    public void testHugeFilter() throws Exception {
-        final int N = 682; // depends on memory configuration for a jit IR
+    public void testInOperatorWithOrChain() throws Exception {
+        // Tests IN operator combined with OR chain
+        final String query = "select * from x where " +
+                "a in (1, 2, 3) or b in (4, 5, 6) or c > 90";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long() i64 " +
+                " rnd_int(1, 10, 0) a," +
+                " rnd_int(1, 10, 0) b," +
+                " rnd_long(0, 100, 0) c" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-
-        FilterGenerator gen = new FilterGenerator();
-        for (int i = 0; i < N; i++) {
-            if (i > 0) {
-                gen.withAnyOf(" and ");
-            }
-            gen.withAnyOf("i64 != 0");
-        }
-        assertGeneratedQueryNotNull(ddl, gen);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -650,6 +887,48 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotInOperatorFloat() throws Exception {
+        // Tests NOT IN operator with floats
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_double() f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("f64")
+                .withAnyOf(" not in ")
+                .withAnyOf("(0.1, 0.2, 0.3)", "(0.5, 0.6)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testNotInOperatorInt() throws Exception {
+        // Tests NOT IN operator with integers
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 0) i32" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32")
+                .withAnyOf(" not in ")
+                .withAnyOf("(1, 2, 3)", "(5, 6, 7, 8)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testNotInOperatorWithNull() throws Exception {
+        // Tests NOT IN operator with null in the list
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 5) i32" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32")
+                .withAnyOf(" not in ")
+                .withAnyOf("(1, 2, null)", "(5, null, 7)");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
     public void testNullComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -693,6 +972,87 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByDesc() throws Exception {
         testOrderBy("order by ts desc");
+    }
+
+    @Test
+    public void testShortCircuitAndDeepChain() throws Exception {
+        // Tests short-circuit AND with a deep chain of predicates
+        final String query = "select * from x where " +
+                "i64 > 10 and i64 < 90 and i64 != 20 and i64 != 30 " +
+                "and i64 != 40 and i64 != 50 and i64 != 60 and i64 != 70";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitAndEarlyExit() throws Exception {
+        // Tests short-circuit AND where first predicate is usually false
+        // This tests early exit optimization
+        final String query = "select * from x where " +
+                "i64 > 95 and i64 < 100 and i32 > 0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64," +
+                " rnd_int() i32" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitMixedAndOr() throws Exception {
+        // Tests mixed AND/OR chains with short-circuit evaluation
+        final String query = "select * from x where " +
+                "(i64 > 20 and i64 < 40) or (i64 > 60 and i64 < 80)";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitNestedAndOr() throws Exception {
+        // Tests nested AND/OR with multiple levels
+        final String query = "select * from x where " +
+                "(a > 10 and b > 10) or (c > 10 and d > 10) or (a < 5 and c < 5)";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) a," +
+                " rnd_long(0, 100, 0) b," +
+                " rnd_long(0, 100, 0) c," +
+                " rnd_long(0, 100, 0) d" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitOrDeepChain() throws Exception {
+        // Tests short-circuit OR with a deep chain of predicates
+        final String query = "select * from x where " +
+                "i64 = 10 or i64 = 20 or i64 = 30 or i64 = 40 " +
+                "or i64 = 50 or i64 = 60 or i64 = 70 or i64 = 80";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testShortCircuitOrEarlyExit() throws Exception {
+        // Tests short-circuit OR where first predicate is usually true
+        // This tests early exit optimization
+        final String query = "select * from x where " +
+                "i64 < 95 or i64 = 99 or i32 < 0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) i64," +
+                " rnd_int() i32" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -836,145 +1196,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withEqualityOperator()
                 .withAnyOf("null");
         assertGeneratedQueryNullable(ddl, gen);
-    }
-
-    @Test
-    public void testConstantHoistingWithinCacheCapacity() throws Exception {
-        // Tests constant hoisting with 8 constants (within cache capacity of 8)
-        final String query = "select * from x where " +
-                "i64 > 1 and i64 < 100 and i64 != 50 and i64 != 51 " +
-                "and i64 != 52 and i64 != 53 and i64 != 54 and i64 != 55";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(0, 200, 0) i64" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testConstantHoistingExceedsCacheCapacity() throws Exception {
-        // Tests constant hoisting with more than 8 constants (exceeds cache capacity)
-        // The backend constant cache has capacity of 8 elements
-        final String query = "select * from x where " +
-                "i64 > 1 and i64 < 100 and i64 != 10 and i64 != 20 " +
-                "and i64 != 30 and i64 != 40 and i64 != 50 and i64 != 60 " +
-                "and i64 != 70 and i64 != 80 and i64 != 90";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(0, 200, 0) i64" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testConstantHoistingMixedTypes() throws Exception {
-        // Tests constant hoisting with mixed types exceeding cache capacity
-        final String query = "select * from x where " +
-                "i32 > 1 and i32 < 100 and i64 > 2 and i64 < 200 " +
-                "and f32 > 0.1 and f32 < 0.9 and f64 > 0.2 and f64 < 0.8 " +
-                "and i32 != 50 and i64 != 100 and f32 != 0.5 and f64 != 0.5";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(0, 200, 0) i32," +
-                " rnd_long(0, 300, 0) i64," +
-                " rnd_float() f32," +
-                " rnd_double() f64" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testColumnAddressHoistingWithinCacheCapacity() throws Exception {
-        // Tests column address hoisting with 8 columns (within cache capacity of 8)
-        final String query = "select * from x where " +
-                "c1 > 0 and c2 > 0 and c3 > 0 and c4 > 0 " +
-                "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long() c1," +
-                " rnd_long() c2," +
-                " rnd_long() c3," +
-                " rnd_long() c4," +
-                " rnd_long() c5," +
-                " rnd_long() c6," +
-                " rnd_long() c7," +
-                " rnd_long() c8" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testColumnAddressHoistingExceedsCacheCapacity() throws Exception {
-        // Tests column address hoisting with more than 8 columns (exceeds cache capacity)
-        // The backend address cache has capacity of 8 elements
-        final String query = "select * from x where " +
-                "c1 > 0 and c2 > 0 and c3 > 0 and c4 > 0 " +
-                "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0 " +
-                "and c9 > 0 and c10 > 0 and c11 > 0 and c12 > 0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long() c1," +
-                " rnd_long() c2," +
-                " rnd_long() c3," +
-                " rnd_long() c4," +
-                " rnd_long() c5," +
-                " rnd_long() c6," +
-                " rnd_long() c7," +
-                " rnd_long() c8," +
-                " rnd_long() c9," +
-                " rnd_long() c10," +
-                " rnd_long() c11," +
-                " rnd_long() c12" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testColumnAddressHoistingMixedTypes() throws Exception {
-        // Tests column address hoisting with mixed types exceeding cache capacity
-        final String query = "select * from x where " +
-                "i1 > 0 and i2 > 0 and i3 > 0 and l1 > 0 and l2 > 0 and l3 > 0 " +
-                "and f1 > 0.0 and f2 > 0.0 and f3 > 0.0 " +
-                "and d1 > 0.0 and d2 > 0.0 and d3 > 0.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int() i1," +
-                " rnd_int() i2," +
-                " rnd_int() i3," +
-                " rnd_long() l1," +
-                " rnd_long() l2," +
-                " rnd_long() l3," +
-                " rnd_float() f1," +
-                " rnd_float() f2," +
-                " rnd_float() f3," +
-                " rnd_double() d1," +
-                " rnd_double() d2," +
-                " rnd_double() d3" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testCombinedHoistingExceedsBothCaches() throws Exception {
-        // Tests both constant and column address hoisting exceeding cache capacities
-        final String query = "select * from x where " +
-                "c1 > 1 and c2 > 2 and c3 > 3 and c4 > 4 " +
-                "and c5 > 5 and c6 > 6 and c7 > 7 and c8 > 8 " +
-                "and c9 > 9 and c10 > 10";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(0, 100, 0) c1," +
-                " rnd_long(0, 100, 0) c2," +
-                " rnd_long(0, 100, 0) c3," +
-                " rnd_long(0, 100, 0) c4," +
-                " rnd_long(0, 100, 0) c5," +
-                " rnd_long(0, 100, 0) c6," +
-                " rnd_long(0, 100, 0) c7," +
-                " rnd_long(0, 100, 0) c8," +
-                " rnd_long(0, 100, 0) c9," +
-                " rnd_long(0, 100, 0) c10" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
     }
 
     private void assertGeneratedQuery(CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
