@@ -291,4 +291,60 @@ private:
     asmjit::x86::Xmm xmm_regs[MAX_VALUES];
 };
 
+// Cache for pre-broadcasted constants in YMM registers for AVX2 SIMD loops
+struct ConstantCacheYmm {
+    static constexpr size_t MAX_CONSTANTS = 8;
+
+    ConstantCacheYmm() : count(0) {}
+
+    // Find an integer constant and return its YMM register
+    bool findInt(int64_t value, asmjit::x86::Ymm &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (!is_float[i] && int_values[i] == value) {
+                out_reg = ymm_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Find a float constant and return its YMM register
+    bool findFloat(double value, asmjit::x86::Ymm &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (is_float[i] && float_values[i] == value) {
+                out_reg = ymm_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Add an integer constant
+    void addInt(int64_t value, asmjit::x86::Ymm reg) {
+        if (count < MAX_CONSTANTS) {
+            is_float[count] = false;
+            int_values[count] = value;
+            ymm_regs[count] = reg;
+            count++;
+        }
+    }
+
+    // Add a float constant
+    void addFloat(double value, asmjit::x86::Ymm reg) {
+        if (count < MAX_CONSTANTS) {
+            is_float[count] = true;
+            float_values[count] = value;
+            ymm_regs[count] = reg;
+            count++;
+        }
+    }
+
+private:
+    size_t count;
+    bool is_float[MAX_CONSTANTS];
+    int64_t int_values[MAX_CONSTANTS];
+    double float_values[MAX_CONSTANTS];
+    asmjit::x86::Ymm ymm_regs[MAX_CONSTANTS];
+};
+
 #endif //QUESTDB_JIT_COMMON_H

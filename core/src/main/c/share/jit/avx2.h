@@ -42,6 +42,82 @@ namespace questdb::avx2 {
         }
     }
 
+    // Pre-scan instruction stream and broadcast constants into YMM registers before the loop.
+    // This hoists constant broadcasts out of the hot loop.
+    void preload_constants_ymm(Compiler &c,
+                               const instruction_t *istream,
+                               size_t size,
+                               ConstantCacheYmm &cache) {
+        const auto scope = ConstPool::kScopeLocal;
+        for (size_t i = 0; i < size; ++i) {
+            auto &instr = istream[i];
+            if (instr.opcode == opcodes::Imm) {
+                auto type = static_cast<data_type_t>(instr.options);
+                switch (type) {
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
+                    case data_type_t::i64: {
+                        int64_t value = instr.ipayload.lo;
+                        Ymm dummy;
+                        if (!cache.findInt(value, dummy)) {
+                            Ymm reg = c.newYmm("const_ymm_%lld", value);
+                            switch (type) {
+                                case data_type_t::i8: {
+                                    auto v = static_cast<int8_t>(value);
+                                    Mem mem = c.newConst(scope, &v, 1);
+                                    c.vpbroadcastb(reg, mem);
+                                    break;
+                                }
+                                case data_type_t::i16: {
+                                    auto v = static_cast<int16_t>(value);
+                                    Mem mem = c.newConst(scope, &v, 2);
+                                    c.vpbroadcastw(reg, mem);
+                                    break;
+                                }
+                                case data_type_t::i32: {
+                                    auto v = static_cast<int32_t>(value);
+                                    Mem mem = c.newConst(scope, &v, 4);
+                                    c.vpbroadcastd(reg, mem);
+                                    break;
+                                }
+                                case data_type_t::i64: {
+                                    Mem mem = c.newConst(scope, &value, 8);
+                                    c.vpbroadcastq(reg, mem);
+                                    break;
+                                }
+                                default:
+                                    break;
+                            }
+                            cache.addInt(value, reg);
+                        }
+                        break;
+                    }
+                    case data_type_t::f32:
+                    case data_type_t::f64: {
+                        double value = instr.dpayload;
+                        Ymm dummy;
+                        if (!cache.findFloat(value, dummy)) {
+                            Ymm reg = c.newYmm("const_ymm_f_%f", value);
+                            if (type == data_type_t::f32) {
+                                Mem mem = c.newFloatConst(scope, static_cast<float>(value));
+                                c.vbroadcastss(reg, mem);
+                            } else {
+                                Mem mem = c.newDoubleConst(scope, value);
+                                c.vbroadcastsd(reg, mem);
+                            }
+                            cache.addFloat(value, reg);
+                        }
+                        break;
+                    }
+                    default:
+                        // i128 constants are rare, skip caching
+                        break;
+                }
+            }
+        }
+    }
+
     inline static void unrolled_loop2(Compiler &c,
                                       const Gp &bits,
                                       const Gp &rows_ptr,
@@ -302,10 +378,28 @@ namespace questdb::avx2 {
         return {row_data, type, data_kind_t::kMemory};
     }
 
-    jit_value_t read_imm(Compiler &c, const instruction_t &instr) {
+    jit_value_t read_imm(Compiler &c, const instruction_t &instr, const ConstantCacheYmm &cache) {
+        auto type = static_cast<data_type_t>(instr.options);
+
+        // Check cache for integer constants
+        if (type == data_type_t::i8 || type == data_type_t::i16 ||
+            type == data_type_t::i32 || type == data_type_t::i64) {
+            Ymm cached;
+            if (cache.findInt(instr.ipayload.lo, cached)) {
+                return {cached, type, data_kind_t::kConst};
+            }
+        }
+        // Check cache for float constants
+        if (type == data_type_t::f32 || type == data_type_t::f64) {
+            Ymm cached;
+            if (cache.findFloat(instr.dpayload, cached)) {
+                return {cached, type, data_kind_t::kConst};
+            }
+        }
+
+        // Not in cache, broadcast from memory
         const auto scope = ConstPool::kScopeLocal;
         Ymm val = c.newYmm("imm_value");
-        auto type = static_cast<data_type_t>(instr.options);
         switch (type) {
             case data_type_t::i8: {
                 auto value = static_cast<int8_t>(instr.ipayload.lo);
@@ -553,7 +647,7 @@ namespace questdb::avx2 {
     void
     emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values, bool ncheck,
               const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index,
-              const ColumnAddressCache &addr_cache) {
+              const ColumnAddressCache &addr_cache, const ConstantCacheYmm &const_cache) {
         for (size_t i = 0; i < size; ++i) {
             auto instr = istream[i];
             switch (instr.opcode) {
@@ -574,7 +668,7 @@ namespace questdb::avx2 {
                 }
                     break;
                 case opcodes::Imm:
-                    values.append(read_imm(c, instr));
+                    values.append(read_imm(c, instr, const_cache));
                     break;
                 case opcodes::Neg:
                     values.append(neg(c, get_argument(values), ncheck));

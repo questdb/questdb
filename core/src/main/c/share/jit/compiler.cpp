@@ -165,6 +165,9 @@ struct Function {
         // Preload column addresses and constants before the loop (for scalar tail)
         preload_columns_and_constants(istream, size);
 
+        // Preload constants into YMM registers for the SIMD loop
+        questdb::avx2::preload_constants_ymm(c, istream, size, const_cache_ymm);
+
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
 
@@ -198,7 +201,8 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index, addr_cache);
+            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+                                     addr_cache, const_cache_ymm);
 
             auto mask = values.pop();
 
@@ -284,6 +288,7 @@ struct Function {
     x86::Gp rows_id_start_offset;
     ColumnAddressCache addr_cache;
     ConstantCache const_cache;
+    ConstantCacheYmm const_cache_ymm;
     ColumnValueCache value_cache;
 };
 

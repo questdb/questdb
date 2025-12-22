@@ -283,7 +283,7 @@ namespace questdb::avx2 {
         Ymm dst = c.newYmm();
         Ymm nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
         Mem sign_mask = vec_sign_mask(c, type);
-        c.vsubps(lhs_copy, lhs_copy, rhs_copy); //(lhs - rhs)
+        c.vsubps(lhs_copy, lhs_copy, rhs_copy); // (lhs - rhs)
         c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
         float eps[8] = {FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON};
         Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
@@ -300,7 +300,7 @@ namespace questdb::avx2 {
         Ymm dst = c.newYmm();
         Ymm nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
         Mem sign_mask = vec_sign_mask(c, type);
-        c.vsubpd(lhs_copy, lhs_copy, rhs_copy); //(lhs - rhs)
+        c.vsubpd(lhs_copy, lhs_copy, rhs_copy); // (lhs - rhs)
         c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
         double eps[4] = {DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON};
         Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
