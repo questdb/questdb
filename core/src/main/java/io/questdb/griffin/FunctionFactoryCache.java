@@ -223,10 +223,10 @@ public class FunctionFactoryCache {
      * Thread-safe with write lock.
      *
      * @param pluginName the plugin name (normalized, no .jar suffix)
-     * @param factories iterable of FunctionFactory implementations from the plugin
+     * @param factories list of FunctionFactory implementations from the plugin
      * @throws SqlException if plugin name is invalid or already loaded
      */
-    public void addPluginFunctions(String pluginName, Iterable<FunctionFactory> factories) throws SqlException {
+    public void addPluginFunctions(String pluginName, ObjList<FunctionFactory> factories) throws SqlException {
         pluginLock.writeLock().lock();
         try {
             // Validate plugin name
@@ -248,7 +248,8 @@ public class FunctionFactoryCache {
                     new LowerCaseCharSequenceObjHashMap<>();
 
             // Add each factory to the plugin's function map
-            for (FunctionFactory factory : factories) {
+            for (int i = 0, n = factories.size(); i < n; i++) {
+                final FunctionFactory factory = factories.getQuick(i);
                 try {
                     final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);
                     final CharSequence name = descriptor.getName();
@@ -300,7 +301,7 @@ public class FunctionFactoryCache {
      * @param pluginName the plugin name
      * @throws SqlException if plugin is not loaded
      */
-    public void removePluginFunctions(String pluginName) throws SqlException {
+    public void removePluginFunctions(CharSequence pluginName) throws SqlException {
         pluginLock.writeLock().lock();
         try {
             if (!loadedPlugins.contains(pluginName)) {
@@ -324,7 +325,7 @@ public class FunctionFactoryCache {
      * @param pluginName the plugin name
      * @return true if the plugin is loaded
      */
-    public boolean isPluginLoaded(String pluginName) {
+    public boolean isPluginLoaded(CharSequence pluginName) {
         pluginLock.readLock().lock();
         try {
             return loadedPlugins.contains(pluginName);
