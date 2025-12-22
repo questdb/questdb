@@ -215,6 +215,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = true;
     }
 
+    public void ofAlterView() {
+        of(ALTER_VIEW);
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofBackupTable() {
         of(BACKUP_TABLE);
         this.isExecutedAtParseTime = true;
@@ -333,11 +338,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofRepair() {
         of(REPAIR);
-        this.isExecutedAtParseTime = true;
-    }
-
-    public void ofReplaceView() {
-        of(REPLACE_VIEW);
         this.isExecutedAtParseTime = true;
     }
 

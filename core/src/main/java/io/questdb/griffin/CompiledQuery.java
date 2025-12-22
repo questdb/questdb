@@ -71,8 +71,8 @@ public interface CompiledQuery {
     short REFRESH_MAT_VIEW = CREATE_MAT_VIEW + 1; // 33
     short CREATE_VIEW = REFRESH_MAT_VIEW + 1; // 34
     short COMPILE_VIEW = CREATE_VIEW + 1; // 35
-    short REPLACE_VIEW = COMPILE_VIEW + 1; // 36
-    short EMPTY = REPLACE_VIEW + 1;
+    short ALTER_VIEW = COMPILE_VIEW + 1; // 36
+    short EMPTY = ALTER_VIEW + 1;
     short TYPES_COUNT = EMPTY;
 
     void closeAllButSelect();

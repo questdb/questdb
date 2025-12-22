@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
-import io.questdb.tasks.TelemetryTask;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
@@ -149,6 +148,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -1653,7 +1653,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         executionContext.getSecurityContext().authorizeAlterView(viewToken);
         engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
-        compiledQuery.ofReplaceView();
+        compiledQuery.ofAlterView();
     }
 
     private TableToken authorizeCompileView(SecurityContext securityContext, CompileViewModel model) {
@@ -1732,21 +1732,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        if (executionContext.isValidationOnly()) {
-            compiledQuery.ofAlter(null);
-            return;
-        }
-
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isViewKeyword(tok))) {
             compileAlterExt(executionContext, tok);
             return;
         }
+
         if (isTableKeyword(tok)) {
+            if (executionContext.isValidationOnly()) {
+                compiledQuery.ofAlter(null);
+                return;
+            }
             compileAlterTable(executionContext);
         } else if (isMaterializedKeyword(tok)) {
+            if (executionContext.isValidationOnly()) {
+                compiledQuery.ofAlter(null);
+                return;
+            }
             compileAlterMatView(executionContext);
         } else {
+            if (executionContext.isValidationOnly()) {
+                compiledQuery.ofAlterView();
+                return;
+            }
             compileAlterView(executionContext);
         }
     }
