@@ -28,12 +28,27 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction {
 
     public FirstNotNullDoubleGroupByFunction(@NotNull Function arg) {
         super(arg);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final long hi = ptr + count * (long) Double.BYTES;
+            for (; ptr < hi; ptr += Double.BYTES) {
+                double value = Unsafe.getUnsafe().getDouble(ptr);
+                if (!Numbers.isNull(value)) {
+                    mapValue.putDouble(valueIndex + 1, value);
+                    break;
+                }
+            }
+        }
     }
 
     @Override

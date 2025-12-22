@@ -611,11 +611,11 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testRandomInsertion() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1D" + wal);
         execute("INSERT INTO tango SELECT rnd_timestamp('1970-01-01', '1970-12-01', 0) ts from long_sequence(2_000_000)");
         execute("INSERT INTO tango values ('1970-12-02')");
         drainWalQueue();
-        assertQuery("name\n1970-12-02T00\n",
+        assertQuery("name\n1970-12-02\n",
                 "SELECT name FROM (SHOW PARTITIONS FROM tango)",
                 "", false, true);
     }

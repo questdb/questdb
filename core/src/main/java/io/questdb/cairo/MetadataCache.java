@@ -598,7 +598,12 @@ public class MetadataCache implements QuietCloseable {
 
             for (int i = 0, n = table.columns.size(); i < n; i++) {
                 // Update column positions after sort
-                table.columns.getQuick(i).setPosition(i);
+                final CairoColumn column = table.columns.getQuick(i);
+                column.setPosition(i);
+                // Update designated timestamp index
+                if (column.isDesignated()) {
+                    table.setTimestampIndex(i);
+                }
                 // Update column name index map
                 table.columnNameIndexMap.put(table.columns.getQuick(i).getName(), i);
             }

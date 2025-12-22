@@ -1126,7 +1126,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, configuration);
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
@@ -1814,7 +1814,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, configuration);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
@@ -1946,9 +1946,9 @@ public class OrderedMapTest extends AbstractCairoTest {
     @Test
     public void testUsefulErrorMessageWhenPageSizeExceeded() throws Exception {
         assertMemoryLeak(() -> {
-            int num_columns = 1600;
+            final int columnCount = 1600;
             TableModel model = new TableModel(configuration, "testUsefulErrorMessageWhenPageSizeExceeded", PartitionBy.DAY);
-            for (int i = 0; i < num_columns; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 model.col("f" + i, ColumnType.FLOAT);
             }
             model.timestamp("t");
@@ -1956,18 +1956,18 @@ public class OrderedMapTest extends AbstractCairoTest {
             AbstractCairoTest.create(model);
 
             sink.put("SELECT t, ");
-            for (int i = 0; i < num_columns; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 sink.put("max(f").put(i).put("),");
                 sink.put("min(f").put(i).put("),");
                 sink.put("avg(f").put(i).put(")");
-                if (i + 1 < num_columns) {
+                if (i + 1 < columnCount) {
                     sink.put(',');
                 }
             }
             sink.put(" FROM testUsefulErrorMessageWhenPageSizeExceeded SAMPLE BY 1h");
 
             try {
-                assertException(sink, 0, "page size is too small to fit a single key. consider increasing `cairo.sql.small.map.page.size` [expected=38408, actual=32768]");
+                assertException(sink, 0, "page size is too small to fit a single key, consider increasing `cairo.sql.small.map.page.size` [expected=38408, actual=32768]");
             } finally {
                 sink.clear();
             }
@@ -2021,7 +2021,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, configuration);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
@@ -2093,7 +2093,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, configuration);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();

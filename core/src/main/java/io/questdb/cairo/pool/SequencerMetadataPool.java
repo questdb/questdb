@@ -161,7 +161,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
 
         @Override
         public boolean isDedupKey(int columnIndex) {
-            throw new UnsupportedOperationException();
+            return false;
         }
 
         @Override

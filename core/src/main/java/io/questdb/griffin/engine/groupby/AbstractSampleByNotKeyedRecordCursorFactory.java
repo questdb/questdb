@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
+
     public AbstractSampleByNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
             RecordMetadata metadata,

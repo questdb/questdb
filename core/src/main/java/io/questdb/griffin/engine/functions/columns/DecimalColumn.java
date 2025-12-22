@@ -29,9 +29,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import org.jetbrains.annotations.TestOnly;
 
-public class DecimalColumn extends DecimalFunction {
+public class DecimalColumn extends DecimalFunction implements ColumnFunction {
     private final int columnIndex;
 
     public DecimalColumn(int columnIndex, int columnType) {
@@ -43,7 +42,7 @@ public class DecimalColumn extends DecimalFunction {
         return new DecimalColumn(columnIndex, columnType);
     }
 
-    @TestOnly
+    @Override
     public int getColumnIndex() {
         return columnIndex;
     }

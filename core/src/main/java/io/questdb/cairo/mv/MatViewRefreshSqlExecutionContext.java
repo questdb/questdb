@@ -53,6 +53,7 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
             setParallelFilterEnabled(false);
             setParallelGroupByEnabled(false);
             setParallelTopKEnabled(false);
+            setParallelWindowJoinEnabled(false);
             setParallelReadParquetEnabled(false);
         }
         this.securityContext = new ReadOnlySecurityContext() {
