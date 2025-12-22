@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
+import io.questdb.tasks.TelemetryTask;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
@@ -4209,6 +4210,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     createViewOp.updateOperationFutureTableToken(viewToken);
                     engine.getViewStateStore().enqueueCompile(viewToken);
+                    TelemetryTask.store(engine.getTelemetry(), TelemetryOrigin.INTERNAL, TelemetrySystemEvent.VIEW_CREATE);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "view requires a SELECT statement");
                 }
