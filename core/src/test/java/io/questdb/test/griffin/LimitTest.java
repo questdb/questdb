@@ -103,7 +103,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit -6,-2";
-        testLimit(expected, expected2, query, true);
+        testLimit(expected, expected2, query);
     }
 
     @Test
@@ -118,7 +118,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit -33,-31";
-        testLimit(expected, expected2, query, true);
+        testLimit(expected, expected2, query);
     }
 
     @Test
@@ -143,7 +143,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit -35,-28";
-        testLimit(expected, expected2, query, true);
+        testLimit(expected, expected2, query);
     }
 
     @Test
@@ -159,7 +159,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit 5,";
-        testLimit(expected, expected, query, true);
+        testLimit(expected, expected, query);
     }
 
     @Test
@@ -175,7 +175,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit ,5";
-        testLimit(expected, expected, query, true);
+        testLimit(expected, expected, query);
     }
 
     @Test
@@ -206,7 +206,7 @@ public class LimitTest extends AbstractCairoTest {
                 00000010 61 2d\tEYDNMIOCCVV
                 """;
 
-        testLimit(expected, expected2, "select * from y limit -3,-10", true);
+        testLimit(expected, expected2, "select * from y limit -3,-10");
     }
 
     @Test
@@ -284,7 +284,7 @@ public class LimitTest extends AbstractCairoTest {
                 i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                 6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.13264287\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE
                 """;
-        testLimit(expected, expected, "select * from y limit 6,5", true);
+        testLimit(expected, expected, "select * from y limit 6,5");
     }
 
     @Test
@@ -311,7 +311,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit -5";
-        testLimit(expected, expected2, query, true);
+        testLimit(expected, expected2, query);
     }
 
     @Test
@@ -1295,7 +1295,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit 4,-6";
-        testLimit(expected, expected2, query, true);
+        testLimit(expected, expected2, query);
     }
 
     @Test
@@ -1310,7 +1310,7 @@ public class LimitTest extends AbstractCairoTest {
                 5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.021189213\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH
                 """;
 
-        testLimit(expected, expected, "select * from y limit 5", true);
+        testLimit(expected, expected, "select * from y limit 5");
     }
 
     @Test
@@ -1325,7 +1325,7 @@ public class LimitTest extends AbstractCairoTest {
                 5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.021189213\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH
                 """;
 
-        testLimit(expected, expected, "select * from y limit 0,5", true);
+        testLimit(expected, expected, "select * from y limit 0,5");
     }
 
     @Test
@@ -1453,7 +1453,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit 4,6";
-        testLimit(expected, expected, query, true);
+        testLimit(expected, expected, query);
     }
 
     private static void testLimitDefinesBindVariables0(String sqlText, int bindVarCount) throws SqlException {
@@ -1497,11 +1497,11 @@ public class LimitTest extends AbstractCairoTest {
         });
     }
 
-    private void testLimit(String expected1, String expected2, String query, boolean expectSize) throws Exception {
+    private void testLimit(String expected1, String expected2, String query) throws Exception {
         assertMemoryLeak(() -> {
             execute(createTableDdl);
 
-            assertQueryAndCache(expected1, query, "timestamp", true, expectSize);
+            assertQueryAndCache(expected1, query, "timestamp", true, true);
 
             execute(
                     "insert into y select * from " +
@@ -1526,7 +1526,7 @@ public class LimitTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery(expected2, query, "timestamp", true, expectSize);
+            assertQuery(expected2, query, "timestamp", true, true);
         });
     }
 
