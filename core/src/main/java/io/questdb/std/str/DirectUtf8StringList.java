@@ -82,6 +82,13 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
         return this;
     }
 
+    /**
+     * Appends a Utf8Sequence as a new element in the list.
+     * If the sequence is null, no element is added.
+     *
+     * @param us the sequence to append, or null to skip
+     * @return this list for method chaining
+     */
     @Override
     public DirectUtf8StringList put(@Nullable Utf8Sequence us) {
         if (us == null) {
@@ -96,11 +103,19 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
         return this;
     }
 
+    /**
+     * Appends a DirectUtf8Sequence as a new element in the list.
+     * If the sequence is null, no element is added.
+     *
+     * @param dus the sequence to append, or null to skip
+     * @return this list for method chaining
+     */
     @Override
     public DirectUtf8StringList put(@Nullable DirectUtf8Sequence dus) {
-        if (dus != null) {
-            putNonAscii(dus.lo(), dus.hi());
+        if (dus == null) {
+            return this;
         }
+        putNonAscii(dus.lo(), dus.hi());
         setElem();
         return this;
     }

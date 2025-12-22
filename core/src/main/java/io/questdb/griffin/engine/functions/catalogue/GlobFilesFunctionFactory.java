@@ -388,6 +388,10 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
                 }
 
                 int type = ff.findType(findPtr);
+                // Skip symbolic links for security and to avoid cycles
+                if (type == Files.DT_LNK) {
+                    continue;
+                }
                 if (matchDirectory) {
                     if (type != Files.DT_DIR) {
                         continue;
