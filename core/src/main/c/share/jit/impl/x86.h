@@ -32,8 +32,10 @@ namespace questdb::x86 {
     using namespace asmjit::x86;
 
     inline Gpd int32_not(Compiler &c, const Gpd &b) {
-        c.not_(b);
-        return b;
+        Gp r = c.newInt32();
+        c.mov(r, b);
+        c.xor_(r, 1);
+        return r.as<Gpd>();
     }
 
     inline Gpd int32_and(Compiler &c, const Gpd &b1, const Gpd &b2) {
