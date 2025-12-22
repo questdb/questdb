@@ -338,6 +338,236 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorInt() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 0) i32," +
+                " rnd_long(1, 10, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32", "i64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(1, 2, 3)", "(4, 5)", "(6, 7, 8, 9)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorIntWithNull() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 5) i32," +
+                " rnd_long(1, 10, 5) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32", "i64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(1, 2, null)", "(null, 4, 5)", "(6, null)");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorFloat() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_float() f32," +
+                " rnd_double() f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("f32", "f64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(0.1, 0.2, 0.3)", "(0.5, 0.6)", "(-0.1, 0.0, 0.1)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorFloatWithNull() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_float(5) f32," +
+                " rnd_double(5) f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("f32", "f64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(0.1, 0.2, null)", "(null, 0.5)", "(0.0, null, 0.1)");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorWithBooleanOperators() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 20, 0) i32," +
+                " rnd_long(1, 20, 0) i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32", "i64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(1, 2, 3)", "(10, 11, 12)")
+                .withBooleanOperator()
+                .withAnyOf("f32", "f64")
+                .withComparisonOperator()
+                .withAnyOf("0.5");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorWithBooleanOperatorsAndNull() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 20, 5) i32," +
+                " rnd_long(1, 20, 5) i64," +
+                " rnd_float(5) f32," +
+                " rnd_double(5) f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32", "i64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(1, 2, null)", "(null, 10, 11)")
+                .withBooleanOperator()
+                .withAnyOf("f32", "f64")
+                .withAnyOf(" = ", " <> ")
+                .withAnyOf("null");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorChained() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 0) a," +
+                " rnd_int(1, 10, 0) b," +
+                " rnd_int(1, 10, 0) c" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("a")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(1, 2)")
+                .withBooleanOperator()
+                .withAnyOf("b")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(3, 4)")
+                .withBooleanOperator()
+                .withAnyOf("c")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(5, 6)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorSingleValue() throws Exception {
+        // Tests single-value IN() which has a special unrolled code path in CompiledFilterIRSerializer
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 0) i32," +
+                " rnd_long(1, 10, 0) i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32", "i64", "f32", "f64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(5)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorSingleValueWithNull() throws Exception {
+        // Tests single-value IN() with null, special unrolled code path
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 5) i32," +
+                " rnd_long(1, 10, 5) i64," +
+                " rnd_float(5) f32," +
+                " rnd_double(5) f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32", "i64", "f32", "f64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(null)", "(5)");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorTwoValues() throws Exception {
+        // Tests two-value IN() which also has an unrolled code path (args.size() < 3)
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 0) i32," +
+                " rnd_long(1, 10, 0) i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32", "i64", "f32", "f64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(3, 7)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorTwoValuesWithNull() throws Exception {
+        // Tests two-value IN() with null, special unrolled code path
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 5) i32," +
+                " rnd_long(1, 10, 5) i64," +
+                " rnd_float(5) f32," +
+                " rnd_double(5) f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32", "i64", "f32", "f64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(3, null)", "(null, 7)");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorSingleValueWithBooleanOperators() throws Exception {
+        // Tests single-value IN() combined with AND/OR for short-circuit evaluation
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 10, 0) i32," +
+                " rnd_long(1, 10, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i32")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(5)")
+                .withBooleanOperator()
+                .withAnyOf("i64")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(7)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorSingleValueChained() throws Exception {
+        // Tests multiple single-value IN() conditions chained with AND/OR
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(1, 5, 0) a," +
+                " rnd_int(1, 5, 0) b," +
+                " rnd_int(1, 5, 0) c" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("a")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(1)")
+                .withBooleanOperator()
+                .withAnyOf("b")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(2)")
+                .withBooleanOperator()
+                .withAnyOf("c")
+                .withAnyOf(" in ", " not in ")
+                .withAnyOf("(3)");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
     public void testHugeFilter() throws Exception {
         final int N = 682; // depends on memory configuration for a jit IR
         final String ddl = "create table x as " +

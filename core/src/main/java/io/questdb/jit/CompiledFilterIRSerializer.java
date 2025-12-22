@@ -1029,6 +1029,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     }
                 }
             }
+            // Mark that this predicate handled its own short-circuit exit
+            // so the parent AND chain doesn't emit another AND_SC
+            predicateContext.handledShortCircuitExit = true;
             return;
         }
 
@@ -1289,7 +1292,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             for (int i = 0; i < n; i++) {
                 traverseAlgo.traverse(predicates.getQuick(i), this);
                 if (i != n - 1) {
-                    putOperatorWithLabel(AND_SC, 0); // label 0 = next_row
+                    // Only emit AND_SC if the predicate didn't handle its own short-circuit exit.
+                    // IN() with short-circuit mode emits its own AND_SC(0), so we skip it here.
+                    if (!predicateContext.handledShortCircuitExit) {
+                        putOperatorWithLabel(AND_SC, 0); // label 0 = next_row
+                    }
                 }
             }
 
@@ -1618,6 +1625,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
         private boolean currentInSerialization = false;
+        private boolean handledShortCircuitExit = false; // true if predicate emitted its own AND_SC/OR_SC exit
         private ExpressionNode inOperationNode = null;
         private ExpressionNode rootNode;
 
@@ -1732,6 +1740,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             hasArithmeticOperations = false;
             localTypesObserver.clear();
             currentInSerialization = false;
+            handledShortCircuitExit = false;
             inOperationNode = null;
             inIntervals.clear();
             // Note: shortCircuitMode is NOT reset here; it's managed by serializePredicates*Sc methods

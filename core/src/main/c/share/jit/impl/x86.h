@@ -797,7 +797,7 @@ namespace questdb::x86 {
         c.cmp(int_r, inf_memory);
         c.jne(l_nan);
         if (eq) {
-            c.mov(r.r8Lo(), 1);
+            c.mov(r, 1);
         } else {
             c.xor_(r, r);
         }
