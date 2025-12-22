@@ -24,16 +24,32 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class CountGeoHashGroupByFunctionShort extends AbstractCountGroupByFunction {
 
     public CountGeoHashGroupByFunctionShort(@NotNull Function arg) {
         super(arg);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            long nonNullCount = 0;
+            final long hi = ptr + count * 2L;
+            for (; ptr < hi; ptr += 2) {
+                if (Unsafe.getUnsafe().getShort(ptr) != GeoHashes.SHORT_NULL) {
+                    nonNullCount++;
+                }
+            }
+            mapValue.putLong(valueIndex, nonNullCount);
+        }
     }
 
     @Override
@@ -53,5 +69,14 @@ public class CountGeoHashGroupByFunctionShort extends AbstractCountGroupByFuncti
             mapValue.addLong(valueIndex, 1);
         }
     }
-}
 
+    @Override
+    public int getComputeBatchArgType() {
+        return ColumnType.GEOSHORT;
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
+    }
+}

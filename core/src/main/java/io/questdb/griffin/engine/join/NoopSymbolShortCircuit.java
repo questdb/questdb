@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 
 public class NoopSymbolShortCircuit implements SymbolShortCircuit {
     public static final NoopSymbolShortCircuit INSTANCE = new NoopSymbolShortCircuit();
@@ -36,6 +36,6 @@ public class NoopSymbolShortCircuit implements SymbolShortCircuit {
     }
 
     @Override
-    public void of(TimeFrameRecordCursor slaveCursor) {
+    public void of(TimeFrameCursor slaveCursor) {
     }
 }

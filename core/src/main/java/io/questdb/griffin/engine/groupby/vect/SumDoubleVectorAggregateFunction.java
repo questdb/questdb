@@ -74,8 +74,8 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         if (address != 0) {
             final double value = Vect.sumDouble(address, frameRowCount);
             if (Numbers.isFinite(value)) {
-                this.sum[workerId * SUM_PADDING] += value;
-                this.count[workerId * COUNT_PADDING]++;
+                sum[workerId * SUM_PADDING] += value;
+                count[workerId * COUNT_PADDING]++;
             }
         }
     }

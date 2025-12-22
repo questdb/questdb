@@ -27,12 +27,20 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class LastTimestampGroupByFunction extends FirstTimestampGroupByFunction {
 
     public LastTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
         super(arg, timestampType);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putLong(valueIndex + 1, Unsafe.getUnsafe().getLong(ptr + (count - 1) * 8L));
+        }
     }
 
     @Override

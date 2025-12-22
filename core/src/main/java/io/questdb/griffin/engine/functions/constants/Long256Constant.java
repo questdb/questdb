@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
@@ -80,6 +81,17 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     @Override
     public long getLong3() {
         return value.getLong3();
+    }
+
+    @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Long256Constant that) {
+            return this.value.equals(that.value);
+        }
+        return false;
     }
 
     @Override

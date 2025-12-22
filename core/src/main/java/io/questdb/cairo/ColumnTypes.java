@@ -25,6 +25,28 @@
 package io.questdb.cairo;
 
 public interface ColumnTypes {
+
+    /**
+     * Returns total size in bytes in case of all fixed-size columns
+     * or -1 if there is a var-size column in the given list.
+     */
+    static int sizeInBytes(ColumnTypes types) {
+        if (types == null) {
+            return 0;
+        }
+        int totalSize = 0;
+        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
+            final int columnType = types.getColumnType(i);
+            final int size = ColumnType.sizeOf(columnType);
+            if (size > 0) {
+                totalSize += size;
+            } else {
+                return -1;
+            }
+        }
+        return totalSize;
+    }
+
     int getColumnCount();
 
     int getColumnType(int columnIndex);

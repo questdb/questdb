@@ -821,7 +821,7 @@ public final class Utf8s {
     public static boolean isAscii(long ptr, int size) {
         long i = 0;
         for (; i + 7 < size; i += 8) {
-            if (isAscii(Unsafe.getUnsafe().getLong(ptr + i))) {
+            if (!isAscii(Unsafe.getUnsafe().getLong(ptr + i))) {
                 return false;
             }
         }
