@@ -177,7 +177,7 @@ impl ColumnTypeTag {
     // of constructing an invalid `ColumnType`, e.g. one without the appropriate
     // extra type info for Geo types.
     #[cfg(test)]
-    pub(crate) fn into_type(self) -> ColumnType {
+    pub(crate) const fn into_type(self) -> ColumnType {
         ColumnType::new(self, 0)
     }
 }
