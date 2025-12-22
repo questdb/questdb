@@ -506,7 +506,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Sorted by priority: along (i64, priority 1) before anint (i32, priority 2)
         serialize("anint IN (3, 4) and along IN (1, 2)");
         assertIR(
-                "(begin_sc 2)(i32 4L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(&&_sc)(end_sc 2)(&&_sc)" +
+                "(begin_sc 2)(i32 4L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(&&_sc)(end_sc 2)" +
                         "(begin_sc 2)(i64 2L)(i64 along)(=)(||_sc 2)(i64 1L)(i64 along)(=)(&&_sc)(end_sc 2)(ret)"
         );
     }
