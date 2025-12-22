@@ -1497,6 +1497,49 @@ public class UnionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Tests UNION DISTINCT of VARCHAR and SYMBOL with duplicate values.
+     * This exercises RecordSink's handling in the distinct operation where
+     * both VARCHAR and SYMBOL values need to be compared correctly.
+     */
+    @Test
+    public void testUnionDistinctVarcharAndSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            // Table with VARCHAR column - include 'common' value
+            execute("create table t_varchar as (" +
+                    "  select cast(case when x = 1 then 'common' else 'varchar_' || x end as varchar) as col " +
+                    "  from long_sequence(3)" +
+                    ")");
+
+            // Table with SYMBOL column - include 'common' value
+            execute("create table t_symbol (col symbol)");
+            execute("insert into t_symbol values ('common')");
+            execute("insert into t_symbol values ('sym_a')");
+            execute("insert into t_symbol values ('sym_b')");
+
+            // UNION DISTINCT should deduplicate 'common' value
+            // Result should have 5 unique values, not 6
+            assertQueryNoLeakCheck(
+                    """
+                            col
+                            common
+                            sym_a
+                            sym_b
+                            varchar_2
+                            varchar_3
+                            """,
+                    "select col from (" +
+                            "  select col from t_varchar " +
+                            "  union distinct " +
+                            "  select col from t_symbol" +
+                            ") order by col",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
     @Test
     public void testUnionGroupBy() throws Exception {
         assertMemoryLeak(() -> {
@@ -1547,6 +1590,51 @@ public class UnionTest extends AbstractCairoTest {
                             union
                             select str3 from table3""",
                     null,
+                    false
+            );
+        });
+    }
+
+    /**
+     * Tests UNION of VARCHAR and SYMBOL columns.
+     * This exercises RecordSink's handling of type coercion where:
+     * - SYMBOL values need to be written as VARCHAR
+     * - The result column type should be VARCHAR (wider type)
+     */
+    @Test
+    public void testUnionVarcharAndSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            // Table with VARCHAR column
+            execute("create table t_varchar as (" +
+                    "  select cast('varchar_' || x as varchar) as col " +
+                    "  from long_sequence(3)" +
+                    ")");
+
+            // Table with SYMBOL column - use explicit values
+            execute("create table t_symbol (col symbol)");
+            execute("insert into t_symbol values ('sym_a')");
+            execute("insert into t_symbol values ('sym_b')");
+            execute("insert into t_symbol values ('sym_c')");
+
+            // UNION should coerce SYMBOL to VARCHAR
+            // Verify the actual data and type - result type should be VARCHAR
+            assertQueryNoLeakCheck(
+                    """
+                            typeof\tcol
+                            VARCHAR\tsym_a
+                            VARCHAR\tsym_b
+                            VARCHAR\tsym_c
+                            VARCHAR\tvarchar_1
+                            VARCHAR\tvarchar_2
+                            VARCHAR\tvarchar_3
+                            """,
+                    "select typeof(col), col from (" +
+                            "  select col from t_varchar " +
+                            "  union " +
+                            "  select col from t_symbol" +
+                            ") order by col",
+                    null,
+                    true,
                     false
             );
         });
