@@ -161,7 +161,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int initState;
-        private int recordsRemaining = 1;
+        private boolean isExhausted = false;
         private long rowId;
 
         public GroupByNotKeyedRecordCursor(
@@ -176,9 +176,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (recordsRemaining > 0) {
-                counter.add(recordsRemaining);
-                recordsRemaining = 0;
+            if (!isExhausted) {
+                counter.inc();
+                isExhausted = true;
             }
         }
 
@@ -205,6 +205,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public boolean hasNext() {
+            if (isExhausted) {
+                return false;
+            }
             if (initState != INIT_DONE) {
                 final Record baseRecord = baseCursor.getRecord();
                 if (initState != INIT_FIRST_RECORD_DONE) {
@@ -225,7 +228,8 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 toTop();
                 initState = INIT_DONE;
             }
-            return recordsRemaining-- > 0;
+            isExhausted = true;
+            return true;
         }
 
         @Override
@@ -255,7 +259,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public void toTop() {
             rowId = 0;
-            recordsRemaining = 1;
+            isExhausted = false;
             GroupByUtils.toTop(groupByFunctions);
         }
     }

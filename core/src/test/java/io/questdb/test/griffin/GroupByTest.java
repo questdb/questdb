@@ -2207,7 +2207,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 GroupBy vectorized: false
                                   keys: [i]
                                   values: [last(ts),last(avg),last(sum),last(first_value)]
-                                    Limit lo: -100 skip-over-rows: 999900 limit: 100
+                                    Limit value: -100 skip-rows: 999900 take-rows: 100
                                         Window
                                           functions: [avg(j) over (partition by [i] range between 80000 preceding and current row),sum(j) over (partition by [i] range between 80000 preceding and current row),first_value(j) over (partition by [i] range between 80000 preceding and current row)]
                                             PageFrame
