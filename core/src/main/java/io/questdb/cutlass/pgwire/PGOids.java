@@ -38,6 +38,12 @@ public class PGOids {
     public static final int BINARY_TYPE_BYTE = (1 << 31) | ColumnType.BYTE;
     public static final int BINARY_TYPE_CHAR = (1 << 31) | ColumnType.CHAR;
     public static final int BINARY_TYPE_DATE = (1 << 31) | ColumnType.DATE;
+    public static final int BINARY_TYPE_DECIMAL128 = (1 << 31) | ColumnType.DECIMAL128;
+    public static final int BINARY_TYPE_DECIMAL16 = (1 << 31) | ColumnType.DECIMAL16;
+    public static final int BINARY_TYPE_DECIMAL256 = (1 << 31) | ColumnType.DECIMAL256;
+    public static final int BINARY_TYPE_DECIMAL32 = (1 << 31) | ColumnType.DECIMAL32;
+    public static final int BINARY_TYPE_DECIMAL64 = (1 << 31) | ColumnType.DECIMAL64;
+    public static final int BINARY_TYPE_DECIMAL8 = (1 << 31) | ColumnType.DECIMAL8;
     public static final int BINARY_TYPE_DOUBLE = (1 << 31) | ColumnType.DOUBLE;
     public static final int BINARY_TYPE_FLOAT = (1 << 31) | ColumnType.FLOAT;
     public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
@@ -50,12 +56,6 @@ public class PGOids {
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
     public static final int BINARY_TYPE_VARCHAR = (1 << 31) | ColumnType.VARCHAR;
-    public static final int BINARY_TYPE_DECIMAL8 = (1 << 31) | ColumnType.DECIMAL8;
-    public static final int BINARY_TYPE_DECIMAL16 = (1 << 31) | ColumnType.DECIMAL16;
-    public static final int BINARY_TYPE_DECIMAL32 = (1 << 31) | ColumnType.DECIMAL32;
-    public static final int BINARY_TYPE_DECIMAL64 = (1 << 31) | ColumnType.DECIMAL64;
-    public static final int BINARY_TYPE_DECIMAL128 = (1 << 31) | ColumnType.DECIMAL128;
-    public static final int BINARY_TYPE_DECIMAL256 = (1 << 31) | ColumnType.DECIMAL256;
     /**
      * We cannot know in advance the actual type of the decimal, so we make a default one that
      * should be large enough to hold decimals.
@@ -102,6 +102,7 @@ public class PGOids {
     public static final int PG_TIME = 1083;
     public static final int PG_TIMESTAMP = 1114;
     public static final int PG_TIMESTAMP_TZ = 1184;
+    public static final int PG_TEXT = 25;
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_PROC_OIDS = new IntList();
     public static final char[] PG_TYPE_TO_CATEGORY = new char[16];
@@ -229,6 +230,7 @@ public class PGOids {
         return switch (pgOid) {
             case PG_ARR_FLOAT8 -> PG_FLOAT8;
             case PG_ARR_INT8 -> PG_INT8;
+            case PG_ARR_TEXT, PG_ARR_VARCHAR -> PG_VARCHAR;
             default -> 0;
         };
     }

@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * This class represents a flat array of numbers with a hierarchical addressing
@@ -461,6 +462,10 @@ public abstract class ArrayView implements QuietCloseable {
         return intBytes + // type
                 getDimCount() * intBytes // shape
                 + getCardinality() * elemSize; // data
+    }
+
+    public final Utf8Sequence getVarchar(int flatIndex) {
+        return flatView.getVarcharAt(flatViewOffset + flatIndex);
     }
 
     /**

@@ -155,6 +155,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
+    private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -337,6 +338,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateSync = SYNC_PARSE;
         tas = null;
         arrayViewPool.clear();
+        varcharArrayViewPool.clear();
         utf8StringSink.clear();
     }
 
@@ -3000,6 +3002,40 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         bindVariableService.setTimestampWithType(variableIndex, ColumnType.TIMESTAMP_MICRO, getLongUnsafe(valueAddr) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
     }
 
+    private void setBindVariableAsVarcharArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, PGMessageProcessingException {
+        int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+        if (dimensions != 1) {
+            throw kaput().put("varchar arrays must be 1-dimensional [dimensions=").put(dimensions).put(']');
+        }
+
+        getInt(lo, msgLimit, "malformed array null flag");
+        // hasNull flag is not a reliable indicator of a null element, since some clients
+        // send it as 0 even if the array element is null. we need to manually check for null
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        int componentOid = getInt(lo, msgLimit, "malformed array component oid");
+        if (componentOid != PG_VARCHAR && componentOid != PG_TEXT) {
+            throw kaput().put("invalid component type for varchar array [componentOid=").put(componentOid).put(']');
+        }
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+        PGNonNullVarcharArrayView arrayView = varcharArrayViewPool.next();
+
+        // dimensions == 1
+        int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
+        arrayView.addDimLen(dimensionSize);
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        lo += Integer.BYTES; // skip lower bound, it's always 1
+        valueSize -= Integer.BYTES;
+        arrayView.setPtrAndBuildOffsetIndex(lo, lo + valueSize, this);
+        bindVariableService.setArray(i, arrayView);
+    }
+
     private void setDecimalAddTenMultiple(int index, Decimal256 decimal, int weight, int multiplier) throws PGMessageProcessingException {
         if (multiplier == 0) {
             return;
@@ -3271,6 +3307,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateExec = false;
         stateClosed = false;
         arrayViewPool.clear();
+        varcharArrayViewPool.clear();
     }
 
     void copyParameterValuesToBindVariableService(
@@ -3383,6 +3420,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         case X_PG_ARR_INT8:
                         case X_PG_ARR_FLOAT8:
                             setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
+                            break;
+                        case X_PG_ARR_VARCHAR:
+                        case X_PG_ARR_TEXT:
+                            setBindVariableAsVarcharArray(i, lo, valueSize, msgLimit, bindVariableService);
                             break;
                         case X_PG_NUMERIC:
                             setDecimalBindVariable(sqlExecutionContext, i, lo, valueSize, bindVariableService, nativeType);

@@ -110,7 +110,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
     }
 
     @FunctionalInterface
-    private interface TestFunc {
+    interface TestFunc {
         boolean test(Record rec);
     }
 
