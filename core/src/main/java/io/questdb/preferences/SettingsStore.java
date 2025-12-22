@@ -81,12 +81,30 @@ public class SettingsStore implements Closeable {
         }
     }
 
+    public synchronized CharSequence getPreference(CharSequence key) {
+        return preferencesMap.get(key);
+    }
+
     public void registerListener(@NotNull PreferencesUpdateListener listener) {
         this.listener = listener;
 
         // call the listener with current state,
         // it will be called on subsequent updates too
         listener.update(preferencesMap);
+    }
+
+    /**
+     * Sets a single preference value and persists it.
+     * This method is intended for programmatic initialization of preferences,
+     * for example from environment variables during startup.
+     */
+    public synchronized void setPreference(CharSequence key, CharSequence value) {
+        preferencesMap.put(key, value);
+        persist(preferencesMap);
+
+        if (listener != null) {
+            listener.update(preferencesMap);
+        }
     }
 
     public synchronized void save(DirectUtf8Sink sink, Mode mode, long expectedVersion) {

@@ -213,6 +213,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
+            initInstanceNameFromEnv();
 
             tableIdGenerator.open();
             checkpointRecover();
@@ -1850,6 +1851,20 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    private void initInstanceNameFromEnv() {
+        if (configuration.isReadOnlyInstance()) {
+            return;
+        }
+        final CharSequence instanceName = settingsStore.getPreference("instance_name");
+        if (Chars.isBlank(instanceName)) {
+            final String envInstanceName = configuration.getEnv().get("QDB_DEFAULT_INSTANCE_NAME");
+            if (!Chars.isBlank(envInstanceName)) {
+                settingsStore.setPreference("instance_name", envInstanceName);
+                LOG.info().$("instance name initialized from environment [name=").$(envInstanceName).I$();
+            }
+        }
     }
 
     // used in ent
