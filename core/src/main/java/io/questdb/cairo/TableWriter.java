@@ -10912,6 +10912,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString);
 
+        /**
+         * Writes Long256 from UTF8-encoded hex string. Accepts any Utf8Sequence implementation.
+         */
+        void putLong256Utf8(int columnIndex, Utf8Sequence hexString);
+
         void putShort(int columnIndex, short value);
 
         void putStr(int columnIndex, CharSequence value);
@@ -10929,6 +10934,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
          *                    On this interface, getChar() returns a byte, not complete character.
          */
         void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
+
+        /**
+         * Writes UTF8-encoded string. Accepts any Utf8Sequence implementation.
+         * For DirectUtf8Sequence, delegates to the more efficient putStrUtf8(int, DirectUtf8Sequence).
+         * For other implementations (e.g., Utf8StringSink), converts to UTF-16 and writes.
+         *
+         * @param columnIndex index of the column we are writing to
+         * @param value       UTF8 sequence to write
+         */
+        void putStrUtf8(int columnIndex, Utf8Sequence value);
 
         void putSym(int columnIndex, CharSequence value);
 
@@ -11096,6 +11111,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
+            // no-op
+        }
+
+        @Override
         public void putShort(int columnIndex, short value) {
             // no-op
         }
@@ -11117,6 +11137,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            // no-op
+        }
+
+        @Override
+        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
             // no-op
         }
 
@@ -11340,6 +11365,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
+            if (hexString == null) {
+                putLong256(columnIndex, (CharSequence) null);
+                return;
+            }
+            if (hexString instanceof DirectUtf8Sequence ds) {
+                putLong256Utf8(columnIndex, ds);
+                return;
+            }
+            // Long256 hex strings are always ASCII
+            putLong256(columnIndex, hexString.asAsciiCharSequence());
+        }
+
+        @Override
         public void putShort(int columnIndex, short value) {
             getPrimaryColumn(columnIndex).putShort(value);
             setRowValueNotNull(columnIndex);
@@ -11367,6 +11406,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
+            if (value == null) {
+                putStr(columnIndex, null);
+                return;
+            }
+            if (value instanceof DirectUtf8Sequence ds) {
+                putStrUtf8(columnIndex, ds);
+                return;
+            }
+            if (value.isAscii()) {
+                putStr(columnIndex, value.asAsciiCharSequence());
+            } else {
+                utf16Sink.clear();
+                Utf8s.utf8ToUtf16(value, utf16Sink);
+                putStr(columnIndex, utf16Sink);
+            }
         }
 
         @Override
