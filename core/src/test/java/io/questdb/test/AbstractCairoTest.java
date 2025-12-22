@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -269,24 +269,60 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
         }
         if (cursorSize != -1) {
-            Assert.assertEquals("Actual cursor records vs cursor.size()", count, cursorSize);
+            Assert.assertEquals("Expected: counted with hasNext(), actual: cursor.size()", count, cursorSize);
             if (cursorSizeBeforeFetch != -1) {
-                Assert.assertEquals("Cursor size before fetch and after", cursorSizeBeforeFetch, cursorSize);
+                Assert.assertEquals("Expected: cursor size before fetch, actual: cursor size after fetch",
+                        cursorSizeBeforeFetch, cursorSize);
+            }
+        }
+        if (count > 0) {
+            int countReducedToInt = (int) Math.min(Integer.MAX_VALUE, count);
+            RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.toTop();
+            skip = rnd.nextBoolean() ? rnd.nextInt(countReducedToInt) : 0;
+            while (counter.get() < skip && cursor.hasNext()) {
+                counter.inc();
+            }
+            SqlExecutionCircuitBreaker breaker =
+                    sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null;
+            cursor.calculateSize(breaker, counter);
+            Assert.assertEquals(
+                    String.format("Skip %,d then calculateSize(). Expect: as counted with hasNext(), actual: cursor.calculateSize()", skip),
+                    count, counter.get());
+
+            cursor.toTop();
+            counter.set(count + 1);
+            cursor.skipRows(counter);
+            Assert.assertEquals("skipRows(rowCountPlusOne) didn't leave the counter at 1", 1, counter.get());
+            Assert.assertFalse("hasNext() returned true after skipRows exhausted the cursor", cursor.hasNext());
+
+            if (count > 1) {
+                skip = rnd.nextInt(countReducedToInt / 2);
+                counter.set(skip);
+                cursor.toTop();
+                cursor.skipRows(counter);
+                Assert.assertEquals("skipRows(lessThanRowCount) didn't bring the counter to 0", 0, counter.get());
+                long remaining = 0;
+                String countMethod;
+                if (rnd.nextBoolean()) {
+                    countMethod = "calculateSize()";
+                    counter.clear();
+                    cursor.calculateSize(breaker, counter);
+                    remaining = counter.get();
+                } else {
+                    countMethod = "hasNext()";
+                    while (cursor.hasNext()) {
+                        remaining++;
+                    }
+                }
+                Assert.assertEquals(
+                        "skipRows(lessThanRowCount) didn't leave the correct number of remaining rows." +
+                                " Remaining rows counted using " + countMethod,
+                        count, skip + remaining);
             }
         } else {
-            if (count > 0) {
-                RecordCursor.Counter counter = new RecordCursor.Counter();
-                cursor.toTop();
-                skip = rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
-                while (counter.get() < skip && cursor.hasNext()) {
-                    counter.inc();
-                }
-                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
-                Assert.assertEquals("Actual cursor records vs cursor.calculateSize()", count, counter.get());
-            } else {
-                cursor.toTop();
-                Assert.assertFalse(cursor.hasNext());
-            }
+            cursor.toTop();
+            Assert.assertFalse(cursor.hasNext());
         }
 
         TestUtils.assertEquals(expected, sink);
@@ -702,12 +738,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             cursor.calculateSize(circuitBreaker, counter);
+            Assert.assertFalse("hasNext() returned true after calculateSize exhausted the cursor", cursor.hasNext());
             size = counter.get();
             long preComputeStateSize = cursor.preComputedStateSize();
             cursor.toTop();
             Assert.assertEquals(preComputeStateSize, cursor.preComputedStateSize());
             counter.clear();
             cursor.calculateSize(circuitBreaker, counter);
+            Assert.assertFalse("hasNext() returned true after calculateSize exhausted the cursor", cursor.hasNext());
             long sizeAfterToTop = counter.get();
 
             Assert.assertEquals(size, sizeAfterToTop);
@@ -2031,6 +2069,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertQueryNoLeakCheck(String expected, String query) throws SqlException {
+        assertQueryNoLeakCheck(expected, query, true);
+    }
+
+    protected void assertQueryNoLeakCheck(String expected, String query, boolean expectSize) throws SqlException {
         snapshotMemoryUsage();
         try (RecordCursorFactory factory = select(query)) {
             assertFactoryCursor(
@@ -2039,7 +2081,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     factory,
                     true,
                     sqlExecutionContext,
-                    true,
+                    expectSize,
                     false
             );
         }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -4415,7 +4415,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             final Function loFunc = getLoFunction(model, executionContext);
             final Function hiFunc = getHiFunction(model, executionContext);
-            return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
+            return new LimitRecordCursorFactory(
+                    factory, loFunc, hiFunc, limitLo != null ? limitLo.position : limitHi.position
+            );
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
@@ -4669,11 +4671,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.
+        boolean pushed = false;
         final QueryModel savedOrderByModel = lastSeenOrderByModel;
         try {
             final ObjList<ExpressionNode> orderBy = model.getOrderBy();
             if (orderBy != null && orderBy.size() > 0) {
                 lastSeenOrderByModel = model;
+
+                // when order-by specific here it would be pointless to require timestamp from the
+                // nested models
+                executionContext.pushTimestampRequiredFlag(false);
+                pushed = true;
             }
             RecordCursorFactory factory;
 
@@ -4686,6 +4694,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         } finally {
             lastSeenOrderByModel = savedOrderByModel;
+            if (pushed) {
+                executionContext.popTimestampRequiredFlag();
+            }
         }
     }
 

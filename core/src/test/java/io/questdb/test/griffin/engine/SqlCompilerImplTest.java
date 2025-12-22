@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -4015,7 +4015,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     Filter filter: T2.created in [now(),now()]
                                         Nested Loop Full Join
                                           filter: T1.created<T2.created
-                                            Limit lo: 0 skip-over-rows: 0 limit: 0
+                                            Limit value: 0 skip-rows-max: 0 take-rows-max: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
@@ -5619,7 +5619,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     Filter filter: T2.created in [now(),now()]
                                         Nested Loop Left Join
                                           filter: T1.created<T2.created
-                                            Limit lo: 0 skip-over-rows: 0 limit: 0
+                                            Limit value: 0 skip-rows-max: 0 take-rows-max: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
@@ -5666,7 +5666,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Left Join
                                       filter: T1.created<T2.created
-                                        Limit lo: -1 skip-over-rows: 2 limit: 1
+                                        Limit value: -1 skip-rows: 2 take-rows: 1
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -5842,7 +5842,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                           condition: T3.created=T2.created
                                             Nested Loop Left Join
                                               filter: T1.created<T2.created
-                                                Limit lo: 2 skip-over-rows: 0 limit: 2
+                                                Limit value: 2 skip-rows: 0 take-rows: 2
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
@@ -5850,11 +5850,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: tab
                                             Hash
-                                                Limit lo: 3 skip-over-rows: 0 limit: 3
+                                                Limit value: 3 skip-rows: 0 take-rows: 3
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
-                                        Limit lo: 4 skip-over-rows: 0 limit: 3
+                                        Limit value: 4 skip-rows: 0 take-rows: 3
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -6337,7 +6337,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     Filter filter: T2.created in [now(),now()]
                                         Nested Loop Right Join
                                           filter: T1.created<T2.created
-                                            Limit lo: 0 skip-over-rows: 0 limit: 0
+                                            Limit value: 0 skip-rows-max: 0 take-rows-max: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
@@ -6384,7 +6384,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Right Join
                                       filter: T1.created<T2.created
-                                        Limit lo: -1 skip-over-rows: 2 limit: 1
+                                        Limit value: -1 skip-rows: 2 take-rows: 1
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -6568,7 +6568,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                           condition: T3.created=T2.created
                                             Nested Loop Right Join
                                               filter: T1.created<T2.created
-                                                Limit lo: 2 skip-over-rows: 0 limit: 2
+                                                Limit value: 2 skip-rows: 0 take-rows: 2
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
@@ -6576,11 +6576,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: tab
                                             Hash
-                                                Limit lo: 3 skip-over-rows: 0 limit: 3
+                                                Limit value: 3 skip-rows: 0 take-rows: 3
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
-                                        Limit lo: 4 skip-over-rows: 0 limit: 3
+                                        Limit value: 4 skip-rows: 0 take-rows: 3
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
