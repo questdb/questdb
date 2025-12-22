@@ -55,6 +55,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -228,6 +229,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testDecimalFillNull() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         s\tk\tfirst\tfirst1\tfirst2\tfirst3\tfirst4\tfirst5
@@ -264,6 +268,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testDecimalFillPrev() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         s\tk\tfirst\tfirst1\tfirst2\tfirst3\tfirst4\tfirst5
@@ -318,6 +325,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevConsistency() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table telem (created timestamp, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 
@@ -682,6 +692,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashFillNull() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         s\tk\tfirst\tfirst1\tfirst2\tfirst3
@@ -717,6 +730,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashFillPrev() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         s\tk\tfirst\tfirst1\tfirst2\tfirst3
@@ -770,6 +786,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByAllTypes() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5
@@ -923,6 +942,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByAllTypesAndTimestampSameLevel() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5
@@ -1012,6 +1034,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByCount() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         c\tcount
@@ -1054,6 +1079,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByCountFromSubQuery() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         c\tcount
@@ -1096,6 +1124,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByEmpty() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "c\tsum_t\n",
                 "select c, sum_t(d) from x order by c",
@@ -1168,6 +1199,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByFreesFunctions() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         c\tsum_t
@@ -1212,6 +1246,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByRandomAccessConsistency() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         c\tcount
@@ -1235,6 +1272,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithProjection() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -1300,6 +1340,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\ts\tlat\tlon
@@ -1359,6 +1402,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy2a() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -1386,6 +1432,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy2b() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -1446,6 +1495,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy2c() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -1508,6 +1560,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy2d() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -1592,6 +1647,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy2e() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -1680,6 +1738,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy3a() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -1707,6 +1768,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy3b() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -1747,6 +1811,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy3c() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -1789,6 +1856,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy3d() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -1846,6 +1916,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBy3e() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -1949,6 +2022,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarBindVariables() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     "create table x as " +
@@ -2039,6 +2115,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarBindVariablesWrongTypes() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     "create table x as " +
@@ -2086,6 +2165,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardEdge() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\ts\tlat\tlon
@@ -2115,6 +2197,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardEdge2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\ts\tlat\tlon
@@ -2143,6 +2228,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardEdge3() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\ts\tlat\tlon
@@ -2172,6 +2260,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardLocalMidnight() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\ts\tlat\tlon
@@ -2608,6 +2699,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByEmpty() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -2640,6 +2734,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByFirstAndLast() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -2703,6 +2800,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByIndexFrameExceedsPartitionFrame() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -2760,6 +2860,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByIndexNoTimestampColSelected() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table xx (lat double, lon double, s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
@@ -2813,6 +2916,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByIndexWithIrregularEmptyPeriods() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> execute("create table xx (s symbol, k timestamp)" +
                 ", index(s capacity 256) timestamp(k) partition by DAY"));
 
@@ -2857,6 +2963,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByLastAndFirstOnDifferentIndexPages() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -2912,6 +3021,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByManyPartitions() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -3086,6 +3198,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByMonth() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, last(lat) lat, last(lon) lon " +
@@ -3123,6 +3238,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleBySameTimePoints() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\ts\tlat\tlon
@@ -3153,6 +3271,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByVeryFewRowsPerInterval() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -3199,6 +3320,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByWithArithmetics() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\ts\tlat\tlon\tconst
@@ -3228,6 +3352,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByWithEmptyIndexPage() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -3322,6 +3449,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleIndexNoRowsInIndex() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table xx (k timestamp)\n" +
                     " timestamp(k) partition by DAY");
@@ -3361,6 +3491,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleLatestRestrictedByWhere() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> execute("create table xx (s symbol, k timestamp)" +
                 ", index(s capacity 256) timestamp(k) partition by DAY"));
 
@@ -3386,6 +3519,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleMainIndexHasColumnTop() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table xx (k timestamp)\n" +
                     " timestamp(k) partition by DAY");
@@ -3437,6 +3573,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleWithColumnTops() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table xx (s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
@@ -3520,6 +3659,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleWithColumnTopsGeo() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table xx (s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
@@ -3694,6 +3836,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
                     ", index(s capacity 345) timestamp(k) partition by DAY \n");
@@ -3720,6 +3865,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testPrefixedTableNames() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(SYS_TELEMETRY_WAL_DDL);
             assertSql("""
@@ -3756,6 +3904,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testQueryCorrectlyFillsSides() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(SYS_TELEMETRY_WAL_DDL);
             drainWalQueue();
@@ -3892,6 +4043,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToCalendarDSTGapNoBackwardJumps() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION by day;");
             execute(
@@ -4290,6 +4444,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToCalendarDSTGapNoBackwardJumpsWithFilter() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION by day;");
             execute(
@@ -4342,6 +4499,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToCalendarDSTGapNoBackwardJumpsWithFrom() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION by day;");
             execute(
@@ -4427,6 +4587,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToCalendarFillNoneWithoutKey1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\tfirst\tavg\tlast\tmax
@@ -4450,6 +4613,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToCalendarFillNoneWithoutKey2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\tfirst\tavg\tlast\tmax
@@ -4474,6 +4640,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToCalendarFillNullWithKey1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\ts\tfirst\tavg\tlast\tmax
@@ -4500,6 +4669,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToCalendarFillNullWithKey2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\ts\tfirst\tavg\tlast\tmax
@@ -4526,6 +4698,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\tcount
@@ -4548,6 +4723,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToFirstObservationFillNoneWithKey() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\ts\tfirst\tavg\tlast\tmax
@@ -4571,6 +4749,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToFirstObservationFillNoneWithoutKey() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\tfirst\tavg\tlast\tmax
@@ -4594,6 +4775,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\tcount
@@ -4617,6 +4801,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignedToCalendarWithTimezoneEndingWithSemicolon() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery("""
                         k\tcount
                         1970-01-03T00:00:00.000000Z\t6
@@ -4756,6 +4943,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAllowsPredicatePushDownWhenTsIsNotIncludedInColumnList() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -4782,6 +4972,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByBrokenTimestampClause() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE 'trades' ( " +
@@ -4810,6 +5003,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByCountWithNoTsColSelected() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         count
@@ -4833,6 +5029,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDayNoFillAlignToCalendarWithTimezoneLondon() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         to_timezone\ts\tlat\tlon
@@ -4864,6 +5063,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDayNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\tc\ta\tlk
@@ -4919,6 +5121,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDayNoFillNotKeyedAlignToCalendarWithTimezoneLondon() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         to_timezone\tlat\tlon
@@ -5011,6 +5216,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDoesntAllowNonTimestampPredicatePushdown() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("""
                     create table tab as (
@@ -5062,6 +5270,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDoesntAllowTimestampPredicatePushdown() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("""
                     create table tab as (
@@ -5128,6 +5339,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillNeedFix() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("CREATE TABLE candles_market_spot_4_1m (" +
                     "   candle_start_time TIMESTAMP," +
@@ -5272,6 +5486,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillNullDecimal() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("""
                     create table test as (
@@ -5348,6 +5565,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFilteredByIndex() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         time\ts1\tdd
@@ -5397,6 +5617,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFirstLastFactoryIsChosenIfNotKeyedByFilteredSymbol() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
@@ -5428,6 +5651,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonDesignatedTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
@@ -5459,6 +5685,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonFilteredSymbol() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
@@ -5507,6 +5736,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonSymbol() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
@@ -5659,6 +5891,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFirstLastWithNonTsOrFilteredSymbolColumn() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "id\ttime\tgeo6\tlat\tlon\n",
                 "select   id, time, geo6, last(lat) lat, last(lon) lon " +
@@ -5696,6 +5931,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFromToBindVariables() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL, sqlExecutionContext);
 
@@ -5732,6 +5970,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFromToFillNull() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             drainWalQueue();
@@ -5778,6 +6019,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFromToIsDisallowedForKeyedQueries() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             assertException("""
@@ -5794,6 +6038,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFromToNoFill() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             drainWalQueue();
@@ -5840,6 +6087,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFromToPlans() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -5917,6 +6167,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFromToSampleByMonthWithFill() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             assertSql(
@@ -5937,6 +6190,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFromToSampleByYearWithFill() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             assertSql(
@@ -6260,6 +6516,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\tb\tc
@@ -6458,6 +6717,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOffset() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\tc
@@ -6486,6 +6748,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneVariable() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     "create table x as " +
@@ -6575,6 +6840,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarUTC() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\tcount
@@ -6604,6 +6872,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarUTCOffset() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         k\tcount
@@ -6633,6 +6904,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteJoinNoTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -6676,6 +6950,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteJoinTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -6715,6 +6992,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteMaintainTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery("""
                         k\tsum
                         2021-03-25T18:00:00.000000Z\t144.77803379943109
@@ -6755,6 +7035,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteMultipleTimestamps1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -6779,6 +7062,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteMultipleTimestamps1NotKeyed() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -6803,6 +7089,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteMultipleTimestamps2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -6827,6 +7116,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteTimestampExpression() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (ts1 timestamp, ts2 timestamp) timestamp(ts1) partition by DAY");
             execute(
@@ -6904,6 +7196,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteTimestampMixedWithAggregates() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (i INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
@@ -7158,6 +7453,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteUTCOffset() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -7181,6 +7479,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteUnionNoTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -7220,6 +7521,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteUnionTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -7257,6 +7561,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRewriteWith() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table if not exists x (ts1 timestamp, ts2 timestamp, sym symbol, val long) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
@@ -7281,6 +7588,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByRunsSequentiallyWithNonConstantFrom() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE 'trades' (
@@ -7314,6 +7624,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWeekWithOffset0() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE points ( \s
@@ -7353,6 +7666,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithAsofJoin() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE 'trades1' (
@@ -7431,6 +7747,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithCTEsAndConstantKey() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         period_start_time\tnas_timestamp\tfeed_table\tdevice_name\tapplication_name\tapplication_group\tmin_response_time_usec\tmax_response_time_usec\ttotal_response_time_usec\tcount_response_time\tevents
@@ -7488,6 +7807,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithEmptyCursor() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "to_timezone\ts\tlat\tlon\n",
                 "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
@@ -7512,6 +7834,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         open\thigh\tlow\tclose\tvolume\ttimestamp
@@ -7579,6 +7904,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithFullDoesNotReferenceMutableCharSequence() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
 
@@ -7622,6 +7950,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithOnlyOneFillOption() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("CREATE TABLE weather ( ts TIMESTAMP, temperature DOUBLE, humidity INTEGER ) TIMESTAMP(ts);");
             execute("""
@@ -7690,6 +8021,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithOrderByDescTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         created_at\tfirst
@@ -7718,6 +8052,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithPredicate() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -7776,6 +8113,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithProjection() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -7894,6 +8234,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithProjection2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -7953,6 +8296,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithSubQueryAndFromToNoFill() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             drainWalQueue();
@@ -7980,6 +8326,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleCountFillLinear() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tcount\tk
@@ -8216,6 +8565,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleCountFillLinearFromSubQuery() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tcount\tk
@@ -8516,6 +8868,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleCountFillLinearWithOffset() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery("""
                 b\tcount\tk
                 \t9\t1970-01-03T00:45:00.000000Z
@@ -8630,6 +8985,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillAllTypesLinear() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery("""
                         b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk
                         HYRX\t11.42798\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\t1970-01-03T00:00:00.000000Z
@@ -8895,6 +9253,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinear() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -9066,6 +9427,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinearByMonth() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum_t\tk
@@ -9228,6 +9592,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinearWithAlignment() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("""
                     create table x (
@@ -9483,6 +9850,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNone() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -9551,6 +9921,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNoneAllTypes() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk
@@ -9736,6 +10109,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNoneDataGaps() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -9813,6 +10189,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNoneDataGapsAlignToCalendar() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -9892,6 +10271,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNoneDataGapsAlignToCalendarTimeZone() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\ts\tk
@@ -9934,6 +10316,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNoneEmpty() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "b\tsum_t\tk\n",
                 "select b, sum_t(a), k from x sample by 2h fill(none) align to first observation",
@@ -9968,6 +10353,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNoneNotKeyed() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -10017,6 +10405,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNoneNotKeyedEmpty() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "sum\tk\n",
                 "select sum(a), k from x sample by 3h fill(none) align to first observation",
@@ -10049,6 +10440,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNull() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -10820,6 +11214,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullDay() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -10853,6 +11250,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullDayNotKeyed() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -10876,6 +11276,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullDayNotKeyedGaps() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -10936,6 +11339,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullMonth() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -10975,6 +11381,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullMonthAlignToCalendar() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -11020,6 +11429,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullNotKeyedAlignToCalendar() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         s\tk
@@ -11106,6 +11518,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullNotKeyedEmpty() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "sum\tk\n",
                 "select sum(a), k from x sample by 3h fill(null) align to first observation",
@@ -11170,6 +11585,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullNotKeyedValid() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table x as " +
                     "(" +
@@ -11218,6 +11636,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullYear() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -11317,6 +11738,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullYearAlignToCalendar() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -11362,6 +11786,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrev() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -11513,6 +11940,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevAlignToCalendar() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -11756,6 +12186,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevAllTypes() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tvch\tsum\tk
@@ -11804,6 +12237,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevDuplicateKey() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tb1\tb2\tsum\tk
@@ -11955,6 +12391,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevDuplicateTimestamp1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk\tk1
@@ -12106,6 +12545,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevDuplicateTimestamp2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk1\tk
@@ -12257,6 +12699,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevEmptyBase() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 (CharSequence) null,
                 "select a,b,c,d,e,f,g,i,j,l,m,p,sum(o), k from x where 0!=0 sample by 3h fill(prev)",
@@ -12288,6 +12733,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevNoTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum
@@ -12439,6 +12887,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevNoTimestampLong256AndChar() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         a\tb\tsum
@@ -12913,6 +13364,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevNotKeyed() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -12980,6 +13434,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevNotKeyedAlignToCalendar() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -13357,6 +13814,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevNotKeyedEmpty() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "sum\tk\n",
                 "select sum(o), k from x sample by 3h fill(prev)",
@@ -13414,6 +13874,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValue() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -13669,6 +14132,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueAllKeyTypes() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\th\ti\tj\tl\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk
@@ -13739,6 +14205,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueAllTypes() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tlast\tlast1\tlast2\tlast3\tlast4\tlast5\tk
@@ -13924,6 +14393,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueAllTypesAndTruncate() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     "create table x as " +
@@ -14020,6 +14492,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueEmpty() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "b\tsum\tk\n",
                 "select b, sum(a), k from x sample by 3h fill(20.56)",
@@ -14039,6 +14514,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueFromSubQuery() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tk
@@ -14201,6 +14679,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueListWithLinearAllTypesNotKeyed() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "first\tfirst1\tmin\tmax\tfirst2\tsum\tfirst3\tfirst4\tk\n",
                 "select first(a),first(c),min(d),max(e),first(f),sum(j),first(l),first(p), k " +
@@ -14256,6 +14737,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueListWithNullAndPrev() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         b\tsum\tcount\tmin\tmax\tavg\tk
@@ -14356,6 +14840,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueListWithNullAndPrevAndLinearAllTypesNotKeyed() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tcount\tmin\tmax\tsum1\tmax1\tcount1\tsum2\tsum3\tsum4\tk
@@ -14407,6 +14894,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueListWithNullAndPrevAndLinearNotKeyed() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tcount\tmin\tmax\tavg\tk
@@ -14485,6 +14975,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueNotKeyed() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -14525,6 +15018,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueNotKeyedAlignToCalendar() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -14720,6 +15216,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueNotKeyedAlignToCalendarTimeZone() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -15008,6 +15507,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueNotKeyedEmpty() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "sum\tk\n",
                 "select sum(a), k from x sample by 30m fill(20.56) align to first observation",
@@ -15093,6 +15595,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillWithWeekStride() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
 
@@ -15175,6 +15680,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleArithmeticsInPeriod() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "sum\tk\n",
                 "select sum(a), k from x sample by (10+20)m",
@@ -15194,6 +15702,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleArithmeticsInPeriod2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -15219,6 +15730,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleArithmeticsInPeriod3() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         sum\tk
@@ -15244,6 +15758,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleLongArithmeticsInPeriod() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 "sum\tk\n",
                 "select sum(a), k from x sample by (1+2)*10L m align to calendar",
@@ -15263,6 +15780,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampColumnAliasPosFirst() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
@@ -15303,6 +15823,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampColumnAliasPosLast() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
@@ -15343,6 +15866,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampColumnAliasPosMid() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
@@ -15383,6 +15909,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampColumnJoinTableAliasFirst() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
@@ -15423,6 +15952,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampColumnJoinTableAliasLast() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
@@ -15463,6 +15995,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampColumnJoinTableAliasMid() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
@@ -15503,6 +16038,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampFillNullAndValue() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\tfirst\tlast
@@ -15551,6 +16089,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\tvalue
@@ -15589,6 +16130,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\tvalue
@@ -15628,6 +16172,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTsNotInSelectList() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         value
@@ -15744,6 +16291,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampSpecifiedForTableWithNoDesignatedTimestamp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         ts\tv
@@ -15772,6 +16322,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testUuidFillNull() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertQuery(
                 """
                         s\tk\tfirst\tlast
