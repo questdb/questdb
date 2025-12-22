@@ -12215,6 +12215,41 @@ create table tab as (
     }
 
     @Test
+    public void testViewCyclePrevention() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (x int, y int, ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("create view v1 as select * from tango");
+                stmt.execute("create view v2 as select * from tango");
+            }
+
+            drainWalAndViewQueues();
+
+            try (PreparedStatement stmt1 = connection.prepareStatement("ALTER VIEW v1 AS SELECT * FROM v2");
+                 PreparedStatement stmt2 = connection.prepareStatement("ALTER VIEW v2 AS SELECT * FROM v1")) {
+                stmt1.execute();
+                stmt2.execute();
+                drainWalAndViewQueues();
+                Assert.fail("expected SQLException due to cycle in view definitions");
+            } catch (SQLException e) {
+                assertContains(e.getMessage(), "v2' cannot depend on 'v1' because 'v1' already depends on 'v2");
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from v1")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[INTEGER],y[INTEGER],ts[TIMESTAMP]
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testViewDroppedAndRecreatedWithDifferentDefinition() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
