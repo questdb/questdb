@@ -838,6 +838,145 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertGeneratedQueryNullable(ddl, gen);
     }
 
+    @Test
+    public void testConstantHoistingWithinCacheCapacity() throws Exception {
+        // Tests constant hoisting with 8 constants (within cache capacity of 8)
+        final String query = "select * from x where " +
+                "i64 > 1 and i64 < 100 and i64 != 50 and i64 != 51 " +
+                "and i64 != 52 and i64 != 53 and i64 != 54 and i64 != 55";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 200, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testConstantHoistingExceedsCacheCapacity() throws Exception {
+        // Tests constant hoisting with more than 8 constants (exceeds cache capacity)
+        // The backend constant cache has capacity of 8 elements
+        final String query = "select * from x where " +
+                "i64 > 1 and i64 < 100 and i64 != 10 and i64 != 20 " +
+                "and i64 != 30 and i64 != 40 and i64 != 50 and i64 != 60 " +
+                "and i64 != 70 and i64 != 80 and i64 != 90";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 200, 0) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testConstantHoistingMixedTypes() throws Exception {
+        // Tests constant hoisting with mixed types exceeding cache capacity
+        final String query = "select * from x where " +
+                "i32 > 1 and i32 < 100 and i64 > 2 and i64 < 200 " +
+                "and f32 > 0.1 and f32 < 0.9 and f64 > 0.2 and f64 < 0.8 " +
+                "and i32 != 50 and i64 != 100 and f32 != 0.5 and f64 != 0.5";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(0, 200, 0) i32," +
+                " rnd_long(0, 300, 0) i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnAddressHoistingWithinCacheCapacity() throws Exception {
+        // Tests column address hoisting with 8 columns (within cache capacity of 8)
+        final String query = "select * from x where " +
+                "c1 > 0 and c2 > 0 and c3 > 0 and c4 > 0 " +
+                "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long() c1," +
+                " rnd_long() c2," +
+                " rnd_long() c3," +
+                " rnd_long() c4," +
+                " rnd_long() c5," +
+                " rnd_long() c6," +
+                " rnd_long() c7," +
+                " rnd_long() c8" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnAddressHoistingExceedsCacheCapacity() throws Exception {
+        // Tests column address hoisting with more than 8 columns (exceeds cache capacity)
+        // The backend address cache has capacity of 8 elements
+        final String query = "select * from x where " +
+                "c1 > 0 and c2 > 0 and c3 > 0 and c4 > 0 " +
+                "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0 " +
+                "and c9 > 0 and c10 > 0 and c11 > 0 and c12 > 0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long() c1," +
+                " rnd_long() c2," +
+                " rnd_long() c3," +
+                " rnd_long() c4," +
+                " rnd_long() c5," +
+                " rnd_long() c6," +
+                " rnd_long() c7," +
+                " rnd_long() c8," +
+                " rnd_long() c9," +
+                " rnd_long() c10," +
+                " rnd_long() c11," +
+                " rnd_long() c12" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnAddressHoistingMixedTypes() throws Exception {
+        // Tests column address hoisting with mixed types exceeding cache capacity
+        final String query = "select * from x where " +
+                "i1 > 0 and i2 > 0 and i3 > 0 and l1 > 0 and l2 > 0 and l3 > 0 " +
+                "and f1 > 0.0 and f2 > 0.0 and f3 > 0.0 " +
+                "and d1 > 0.0 and d2 > 0.0 and d3 > 0.0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int() i1," +
+                " rnd_int() i2," +
+                " rnd_int() i3," +
+                " rnd_long() l1," +
+                " rnd_long() l2," +
+                " rnd_long() l3," +
+                " rnd_float() f1," +
+                " rnd_float() f2," +
+                " rnd_float() f3," +
+                " rnd_double() d1," +
+                " rnd_double() d2," +
+                " rnd_double() d3" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testCombinedHoistingExceedsBothCaches() throws Exception {
+        // Tests both constant and column address hoisting exceeding cache capacities
+        final String query = "select * from x where " +
+                "c1 > 1 and c2 > 2 and c3 > 3 and c4 > 4 " +
+                "and c5 > 5 and c6 > 6 and c7 > 7 and c8 > 8 " +
+                "and c9 > 9 and c10 > 10";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long(0, 100, 0) c1," +
+                " rnd_long(0, 100, 0) c2," +
+                " rnd_long(0, 100, 0) c3," +
+                " rnd_long(0, 100, 0) c4," +
+                " rnd_long(0, 100, 0) c5," +
+                " rnd_long(0, 100, 0) c6," +
+                " rnd_long(0, 100, 0) c7," +
+                " rnd_long(0, 100, 0) c8," +
+                " rnd_long(0, 100, 0) c9," +
+                " rnd_long(0, 100, 0) c10" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
     private void assertGeneratedQuery(CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
