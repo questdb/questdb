@@ -4671,11 +4671,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.
+        boolean pushed = false;
         final QueryModel savedOrderByModel = lastSeenOrderByModel;
         try {
             final ObjList<ExpressionNode> orderBy = model.getOrderBy();
             if (orderBy != null && orderBy.size() > 0) {
                 lastSeenOrderByModel = model;
+
+                // when order-by specific here it would be pointless to require timestamp from the
+                // nested models
+                executionContext.pushTimestampRequiredFlag(false);
+                pushed = true;
             }
             RecordCursorFactory factory;
 
@@ -4688,6 +4694,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         } finally {
             lastSeenOrderByModel = savedOrderByModel;
+            if (pushed) {
+                executionContext.popTimestampRequiredFlag();
+            }
         }
     }
 
