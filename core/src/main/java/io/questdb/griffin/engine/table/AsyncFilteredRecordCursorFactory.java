@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -60,6 +61,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFilteredRecordCursor cursor;
     private final Function filter;
+    private final ExpressionNode filterExpr;
     private final PageFrameSequence<AsyncFilterAtom> frameSequence;
     private final Function limitLoFunction;
     private final int limitLoPos;
@@ -76,6 +78,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull Function filter,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull ExpressionNode filterExpr,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             int workerCount,
@@ -86,6 +89,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.base = base;
         this.filter = filter;
         this.cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+        this.filterExpr = filterExpr;
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
         final int columnCount = base.getMetadata().getColumnCount();
         final IntList columnTypes = new IntList(columnCount);
@@ -173,6 +177,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public ExpressionNode getStealFilterExpr() {
+        return filterExpr;
+    }
+
+    @Override
     public TableToken getTableToken() {
         return base.getTableToken();
     }
@@ -243,13 +252,13 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getFilteredRows();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
+        final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
@@ -265,6 +274,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         } finally {
             atom.releaseFilter(filterId);
         }
+
+        task.setFilteredRowCount(rows.size());
 
         // Pre-touch native columns, if asked.
         if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {

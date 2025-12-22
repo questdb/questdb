@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,6 +56,26 @@ public interface MultiArgFunction extends Function {
             }
         }
         return true;
+    }
+
+    @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof MultiArgFunction that) {
+            ObjList<Function> thatArgs = that.args();
+            ObjList<Function> thisArgs = args();
+            if (thatArgs.size() == thisArgs.size()) {
+                for (int i = 0, n = thisArgs.size(); i < n; i++) {
+                    if (!thisArgs.getQuick(i).isEquivalentTo(thatArgs.getQuick(i))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

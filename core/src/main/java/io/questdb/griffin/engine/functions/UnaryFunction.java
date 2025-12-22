@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,6 +53,17 @@ public interface UnaryFunction extends Function {
     @Override
     default boolean isConstant() {
         return getArg().isConstant();
+    }
+
+    @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof UnaryFunction that) {
+            return getArg().isEquivalentTo(that.getArg());
+        }
+        return false;
     }
 
     @Override
