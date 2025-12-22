@@ -308,6 +308,33 @@ public class FunctionFactoryCache {
                 throw SqlException.position(0).put("Plugin not loaded: ").put(pluginName);
             }
 
+            // Get plugin's function map before removing
+            final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> pluginFactoryMap =
+                    pluginFunctions.get(pluginName);
+
+            // Remove qualified names from function type sets
+            if (pluginFactoryMap != null) {
+                final ObjList<CharSequence> keys = pluginFactoryMap.keys();
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    final CharSequence functionName = keys.getQuick(i);
+                    final ObjList<FunctionFactoryDescriptor> overloads = pluginFactoryMap.get(functionName);
+                    if (overloads != null && overloads.size() > 0) {
+                        // Check the first overload to determine the function type
+                        final FunctionFactory factory = overloads.getQuick(0).getFactory();
+                        final String qualifiedName = pluginName + "." + functionName;
+                        if (factory.isGroupBy()) {
+                            groupByFunctionNames.remove(qualifiedName);
+                        } else if (factory.isCursor()) {
+                            cursorFunctionNames.remove(qualifiedName);
+                        } else if (factory.isWindow()) {
+                            windowFunctionNames.remove(qualifiedName);
+                        } else if (factory.isRuntimeConstant()) {
+                            runtimeConstantFunctionNames.remove(qualifiedName);
+                        }
+                    }
+                }
+            }
+
             // Remove plugin's function map
             pluginFunctions.remove(pluginName);
             loadedPlugins.remove(pluginName);
