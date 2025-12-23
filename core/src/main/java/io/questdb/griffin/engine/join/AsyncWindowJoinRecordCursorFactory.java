@@ -831,11 +831,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         // First, check if one of the first rows matching the join filter is also at the masterSlaveTimestampLo timestamp.
                         // If so, we don't need to do backward scan to find the prevailing row.
                         final long ogRowLo = rowLo;
+                        long adjustedRowLo = rowLo;
                         for (long i = rowLo; i < rowHi; i++) {
                             if (slaveTimestamps.get(i) > masterSlaveTimestampLo) {
                                 break;
                             }
-                            rowLo++;
+                            adjustedRowLo++;
                             final long slaveRowId = slaveRowIds.get(i);
                             slaveTimeFrameHelper.recordAt(slaveRowId);
                             if (joinFilter.getBool(joinRecord)) {
@@ -874,7 +875,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         }
 
                         // At last, process time window rows.
-                        for (long i = rowLo; i < rowHi; i++) {
+                        for (long i = adjustedRowLo; i < rowHi; i++) {
                             final long slaveRowId = slaveRowIds.get(i);
                             slaveTimeFrameHelper.recordAt(slaveRowId);
                             if (joinFilter.getBool(joinRecord)) {
@@ -1597,11 +1598,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             // First, check if one of the first rows matching the join filter is also at the masterSlaveTimestampLo timestamp.
                             // If so, we don't need to do backward scan to find the prevailing row.
                             final long ogRowLo = rowLo;
+                            long adjustedRowLo = rowLo;
                             for (long i = rowLo; i < rowHi; i++) {
                                 if (slaveTimestamps.get(i) > masterSlaveTimestampLo) {
                                     break;
                                 }
-                                rowLo++;
+                                adjustedRowLo++;
                                 final long slaveRowId = slaveRowIds.get(i);
                                 slaveTimeFrameHelper.recordAt(slaveRowId);
                                 if (joinFilter.getBool(joinRecord)) {
@@ -1640,7 +1642,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             }
 
                             // At last, process time window rows.
-                            for (long i = rowLo; i < rowHi; i++) {
+                            for (long i = adjustedRowLo; i < rowHi; i++) {
                                 final long slaveRowId = slaveRowIds.get(i);
                                 slaveTimeFrameHelper.recordAt(slaveRowId);
                                 if (joinFilter.getBool(joinRecord)) {
