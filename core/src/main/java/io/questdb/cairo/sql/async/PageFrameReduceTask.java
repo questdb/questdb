@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,15 +43,17 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_GROUP_BY = 1;
     public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
     public static final byte TYPE_TOP_K = 3;
+    public static final byte TYPE_WINDOW_JOIN = 4;
     private static final String exceptionMessage = "unexpected filter error";
 
     private final DirectLongList auxAddresses;
     private final DirectLongList dataAddresses;
     private final StringSink errorMsg = new StringSink();
-    private final DirectLongList filteredRows; // Used for TYPE_FILTER.
+    private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
     private int errorMessagePosition;
+    private long filteredRowCount;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
@@ -77,6 +79,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
+        filteredRowCount = 0;
         filteredRows.resetCapacity();
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
@@ -85,10 +88,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
-        Misc.free(frameMemoryPool);
+        filteredRowCount = 0;
         Misc.free(filteredRows);
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
+        Misc.free(frameMemoryPool);
     }
 
     /**
@@ -111,6 +115,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public CharSequence getErrorMsg() {
         return errorMsg;
+    }
+
+    public long getFilteredRowCount() {
+        return filteredRowCount;
     }
 
     public DirectLongList getFilteredRows() {
@@ -232,6 +240,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             isOutOfMemory = ce.isOutOfMemory();
             errorMessagePosition = ce.getPosition();
         }
+    }
+
+    public void setFilteredRowCount(long filteredRowCount) {
+        this.filteredRowCount = filteredRowCount;
     }
 
     public void setTaskType(byte taskType) {

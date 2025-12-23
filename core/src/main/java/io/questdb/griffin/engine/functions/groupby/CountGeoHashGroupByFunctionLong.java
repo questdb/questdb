@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,32 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class CountGeoHashGroupByFunctionLong extends AbstractCountGroupByFunction {
 
     public CountGeoHashGroupByFunctionLong(@NotNull Function arg) {
         super(arg);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            long nonNullCount = 0;
+            final long hi = ptr + count * 8L;
+            for (; ptr < hi; ptr += 8L) {
+                if (Unsafe.getUnsafe().getLong(ptr) != GeoHashes.NULL) {
+                    nonNullCount++;
+                }
+            }
+            mapValue.putLong(valueIndex, nonNullCount);
+        }
     }
 
     @Override
@@ -53,5 +69,14 @@ public class CountGeoHashGroupByFunctionLong extends AbstractCountGroupByFunctio
             mapValue.addLong(valueIndex, 1);
         }
     }
-}
 
+    @Override
+    public int getComputeBatchArgType() {
+        return ColumnType.GEOLONG;
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
+    }
+}

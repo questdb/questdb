@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,6 +63,19 @@ public interface TernaryFunction extends Function {
     @Override
     default boolean isConstant() {
         return getLeft().isConstant() && getCenter().isConstant() && getRight().isConstant();
+    }
+
+    @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof TernaryFunction that) {
+            return getLeft().isEquivalentTo(that.getLeft())
+                    && getCenter().isEquivalentTo(that.getCenter())
+                    && getRight().isEquivalentTo(that.getRight());
+        }
+        return false;
     }
 
     @Override

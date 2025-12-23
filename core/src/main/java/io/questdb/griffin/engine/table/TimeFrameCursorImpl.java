@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,20 +42,21 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
+ * Thread-unsafe time frame cursor.
+ * <p>
  * The only supported partition order is forward, i.e. navigation
  * should start with a {@link #next()} call.
  */
-public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
+public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
     private final IntList framePartitionIndexes = new IntList();
@@ -63,7 +64,7 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private final RecordMetadata metadata;
     private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
-    private final TableReaderTimeFrame timeFrame = new TableReaderTimeFrame();
+    private final TimeFrame timeFrame = new TimeFrame();
     private int frameCount = 0;
     private PageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
@@ -71,7 +72,7 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private int partitionHi;
     private TableReader reader;
 
-    public TimeFrameRecordCursorImpl(
+    public TimeFrameCursorImpl(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata
     ) {
@@ -90,16 +91,12 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     @Override
     public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
         int physicalColumnIndex = frameCursor.getColumnIndexes().getQuick(logicalColumnIndex);
-        int frameIndex = timeFrame.frameIndex;
+        int frameIndex = timeFrame.getFrameIndex();
         if (frameIndex == -1) {
             return null;
         }
         int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
         return reader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
-    }
-
-    public PageFrameCursor getPageFrameCursor() {
-        return frameCursor;
     }
 
     @Override
@@ -123,6 +120,11 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     @Override
+    public int getTimestampIndex() {
+        return metadata.getTimestampIndex();
+    }
+
+    @Override
     public void jumpTo(int frameIndex) {
         buildFrameCache();
 
@@ -134,7 +136,7 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
         long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
         long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
-        timeFrame.of(frameIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
+        timeFrame.ofEstimate(frameIndex, timestampLo, estimatePartitionHi(partitionCeilMethod, timestampLo, maxTimestampHi));
     }
 
     @Override
@@ -146,20 +148,20 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     public boolean next() {
         buildFrameCache();
 
-        int frameIndex = timeFrame.frameIndex;
+        int frameIndex = timeFrame.getFrameIndex();
         if (++frameIndex < frameCount) {
             int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
             long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
             long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
-            timeFrame.of(frameIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
+            timeFrame.ofEstimate(frameIndex, timestampLo, estimatePartitionHi(partitionCeilMethod, timestampLo, maxTimestampHi));
             return true;
         }
         // Update frame index in case of subsequent prev() call.
-        timeFrame.of(frameCount, Long.MIN_VALUE, Long.MIN_VALUE);
+        timeFrame.ofEstimate(frameCount, Long.MIN_VALUE, Long.MIN_VALUE);
         return false;
     }
 
-    public TimeFrameRecordCursor of(TablePageFrameCursor frameCursor) {
+    public TimeFrameCursor of(TablePageFrameCursor frameCursor) {
         this.frameCursor = frameCursor;
         frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
         frameMemoryPool.of(frameAddressCache);
@@ -178,24 +180,28 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     @Override
     public long open() throws DataUnavailableException {
-        final int frameIndex = timeFrame.frameIndex;
+        final int frameIndex = timeFrame.getFrameIndex();
         if (frameIndex < 0 || frameIndex >= frameCount) {
             throw CairoException.nonCritical().put("open call on uninitialized time frame");
         }
         final long rowCount = frameRowCounts.getQuick(frameIndex);
         if (rowCount > 0) {
-            timeFrame.rowLo = 0;
-            timeFrame.rowHi = rowCount;
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
-            timeFrame.timestampLo = Unsafe.getUnsafe().getLong(timestampAddress);
-            timeFrame.timestampHi = Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8) + 1;
+            timeFrame.ofOpen(
+                    Unsafe.getUnsafe().getLong(timestampAddress),
+                    Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8) + 1,
+                    0,
+                    rowCount
+            );
             return rowCount;
         }
-        timeFrame.rowLo = 0;
-        timeFrame.rowHi = 0;
-        timeFrame.timestampLo = timeFrame.estimateTimestampLo;
-        timeFrame.timestampHi = timeFrame.estimateTimestampLo;
+        timeFrame.ofOpen(
+                timeFrame.getTimestampEstimateLo(),
+                timeFrame.getTimestampEstimateHi(),
+                0,
+                0
+        );
         return 0;
     }
 
@@ -203,16 +209,16 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     public boolean prev() {
         buildFrameCache();
 
-        int frameIndex = timeFrame.frameIndex;
+        int frameIndex = timeFrame.getFrameIndex();
         if (--frameIndex >= 0) {
             int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
             long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
             long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
-            timeFrame.of(frameIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
+            timeFrame.ofEstimate(frameIndex, timestampLo, estimatePartitionHi(partitionCeilMethod, timestampLo, maxTimestampHi));
             return true;
         }
         // Update frame index in case of subsequent next() call.
-        timeFrame.of(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+        timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
         return false;
     }
 
@@ -256,80 +262,9 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     // maxTimestampHi is used to handle split partitions correctly as ceil method
     // will return the same value for all split partitions
-    private long estimatePartitionHi(long partitionTimestamp, long maxTimestampHi) {
+    static long estimatePartitionHi(TimestampDriver.TimestampCeilMethod partitionCeilMethod, long partitionTimestamp, long maxTimestampHi) {
         // partitionCeilMethod is null in case of partition by NONE
         long partitionHi = partitionCeilMethod != null ? partitionCeilMethod.ceil(partitionTimestamp) : Long.MAX_VALUE;
         return Math.min(partitionHi, maxTimestampHi);
-    }
-
-    private static class TableReaderTimeFrame implements TimeFrame, Mutable {
-        private long estimateTimestampHi;
-        private long estimateTimestampLo;
-        private int frameIndex;
-        private long rowHi;
-        private long rowLo;
-        private long timestampHi;
-        private long timestampLo;
-
-        @Override
-        public void clear() {
-            frameIndex = -1;
-            estimateTimestampLo = Long.MIN_VALUE;
-            estimateTimestampHi = Long.MIN_VALUE;
-            timestampLo = Long.MIN_VALUE;
-            timestampHi = Long.MIN_VALUE;
-            rowLo = -1;
-            rowHi = -1;
-        }
-
-        @Override
-        public int getFrameIndex() {
-            return frameIndex;
-        }
-
-        @Override
-        public long getRowHi() {
-            return rowHi;
-        }
-
-        @Override
-        public long getRowLo() {
-            return rowLo;
-        }
-
-        @Override
-        public long getTimestampEstimateHi() {
-            return estimateTimestampHi;
-        }
-
-        @Override
-        public long getTimestampEstimateLo() {
-            return estimateTimestampLo;
-        }
-
-        @Override
-        public long getTimestampHi() {
-            return timestampHi;
-        }
-
-        @Override
-        public long getTimestampLo() {
-            return timestampLo;
-        }
-
-        @Override
-        public boolean isOpen() {
-            return rowLo != -1 && rowHi != -1;
-        }
-
-        public void of(int frameIndex, long estimateTimestampLo, long estimateTimestampHi) {
-            this.frameIndex = frameIndex;
-            this.estimateTimestampLo = estimateTimestampLo;
-            this.estimateTimestampHi = estimateTimestampHi;
-            timestampLo = Long.MIN_VALUE;
-            timestampHi = Long.MIN_VALUE;
-            rowLo = -1;
-            rowHi = -1;
-        }
     }
 }

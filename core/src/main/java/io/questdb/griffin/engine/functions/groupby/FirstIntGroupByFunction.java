@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
@@ -42,6 +43,13 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     public FirstIntGroupByFunction(@NotNull Function arg) {
         super();
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(ptr));
+        }
     }
 
     @Override
@@ -123,6 +131,11 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         setInt(mapValue, Numbers.INT_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

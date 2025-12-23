@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -2551,6 +2551,20 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
+            if (hexString == null) {
+                putLong256(columnIndex, (CharSequence) null);
+                return;
+            }
+            if (hexString instanceof DirectUtf8Sequence) {
+                putLong256Utf8(columnIndex, (DirectUtf8Sequence) hexString);
+                return;
+            }
+            // Long256 hex strings are always ASCII
+            putLong256(columnIndex, hexString.asAsciiCharSequence());
+        }
+
+        @Override
         public void putShort(int columnIndex, short value) {
             getPrimaryColumn(columnIndex).putShort(value);
             setRowValueNotNull(columnIndex);
@@ -2578,6 +2592,25 @@ public class WalWriter implements TableWriterAPI {
         public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
+            if (value == null) {
+                putStr(columnIndex, null);
+                return;
+            }
+            if (value instanceof DirectUtf8Sequence ds) {
+                putStrUtf8(columnIndex, ds);
+                return;
+            }
+            if (value.isAscii()) {
+                putStr(columnIndex, value.asAsciiCharSequence());
+            } else {
+                tempSink.clear();
+                Utf8s.utf8ToUtf16(value, tempSink);
+                putStr(columnIndex, tempSink);
+            }
         }
 
         @Override
