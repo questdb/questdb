@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import org.junit.Before;
@@ -73,12 +73,17 @@ public class PGSymbolBindVariablesTest extends AbstractBootstrapTest {
                         stmt.setArray(1, array);
                         try (final ResultSet resultSet = stmt.executeQuery()) {
                             assertResultSet(
-                                    "QUERY PLAN[VARCHAR]\n" +
-                                            "Limit lo: $0::int[1] skip-over-rows: 0 limit: 1\n" +
-                                            "    PageFrame\n" +
-                                            "        Row forward scan\n" +
-                                            "        Frame forward scan on: tab\n",
-                                    Misc.getThreadLocalSink(),
+                                    """
+                                            ts[TIMESTAMP],sym_col[VARCHAR]
+                                            2023-01-01 09:10:00.0,a
+                                            2023-01-01 09:13:00.0,b
+                                            2023-01-01 09:14:00.0,b
+                                            2023-01-01 09:15:00.0,a
+                                            2023-01-01 09:17:00.0,a
+                                            2023-01-01 09:18:00.0,b
+                                            2023-01-01 09:19:00.0,a
+                                            """,
+                                    new StringSink(),
                                     resultSet
                             );
                         }
@@ -95,10 +100,28 @@ public class PGSymbolBindVariablesTest extends AbstractBootstrapTest {
                         .with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(engine.getConfiguration()))
         ) {
             engine.execute(
-                    "create table tab as (select rnd_symbol('a', 'b', 'c', null) sym_col, timestamp_sequence(20000000, 100000) ts " +
-                            "from long_sequence(" + numOfRows + ")) timestamp(ts) partition by day wal",
-                    executionContext)
-            ;
+                    """
+                            create table tab (
+                              ts TIMESTAMP,
+                              sym_col symbol
+                            ) timestamp(ts) partition by day;
+                            """, executionContext
+            );
+            engine.execute(
+                    """
+                            insert into tab(ts, sym_col) values
+                            (cast('2023-01-01T09:10:00.000000Z' as TIMESTAMP), 'a'),
+                            (cast('2023-01-01T09:11:00.000000Z' as TIMESTAMP), null),
+                            (cast('2023-01-01T09:12:00.000000Z' as TIMESTAMP), null),
+                            (cast('2023-01-01T09:13:00.000000Z' as TIMESTAMP), 'b'),
+                            (cast('2023-01-01T09:14:00.000000Z' as TIMESTAMP), 'b'),
+                            (cast('2023-01-01T09:15:00.000000Z' as TIMESTAMP), 'a'),
+                            (cast('2023-01-01T09:16:00.000000Z' as TIMESTAMP), null),
+                            (cast('2023-01-01T09:17:00.000000Z' as TIMESTAMP), 'a'),
+                            (cast('2023-01-01T09:18:00.000000Z' as TIMESTAMP), 'b'),
+                            (cast('2023-01-01T09:19:00.000000Z' as TIMESTAMP), 'a');
+                            """, executionContext
+            );
         } catch (SqlException e) {
             throw CairoException.critical(0).put("Could not create table: '").put(e.getFlyweightMessage());
         }

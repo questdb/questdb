@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.BoolList;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -44,9 +45,8 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public final class PGNonNullVarcharArrayView extends ArrayView implements FlatArrayView, Mutable {
     private final LongList elementOffsets = new LongList();
+    private final BoolList isAsciis = new BoolList();
     private final DirectUtf8String view = new DirectUtf8String();
-    private long hi;
-    private long lo;
 
     public PGNonNullVarcharArrayView() {
         this.isVanilla = false;
@@ -64,12 +64,11 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
     @Override
     public void clear() {
         elementOffsets.clear();
+        isAsciis.clear();
         shape.clear();
         strides.clear();
         flatViewLength = 1;
         flatViewOffset = 0;
-        lo = 0;
-        hi = 0;
         type = ColumnType.UNDEFINED;
     }
 
@@ -100,12 +99,21 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
             return null;
         }
         int elementLen = Numbers.bswap(Unsafe.getUnsafe().getInt(elementAddr));
-        return view.of(elementAddr + Integer.BYTES, elementAddr + Integer.BYTES + elementLen);
+        return view.of(elementAddr + Integer.BYTES, elementAddr + Integer.BYTES + elementLen, isAsciis.get(index));
     }
 
     @Override
     public int length() {
         return flatViewLength;
+    }
+
+    private static boolean isAscii(long addr, int len) {
+        for (int i = 0; i < len; i++) {
+            if (Unsafe.getUnsafe().getByte(addr + i) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void defaultStrides() {
@@ -138,16 +146,20 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
         final int elementCount = flatViewLength;
         elementOffsets.clear();
         elementOffsets.setPos(elementCount);
+        isAsciis.clear();
+        isAsciis.setPos(elementCount);
         long ptr = lo;
         for (int i = 0; i < elementCount; i++) {
             int elementLenBE = Unsafe.getUnsafe().getInt(ptr);
             // -1 indicates NULL element
             if (elementLenBE == -1) {
                 elementOffsets.setQuick(i, -1);
+                isAsciis.setQuick(i, true);
                 ptr += Integer.BYTES;
             } else {
                 int elementLen = Numbers.bswap(elementLenBE);
                 elementOffsets.setQuick(i, ptr);
+                isAsciis.setQuick(i, isAscii(ptr + Integer.BYTES, elementLen));
                 ptr += Integer.BYTES + elementLen;
             }
         }
@@ -157,10 +169,7 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
                     .put("unexpected array size [expected=").put(hi - lo)
                     .put(", actual=").put(ptr - lo).put(']');
         }
-
-        this.lo = lo;
-        this.hi = hi;
-        this.type = ColumnType.encodeArrayType(ColumnType.VARCHAR, shape.size());
+        this.type = ColumnType.encodeArrayType(ColumnType.VARCHAR, shape.size(), false);
         defaultStrides();
     }
 }

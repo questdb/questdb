@@ -40,7 +40,6 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
@@ -72,6 +71,7 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
     private static class Func extends BooleanFunction implements BinaryFunction {
         private final Function arrayFunc;
         private final IntHashSet intSet = new IntHashSet();
+        private final StringSink sink = new StringSink();
         private final CharSequenceHashSet strSet = new CharSequenceHashSet();
         private final SymbolFunction symbolFunc;
         private final InSymbolFunctionFactory.TestFunc intTest = this::testAsInt;
@@ -108,14 +108,14 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
 
             if (symbolTable != null) {
                 for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
-                    Utf8Sequence element = arrayView.getVarchar(i);
-                    if (element == null) {
+                    Utf8Sequence value = arrayView.getVarchar(i);
+                    if (value == null) {
                         intSet.add(symbolTable.keyOf(null));
-                    } else if (element.isAscii()) {
-                        intSet.add(symbolTable.keyOf(element.asAsciiCharSequence()));
+                    } else if (value.isAscii()) {
+                        intSet.add(symbolTable.keyOf(value.asAsciiCharSequence()));
                     } else {
-                        StringSink sink = Misc.getThreadLocalSink();
-                        sink.put(element);
+                        sink.clear();
+                        sink.put(value);
                         intSet.add(symbolTable.keyOf(sink));
                     }
                 }

@@ -88,7 +88,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
         }
 
         int elementType = ColumnType.decodeArrayElementType(view.getType());
-        if (elementType != ColumnType.LONG && elementType != ColumnType.DOUBLE) {
+        if (elementType != ColumnType.LONG && elementType != ColumnType.DOUBLE && elementType != ColumnType.VARCHAR) {
             throw CairoException.nonCritical().put("unsupported array type, only DOUBLE is currently supported [type=")
                     .put(ColumnType.nameOf(elementType)).put(']');
         }
