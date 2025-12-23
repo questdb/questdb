@@ -30,7 +30,6 @@ import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -879,6 +878,10 @@ public class PGArraysTest extends BasePGTest {
         } catch (SQLException ex) {
             TestUtils.assertContains(ex.getMessage(), expectedError);
         }
+    }
+
+    private void assertArrayBindVarQueryFails1() {
+
     }
 
     private void assertPgWireQuery(Connection conn, String query, CharSequence expected) throws Exception {

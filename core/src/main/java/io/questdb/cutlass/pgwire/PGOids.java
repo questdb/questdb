@@ -99,10 +99,10 @@ public class PGOids {
     public static final int PG_NUMERIC = 1700;
     public static final int PG_OID = 26;
     public static final int PG_PUBLIC_OID = 2200;
+    public static final int PG_TEXT = 25;
     public static final int PG_TIME = 1083;
     public static final int PG_TIMESTAMP = 1114;
     public static final int PG_TIMESTAMP_TZ = 1184;
-    public static final int PG_TEXT = 25;
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_PROC_OIDS = new IntList();
     public static final char[] PG_TYPE_TO_CATEGORY = new char[16];
@@ -303,6 +303,7 @@ public class PGOids {
 
         TYPE_ARR_OIDS.extendAndSet(ColumnType.DOUBLE, PG_ARR_FLOAT8); // FLOAT8[]
         TYPE_ARR_OIDS.extendAndSet(ColumnType.LONG, PG_ARR_INT8); // INT8[]
+        TYPE_ARR_OIDS.extendAndSet(ColumnType.VARCHAR, PG_ARR_VARCHAR); // VARCHAR[]
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);

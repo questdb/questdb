@@ -543,7 +543,9 @@ io.questdb.griffin.engine.functions.cast.VarcharCastHelperFunctionFactory
 
 # 'in'
 io.questdb.griffin.engine.functions.bool.InSymbolCursorFunctionFactory
+io.questdb.griffin.engine.functions.bool.InStrVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InStrFunctionFactory
+io.questdb.griffin.engine.functions.bool.InVarcharVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InVarcharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InCharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory

@@ -179,8 +179,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof StrInCursorFunc) {
-                StrInCursorFunc thatF = (StrInCursorFunc) that;
+            if (that instanceof StrInCursorFunc thatF) {
                 thatF.valueSet.clear();
                 thatF.valueSet.addAll(valueSet);
                 thatF.stateInherited = this.stateShared = true;
@@ -280,8 +279,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof SymbolInCursorFunc) {
-                SymbolInCursorFunc thatF = (SymbolInCursorFunc) that;
+            if (that instanceof SymbolInCursorFunc thatF) {
                 thatF.symbolKeys.clear();
                 thatF.symbolKeys.addAll(symbolKeys);
                 thatF.stateInherited = this.stateShared = true;

@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -36,27 +35,24 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 /**
- * Handles "symbol IN $1" where $1 is a VARCHAR[] bind variable.
+ * Handles "str IN $1" where $1 is a VARCHAR[] bind variable.
  * <p>
  * VARCHAR[] is currently only supported as a bind variable type in PGWire protocol,
  * passed via the BIND message. There is no SQL literal syntax for VARCHAR arrays.
  */
-public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
+public class InStrVarcharArrayFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "in(KØ[])";
+        return "in(SØ[])";
     }
 
     @Override
@@ -67,37 +63,33 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        SymbolFunction symbolFunc = (SymbolFunction) args.getQuick(0);
         Function arrayFunc = args.getQuick(1);
         if (!arrayFunc.isConstant() && !arrayFunc.isRuntimeConstant()) {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
-        return new Func(symbolFunc, arrayFunc);
+        return new Func(args.getQuick(0), arrayFunc);
     }
 
     private static class Func extends BooleanFunction implements BinaryFunction {
         private final Function arrayFunc;
-        private final SymbolFunction symbolFunc;
-        private IntHashSet intSet;
-        private final InSymbolFunctionFactory.TestFunc intTest = this::testAsInt;
+        private final Function strFunc;
+        private CharSequenceHashSet set;
         private boolean stateInherited = false;
-        private CharSequenceHashSet strSet;
-        private final InSymbolFunctionFactory.TestFunc strTest = this::testAsStr;
-        private InSymbolFunctionFactory.TestFunc testFunc;
 
-        public Func(SymbolFunction symbolFunc, Function arrayFunc) {
-            this.symbolFunc = symbolFunc;
+        public Func(Function strFunc, Function arrayFunc) throws SqlException {
+            this.strFunc = strFunc;
             this.arrayFunc = arrayFunc;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return testFunc.test(rec);
+            final CharSequence val = strFunc.getStrA(rec);
+            return set.contains(val);
         }
 
         @Override
         public Function getLeft() {
-            return symbolFunc;
+            return strFunc;
         }
 
         @Override
@@ -112,63 +104,29 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
                 return;
             }
 
-            if (intSet == null) {
-                intSet = new IntHashSet();
+            if (set == null) {
+                set = new CharSequenceHashSet();
             }
-            if (strSet == null) {
-                strSet = new CharSequenceHashSet();
-            }
-            intSet.clear();
-            strSet.clear();
+            set.clear();
             ArrayView arrayView = arrayFunc.getArray(null);
-            StaticSymbolTable symbolTable = symbolFunc.getStaticSymbolTable();
-
-            if (symbolTable != null) {
-                for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
-                    Utf8Sequence value = arrayView.getVarchar(i);
-                    if (value == null) {
-                        intSet.add(symbolTable.keyOf(null));
-                    } else if (value.isAscii()) {
-                        intSet.add(symbolTable.keyOf(value.asAsciiCharSequence()));
-                    } else {
-                        StringSink sink = Misc.getThreadLocalSink();
-                        sink.clear();
-                        sink.put(value);
-                        intSet.add(symbolTable.keyOf(sink));
-                    }
-                }
-                testFunc = intTest;
-            } else {
-                for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
-                    Utf8Sequence element = arrayView.getVarchar(i);
-                    strSet.add(Utf8s.toString(element));
-                }
-                testFunc = strTest;
+            for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
+                Utf8Sequence element = arrayView.getVarchar(i);
+                set.add(Utf8s.toString(element));
             }
         }
 
         @Override
         public void offerStateTo(Function that) {
             BinaryFunction.super.offerStateTo(that);
-            if (that instanceof InSymbolVarcharArrayFunctionFactory.Func other) {
-                other.testFunc = this.testFunc;
+            if (that instanceof InStrVarcharArrayFunctionFactory.Func other) {
+                other.set = this.set;
                 other.stateInherited = true;
             }
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(symbolFunc).val(" in ").val(arrayFunc);
-        }
-
-        private boolean testAsInt(Record rec) {
-            int key = symbolFunc.getInt(rec);
-            return intSet.contains(key);
-        }
-
-        private boolean testAsStr(Record rec) {
-            CharSequence symbol = symbolFunc.getSymbol(rec);
-            return strSet.contains(symbol);
+            sink.val(strFunc).val(" in ").val(arrayFunc);
         }
     }
 }
