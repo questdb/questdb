@@ -111,7 +111,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertExecRequest(
                     httpClient,
                     VIEW1 + " order by ts",
-                    HTTP_OK,
                     "{" +
                             "\"query\":\"view1 order by ts\"," +
                             "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
@@ -129,7 +128,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertExecRequest(
                     httpClient,
                     VIEW2 + " order by ts",
-                    HTTP_OK,
                     "{" +
                             "\"query\":\"view2 order by ts\"," +
                             "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k2\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
@@ -151,7 +149,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertExecRequest(
                     httpClient,
                     VIEW1 + " order by ts",
-                    HTTP_OK,
                     "{" +
                             "\"query\":\"view1 order by ts\"," +
                             "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
@@ -169,7 +166,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertExecRequest(
                     httpClient,
                     VIEW2 + " order by ts",
-                    HTTP_OK,
                     "{" +
                             "\"query\":\"view2 order by ts\"," +
                             "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k2\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
@@ -360,7 +356,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertExecRequest(
                     httpClient,
                     "views()",
-                    HTTP_OK,
                     "{" +
                             "\"query\":\"views()\"," +
                             "\"columns\":[" +
@@ -383,7 +378,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertExecRequest(
                     httpClient,
                     "alter table " + TABLE1 + " drop column k",
-                    HTTP_OK,
                     "{\"ddl\":\"OK\"}"
             );
             drainWalQueue();
@@ -395,7 +389,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertExecRequest(
                     httpClient,
                     "views()",
-                    HTTP_OK,
                     "{" +
                             "\"query\":\"views()\"," +
                             "\"columns\":[" +
@@ -456,7 +449,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertExecRequest(
                     httpClient,
                     "views()",
-                    HTTP_OK,
                     "{" +
                             "\"query\":\"views()\"," +
                             "\"columns\":[" +
@@ -481,12 +473,11 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     private static void assertExecRequest(
             HttpClient httpClient,
             String sql,
-            int expectedHttpStatusCode,
             String expectedHttpResponse
     ) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         request.GET().url("/exec").query("query", sql);
-        assertHttpRequest(request, expectedHttpStatusCode, expectedHttpResponse);
+        assertHttpRequest(request, HTTP_OK, expectedHttpResponse);
     }
 
     private static void assertHttpRequest(
@@ -554,14 +545,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                 "create table if not exists " + tableName +
                         " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
                         " timestamp(ts) partition by day wal",
-                HTTP_OK,
                 "{\"ddl\":\"OK\"}"
         );
         for (int i = 0; i < 9; i++) {
             assertExecRequest(
                     httpClient,
                     "insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + "'k2_" + i + "', " + i + ")",
-                    HTTP_OK,
                     "{\"dml\":\"OK\"}"
             );
         }
@@ -571,7 +560,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         assertExecRequest(
                 httpClient,
                 "create view " + viewName + " as (" + viewQuery + ")",
-                HTTP_OK,
                 "{\"ddl\":\"OK\"}"
         );
     }
