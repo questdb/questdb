@@ -784,6 +784,8 @@ public class WalEventCursor {
                 for (int j = 0; j < numOfColumns; j++) {
                     columns.add(readString());
                 }
+                // table and column names have to be string objects,
+                // they will be used in the view definition
                 viewDependencies.put(tableName, columns);
             }
         }

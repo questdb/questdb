@@ -159,7 +159,7 @@ public class ViewDefinition implements Mutable {
     ) {
         init(viewToken, viewSql, seqTxn);
 
-        // shallow copy
+        // shallow copy, all table and column names should be string objects in the dependencies map
         this.dependencies.putAll(dependencies);
     }
 

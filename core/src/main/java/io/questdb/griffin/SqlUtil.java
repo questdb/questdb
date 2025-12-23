@@ -1263,6 +1263,8 @@ public class SqlUtil {
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
     }
 
+    // tableName and columnName have to be string objects,
+    // they will be used in the view definition
     private static void addDependency(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap, String tableName, String columnName) {
         LowerCaseCharSequenceHashSet columns = depMap.get(tableName);
         if (columns == null) {
