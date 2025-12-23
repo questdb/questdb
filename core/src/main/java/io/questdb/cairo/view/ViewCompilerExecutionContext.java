@@ -28,9 +28,13 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 
+// Execution context used by the view compiler job.
+// Since there is no user while the job is compiling views, we are switching the security context to ReadOnlySecurityContext.
+// This execution context is also used by the COMPILE VIEW command.
+// In that case we only care if the user has the COMPILE VIEW permission on the view, and no need to check for SELECT permission too.
 public class ViewCompilerExecutionContext extends SqlExecutionContextImpl {
     public ViewCompilerExecutionContext(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine, sharedQueryWorkerCount);
-        this.securityContext = ReadOnlySecurityContext.INSTANCE;
+        securityContext = ReadOnlySecurityContext.INSTANCE;
     }
 }
