@@ -283,6 +283,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public void restoreToDefaultPageFrameSizes() {
+    }
+
+    @Override
     public void setAllowNonDeterministicFunction(boolean value) {
     }
 

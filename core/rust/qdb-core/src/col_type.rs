@@ -270,7 +270,11 @@ impl ColumnType {
         self.is_designated() && (self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING) == 0
     }
 
-    pub fn into_designated(self, ascending : bool) -> CoreResult<ColumnType> {
+    pub fn into_designated(self) -> CoreResult<ColumnType> {
+        self.into_designated_with_order(true)
+    }
+
+    pub fn into_designated_with_order(self, ascending : bool) -> CoreResult<ColumnType> {
         if self.tag() != ColumnTypeTag::Timestamp {
             return Err(fmt_err!(
                 InvalidType,
@@ -483,12 +487,12 @@ mod tests {
         for tag in ColumnTypeTag::VALUES {
             if tag != ColumnTypeTag::Timestamp {
                 assert!(!ColumnType::new(tag, 0).is_designated());
-                assert!(ColumnType::new(tag, 0).into_designated(true).is_err());
+                assert!(ColumnType::new(tag, 0).into_designated().is_err());
                 assert!(ColumnType::new(tag, 0).into_non_designated().is_err());
             }
         }
 
-        let typ = ColumnType::new(ColumnTypeTag::Timestamp, 0).into_designated(true);
+        let typ = ColumnType::new(ColumnTypeTag::Timestamp, 0).into_designated();
         assert!(typ.is_ok());
         let typ = typ.unwrap();
         assert!(typ.is_designated());
@@ -515,13 +519,13 @@ mod tests {
         assert!(!typ.is_designated_timestamp_ascending());
 
         let typ_asc = ColumnType::new(ColumnTypeTag::Timestamp, 0)
-            .into_designated(true)
+            .into_designated()
             .unwrap();
         assert!(typ_asc.is_designated());
         assert!(typ_asc.is_designated_timestamp_ascending());
 
         let typ_desc = ColumnType::new(ColumnTypeTag::Timestamp, 0)
-            .into_designated(false)
+            .into_designated_with_order(false)
             .unwrap();
         assert!(typ_desc.is_designated());
         assert!(!typ_desc.is_designated_timestamp_ascending());

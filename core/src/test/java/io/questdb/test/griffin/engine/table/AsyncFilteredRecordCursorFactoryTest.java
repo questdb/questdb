@@ -1379,6 +1379,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void restoreToDefaultPageFrameSizes() {
+            sqlExecutionContext.restoreToDefaultPageFrameSizes();
+        }
+
+        @Override
         public void setAllowNonDeterministicFunction(boolean value) {
             sqlExecutionContext.setAllowNonDeterministicFunction(value);
         }

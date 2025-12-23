@@ -423,6 +423,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void restoreToDefaultPageFrameSizes() {
+        this.pageFrameMinRows = defaultPageFrameMinRows;
+        this.pageFrameMaxRows = defaultPageFrameMaxRows;
+    }
+
+    @Override
     public void setAllowNonDeterministicFunction(boolean value) {
         this.allowNonDeterministicFunction = value;
     }

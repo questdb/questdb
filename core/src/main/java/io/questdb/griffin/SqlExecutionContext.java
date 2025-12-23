@@ -252,6 +252,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void resetFlags();
 
+    void restoreToDefaultPageFrameSizes();
+
     void setAllowNonDeterministicFunction(boolean value);
 
     void setCacheHit(boolean value);

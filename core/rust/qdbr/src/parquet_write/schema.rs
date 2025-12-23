@@ -392,7 +392,7 @@ pub fn to_parquet_schema(
         };
 
         let column_type = if column.designated_timestamp && column.designated_timestamp_ascending {
-            column.data_type.into_designated(column.designated_timestamp_ascending)?
+            column.data_type.into_designated_with_order(column.designated_timestamp_ascending)?
         } else {
             column.data_type
         };

@@ -110,7 +110,7 @@ mod tests {
             (
                 ColumnTypeTag::Timestamp
                     .into_type()
-                    .into_designated(true)
+                    .into_designated()
                     .unwrap(),
                 "designated-timestamp",
             ),
