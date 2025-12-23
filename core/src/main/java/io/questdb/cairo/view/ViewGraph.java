@@ -56,11 +56,13 @@ public class ViewGraph implements Mutable {
     public synchronized boolean addView(ViewDefinition viewDefinition) {
         final TableToken viewToken = viewDefinition.getViewToken();
         final ViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
-
+        if (prevDefinition != null) {
+            // WAL table directories are unique, so we don't expect previous value ever,
+            // but if it happens somehow, we should ot update dependencies again, just return
+            return false;
+        }
         updateDependencies(viewToken, viewDefinition, ADD);
-
-        // WAL table directories are unique, so we don't expect previous value
-        return prevDefinition == null;
+        return true;
     }
 
     @TestOnly
