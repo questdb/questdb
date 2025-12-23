@@ -62,7 +62,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor();
-        readerPoolCursor.of(cairoEngine.getReaderPoolEntries());
+        readerPoolCursor.of(cairoEngine.getReaderPoolEntries(), cairoEngine.getConfiguration().getPoolSegmentSize());
         return readerPoolCursor;
     }
 
@@ -84,6 +84,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         private long lastAccessTimestamp;
         private long owner_thread;
         private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
+        private int poolSegmentSize;
         private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
         private TableToken tableToken;
 
@@ -119,8 +120,9 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             return true;
         }
 
-        public void of(Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries) {
+        public void of(Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries, int poolSegmentSize) {
             this.readerPoolEntries = readerPoolEntries;
+            this.poolSegmentSize = poolSegmentSize;
             toTop();
         }
 
@@ -153,7 +155,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> mapEntry = iterator.next();
                     poolEntry = mapEntry.getValue();
                     return true;
-                } else if (allocationIndex == ReaderPool.ENTRY_SIZE) {
+                } else if (allocationIndex == poolSegmentSize) {
                     // we exhausted all slots in the current Entry
                     // let's see if there is another Entry chained
                     poolEntry = poolEntry.getNext();

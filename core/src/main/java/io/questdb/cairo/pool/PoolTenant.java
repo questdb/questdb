@@ -48,6 +48,14 @@ public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable, Sin
     int getIndex();
 
     /**
+     * Returns the root entry (first segment) of the entry chain this tenant belongs to.
+     * This is used to check if the table has been dropped from the pool.
+     *
+     * @return root entry instance (segment 0).
+     */
+    AbstractMultiTenantPool.Entry<T> getRootEntry();
+
+    /**
      * Supervisor this reader is attached to.
      *
      * @return supervisor instance or null if reader is not attached to any supervisor.
