@@ -830,7 +830,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     if (rowLo < rowHi) {
                         // First, check if one of the first rows matching the join filter is also at the masterSlaveTimestampLo timestamp.
                         // If so, we don't need to do backward scan to find the prevailing row.
-                        final long ogRowLo = rowLo;
                         long adjustedRowLo = rowLo;
                         for (long i = rowLo; i < rowHi; i++) {
                             if (slaveTimestamps.get(i) > masterSlaveTimestampLo) {
@@ -850,7 +849,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         // Do a backward scan to find the prevailing row.
                         if (needToFindPrevailing) {
                             // First check the accumulated row ids.
-                            for (long i = ogRowLo - 1; i >= 0; i--) {
+                            for (long i = rowLo - 1; i >= 0; i--) {
                                 final long slaveRowId = slaveRowIds.get(i);
                                 slaveTimeFrameHelper.recordAt(slaveRowId);
                                 if (joinFilter.getBool(joinRecord)) {
@@ -1597,7 +1596,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         if (rowLo < rowHi) {
                             // First, check if one of the first rows matching the join filter is also at the masterSlaveTimestampLo timestamp.
                             // If so, we don't need to do backward scan to find the prevailing row.
-                            final long ogRowLo = rowLo;
                             long adjustedRowLo = rowLo;
                             for (long i = rowLo; i < rowHi; i++) {
                                 if (slaveTimestamps.get(i) > masterSlaveTimestampLo) {
@@ -1617,7 +1615,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             // Do a backward scan to find the prevailing row.
                             if (needToFindPrevailing) {
                                 // First check the accumulated row ids.
-                                for (long i = ogRowLo - 1; i >= 0; i--) {
+                                for (long i = rowLo - 1; i >= 0; i--) {
                                     final long slaveRowId = slaveRowIds.get(i);
                                     slaveTimeFrameHelper.recordAt(slaveRowId);
                                     if (joinFilter.getBool(joinRecord)) {
