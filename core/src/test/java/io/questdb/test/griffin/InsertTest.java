@@ -155,6 +155,25 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotInsertIntoView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            execute("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
+            execute("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
+
+            execute("create view curr_view as (select ts, max(id) as id from currencies sample by 1h)");
+            try {
+                execute("insert into curr_view values ('JPY', 4, '2019-03-10T03:00:00.000000Z')");
+                Assert.fail("INSERT should fail");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify view [view=curr_view]");
+                Assert.assertEquals(12, e.getPosition());
+            }
+        });
+    }
+
+    @Test
     public void testGeoHash() throws Exception {
         final TimestampFunction timestampFunction = new TimestampFunction() {
             private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");

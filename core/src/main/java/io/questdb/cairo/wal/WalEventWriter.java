@@ -41,12 +41,15 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -393,6 +396,42 @@ class WalEventWriter implements Closeable {
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         appendBindVariableValuesByIndex(bindVariableService);
         appendBindVariableValuesByName(bindVariableService);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        return txn++;
+    }
+
+    int appendViewDefinition(
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.VIEW_DEFINITION);
+
+        // add view sql
+        eventMem.putStr(viewSql);
+
+        //add view dependencies
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        final int numOfDependencies = tableNames.size();
+        eventMem.putInt(numOfDependencies);
+        for (int i = 0; i < numOfDependencies; i++) {
+            final CharSequence tableName = tableNames.getQuick(i);
+            eventMem.putStr(tableName);
+            final LowerCaseCharSequenceHashSet columns = dependencies.get(tableName);
+            eventMem.putInt(columns.size());
+            for (int j = 0; j < columns.getKeyCount(); j++) {
+                final CharSequence key = columns.getKey(j);
+                if (key != null) {
+                    eventMem.putStr(key);
+                }
+            }
+        }
+
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 

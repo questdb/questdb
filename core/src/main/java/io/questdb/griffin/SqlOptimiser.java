@@ -3512,6 +3512,9 @@ public class SqlOptimiser implements Mutable {
                 case QueryModel.SHOW_CREATE_MAT_VIEW:
                     tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
                     break;
+                case QueryModel.SHOW_CREATE_VIEW:
+                    tableFactory = sqlParserCallback.generateShowCreateViewFactory(model, executionContext, path);
+                    break;
                 default:
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
                     break;
@@ -7466,6 +7469,7 @@ public class SqlOptimiser implements Mutable {
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
+            rewrittenModel.recordViews(model.getReferencedViews());
             if (!sqlExecutionContext.isValidationOnly()) {
                 authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             }

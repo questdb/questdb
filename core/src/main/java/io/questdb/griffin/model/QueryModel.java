@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
@@ -100,6 +101,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_COLUMNS = 2;
     public static final int SHOW_CREATE_MAT_VIEW = 15;
     public static final int SHOW_CREATE_TABLE = 14;
+    public static final int SHOW_CREATE_VIEW = 17;
     public static final int SHOW_DATE_STYLE = 9;
     public static final int SHOW_DEFAULT_TRANSACTION_READ_ONLY = 16;
     public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
@@ -120,6 +122,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceHashSet constDecls = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
@@ -143,6 +146,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // list of "and" concatenated expressions
     private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConstants = new IntHashSet();
+    private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
@@ -220,6 +224,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel unionModel;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
+    private ExpressionNode viewNameExpr;
     private ExpressionNode whereClause;
 
     private QueryModel() {
@@ -432,6 +437,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         constWhereClause = null;
         nestedModel = null;
         tableNameExpr = null;
+        viewNameExpr = null;
         alias = null;
         latestByType = LATEST_BY_NONE;
         latestBy.clear();
@@ -495,11 +501,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
+        constDecls.clear();
         orderDescendingByDesignatedTimestampOnly = false;
         forceBackwardScan = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
         windowJoinContext.clear();
+        referencedViews.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -579,13 +587,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    public void copyDeclsFrom(QueryModel model) {
-        copyDeclsFrom(model.getDecls());
+    public void copyDeclsFrom(QueryModel model, boolean overrideDeclares) throws SqlException {
+        copyDeclsFrom(model.getDecls(), overrideDeclares);
     }
 
-    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
+    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException {
         if (decls != null && decls.size() > 0) {
-            this.decls.putAll(decls);
+            if (overrideDeclares) {
+                final ObjList<CharSequence> keys = decls.keys();
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    final CharSequence key = keys.getQuick(i);
+                    if (this.constDecls.contains(key)) {
+                        ExpressionNode existing = decls.get(key);
+                        int position = existing != null ? existing.position : 0;
+                        throw SqlException.$(position, "cannot override CONST variable: ").put(key);
+                    }
+                }
+                this.decls.putAll(decls);
+            } else {
+                final ObjList<CharSequence> keys = decls.keys();
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    final CharSequence key = keys.getQuick(i);
+                    this.decls.putIfAbsent(key, decls.get(key));
+                }
+            }
         }
     }
 
@@ -698,6 +723,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(constWhereClause, that.constWhereClause)
                 && Objects.equals(nestedModel, that.nestedModel)
                 && Objects.equals(tableNameExpr, that.tableNameExpr)
+                && Objects.equals(viewNameExpr, that.viewNameExpr)
                 && Objects.equals(tableNameFunction, that.tableNameFunction)
                 && Objects.equals(alias, that.alias)
                 && Objects.equals(timestamp, that.timestamp)
@@ -720,7 +746,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && Objects.equals(decls, that.decls)
                 && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance)
-                && Objects.equals(windowJoinContext, that.windowJoinContext);
+                && Objects.equals(windowJoinContext, that.windowJoinContext)
+                && Objects.equals(referencedViews, that.referencedViews);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -768,6 +795,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<QueryColumn> getColumns() {
         return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
+    }
+
+    public LowerCaseCharSequenceHashSet getConstDecls() {
+        return constDecls;
     }
 
     public ExpressionNode getConstWhereClause() {
@@ -957,6 +988,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return this;
     }
 
+    public ObjList<ViewDefinition> getReferencedViews() {
+        return referencedViews;
+    }
+
     public ExpressionNode getSampleBy() {
         return sampleBy;
     }
@@ -1043,6 +1078,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return updateTableToken;
     }
 
+    public ExpressionNode getViewNameExpr() {
+        return viewNameExpr;
+    }
+
     public ExpressionNode getWhereClause() {
         return whereClause;
     }
@@ -1088,7 +1127,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
                 latestByType, whereClause, backupWhereClause,
                 postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
-                tableNameExpr, metadataVersion, tableNameFunction,
+                tableNameExpr, viewNameExpr, metadataVersion, tableNameFunction,
                 alias, timestamp, sampleBy,
                 sampleByUnit, sampleByTo, sampleByFrom, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
@@ -1098,7 +1137,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, isCteModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls, windowJoinContext
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues,
+                decls, windowJoinContext, referencedViews
         );
     }
 
@@ -1279,6 +1319,25 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
         return getParsedWhere();
+    }
+
+    public void recordViews(LowerCaseCharSequenceObjHashMap<ViewDefinition> viewDefinitions) {
+        final ObjList<CharSequence> keys = viewDefinitions.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final ViewDefinition viewDefinition = viewDefinitions.get(keys.getQuick(i));
+            if (!referencedViews.contains(viewDefinition)) {
+                referencedViews.add(viewDefinition);
+            }
+        }
+    }
+
+    public void recordViews(ObjList<ViewDefinition> viewDefinitions) {
+        for (int i = 0, n = viewDefinitions.size(); i < n; i++) {
+            final ViewDefinition viewDefinition = viewDefinitions.getQuick(i);
+            if (!referencedViews.contains(viewDefinition)) {
+                referencedViews.add(viewDefinition);
+            }
+        }
     }
 
     /**
@@ -1515,6 +1574,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setUpdateTableToken(TableToken tableName) {
         this.updateTableToken = tableName;
+    }
+
+    public void setViewNameExpr(ExpressionNode viewNameExpr) {
+        this.viewNameExpr = viewNameExpr;
     }
 
     public void setWhereClause(ExpressionNode whereClause) {

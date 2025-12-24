@@ -257,6 +257,17 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 's';
     }
 
+    public static boolean isCompileKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'p'
+                && (tok.charAt(4) | 32) == 'i'
+                && (tok.charAt(5) | 32) == 'l'
+                && (tok.charAt(6) | 32) == 'e';
+    }
+
     public static boolean isConcatKeyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;
@@ -277,6 +288,15 @@ public class SqlKeywords {
         return tok.length() == 2
                 && tok.charAt(0) == '|'
                 && tok.charAt(1) == '|';
+    }
+
+    public static boolean isConstKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'n'
+                && (tok.charAt(3) | 32) == 's'
+                && (tok.charAt(4) | 32) == 't';
     }
 
     public static boolean isConvertKeyword(CharSequence tok) {
@@ -1551,6 +1571,17 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'u'
                 && (tok.charAt(5) | 32) == 'e'
                 && (tok.charAt(6) | 32) == 't';
+    }
+
+    public static boolean isReplaceKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'r'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'c'
+                && (tok.charAt(6) | 32) == 'e';
     }
 
     public static boolean isPartitionKeyword(CharSequence tok) {

@@ -56,6 +56,8 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
+    ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
+
     RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel queryModel,
             @Nullable @Transient InsertModel insertModel,
@@ -74,9 +76,6 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     @TestOnly
     void setFullFatJoins(boolean fullFatJoins);
-
-    @TestOnly
-    ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     @TestOnly
     ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException;

@@ -57,6 +57,14 @@ public class TableWriterTask implements Closeable {
         reset();
     }
 
+    public static String getCommandName(int cmd) {
+        return switch (cmd) {
+            case CMD_ALTER_TABLE -> "ALTER TABLE";
+            case CMD_UPDATE_TABLE -> "UPDATE TABLE";
+            default -> "UNKNOWN COMMAND";
+        };
+    }
+
     @Override
     public void close() {
         appendPtr = 0;
