@@ -638,26 +638,30 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Check if it's an equality operation
         if (Chars.equals(node.token, '=')) {
             // Find the column type involved in this equality
-            final int columnType = findOperandColumnType(node);
-            return switch (columnType) {
-                case ColumnType.UUID, ColumnType.LONG128 -> PRIORITY_I16_EQ;
-                case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG -> PRIORITY_I8_EQ;
-                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> PRIORITY_I4_EQ;
-                case ColumnType.SYMBOL -> PRIORITY_SYM_EQ;
-                default -> PRIORITY_OTHER_EQ;
-            };
+            return getPredicatePriority0(node, PRIORITY_I16_EQ, PRIORITY_I8_EQ, PRIORITY_I4_EQ, PRIORITY_SYM_EQ, PRIORITY_OTHER_EQ);
         } else if (Chars.equals(node.token, "<>") || Chars.equals(node.token, "!=")) {
             // Find the column type involved in this inequality
-            final int columnType = findOperandColumnType(node);
-            return switch (columnType) {
-                case ColumnType.UUID, ColumnType.LONG128 -> PRIORITY_I16_NEQ;
-                case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG -> PRIORITY_I8_NEQ;
-                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> PRIORITY_I4_NEQ;
-                case ColumnType.SYMBOL -> PRIORITY_SYM_NEQ;
-                default -> PRIORITY_OTHER_NEQ;
-            };
+            return getPredicatePriority0(node, PRIORITY_I16_NEQ, PRIORITY_I8_NEQ, PRIORITY_I4_NEQ, PRIORITY_SYM_NEQ, PRIORITY_OTHER_NEQ);
         }
         return PRIORITY_OTHER;
+    }
+
+    private int getPredicatePriority0(
+            ExpressionNode node,
+            int priorityI16Neq,
+            int priorityI8Neq,
+            int priorityI4Neq,
+            int prioritySymNeq,
+            int priorityOtherNeq
+    ) {
+        final int columnType = findOperandColumnType(node);
+        return switch (columnType) {
+            case ColumnType.UUID, ColumnType.LONG128 -> priorityI16Neq;
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG -> priorityI8Neq;
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> priorityI4Neq;
+            case ColumnType.SYMBOL -> prioritySymNeq;
+            default -> priorityOtherNeq;
+        };
     }
 
     private boolean isBooleanColumn(ExpressionNode node) {
