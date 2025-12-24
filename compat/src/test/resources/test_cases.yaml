@@ -629,7 +629,7 @@ tests:
 
   - name: Varchar Array IN Test
     description: Test selecting varchar column using IN clause with varchar array bind variable.
-    exclude: [ "psycopg2", "psycopg3", "asyncpg", "rust", "sqlx", "php", "nodejs-pg", "nodejs-postgres", "csharp" ]
+    exclude: [ "psycopg2" ]
     prepare:
       - action: execute
         query: "CREATE TABLE varchar_in_test (ts TIMESTAMP, varchar_col VARCHAR) timestamp(ts);"
@@ -689,7 +689,7 @@ tests:
 
   - name: Single Element IN Test
     description: Test selecting varchar column using IN clause with varchar array bind variable.
-    exclude: [ "psycopg2", "psycopg3", "asyncpg", "rust", "sqlx", "php", "nodejs-pg", "nodejs-postgres", "csharp" ]
+    exclude: [ "rust", "sqlx", "asyncpg", "psycopg2" ]
     prepare:
       - action: execute
         query: "CREATE TABLE varchar_in_test (ts TIMESTAMP, varchar_col VARCHAR) timestamp(ts);"
@@ -725,7 +725,7 @@ tests:
 
   - name: Symbol Array IN Test
     description: Test selecting symbol column using IN clause with varchar array bind variable.
-    exclude: [ "psycopg2", "psycopg3", "asyncpg", "rust", "sqlx", "php", "nodejs-pg", "nodejs-postgres", "csharp" ]
+    exclude: [ "psycopg2" ]
     prepare:
       - action: execute
         query: "CREATE TABLE symbol_in_test (ts TIMESTAMP, sym_col SYMBOL) timestamp(ts);"
@@ -785,7 +785,7 @@ tests:
 
   - name: String Array IN Test
     description: Test selecting string column using IN clause with varchar array bind variable.
-    exclude: [ "psycopg2", "psycopg3", "asyncpg", "rust", "sqlx", "php", "nodejs-pg", "nodejs-postgres", "csharp" ]
+    exclude: [ "psycopg2" ]
     prepare:
       - action: execute
         query: "CREATE TABLE string_in_test (ts TIMESTAMP, str_col STRING) timestamp(ts);"

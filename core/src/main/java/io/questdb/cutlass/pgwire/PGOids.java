@@ -105,12 +105,12 @@ public class PGOids {
     public static final int PG_TIMESTAMP_TZ = 1184;
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_PROC_OIDS = new IntList();
-    public static final char[] PG_TYPE_TO_CATEGORY = new char[16];
-    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[16];
-    public static final short[] PG_TYPE_TO_LENGTH = new short[16];
-    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[16];
-    public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[16];
-    public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[16];
+    public static final char[] PG_TYPE_TO_CATEGORY = new char[17];
+    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[17];
+    public static final short[] PG_TYPE_TO_LENGTH = new short[17];
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[17];
+    public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[17];
+    public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[17];
     public static final IntShortHashMap PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
     public static final int PG_UNSPECIFIED = 0;
     public static final int PG_UUID = 2950;
@@ -321,6 +321,7 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_OID);
         PG_TYPE_OIDS.add(PG_ARR_FLOAT8);
         PG_TYPE_OIDS.add(PG_NUMERIC);
+        PG_TYPE_OIDS.add(PG_ARR_VARCHAR);
 
         // these values are taken from PostgreSQL pg_proc view
         PG_TYPE_PROC_OIDS.add(2432);
@@ -337,8 +338,9 @@ public class PGOids {
         PG_TYPE_PROC_OIDS.add(2961);
         PG_TYPE_PROC_OIDS.add(0); // INTERNAL
         PG_TYPE_PROC_OIDS.add(2418); // OID
-        PG_TYPE_PROC_OIDS.add(2400); // ARRAY
+        PG_TYPE_PROC_OIDS.add(2400); // ARRAY (float8[])
         PG_TYPE_PROC_OIDS.add(3823); // NUMERIC
+        PG_TYPE_PROC_OIDS.add(2400); // ARRAY (varchar[])
 
         // Fixed-size types only since variable size types have size -1 in PostgreSQL and -1 this happens
         // to be a marker for 'no value' in this map.
@@ -387,6 +389,7 @@ public class PGOids {
         PG_TYPE_TO_NAME[13] = "oid";
         PG_TYPE_TO_NAME[14] = "_float8";
         PG_TYPE_TO_NAME[15] = "numeric";
+        PG_TYPE_TO_NAME[16] = "_varchar";
 
         // array are excluded since all arrays are handled by the same function
         for (int i = 0, n = PG_TYPE_TO_NAME.length; i < n; i++) {
@@ -418,6 +421,7 @@ public class PGOids {
         PG_TYPE_TO_CATEGORY[13] = 'N';
         PG_TYPE_TO_CATEGORY[14] = 'A';
         PG_TYPE_TO_CATEGORY[15] = 'N';
+        PG_TYPE_TO_CATEGORY[16] = 'A';
 
         PG_TYPE_TO_LENGTH[0] = -1;
         PG_TYPE_TO_LENGTH[1] = 8;
@@ -435,6 +439,7 @@ public class PGOids {
         PG_TYPE_TO_LENGTH[13] = 4;
         PG_TYPE_TO_LENGTH[14] = -1;
         PG_TYPE_TO_LENGTH[15] = -1;
+        PG_TYPE_TO_LENGTH[16] = -1;
 
         PG_TYPE_TO_DEFAULT[0] = null;
         PG_TYPE_TO_DEFAULT[1] = null;
@@ -452,5 +457,6 @@ public class PGOids {
         PG_TYPE_TO_DEFAULT[13] = null;
         PG_TYPE_TO_DEFAULT[14] = null;
         PG_TYPE_TO_DEFAULT[15] = null;
+        PG_TYPE_TO_DEFAULT[16] = null;
     }
 }
