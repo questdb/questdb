@@ -52,6 +52,7 @@ import io.questdb.griffin.CompiledQueryImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -2960,30 +2961,54 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         Function fn = bindVariableService.getFunction(variableIndex);
         // If the function type is VARCHAR, there's no need to convert to UTF-16
         try {
-            if (fn != null && fn.getType() == ColumnType.VARCHAR) {
-                final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
-                boolean ascii = switch (sequenceType) {
-                    case 0 ->
-                        // ascii sequence
-                            true;
-                    case 1 ->
-                        // non-ASCII sequence
-                            false;
-                    default ->
-                            throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
-                };
-                // varchar value is sourced from the send-receive buffer (which is volatile, e.g. will be wiped
-                // without warning). It seems to be "ok" for all situations, of which there are only two:
-                // 1. the target type is "varchar", in which case the source value is "sank" into the buffer of
-                //    the bind variable
-                // 2. the target is not a varchar, in which case varchar is parsed on-the-fly
-                bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
-            } else {
-                if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
-                    bindVariableService.setStr(variableIndex, characterStore.toImmutable());
-                } else {
-                    throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
+            if (fn != null) {
+                int type = fn.getType();
+                if (type == ColumnType.VARCHAR) {
+                    final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
+                    boolean ascii = switch (sequenceType) {
+                        case 0 ->
+                            // ascii sequence
+                                true;
+                        case 1 ->
+                            // non-ASCII sequence
+                                false;
+                        default ->
+                                throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
+                    };
+                    // varchar value is sourced from the send-receive buffer (which is volatile, e.g. will be wiped
+                    // without warning). It seems to be "ok" for all situations, of which there are only two:
+                    // 1. the target type is "varchar", in which case the source value is "sank" into the buffer of
+                    //    the bind variable
+                    // 2. the target is not a varchar, in which case varchar is parsed on-the-fly
+                    bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
+                    return;
+                } else if (ColumnType.isArray(type) && ColumnType.decodeArrayElementType(type) == ColumnType.VARCHAR) {
+                    final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
+                    boolean ascii = switch (sequenceType) {
+                        case 0 ->
+                            // ascii sequence
+                                true;
+                        case 1 ->
+                            // non-ASCII sequence
+                                false;
+                        default ->
+                                throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
+                    };
+                    if (ascii) {
+                        ((ArrayBindVariable) fn).parseVarcharArrayFromUtf8(valueAddr, valueAddr + valueSize);
+                    } else if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
+                        ((ArrayBindVariable) fn).parseArray(characterStore.toImmutable());
+                    } else {
+                        throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
+                    }
+                    return;
                 }
+            }
+
+            if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
+                bindVariableService.setStr(variableIndex, characterStore.toImmutable());
+            } else {
+                throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
             }
         } catch (PGMessageProcessingException ex) {
             throw ex;

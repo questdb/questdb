@@ -1071,9 +1071,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         break;
                     }
                 }
-
                 if (match == MATCH_NO_MATCH) {
                     continue;
+                }
+
+                if (match == MATCH_EXACT_MATCH && sigVarArg && argCount >= sigArgCount) {
+                    match = MATCH_PARTIAL_MATCH;
                 }
 
                 if (isWindowContext != factory.isWindow()) {

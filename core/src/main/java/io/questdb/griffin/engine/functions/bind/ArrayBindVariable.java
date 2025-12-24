@@ -28,15 +28,18 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
+import io.questdb.cairo.arr.VarcharArrayParser;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 
 public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     private final DoubleArrayParser doubleArrayParser = new DoubleArrayParser();
+    private final VarcharArrayParser varcharArrayParser = new VarcharArrayParser();
     private ArrayView view;
 
     public void assignType(int type) throws SqlException {
@@ -70,7 +73,12 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     }
 
     public void parseArray(CharSequence value) {
-        view = SqlUtil.implicitCastStringAsDoubleArray(value, doubleArrayParser, type);
+        short elementType = ColumnType.isUndefined(type) ? ColumnType.UNDEFINED : ColumnType.decodeArrayElementType(type);
+        if (elementType == ColumnType.VARCHAR) {
+            view = SqlUtil.implicitCastStringAsVarcharArray(value, varcharArrayParser, type);
+        } else {
+            view = SqlUtil.implicitCastStringAsDoubleArray(value, doubleArrayParser, type);
+        }
         if (ColumnType.isUndefined(type)) {
             type = view.getType();
         } else {
@@ -79,6 +87,16 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
                         .put(", actual=").put(ColumnType.nameOf(view.getType())).put(']');
             }
         }
+    }
+
+    public void parseVarcharArrayFromUtf8(long start, long end) {
+        assert ColumnType.decodeArrayElementType(type) == ColumnType.VARCHAR;
+        varcharArrayParser.of(start, end, ColumnType.decodeWeakArrayDimensionality(type));
+        view = varcharArrayParser;
+    }
+
+    public void release() {
+        Misc.free(varcharArrayParser);
     }
 
     public void setView(ArrayView view) {
