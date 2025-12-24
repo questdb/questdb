@@ -34,6 +34,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -88,6 +89,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> columns;
     private int openPartitionCount;
     private LongList openPartitionInfo;
+    private ObjList<PartitionDecoder> parquetPartitionDecoders;
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
     private long rowCount;
@@ -274,6 +276,17 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long floorToPartitionTimestamp(long timestamp) {
         return txFile.getPartitionTimestampByTimestamp(timestamp);
+    }
+
+    public PartitionDecoder getAndInitParquetPartitionDecoders(int partitionIndex) {
+        PartitionDecoder decoder = parquetPartitionDecoders.getQuick(partitionIndex);
+        long addr = getParquetAddr(partitionIndex);
+        long fileSize = getParquetFileSize(partitionIndex);
+        assert addr != 0 && fileSize > 0;
+        if (decoder.getFileAddr() != addr || decoder.getFileSize() != fileSize) {
+            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        }
+        return decoder;
     }
 
     public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnIndex, int direction) {
@@ -754,7 +767,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         columnTops.removeIndexBlock(colTopStart, columnSlotSize / 2);
 
         Misc.free(parquetPartitions.get(partitionIndex));
+        Misc.free(parquetPartitionDecoders.get(partitionIndex));
         parquetPartitions.remove(partitionIndex);
+        parquetPartitionDecoders.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
         LOG.info().$("closed deleted partition [table=").$(tableToken)
                 .$(", ts=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
@@ -771,6 +786,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void closeParquetPartition(int partitionIndex) {
         Misc.free(parquetPartitions.getQuick(partitionIndex));
+        Misc.free(parquetPartitionDecoders.getQuick(partitionIndex));
         int columnBase = getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
             closeIndexReader(columnBase, i);
@@ -1011,6 +1027,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeParquetPartitions() {
         Misc.freeObjList(parquetPartitions);
+        Misc.freeObjList(parquetPartitionDecoders);
     }
 
     private void freeSymbolMapReaders() {
@@ -1039,6 +1056,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         int capacity = getColumnBase(partitionCount);
         parquetPartitions = new ObjList<>(partitionCount);
         parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
+        parquetPartitionDecoders = new ObjList<>(partitionCount);
+        parquetPartitionDecoders.setAll(partitionCount, null);
         columns = new ObjList<>(capacity + 2);
         columns.setPos(capacity + 2);
         columns.setQuick(0, NullMemoryCMR.INSTANCE);
@@ -1077,6 +1096,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         columns.insert(idx, columnSlotSize, NullMemoryCMR.INSTANCE);
         bitmapIndexes.insert(idx, columnSlotSize, null);
         parquetPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
+        parquetPartitionDecoders.insert(partitionIndex, 1, null);
 
         final int topBase = columnBase / 2;
         final int topSlotSize = columnSlotSize / 2;
@@ -1180,6 +1200,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                             parquetPartitions.setQuick(partitionIndex, parquetMem);
                         }
                         openPartitionCount++;
+                    }
+                    PartitionDecoder decoder = parquetPartitionDecoders.getQuick(partitionIndex);
+                    if (decoder != null) {
+                        decoder.close();
+                    } else {
+                        parquetPartitionDecoders.setQuick(partitionIndex, new PartitionDecoder());
                     }
 
                     return partitionSize;

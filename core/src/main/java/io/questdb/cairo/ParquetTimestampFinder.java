@@ -164,11 +164,8 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
 
     @Override
     public void prepare() {
-        partitionDecoder.of(
-                reader.getParquetAddr(partitionIndex),
-                reader.getParquetFileSize(partitionIndex),
-                MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
-        );
+        PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(partitionIndex);
+        partitionDecoder.of(decoder);
         rowGroupBuffers.reopen();
         statBuffers.reopen();
 

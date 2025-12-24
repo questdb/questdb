@@ -19,7 +19,8 @@ use crate::parquet_read::slicer::{
     DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
 };
 use crate::parquet_read::{
-    ColumnChunkBuffers, ColumnChunkStats, ParquetDecoder, RowGroupBuffers, RowGroupStatBuffers,
+    ColumnChunkBuffers, ColumnChunkStats, DecodeContext, ParquetDecoder, RowGroupBuffers,
+    RowGroupStatBuffers,
 };
 use crate::parquet_write::array::{append_array_null, calculate_array_shape, LevelsIterator};
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
@@ -34,8 +35,9 @@ use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLog
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::cmp;
 use std::cmp::min;
-use std::io::{Read, Seek};
+use std::io::Cursor;
 use std::ptr;
+use std::slice;
 
 impl RowGroupBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
@@ -124,9 +126,10 @@ const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 /// Not to be confused with the field_id in the parquet metadata.
 pub type ParquetColumnIndex = i32;
 
-impl<R: Read + Seek> ParquetDecoder<R> {
+impl ParquetDecoder {
     pub fn decode_row_group(
-        &mut self,
+        &self,
+        ctx: &mut DecodeContext,
         row_group_bufs: &mut RowGroupBuffers,
         columns: &[(ParquetColumnIndex, ColumnType)],
         row_group_index: u32,
@@ -197,6 +200,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
             let col_info = QdbMetaCol { column_type, column_top, format };
             match self.decode_column_chunk(
+                ctx,
                 column_chunk_bufs,
                 row_group_index as usize,
                 row_group_lo as usize,
@@ -222,8 +226,10 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         Ok(decoded)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn decode_column_chunk(
-        &mut self,
+        &self,
+        ctx: &mut DecodeContext,
         column_chunk_bufs: &mut ColumnChunkBuffers,
         row_group_index: usize,
         row_group_lo: usize,
@@ -239,8 +245,11 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             .try_into()
             .map_err(|_| fmt_err!(Layout, "column chunk size overflow, size: {chunk_size}"))?;
 
+        let buf = unsafe { slice::from_raw_parts(ctx.file_ptr, ctx.file_size as usize) };
+        let mut reader: Cursor<&[u8]> = Cursor::new(buf);
+
         let page_reader =
-            get_page_iterator(column_metadata, &mut self.reader, None, vec![], chunk_size)?;
+            get_page_iterator(column_metadata, &mut reader, None, vec![], chunk_size)?;
 
         match self.metadata.version {
             1 | 2 => Ok(()),
@@ -253,7 +262,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         column_chunk_bufs.data_vec.clear();
         for maybe_page in page_reader {
             let page = maybe_page?;
-            let page = decompress(page, &mut self.decompress_buffer)?;
+            let page = decompress(page, &mut ctx.decompress_buffer)?;
 
             match page {
                 Page::Dict(page) => {
@@ -1462,23 +1471,18 @@ mod tests {
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
-    use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
+    use crate::parquet_read::{ColumnChunkBuffers, DecodeContext, ParquetDecoder};
     use crate::parquet_write::array::{append_array_null, append_raw_array};
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
     use arrow::datatypes::ToByteSlice;
-    use bytes::Bytes;
-    use parquet::file::reader::Length;
     use parquet2::write::Version;
     use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
     use rand::Rng;
-    use std::fs::File;
-    use std::io::{Cursor, Write};
+    use std::io::Cursor;
     use std::mem::size_of;
-    use std::path::Path;
     use std::ptr::null;
-    use tempfile::NamedTempFile;
 
     #[test]
     fn test_decode_int_column_v2_nulls() {
@@ -1499,12 +1503,14 @@ mod tests {
             expected_buff.data_vec.as_ref(),
         );
 
-        let file_len = file.len();
-        let mut decoder = ParquetDecoder::read(allocator.clone(), file, file_len).unwrap();
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
         let bufs = &mut ColumnChunkBuffers::new(allocator.clone());
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
 
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type.unwrap();
@@ -1512,6 +1518,7 @@ mod tests {
             for row_group_index in 0..row_group_count {
                 decoder
                     .decode_column_chunk(
+                        &mut ctx,
                         bufs,
                         row_group_index,
                         0,
@@ -1547,12 +1554,14 @@ mod tests {
             expected_buff.data_vec.as_ref(),
         );
 
-        let file_len = file.len();
-        let mut decoder = ParquetDecoder::read(allocator.clone(), file, file_len).unwrap();
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
         let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
 
         for row_lo in 0..row_group_size - 1 {
             for row_hi in row_lo + 1..row_group_size {
@@ -1562,6 +1571,7 @@ mod tests {
                     for row_group_index in 0..row_group_count {
                         decoder
                             .decode_column_chunk(
+                                &mut ctx,
                                 bufs,
                                 row_group_index,
                                 row_lo,
@@ -1752,12 +1762,14 @@ mod tests {
         let column_count = columns.len();
         let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
 
-        let file_len = file.len();
-        let mut decoder = ParquetDecoder::read(allocator.clone(), file, file_len).unwrap();
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
         let bufs = &mut ColumnChunkBuffers::new(allocator.clone());
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
 
         for (column_index, (column_buffs, column_type)) in expected_buffs.iter().enumerate() {
             let column_type = *column_type;
@@ -1780,6 +1792,7 @@ mod tests {
             for row_group_index in 0..row_group_count {
                 let row_count = decoder
                     .decode_column_chunk(
+                        &mut ctx,
                         bufs,
                         row_group_index,
                         0,
@@ -1844,7 +1857,7 @@ mod tests {
         data_page_size: usize,
         version: Version,
         expected_buff: &[u8],
-    ) -> File {
+    ) -> Vec<u8> {
         let columns = vec![create_fix_column(
             0,
             row_count,
@@ -1861,7 +1874,7 @@ mod tests {
         data_page_size: usize,
         version: Version,
         columns: Vec<Column>,
-    ) -> File {
+    ) -> Vec<u8> {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let partition = Partition { table: "test_table".to_string(), columns };
         ParquetWriter::new(&mut buf)
@@ -1873,16 +1886,7 @@ mod tests {
             .finish(partition)
             .expect("parquet writer");
 
-        buf.set_position(0);
-        let bytes: Bytes = buf.into_inner().into();
-        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        temp_file
-            .write_all(bytes.to_byte_slice())
-            .expect("Failed to write to temp file");
-
-        let path = temp_file.path().to_str().unwrap();
-        let file = File::open(Path::new(path)).unwrap();
-        file
+        buf.into_inner()
     }
 
     fn create_col_data_buff_bool(row_count: usize) -> ColumnBuffers {

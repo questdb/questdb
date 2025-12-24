@@ -27,8 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.std.MemoryTag;
 
 public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
 
@@ -83,16 +81,9 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
         final byte format = reader.getPartitionFormat(frame.partitionIndex);
         if (format == PartitionFormat.PARQUET) {
-            final long addr = reader.getParquetAddr(frame.partitionIndex);
-            assert addr != 0;
-            final long parquetSize = reader.getParquetFileSize(frame.partitionIndex);
-            assert parquetSize > 0;
-            if (parquetDecoder == null) {
-                parquetDecoder = new PartitionDecoder();
-            }
-            parquetDecoder.of(addr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(frame.partitionIndex);
+            assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
             frame.format = PartitionFormat.PARQUET;
-            frame.parquetDecoder = parquetDecoder;
             return frame;
         }
 
