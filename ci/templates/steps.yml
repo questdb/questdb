@@ -26,7 +26,8 @@ steps:
     condition: |
       or(
         eq(variables['poolName'], 'hetzner-docker'),
-        eq(variables['poolName'], 'hetzner-docker-zfs')
+        eq(variables['poolName'], 'hetzner-docker-zfs'),
+        eq(variables['poolName'], 'steve-test')
       )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
