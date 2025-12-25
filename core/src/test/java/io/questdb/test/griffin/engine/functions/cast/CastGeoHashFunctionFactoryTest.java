@@ -113,7 +113,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
             String castExpr = "cast('sp052w92' as geohash(2c)";
             parseFunction(castExpr, metadata, functionParser);
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unbalanced (");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unbalanced parenthesis: missing closing ')'");
             Assert.assertEquals(4, e.getPosition());
         }
     }
