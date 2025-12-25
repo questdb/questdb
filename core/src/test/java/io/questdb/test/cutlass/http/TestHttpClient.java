@@ -24,10 +24,8 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -483,20 +481,13 @@ public class TestHttpClient implements QuietCloseable {
         @SuppressWarnings("resource") HttpClient.ResponseHeaders rsp = req.send();
         rsp.await();
 
-        Response chunkedResponse = rsp.getResponse();
-        Fragment fragment;
-
         String statusCode = Utf8s.toString(rsp.getStatusCode());
-
         sink.clear();
-        while ((fragment = chunkedResponse.recv()) != null) {
-            Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-        }
-
+        rsp.getResponse().copyTextTo(sink);
         return statusCode;
     }
 
-    protected String reqToSinkUtf8Params(
+    protected void reqToSinkUtf8Params(
             HttpClient.Request req,
             MutableUtf8Sink sink,
             @Nullable CharSequence username,
@@ -511,7 +502,7 @@ public class TestHttpClient implements QuietCloseable {
             }
         }
 
-        return reqToSink0(req, sink, username, password, token);
+        reqToSink0(req, sink, username, password, token);
     }
 
     protected void toSink0(

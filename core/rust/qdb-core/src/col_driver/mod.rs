@@ -58,7 +58,7 @@ pub trait ColumnDriver {
 
 /// Obtain a type driver from the provided column type.
 pub fn try_lookup_driver(col_type: ColumnType) -> CoreResult<&'static dyn ColumnDriver> {
-    match (col_type.tag(), col_type.is_designated()) {
+    match (col_type.tag(), col_type.is_designated_timestamp_ascending()) {
         (ColumnTypeTag::Boolean, _) => Ok(&BooleanDriver),
         (ColumnTypeTag::Byte, _) => Ok(&ByteDriver),
         (ColumnTypeTag::Short, _) => Ok(&ShortDriver),

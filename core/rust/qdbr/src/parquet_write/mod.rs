@@ -168,6 +168,7 @@ mod tests {
                     null(),
                     0,
                     false,
+                    false,
                 )
                 .expect("column")
             })
@@ -278,6 +279,7 @@ mod tests {
             offsets.as_ptr(),
             offsets.len(),
             false,
+            false,
         )
         .unwrap();
 
@@ -342,6 +344,7 @@ mod tests {
             null(),
             0,
             false,
+            false,
         )
         .unwrap();
 
@@ -357,6 +360,7 @@ mod tests {
             0,
             null(),
             0,
+            false,
             false,
         )
         .unwrap();
@@ -415,6 +419,7 @@ mod tests {
             0,
             null(),
             0,
+            false,
             false,
         )
         .unwrap();

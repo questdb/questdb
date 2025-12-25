@@ -3773,7 +3773,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         filterFactory.halfClose();
                                     }
 
-                                    master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
                                     if (leftSymbolIndex != -1) {
                                         assert rightSymbolIndex != -1;
                                         master = new AsyncWindowJoinFastRecordCursorFactory(

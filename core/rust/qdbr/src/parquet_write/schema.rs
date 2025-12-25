@@ -294,6 +294,7 @@ pub struct Column {
     pub secondary_data: &'static [u8],
     pub symbol_offsets: &'static [u64],
     pub designated_timestamp: bool,
+    pub designated_timestamp_ascending: bool,
 }
 
 impl Column {
@@ -311,6 +312,7 @@ impl Column {
         symbol_offsets_ptr: *const u64,
         symbol_offsets_size: usize,
         designated_timestamp: bool,
+        designated_timestamp_ascending: bool,
     ) -> ParquetResult<Self> {
         assert!(
             !primary_data_ptr.is_null() || primary_data_size == 0,
@@ -353,6 +355,7 @@ impl Column {
             secondary_data,
             symbol_offsets,
             designated_timestamp,
+            designated_timestamp_ascending,
         })
     }
 }
@@ -388,8 +391,8 @@ pub fn to_parquet_schema(
             None
         };
 
-        let column_type = if column.designated_timestamp {
-            column.data_type.into_designated()?
+        let column_type = if column.designated_timestamp && column.designated_timestamp_ascending {
+            column.data_type.into_designated_with_order(column.designated_timestamp_ascending)?
         } else {
             column.data_type
         };
