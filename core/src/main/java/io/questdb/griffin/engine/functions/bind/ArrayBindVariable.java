@@ -73,7 +73,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     }
 
     public void parseArray(CharSequence value) {
-        short elementType = ColumnType.isUndefined(type) ? ColumnType.UNDEFINED : ColumnType.decodeArrayElementType(type);
+        short elementType = ColumnType.decodeArrayElementType(type);
         if (elementType == ColumnType.VARCHAR) {
             view = SqlUtil.implicitCastStringAsVarcharArray(value, varcharArrayParser, type);
         } else {

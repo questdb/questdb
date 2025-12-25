@@ -785,7 +785,7 @@ tests:
 
   - name: Symbol utf-8 Array IN Test
     description: Test selecting symbol column using IN clause with varchar array bind variable containing utf-8 characters.
-    exclude: [ "psycopg2", "php" ]
+    exclude: [ "psycopg2" ]
     prepare:
       - action: execute
         query: "CREATE TABLE symbol_utf8_in_test (ts TIMESTAMP, sym_col SYMBOL) timestamp(ts);"
