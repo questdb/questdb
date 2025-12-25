@@ -59,6 +59,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
@@ -274,7 +275,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
 
@@ -388,7 +389,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
 
@@ -511,7 +512,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
 
@@ -634,7 +635,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
 
@@ -744,7 +745,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
 
@@ -947,7 +948,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
@@ -1082,7 +1083,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
@@ -1223,7 +1224,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
@@ -1363,7 +1364,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
@@ -1493,7 +1494,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();

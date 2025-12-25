@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -199,7 +200,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         final PageFrameSequence<AsyncTopKAtom> frameSequence = task.getFrameSequence(AsyncTopKAtom.class);
 
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
 
         final long frameRowCount = task.getFrameRowCount();

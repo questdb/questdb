@@ -51,6 +51,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -74,7 +75,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private boolean allFramesActive;
     private long cursor = -1;
     private SqlExecutionContext executionContext;
-    private DirectLongList filteredRows;
+    private MMapedLongList filteredRows;
     private int frameIndex;
     private int frameLimit;
     private long frameRowCount;

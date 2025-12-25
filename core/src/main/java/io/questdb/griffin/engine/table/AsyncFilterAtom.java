@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -130,7 +131,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
      * @param rows          rows to pre-touch
      * @param frameRowCount total number of rows in the frame
      */
-    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows, long frameRowCount) {
+    public void preTouchColumns(PageFrameMemoryRecord record, MMapedLongList rows, long frameRowCount) {
         // Only pre-touch if the filter selectivity is high, i.e. when reading the column values may involve random I/O.
         if (!preTouchEnabled || rows.size() > frameRowCount * preTouchThreshold) {
             return;

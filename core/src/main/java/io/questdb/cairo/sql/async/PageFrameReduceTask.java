@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -49,7 +50,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList auxAddresses;
     private final DirectLongList dataAddresses;
     private final StringSink errorMsg = new StringSink();
-    private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
+    private final MMapedLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
     private int errorMessagePosition;
@@ -65,7 +66,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         try {
             this.frameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
-            this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+            this.filteredRows = new MMapedLongList(configuration.getPageFrameReduceRowIdListCapacity());
             this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             // We don't need to cache anything when reducing,
@@ -121,7 +122,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return filteredRowCount;
     }
 
-    public DirectLongList getFilteredRows() {
+    public MMapedLongList getFilteredRows() {
         return filteredRows;
     }
 

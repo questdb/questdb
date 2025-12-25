@@ -51,6 +51,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -301,7 +302,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
 
         if (frameMemory.hasColumnTops()) {

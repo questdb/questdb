@@ -50,6 +50,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -223,7 +224,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     private static void aggregateFiltered(
             @NotNull PageFrameMemoryRecord record,
-            DirectLongList rows,
+            MMapedLongList rows,
             long baseRowId,
             SimpleMapValue value,
             GroupByFunctionsUpdater functionUpdater
@@ -253,7 +254,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         rows.clear();
 
         final long frameRowCount = task.getFrameRowCount();

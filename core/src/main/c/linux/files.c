@@ -142,12 +142,37 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_madvise0
     return posix_madvise(memAddr, (off_t) len, advise);
 }
 
+// Native madvise (not posix_madvise) - required for Linux-specific flags like MADV_FREE
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_nativeMadvise(JNIEnv *e, jclass cls, jlong address, jlong len, jint advise) {
+    return madvise((void *) address, (size_t) len, advise);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvRandom(JNIEnv *e, jclass cls) {
     return POSIX_MADV_RANDOM;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvSequential(JNIEnv *e, jclass cls) {
     return POSIX_MADV_SEQUENTIAL;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvFree(JNIEnv *e, jclass cls) {
+    return MADV_FREE;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmapAnon(JNIEnv *e, jclass cls, jlong len) {
+    void *addr = mmap(NULL, (size_t) len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (addr == MAP_FAILED) {
+        return -1;
+    }
+    return (jlong) addr;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremapAnon(JNIEnv *e, jclass cls, jlong address, jlong previousSize, jlong newSize) {
+    void *newAddr = mremap((void *) address, (size_t) previousSize, (size_t) newSize, MREMAP_MAYMOVE);
+    if (newAddr == MAP_FAILED) {
+        return -1;
+    }
+    return (jlong) newAddr;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus

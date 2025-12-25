@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
@@ -201,7 +202,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
                     // Consider frame sequence status only if we haven't accumulated enough rows.
                     allFramesActive &= frameSequence.isActive() || rowCount >= rowLimit;
-                    final DirectLongList frameRows = task.getFilteredRows();
+                    final MMapedLongList frameRows = task.getFilteredRows();
                     final long frameRowCount = frameRows.size();
                     frameIndex = task.getFrameIndex();
 

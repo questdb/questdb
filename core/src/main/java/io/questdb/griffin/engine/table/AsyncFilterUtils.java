@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -73,7 +74,7 @@ public class AsyncFilterUtils {
         }
         final DirectLongList data = task.getDataAddresses();
         final DirectLongList varSizeAux = task.getAuxAddresses();
-        final DirectLongList rows = task.getFilteredRows();
+        final MMapedLongList rows = task.getFilteredRows();
         long hi = compiledFilter.call(
                 data.getAddress(),
                 data.size(),
@@ -89,7 +90,7 @@ public class AsyncFilterUtils {
 
     public static void applyFilter(
             @NotNull Function filter,
-            @NotNull DirectLongList rows,
+            @NotNull MMapedLongList rows,
             @NotNull PageFrameMemoryRecord record,
             long frameRowCount
     ) {

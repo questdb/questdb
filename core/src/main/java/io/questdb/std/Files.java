@@ -60,6 +60,7 @@ public final class Files {
     // Apart from obvious random read use case, MADV_RANDOM/FADV_RANDOM should be used for write-only
     // append-only files. Otherwise, OS starts reading adjacent pages under memory pressure generating
     // wasted disk read ops.
+    public static final int POSIX_MADV_FREE;
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
     public static final char SEPARATOR;
@@ -334,6 +335,9 @@ public final class Files {
     }
 
     public static native void madvise0(long address, long len, int advise);
+
+    // Native madvise (not posix_madvise) - required for Linux-specific flags like MADV_FREE
+    static native int nativeMadvise(long address, long len, int advise);
 
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.ptr(), mode);
@@ -627,6 +631,8 @@ public final class Files {
 
     private native static int getPosixFadvSequential();
 
+    private native static int getPosixMadvFree();
+
     private native static int getPosixMadvRandom();
 
     private native static int getPosixMadvSequential();
@@ -756,6 +762,10 @@ public final class Files {
 
     static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
 
+    static native long mmapAnon(long len);
+
+    static native long mremapAnon(long address, long previousSize, long newSize);
+
     static native long mremap0(int fd, long address, long previousSize, long newSize, long offset, int flags);
 
     static native int munmap0(long address, long len);
@@ -793,13 +803,15 @@ public final class Files {
         if (Os.isLinux()) {
             POSIX_FADV_RANDOM = getPosixFadvRandom();
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
+            POSIX_MADV_FREE = getPosixMadvFree();
             POSIX_MADV_RANDOM = getPosixMadvRandom();
             POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
         } else {
             POSIX_FADV_SEQUENTIAL = -1;
             POSIX_FADV_RANDOM = -1;
-            POSIX_MADV_SEQUENTIAL = -1;
+            POSIX_MADV_FREE = -1;
             POSIX_MADV_RANDOM = -1;
+            POSIX_MADV_SEQUENTIAL = -1;
         }
     }
 }

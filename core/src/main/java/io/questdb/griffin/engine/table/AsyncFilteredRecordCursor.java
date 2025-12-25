@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MMapedLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
@@ -65,7 +66,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // The OG rows remaining, used to reset the counter when re-running cursor from top().
     private long ogRowsRemaining;
     private PageFrameMemoryRecord recordB;
-    private DirectLongList rows;
+    private MMapedLongList rows;
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
