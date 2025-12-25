@@ -249,6 +249,8 @@ io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIntervalFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndSymbolZipfFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndSymbolZipfNFunctionFactory
 
 # date conversion functions
 
