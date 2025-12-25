@@ -265,10 +265,15 @@ public class Unordered8Map implements Map, Reopenable {
         final long srcLimit = src8Map.memLimit;
         final long es = entrySize;
 
-        // Prefetch window of 8 entries (all on stack to avoid heap allocation).
+        final sun.misc.Unsafe u = Unsafe.getUnsafe();
+        final long dstMem = memStart;
+        final long dstLim = memLimit;
+
+        // Pipeline state: 8 entries worth of keys, src/dst addresses, and pre-loaded probe values.
         long key0, key1, key2, key3, key4, key5, key6, key7;
         long src0, src1, src2, src3, src4, src5, src6, src7;
         long dst0, dst1, dst2, dst3, dst4, dst5, dst6, dst7;
+        long p0, p1, p2, p3, p4, p5, p6, p7;  // Pre-loaded first-probe values
 
         // Prime the pipeline.
         src0 = srcStart;
@@ -280,42 +285,38 @@ public class Unordered8Map implements Map, Reopenable {
         src6 = srcStart + 6 * es;
         src7 = srcStart + 7 * es;
 
-        key0 = src0 < srcLimit ? Unsafe.getUnsafe().getLong(src0) : 0;
-        key1 = src1 < srcLimit ? Unsafe.getUnsafe().getLong(src1) : 0;
-        key2 = src2 < srcLimit ? Unsafe.getUnsafe().getLong(src2) : 0;
-        key3 = src3 < srcLimit ? Unsafe.getUnsafe().getLong(src3) : 0;
-        key4 = src4 < srcLimit ? Unsafe.getUnsafe().getLong(src4) : 0;
-        key5 = src5 < srcLimit ? Unsafe.getUnsafe().getLong(src5) : 0;
-        key6 = src6 < srcLimit ? Unsafe.getUnsafe().getLong(src6) : 0;
-        key7 = src7 < srcLimit ? Unsafe.getUnsafe().getLong(src7) : 0;
+        key0 = src0 < srcLimit ? u.getLong(src0) : 0;
+        key1 = src1 < srcLimit ? u.getLong(src1) : 0;
+        key2 = src2 < srcLimit ? u.getLong(src2) : 0;
+        key3 = src3 < srcLimit ? u.getLong(src3) : 0;
+        key4 = src4 < srcLimit ? u.getLong(src4) : 0;
+        key5 = src5 < srcLimit ? u.getLong(src5) : 0;
+        key6 = src6 < srcLimit ? u.getLong(src6) : 0;
+        key7 = src7 < srcLimit ? u.getLong(src7) : 0;
 
-        dst0 = key0 != 0 ? memStart + (Hash.hashLong64(key0) & mask) * es : 0;
-        dst1 = key1 != 0 ? memStart + (Hash.hashLong64(key1) & mask) * es : 0;
-        dst2 = key2 != 0 ? memStart + (Hash.hashLong64(key2) & mask) * es : 0;
-        dst3 = key3 != 0 ? memStart + (Hash.hashLong64(key3) & mask) * es : 0;
-        dst4 = key4 != 0 ? memStart + (Hash.hashLong64(key4) & mask) * es : 0;
-        dst5 = key5 != 0 ? memStart + (Hash.hashLong64(key5) & mask) * es : 0;
-        dst6 = key6 != 0 ? memStart + (Hash.hashLong64(key6) & mask) * es : 0;
-        dst7 = key7 != 0 ? memStart + (Hash.hashLong64(key7) & mask) * es : 0;
+        dst0 = key0 != 0 ? dstMem + (Hash.hashLong64(key0) & mask) * es : 0;
+        dst1 = key1 != 0 ? dstMem + (Hash.hashLong64(key1) & mask) * es : 0;
+        dst2 = key2 != 0 ? dstMem + (Hash.hashLong64(key2) & mask) * es : 0;
+        dst3 = key3 != 0 ? dstMem + (Hash.hashLong64(key3) & mask) * es : 0;
+        dst4 = key4 != 0 ? dstMem + (Hash.hashLong64(key4) & mask) * es : 0;
+        dst5 = key5 != 0 ? dstMem + (Hash.hashLong64(key5) & mask) * es : 0;
+        dst6 = key6 != 0 ? dstMem + (Hash.hashLong64(key6) & mask) * es : 0;
+        dst7 = key7 != 0 ? dstMem + (Hash.hashLong64(key7) & mask) * es : 0;
 
-        // Touch to prefetch destination slots into cache.
-        if (dst0 != 0) Unsafe.getUnsafe().getLong(dst0);
-        if (dst1 != 0) Unsafe.getUnsafe().getLong(dst1);
-        if (dst2 != 0) Unsafe.getUnsafe().getLong(dst2);
-        if (dst3 != 0) Unsafe.getUnsafe().getLong(dst3);
-        if (dst4 != 0) Unsafe.getUnsafe().getLong(dst4);
-        if (dst5 != 0) Unsafe.getUnsafe().getLong(dst5);
-        if (dst6 != 0) Unsafe.getUnsafe().getLong(dst6);
-        if (dst7 != 0) Unsafe.getUnsafe().getLong(dst7);
+        // Pre-load first-probe values (these are used in the first iteration).
+        p0 = dst0 != 0 ? u.getLong(dst0) : 0;
+        p1 = dst1 != 0 ? u.getLong(dst1) : 0;
+        p2 = dst2 != 0 ? u.getLong(dst2) : 0;
+        p3 = dst3 != 0 ? u.getLong(dst3) : 0;
+        p4 = dst4 != 0 ? u.getLong(dst4) : 0;
+        p5 = dst5 != 0 ? u.getLong(dst5) : 0;
+        p6 = dst6 != 0 ? u.getLong(dst6) : 0;
+        p7 = dst7 != 0 ? u.getLong(dst7) : 0;
 
-        final sun.misc.Unsafe u = Unsafe.getUnsafe();
-        final long dstMem = memStart;
-        final long dstLim = memLimit;
-
-        // Main loop - process 8 entries per iteration with batched prefetching.
+        // Main loop - process 8 entries per iteration with software pipelining.
         for (long srcAddr = srcStart; srcAddr < srcLimit; srcAddr += 8 * es) {
 
-            // === PHASE 1: Issue prefetch loads for next batch (8 parallel loads) ===
+            // === PHASE 1: Load NEXT batch source keys (8 parallel loads) ===
             long aheadBase = srcAddr + 8 * es;
             long nk0 = 0, nk1 = 0, nk2 = 0, nk3 = 0, nk4 = 0, nk5 = 0, nk6 = 0, nk7 = 0;
             if (aheadBase < srcLimit) {
@@ -329,7 +330,7 @@ public class Unordered8Map implements Map, Reopenable {
                 nk7 = aheadBase + 7 * es < srcLimit ? u.getLong(aheadBase + 7 * es) : 0;
             }
 
-            // === PHASE 2: Compute hashes (ALU work overlaps with memory latency) ===
+            // === PHASE 2: Compute NEXT batch hashes (ALU work overlaps with PHASE 1 latency) ===
             long nh0 = Hash.hashLong64(nk0);
             long nh1 = Hash.hashLong64(nk1);
             long nh2 = Hash.hashLong64(nk2);
@@ -339,7 +340,7 @@ public class Unordered8Map implements Map, Reopenable {
             long nh6 = Hash.hashLong64(nk6);
             long nh7 = Hash.hashLong64(nk7);
 
-            // === PHASE 3: Compute dest addresses and issue prefetches ===
+            // === PHASE 3: Compute NEXT batch dest addresses ===
             long nd0 = nk0 != 0 ? dstMem + (nh0 & mask) * es : 0;
             long nd1 = nk1 != 0 ? dstMem + (nh1 & mask) * es : 0;
             long nd2 = nk2 != 0 ? dstMem + (nh2 & mask) * es : 0;
@@ -349,26 +350,18 @@ public class Unordered8Map implements Map, Reopenable {
             long nd6 = nk6 != 0 ? dstMem + (nh6 & mask) * es : 0;
             long nd7 = nk7 != 0 ? dstMem + (nh7 & mask) * es : 0;
 
-            // Issue all prefetches together (maximizes memory-level parallelism).
-            if (nd0 != 0) u.getLong(nd0);
-            if (nd1 != 0) u.getLong(nd1);
-            if (nd2 != 0) u.getLong(nd2);
-            if (nd3 != 0) u.getLong(nd3);
-            if (nd4 != 0) u.getLong(nd4);
-            if (nd5 != 0) u.getLong(nd5);
-            if (nd6 != 0) u.getLong(nd6);
-            if (nd7 != 0) u.getLong(nd7);
+            // === PHASE 4: Load NEXT batch first-probe values (stored for next iteration) ===
+            // These loads are NOT dead code - results are saved and used in the next iteration.
+            long np0 = nd0 != 0 ? u.getLong(nd0) : 0;
+            long np1 = nd1 != 0 ? u.getLong(nd1) : 0;
+            long np2 = nd2 != 0 ? u.getLong(nd2) : 0;
+            long np3 = nd3 != 0 ? u.getLong(nd3) : 0;
+            long np4 = nd4 != 0 ? u.getLong(nd4) : 0;
+            long np5 = nd5 != 0 ? u.getLong(nd5) : 0;
+            long np6 = nd6 != 0 ? u.getLong(nd6) : 0;
+            long np7 = nd7 != 0 ? u.getLong(nd7) : 0;
 
-            // === PHASE 4: Process current batch (dest slots are warm in cache) ===
-            // Issue all 8 first-probe loads in parallel for maximum MLP.
-            long p0 = key0 != 0 ? u.getLong(dst0) : key0;
-            long p1 = key1 != 0 ? u.getLong(dst1) : key1;
-            long p2 = key2 != 0 ? u.getLong(dst2) : key2;
-            long p3 = key3 != 0 ? u.getLong(dst3) : key3;
-            long p4 = key4 != 0 ? u.getLong(dst4) : key4;
-            long p5 = key5 != 0 ? u.getLong(dst5) : key5;
-            long p6 = key6 != 0 ? u.getLong(dst6) : key6;
-            long p7 = key7 != 0 ? u.getLong(dst7) : key7;
+            // === PHASE 5: Process CURRENT batch using pre-loaded p0-p7 (zero load latency!) ===
 
             // Process results. Most resolve on first probe with 0.5 load factor.
             // Use Unsafe.copyMemory (JVM intrinsic, no JNI).
@@ -572,11 +565,13 @@ public class Unordered8Map implements Map, Reopenable {
                 }
             }
 
-            // === PHASE 5: Rotate prefetched data to current slots ===
+            // === PHASE 6: Rotate prefetched data to current slots ===
             key0 = nk0; key1 = nk1; key2 = nk2; key3 = nk3;
             key4 = nk4; key5 = nk5; key6 = nk6; key7 = nk7;
             dst0 = nd0; dst1 = nd1; dst2 = nd2; dst3 = nd3;
             dst4 = nd4; dst5 = nd5; dst6 = nd6; dst7 = nd7;
+            p0 = np0; p1 = np1; p2 = np2; p3 = np3;
+            p4 = np4; p5 = np5; p6 = np6; p7 = np7;
             src0 = aheadBase;
             src1 = aheadBase + es;
             src2 = aheadBase + 2 * es;
