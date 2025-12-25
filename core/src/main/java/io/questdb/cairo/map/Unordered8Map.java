@@ -255,34 +255,207 @@ public class Unordered8Map implements Map, Reopenable {
             }
         }
 
-        // Then we handle all non-zero keys.
-        OUTER:
-        for (long srcAddr = src8Map.memStart; srcAddr < src8Map.memLimit; srcAddr += entrySize) {
-            long key = Unsafe.getUnsafe().getLong(srcAddr);
-            if (key == 0) {
-                continue;
-            }
+        // Pre-grow to avoid rehash during merge.
+        long srcNonZeroCount = srcSize - (src8Map.hasZero ? 1 : 0);
+        if (size + srcNonZeroCount > keyCapacity * loadFactor) {
+            setKeyCapacity((int) (size + srcNonZeroCount));
+        }
 
-            long destAddr = getStartAddress(Hash.hashLong64(key) & mask);
-            for (; ; ) {
-                long k = Unsafe.getUnsafe().getLong(destAddr);
-                if (k == 0) {
-                    break;
-                } else if (k == key) {
-                    // Match found, merge values.
-                    mergeFunc.merge(
-                            valueAt(destAddr),
-                            src8Map.valueAt(srcAddr)
-                    );
-                    continue OUTER;
+        final long srcStart = src8Map.memStart;
+        final long srcLimit = src8Map.memLimit;
+        final long es = entrySize;
+
+        // Prefetch window of 8 entries (all on stack to avoid heap allocation).
+        long key0, key1, key2, key3, key4, key5, key6, key7;
+        long src0, src1, src2, src3, src4, src5, src6, src7;
+        long dst0, dst1, dst2, dst3, dst4, dst5, dst6, dst7;
+
+        // Prime the pipeline.
+        src0 = srcStart;
+        src1 = srcStart + es;
+        src2 = srcStart + 2 * es;
+        src3 = srcStart + 3 * es;
+        src4 = srcStart + 4 * es;
+        src5 = srcStart + 5 * es;
+        src6 = srcStart + 6 * es;
+        src7 = srcStart + 7 * es;
+
+        key0 = src0 < srcLimit ? Unsafe.getUnsafe().getLong(src0) : 0;
+        key1 = src1 < srcLimit ? Unsafe.getUnsafe().getLong(src1) : 0;
+        key2 = src2 < srcLimit ? Unsafe.getUnsafe().getLong(src2) : 0;
+        key3 = src3 < srcLimit ? Unsafe.getUnsafe().getLong(src3) : 0;
+        key4 = src4 < srcLimit ? Unsafe.getUnsafe().getLong(src4) : 0;
+        key5 = src5 < srcLimit ? Unsafe.getUnsafe().getLong(src5) : 0;
+        key6 = src6 < srcLimit ? Unsafe.getUnsafe().getLong(src6) : 0;
+        key7 = src7 < srcLimit ? Unsafe.getUnsafe().getLong(src7) : 0;
+
+        dst0 = key0 != 0 ? memStart + (Hash.hashLong64(key0) & mask) * es : 0;
+        dst1 = key1 != 0 ? memStart + (Hash.hashLong64(key1) & mask) * es : 0;
+        dst2 = key2 != 0 ? memStart + (Hash.hashLong64(key2) & mask) * es : 0;
+        dst3 = key3 != 0 ? memStart + (Hash.hashLong64(key3) & mask) * es : 0;
+        dst4 = key4 != 0 ? memStart + (Hash.hashLong64(key4) & mask) * es : 0;
+        dst5 = key5 != 0 ? memStart + (Hash.hashLong64(key5) & mask) * es : 0;
+        dst6 = key6 != 0 ? memStart + (Hash.hashLong64(key6) & mask) * es : 0;
+        dst7 = key7 != 0 ? memStart + (Hash.hashLong64(key7) & mask) * es : 0;
+
+        // Touch to prefetch destination slots into cache.
+        if (dst0 != 0) Unsafe.getUnsafe().getLong(dst0);
+        if (dst1 != 0) Unsafe.getUnsafe().getLong(dst1);
+        if (dst2 != 0) Unsafe.getUnsafe().getLong(dst2);
+        if (dst3 != 0) Unsafe.getUnsafe().getLong(dst3);
+        if (dst4 != 0) Unsafe.getUnsafe().getLong(dst4);
+        if (dst5 != 0) Unsafe.getUnsafe().getLong(dst5);
+        if (dst6 != 0) Unsafe.getUnsafe().getLong(dst6);
+        if (dst7 != 0) Unsafe.getUnsafe().getLong(dst7);
+
+        long aheadAddr = srcStart + 8 * es;
+
+        // Main loop with software prefetching - unrolled by 8.
+        for (long srcAddr = srcStart; srcAddr < srcLimit; ) {
+
+            // === Slot 0 ===
+            if (key0 != 0) {
+                mergeEntry(key0, src0, dst0, src8Map, mergeFunc);
+            }
+            src0 = aheadAddr;
+            if (aheadAddr < srcLimit) {
+                key0 = Unsafe.getUnsafe().getLong(aheadAddr);
+                if (key0 != 0) {
+                    dst0 = memStart + (Hash.hashLong64(key0) & mask) * es;
+                    Unsafe.getUnsafe().getLong(dst0);
                 }
-                destAddr = getNextAddress(destAddr);
+                aheadAddr += es;
             }
+            srcAddr += es;
+            if (srcAddr >= srcLimit) break;
 
-            Vect.memcpy(destAddr, srcAddr, entrySize);
-            size++;
-            if (--free == 0) {
-                rehash();
+            // === Slot 1 ===
+            if (key1 != 0) {
+                mergeEntry(key1, src1, dst1, src8Map, mergeFunc);
+            }
+            src1 = aheadAddr;
+            if (aheadAddr < srcLimit) {
+                key1 = Unsafe.getUnsafe().getLong(aheadAddr);
+                if (key1 != 0) {
+                    dst1 = memStart + (Hash.hashLong64(key1) & mask) * es;
+                    Unsafe.getUnsafe().getLong(dst1);
+                }
+                aheadAddr += es;
+            }
+            srcAddr += es;
+            if (srcAddr >= srcLimit) break;
+
+            // === Slot 2 ===
+            if (key2 != 0) {
+                mergeEntry(key2, src2, dst2, src8Map, mergeFunc);
+            }
+            src2 = aheadAddr;
+            if (aheadAddr < srcLimit) {
+                key2 = Unsafe.getUnsafe().getLong(aheadAddr);
+                if (key2 != 0) {
+                    dst2 = memStart + (Hash.hashLong64(key2) & mask) * es;
+                    Unsafe.getUnsafe().getLong(dst2);
+                }
+                aheadAddr += es;
+            }
+            srcAddr += es;
+            if (srcAddr >= srcLimit) break;
+
+            // === Slot 3 ===
+            if (key3 != 0) {
+                mergeEntry(key3, src3, dst3, src8Map, mergeFunc);
+            }
+            src3 = aheadAddr;
+            if (aheadAddr < srcLimit) {
+                key3 = Unsafe.getUnsafe().getLong(aheadAddr);
+                if (key3 != 0) {
+                    dst3 = memStart + (Hash.hashLong64(key3) & mask) * es;
+                    Unsafe.getUnsafe().getLong(dst3);
+                }
+                aheadAddr += es;
+            }
+            srcAddr += es;
+            if (srcAddr >= srcLimit) break;
+
+            // === Slot 4 ===
+            if (key4 != 0) {
+                mergeEntry(key4, src4, dst4, src8Map, mergeFunc);
+            }
+            src4 = aheadAddr;
+            if (aheadAddr < srcLimit) {
+                key4 = Unsafe.getUnsafe().getLong(aheadAddr);
+                if (key4 != 0) {
+                    dst4 = memStart + (Hash.hashLong64(key4) & mask) * es;
+                    Unsafe.getUnsafe().getLong(dst4);
+                }
+                aheadAddr += es;
+            }
+            srcAddr += es;
+            if (srcAddr >= srcLimit) break;
+
+            // === Slot 5 ===
+            if (key5 != 0) {
+                mergeEntry(key5, src5, dst5, src8Map, mergeFunc);
+            }
+            src5 = aheadAddr;
+            if (aheadAddr < srcLimit) {
+                key5 = Unsafe.getUnsafe().getLong(aheadAddr);
+                if (key5 != 0) {
+                    dst5 = memStart + (Hash.hashLong64(key5) & mask) * es;
+                    Unsafe.getUnsafe().getLong(dst5);
+                }
+                aheadAddr += es;
+            }
+            srcAddr += es;
+            if (srcAddr >= srcLimit) break;
+
+            // === Slot 6 ===
+            if (key6 != 0) {
+                mergeEntry(key6, src6, dst6, src8Map, mergeFunc);
+            }
+            src6 = aheadAddr;
+            if (aheadAddr < srcLimit) {
+                key6 = Unsafe.getUnsafe().getLong(aheadAddr);
+                if (key6 != 0) {
+                    dst6 = memStart + (Hash.hashLong64(key6) & mask) * es;
+                    Unsafe.getUnsafe().getLong(dst6);
+                }
+                aheadAddr += es;
+            }
+            srcAddr += es;
+            if (srcAddr >= srcLimit) break;
+
+            // === Slot 7 ===
+            if (key7 != 0) {
+                mergeEntry(key7, src7, dst7, src8Map, mergeFunc);
+            }
+            src7 = aheadAddr;
+            if (aheadAddr < srcLimit) {
+                key7 = Unsafe.getUnsafe().getLong(aheadAddr);
+                if (key7 != 0) {
+                    dst7 = memStart + (Hash.hashLong64(key7) & mask) * es;
+                    Unsafe.getUnsafe().getLong(dst7);
+                }
+                aheadAddr += es;
+            }
+            srcAddr += es;
+        }
+    }
+
+    private void mergeEntry(long key, long srcAddr, long destAddr, Unordered8Map srcMap, MapValueMergeFunction mergeFunc) {
+        for (; ; ) {
+            long k = Unsafe.getUnsafe().getLong(destAddr);
+            if (k == 0) {
+                Vect.memcpy(destAddr, srcAddr, entrySize);
+                size++;
+                return;
+            } else if (k == key) {
+                mergeFunc.merge(valueAt(destAddr), srcMap.valueAt(srcAddr));
+                return;
+            }
+            destAddr += entrySize;
+            if (destAddr >= memLimit) {
+                destAddr = memStart;
             }
         }
     }
