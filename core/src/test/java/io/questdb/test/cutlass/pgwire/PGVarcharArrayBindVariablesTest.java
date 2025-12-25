@@ -59,6 +59,38 @@ public class PGVarcharArrayBindVariablesTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testBindSingleElemVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            createDummyConfiguration(
+                    "pg.select.cache.enabled=true"
+            );
+
+            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
+                serverMain.start();
+                createTable(serverMain, "sym_col", "symbol");
+                try (Connection connection = getConnection(serverMain)) {
+                    try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab where sym_col in (?)")) {
+                        stmt.setString(1, "a");
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    """
+                                            ts[TIMESTAMP],sym_col[VARCHAR]
+                                            2023-01-01 09:10:00.0,a
+                                            2023-01-01 09:15:00.0,a
+                                            2023-01-01 09:17:00.0,a
+                                            2023-01-01 09:19:00.0,a
+                                            """,
+                                    new StringSink(),
+                                    resultSet
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testBindStrListsVariable() throws Exception {
         assertMemoryLeak(() -> {
             createDummyConfiguration(
