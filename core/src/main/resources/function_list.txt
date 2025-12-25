@@ -300,6 +300,9 @@ io.questdb.griffin.engine.functions.date.IntervalEndFunctionFactory
 
 # cast functions
 
+# cast null to ...
+io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory
+
 # cast double to ...
 io.questdb.griffin.engine.functions.cast.CastDoubleToIntFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastDoubleToBooleanFunctionFactory
@@ -377,7 +380,6 @@ io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToVarcharFunctionFactory
-io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory
