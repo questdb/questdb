@@ -1076,7 +1076,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
 
                 if (match == MATCH_EXACT_MATCH && sigVarArg && argCount >= sigArgCount) {
-                    sigArgTypeScore -= 1;
+                    sigArgTypeScore -= -1;
                     match = MATCH_PARTIAL_MATCH;
                 }
 
@@ -1094,7 +1094,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // have to ensure all args are indeed constant
 
                     // when match is the same, prefer non-var-arg functions
-                    if (match == bestMatch && sigVarArg && !candidateSigVarArg && candidateSigArgTypeScore == sigArgTypeScore) {
+                    if (match == bestMatch && sigVarArg && !candidateSigVarArg) {
                         continue;
                     }
 
