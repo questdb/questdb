@@ -76,7 +76,7 @@ public class InStrVarcharArrayFunctionFactory implements FunctionFactory {
         private CharSequenceHashSet set;
         private boolean stateInherited = false;
 
-        public Func(Function strFunc, Function arrayFunc) throws SqlException {
+        public Func(Function strFunc, Function arrayFunc) {
             this.strFunc = strFunc;
             this.arrayFunc = arrayFunc;
         }
@@ -111,7 +111,11 @@ public class InStrVarcharArrayFunctionFactory implements FunctionFactory {
             ArrayView arrayView = arrayFunc.getArray(null);
             for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
                 Utf8Sequence element = arrayView.getVarchar(i);
-                set.add(Utf8s.toString(element));
+                if (element == null) {
+                    set.addNull();
+                } else {
+                    set.add(Utf8s.toString(element));
+                }
             }
         }
 
