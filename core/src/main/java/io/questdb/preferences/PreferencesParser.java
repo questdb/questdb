@@ -47,7 +47,14 @@ public final class PreferencesParser extends AbstractJsonParser {
                 }
                 break;
             case JsonLexer.EVT_VALUE:
+                if (key == null) {
+                throw CairoException.critical(0)
+                    .put("Missing key for value [value=").put(tag)
+                    .put(", state=").put(state).put(']');
+                }
                 parserMap.put(key, copy(tag));
+                key = null;
+                break;
         }
     }
 }
