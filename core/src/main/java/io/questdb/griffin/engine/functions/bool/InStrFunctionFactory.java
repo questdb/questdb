@@ -104,6 +104,11 @@ public class InStrFunctionFactory implements FunctionFactory {
         return new RuntimeConstFunc(new ObjList<>(args), positions);
     }
 
+    @Override
+    public boolean variadicTypeSupportBindVariables(ObjList<Function> args) {
+        return args.size() > 2;
+    }
+
     private static void parseToString(ObjList<Function> args, IntList argPositions, CharSequenceHashSet set) throws SqlException {
         set.clear();
         final int n = args.size();

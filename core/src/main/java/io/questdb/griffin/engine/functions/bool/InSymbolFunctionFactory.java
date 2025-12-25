@@ -109,6 +109,11 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         return new Func(var, set, deferredValues, deferredValuePositions);
     }
 
+    @Override
+    public boolean variadicTypeSupportBindVariables(ObjList<Function> args) {
+        return args.size() > 2;
+    }
+
     @FunctionalInterface
     interface TestFunc {
         boolean test(Record rec);

@@ -968,6 +968,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 continue;
             }
 
+            if (sigVarArg && !factory.variadicTypeSupportBindVariables(args)) {
+                continue;
+            }
+
             // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = sigArgCount == 0 ? MATCH_EXACT_MATCH : MATCH_NO_MATCH;
@@ -1071,19 +1075,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         break;
                     }
                 }
+
                 if (match == MATCH_NO_MATCH) {
                     continue;
                 }
 
-                if (match == MATCH_EXACT_MATCH && sigVarArg && argCount >= sigArgCount) {
-                    sigArgTypeScore -= -1;
-                    match = MATCH_PARTIAL_MATCH;
-                }
-
                 if (isWindowContext != factory.isWindow()) {
-                    if (factory.isGroupBy()) {
-                        match = MATCH_FUZZY_MATCH;
-                    }
+                    match = MATCH_FUZZY_MATCH;
                 } else if (factory.isWindow()) { // make windowFunction high priority when isWindowContext
                     sigArgTypeScore -= 20;
                 }

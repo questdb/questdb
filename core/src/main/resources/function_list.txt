@@ -213,11 +213,10 @@ io.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIPv4FunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIntCCFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndStringListFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndStrFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndStrRndListFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndVarcharListFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndVarcharFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndVarcharListFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndDoubleCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndDoubleFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndFloatCFunctionFactory
@@ -225,7 +224,6 @@ io.questdb.griffin.engine.functions.rnd.RndShortCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndShortFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndDateCCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndTimestampFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory
@@ -237,6 +235,8 @@ io.questdb.griffin.engine.functions.long256.LongsToLong256FunctionFactory
 io.questdb.griffin.engine.functions.uuid.LongsToUuidFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndStringListFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndCharFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLong256FunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLong256NFunctionFactory
@@ -249,8 +249,6 @@ io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIntervalFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndSymbolZipfFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndSymbolZipfNFunctionFactory
 
 # date conversion functions
 
@@ -301,9 +299,6 @@ io.questdb.griffin.engine.functions.date.IntervalStartFunctionFactory
 io.questdb.griffin.engine.functions.date.IntervalEndFunctionFactory
 
 # cast functions
-
-# cast null to ...
-io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory
 
 # cast double to ...
 io.questdb.griffin.engine.functions.cast.CastDoubleToIntFunctionFactory
@@ -382,6 +377,7 @@ io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToVarcharFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory

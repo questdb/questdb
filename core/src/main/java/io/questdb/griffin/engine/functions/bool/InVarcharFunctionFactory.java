@@ -105,6 +105,11 @@ public class InVarcharFunctionFactory implements FunctionFactory {
         return new RuntimeConstFunc(new ObjList<>(args), positions);
     }
 
+    @Override
+    public boolean variadicTypeSupportBindVariables(ObjList<Function> args) {
+        return args.size() > 2;
+    }
+
     private static void parseToVarchar(ObjList<Function> args, IntList argPositions, Utf8SequenceHashSet set) throws SqlException {
         set.clear();
         final int n = args.size();
