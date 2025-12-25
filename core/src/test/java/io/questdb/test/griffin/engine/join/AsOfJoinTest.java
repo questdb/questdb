@@ -1506,6 +1506,70 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinToleranceExceedingIntegerMax() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE 't1' (\s
+                            id LONG,
+                            ts #TIMESTAMP
+                            ) timestamp(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE 't2' (\s
+                            id LONG,
+                            ts #TIMESTAMP
+                            ) timestamp(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName());
+            execute("insert into t1 select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)");
+            execute("insert into t2 select x as id, (x)::timestamp ts from long_sequence(5)");
+            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+            String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
+
+            String expected = String.format("""
+                    id\tts\tid1\tts1
+                    1\t1970-01-01T00:00:01.000001%1$s\t1\t1970-01-01T00:00:00.000001%2$s
+                    2\t1970-01-01T00:00:02.000002%1$s\t2\t1970-01-01T00:00:00.000002%2$s
+                    3\t1970-01-01T00:00:03.000003%1$s\t3\t1970-01-01T00:00:00.000003%2$s
+                    4\t1970-01-01T00:00:04.000004%1$s\t4\t1970-01-01T00:00:00.000004%2$s
+                    5\t1970-01-01T00:00:05.000005%1$s\t5\t1970-01-01T00:00:00.000005%2$s
+                    6\t1970-01-01T00:00:06.000006%1$s\tnull\t
+                    7\t1970-01-01T00:00:07.000007%1$s\tnull\t
+                    8\t1970-01-01T00:00:08.000008%1$s\tnull\t
+                    9\t1970-01-01T00:00:09.000009%1$s\tnull\t
+                    10\t1970-01-01T00:00:10.000010%1$s\tnull\t
+                    """, leftSuffix, rightSuffix);
+
+            // Test with tolerance values exceeding Integer.MAX_VALUE (2,147,483,647)
+            String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 3000000000U;";
+            assertQuery(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 3000000000T;";
+            assertQuery(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 3000000000s;";
+            assertQuery(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 100000000m;";
+            assertQuery(expected, query, null, "ts", false, true);
+
+            // For hours, use a safe value (maximum may be less than Integer.MAX_VALUE depending on timestamp type)
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 2000000h;";
+            assertQuery(expected, query, null, "ts", false, true);
+
+            // For days and weeks: Note that max safe days (~106M) and max safe weeks (~15M) are both
+            // less than Integer.MAX_VALUE (2,147,483,647), so these units cannot exceed Integer.MAX_VALUE.
+            // We use substantial values that test large tolerances for these units.
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 50000d;";
+            assertQuery(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 7000w;";
+            assertQuery(expected, query, null, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testAsOfJoinWithIndexSearchHint() throws Exception {
         assertMemoryLeak(() -> {
             // Create tables with symbol index
