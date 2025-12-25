@@ -1149,7 +1149,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 final int argType;
                 if (FunctionFactoryDescriptor.isArray(t)) {
                     // allow varchar array only if the element type in signature is varchar
-                    argType = ColumnType.encodeArrayTypeWithWeakDims(sigArgType, ColumnType.decodeArrayElementType(t) != ColumnType.VARCHAR);
+                    argType = ColumnType.encodeArrayTypeWithWeakDims(sigArgType, sigArgType != ColumnType.VARCHAR);
                 } else {
                     argType = sigArgType;
                 }
