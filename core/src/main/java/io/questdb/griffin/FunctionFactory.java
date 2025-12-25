@@ -145,7 +145,7 @@ public interface FunctionFactory {
         return true;
     }
 
-    default boolean variadicTypeSupportBindVariables(ObjList<Function> args) {
+    default boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
         return true;
     }
 }

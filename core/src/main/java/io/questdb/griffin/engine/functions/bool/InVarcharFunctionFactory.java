@@ -106,7 +106,7 @@ public class InVarcharFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public boolean variadicTypeSupportBindVariables(ObjList<Function> args) {
+    public boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
         return args.size() > 2;
     }
 
