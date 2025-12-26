@@ -79,11 +79,9 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
         private final Function arrayFunc;
         private final SymbolFunction symbolFunc;
         private IntHashSet intSet;
-        private final InSymbolFunctionFactory.TestFunc intTest = this::testAsInt;
         private boolean stateInherited = false;
         private CharSequenceHashSet strSet;
-        private final InSymbolFunctionFactory.TestFunc strTest = this::testAsStr;
-        private InSymbolFunctionFactory.TestFunc testFunc;
+        private boolean useIntSet;
 
         public Func(SymbolFunction symbolFunc, Function arrayFunc) {
             this.symbolFunc = symbolFunc;
@@ -92,7 +90,9 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return testFunc.test(rec);
+            return useIntSet
+                    ? intSet.contains(symbolFunc.getInt(rec))
+                    : strSet.contains(symbolFunc.getSymbol(rec));
         }
 
         @Override
@@ -132,18 +132,17 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
                         intSet.add(symbolTable.keyOf(value.asAsciiCharSequence()));
                     } else {
                         StringSink sink = Misc.getThreadLocalSink();
-                        sink.clear();
                         sink.put(value);
                         intSet.add(symbolTable.keyOf(sink));
                     }
                 }
-                testFunc = intTest;
+                useIntSet = true;
             } else {
                 for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
                     Utf8Sequence element = arrayView.getVarchar(i);
                     strSet.add(Utf8s.toString(element));
                 }
-                testFunc = strTest;
+                useIntSet = false;
             }
         }
 
@@ -151,7 +150,9 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
         public void offerStateTo(Function that) {
             BinaryFunction.super.offerStateTo(that);
             if (that instanceof InSymbolVarcharArrayFunctionFactory.Func other) {
-                other.testFunc = this.testFunc;
+                other.useIntSet = this.useIntSet;
+                other.intSet = this.intSet;
+                other.strSet = this.strSet;
                 other.stateInherited = true;
             }
         }
@@ -159,16 +160,6 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(symbolFunc).val(" in ").val(arrayFunc);
-        }
-
-        private boolean testAsInt(Record rec) {
-            int key = symbolFunc.getInt(rec);
-            return intSet.contains(key);
-        }
-
-        private boolean testAsStr(Record rec) {
-            CharSequence symbol = symbolFunc.getSymbol(rec);
-            return strSet.contains(symbol);
         }
     }
 }

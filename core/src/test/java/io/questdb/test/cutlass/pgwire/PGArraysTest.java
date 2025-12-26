@@ -880,10 +880,6 @@ public class PGArraysTest extends BasePGTest {
         }
     }
 
-    private void assertArrayBindVarQueryFails1() {
-
-    }
-
     private void assertPgWireQuery(Connection conn, String query, CharSequence expected) throws Exception {
         try (PreparedStatement stmt = conn.prepareStatement(query)) {
             sink.clear();
