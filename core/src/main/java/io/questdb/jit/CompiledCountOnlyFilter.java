@@ -32,7 +32,7 @@ import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
-public class CompiledFilter implements Closeable {
+public class CompiledCountOnlyFilter implements Closeable {
     private static final ThreadLocal<FiltersCompiler.JitError> tlJitError = new ThreadLocal<>(FiltersCompiler.JitError::new);
     private long fnAddress;
 
@@ -42,17 +42,15 @@ public class CompiledFilter implements Closeable {
             long varSizeAuxAddress,
             long varsAddress,
             long varsSize,
-            long filteredRowsAddress,
             long rowsCount
     ) {
-        return FiltersCompiler.callFunction(
+        return FiltersCompiler.callCountOnlyFunction(
                 fnAddress,
                 dataAddress,
                 dataSize,
                 varSizeAuxAddress,
                 varsAddress,
                 varsSize,
-                filteredRowsAddress,
                 rowsCount
         );
     }
@@ -72,10 +70,10 @@ public class CompiledFilter implements Closeable {
 
         final FiltersCompiler.JitError error = tlJitError.get();
         error.reset();
-        fnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, options, error);
+        fnAddress = FiltersCompiler.compileCountOnlyFunction(filterAddress, filterSize, options, error);
         if (error.errorCode() != 0) {
             throw SqlException.position(0)
-                    .put("JIT compilation failed [errorCode").put(error.errorCode())
+                    .put("JIT count-only compilation failed [errorCode").put(error.errorCode())
                     .put(", msg=").put(error.message()).put("]");
         }
         Unsafe.recordMemAlloc(1, MemoryTag.NATIVE_JIT);

@@ -68,7 +68,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testBoolean() throws Exception {
-        final String query = "select * from x where bool1 or bool2 = false";
+        final String query = "x where bool1 or bool2 = false";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_boolean() bool1," +
@@ -105,7 +105,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testChar() throws Exception {
-        final String query = "select * from x where ch > 'A' and ch < 'Z'";
+        final String query = "x where ch > 'A' and ch < 'Z'";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_char() ch" +
@@ -117,7 +117,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testColumnAddressHoistingExceedsCacheCapacity() throws Exception {
         // Tests column address hoisting with more than 8 columns (exceeds cache capacity)
         // The backend address cache has capacity of 8 elements
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "c1 > 0 and c2 > 0 and c3 > 0 and c4 > 0 " +
                 "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0 " +
                 "and c9 > 0 and c10 > 0 and c11 > 0 and c12 > 0";
@@ -142,7 +142,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnAddressHoistingMixedTypes() throws Exception {
         // Tests column address hoisting with mixed types exceeding cache capacity
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i1 > 0 and i2 > 0 and i3 > 0 and l1 > 0 and l2 > 0 and l3 > 0 " +
                 "and f1 > 0.0 and f2 > 0.0 and f3 > 0.0 " +
                 "and d1 > 0.0 and d2 > 0.0 and d3 > 0.0";
@@ -167,7 +167,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnAddressHoistingWithinCacheCapacity() throws Exception {
         // Tests column address hoisting with 8 columns (within cache capacity of 8)
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "c1 > 0 and c2 > 0 and c3 > 0 and c4 > 0 " +
                 "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0";
         final String ddl = "create table x as " +
@@ -307,7 +307,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testColumnValueCacheExceedsCapacity() throws Exception {
         // Tests when column value cache exceeds capacity (8 elements)
         // Each column access creates a cache entry
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "c1 > 0 and c1 < 100 and c2 > 0 and c2 < 100 " +
                 "and c3 > 0 and c3 < 100 and c4 > 0 and c4 < 100 " +
                 "and c5 > 0 and c5 < 100";
@@ -325,7 +325,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnValueCachingInArithmetic() throws Exception {
         // Tests column value caching when column is used in arithmetic expressions
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 + i64 > 100 and i64 * 2 < 180";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -337,7 +337,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnValueCachingMixedTypes() throws Exception {
         // Tests column value caching with multiple columns of different types
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i32 > 10 and i32 < 90 and i64 > 20 and i64 < 80 " +
                 "and f64 > 0.1 and f64 < 0.9";
         final String ddl = "create table x as " +
@@ -353,7 +353,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testColumnValueCachingSameColumnMultipleTimes() throws Exception {
         // Tests column value caching when the same column is used multiple times
         // The backend caches loaded column values within a single row iteration
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 > 10 and i64 < 90 and i64 != 50";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -365,7 +365,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testCombinedHoistingExceedsBothCaches() throws Exception {
         // Tests both constant and column address hoisting exceeding cache capacities
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "c1 > 1 and c2 > 2 and c3 > 3 and c4 > 4 " +
                 "and c5 > 5 and c6 > 6 and c7 > 7 and c8 > 8 " +
                 "and c9 > 9 and c10 > 10";
@@ -412,7 +412,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testConstantHoistingExceedsCacheCapacity() throws Exception {
         // Tests constant hoisting with more than 8 constants (exceeds cache capacity)
         // The backend constant cache has capacity of 8 elements
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 > 1 and i64 < 100 and i64 != 10 and i64 != 20 " +
                 "and i64 != 30 and i64 != 40 and i64 != 50 and i64 != 60 " +
                 "and i64 != 70 and i64 != 80 and i64 != 90";
@@ -426,7 +426,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testConstantHoistingMixedTypes() throws Exception {
         // Tests constant hoisting with mixed types exceeding cache capacity
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i32 > 1 and i32 < 100 and i64 > 2 and i64 < 200 " +
                 "and f32 > 0.1 and f32 < 0.9 and f64 > 0.2 and f64 < 0.8 " +
                 "and i32 != 50 and i64 != 100 and f32 != 0.5 and f64 != 0.5";
@@ -443,7 +443,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testConstantHoistingWithinCacheCapacity() throws Exception {
         // Tests constant hoisting with 8 constants (within cache capacity of 8)
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 > 1 and i64 < 100 and i64 != 50 and i64 != 51 " +
                 "and i64 != 52 and i64 != 53 and i64 != 54 and i64 != 55";
         final String ddl = "create table x as " +
@@ -461,12 +461,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
-        assertQueryNotNull(query, ddl);
+        assertQueryNotNullNoCount(query, ddl);
     }
 
     @Test
     public void testDate() throws Exception {
-        final String query = "select * from x where d1 != d2";
+        final String query = "x where d1 != d2";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d1," +
@@ -477,7 +477,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testDateNull() throws Exception {
-        final String query = "select * from x where d <> null";
+        final String query = "x where d <> null";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 5) d" +
@@ -487,7 +487,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashConstant() throws Exception {
-        final String query = "select * from x " +
+        final String query = "x " +
                 "where geo8 != ##1001 and geo16 != ##100110011001 and geo32 != ##1001100110011001 and geo64 != ##10011001100110011001100110011001";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -501,7 +501,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashNull() throws Exception {
-        final String query = "select * from x where geo8 <> null or geo16 <> null or geo32 <> null or geo64 <> null";
+        final String query = "x where geo8 <> null or geo16 <> null or geo32 <> null or geo64 <> null";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_geohash(4) geo8," +
@@ -514,7 +514,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashValue() throws Exception {
-        final String query = "select * from x where geo8a = geo8b";
+        final String query = "x where geo8a = geo8b";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_geohash(4) geo8a," +
@@ -532,7 +532,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
-        assertQueryNotNull(query, ddl);
+        assertQueryNotNullNoCount(query, ddl);
     }
 
     @Test
@@ -635,7 +635,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorManyValues() throws Exception {
         // Tests IN operator with many values (exceeds typical unroll thresholds)
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 in (1, 2, 3, 4, 5, 6, 7, 8, 9)";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -647,7 +647,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorNestedWithAndOr() throws Exception {
         // Tests IN operator nested within AND/OR expressions
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "(a in (1, 2) and b > 5) or (a in (8, 9) and b < 3)";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -811,7 +811,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorWithOrChain() throws Exception {
         // Tests IN operator combined with OR chain
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "a in (1, 2, 3) or b in (4, 5, 6) or c > 90";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -878,7 +878,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testInterval() throws Exception {
-        final String query = "select * from x where k in '2021-11-29' and i32 > 0";
+        final String query = "x where k in '2021-11-29' and i32 > 0";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500000000) as k," +
                 " rnd_int() i32" +
@@ -977,7 +977,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testShortCircuitAndDeepChain() throws Exception {
         // Tests short-circuit AND with a deep chain of predicates
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 > 10 and i64 < 90 and i64 != 20 and i64 != 30 " +
                 "and i64 != 40 and i64 != 50 and i64 != 60 and i64 != 70";
         final String ddl = "create table x as " +
@@ -991,7 +991,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testShortCircuitAndEarlyExit() throws Exception {
         // Tests short-circuit AND where first predicate is usually false
         // This tests early exit optimization
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 > 95 and i64 < 100 and i32 > 0";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1006,7 +1006,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // Tests flag-based optimization for equality in AND chains.
         // When EQ is followed by And_Sc, the backend emits CMP + JNE directly
         // instead of CMP + SETE + TEST + JZ (kFlagsEq optimization).
-        final String query = "select * from x " +
+        final String query = "x " +
                 "where i64 = 95 and i32 = 13 and i16 = 12107";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1022,7 +1022,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // Tests flag-based optimization for inequality in AND chains.
         // When NE is followed by And_Sc, the backend emits CMP + JE directly
         // instead of CMP + SETNE + TEST + JZ (kFlagsNe optimization).
-        final String query = "select * from x " +
+        final String query = "x " +
                 "where i64 != 50 and i32 != 25 and i16 != 10";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1036,7 +1036,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testShortCircuitFlagOptimizationMixedEqNeq() throws Exception {
         // Tests flag-based optimization with mixed EQ and NE in the same chain.
-        final String query = "select * from x " +
+        final String query = "x " +
                 "where i64 = 26 and i32 != 42 and i16 = 6201";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1052,7 +1052,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // Tests flag-based optimization for equality in OR chains.
         // When EQ is followed by Or_Sc, the backend emits CMP + JE directly
         // instead of CMP + SETE + TEST + JNZ (kFlagsEq optimization).
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 = 50 or i32 = 25 or i16 = 10";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1068,7 +1068,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // Tests flag-based optimization for inequality in OR chains.
         // When NE is followed by Or_Sc, the backend emits CMP + JNE directly
         // instead of CMP + SETNE + TEST + JNZ (kFlagsNe optimization).
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 != 50 or i32 != 25 or i16 != 10";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1083,7 +1083,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testShortCircuitFlagOptimizationUuid() throws Exception {
         // Tests flag-based optimization for UUID (i128) comparisons.
         // UUID comparison uses pcmpeqb + pmovmskb + cmp, then JE/JNE.
-        final String query = "select * from x " +
+        final String query = "x " +
                 "where uuid1 = 'd37facdc-c648-4f32-887c-c184027ff724' and i64 = 57";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1096,7 +1096,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testShortCircuitFlagOptimizationUuidNeq() throws Exception {
         // Tests flag-based optimization for UUID (i128) inequality comparisons.
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "uuid1 != '11111111-1111-1111-1111-111111111111' and i64 = 50";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1109,7 +1109,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testShortCircuitMixedAndOr() throws Exception {
         // Tests mixed AND/OR chains with short-circuit evaluation
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "(i64 > 20 and i64 < 40) or (i64 > 60 and i64 < 80)";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1121,7 +1121,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testShortCircuitNestedAndOr() throws Exception {
         // Tests nested AND/OR with multiple levels
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "(a > 10 and b > 10) or (c > 10 and d > 10) or (a < 5 and c < 5)";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1136,7 +1136,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testShortCircuitOrDeepChain() throws Exception {
         // Tests short-circuit OR with a deep chain of predicates
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 = 10 or i64 = 20 or i64 = 30 or i64 = 40 " +
                 "or i64 = 50 or i64 = 60 or i64 = 70 or i64 = 80";
         final String ddl = "create table x as " +
@@ -1150,7 +1150,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testShortCircuitOrEarlyExit() throws Exception {
         // Tests short-circuit OR where first predicate is usually true
         // This tests early exit optimization
-        final String query = "select * from x where " +
+        final String query = "x where " +
                 "i64 < 95 or i64 = 99 or i32 < 0";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -1170,12 +1170,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
-        assertQueryNotNull(query, ddl);
+        assertQueryNotNullNoCount(query, ddl);
     }
 
     @Test
     public void testSymbolNull() throws Exception {
-        final String query = "select * from x where sym <> null";
+        final String query = "x where sym <> null";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_symbol(10,1,3,5) sym" +
@@ -1185,7 +1185,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampComparison() throws Exception {
-        final String query = "select * from x where t1 != t2";
+        final String query = "x where t1 != t2";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 0) t1," +
@@ -1196,7 +1196,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampComparison2() throws Exception {
-        final String query = "select * from x where ts >= 0";
+        final String query = "x where ts >= 0";
         final String ddl = "create table x as " +
                 "(select case when x < 10 then cast(NULL as TIMESTAMP) else cast(x as TIMESTAMP) end ts" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
@@ -1205,7 +1205,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampNull() throws Exception {
-        final String query = "select * from x where t <> null";
+        final String query = "x where t <> null";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 5) t" +
@@ -1271,7 +1271,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testUuidSameConstantAndChain() throws Exception {
-        final String query = "select * from x " +
+        final String query = "x " +
                 "where uuid1 != '11111111-1111-1111-1111-111111111111'" +
                 "  and uuid2 != '11111111-1111-1111-1111-111111111111'" +
                 "  and uuid3 != '11111111-1111-1111-1111-111111111111'";
@@ -1324,17 +1324,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 execute(ddl);
             }
 
-            long maxSize = 0;
+            long maxCount = 0;
             List<String> filters = gen.generate();
-            LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$("select * from x").$();
+            LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: select * from x").$();
             Assert.assertFalse(filters.isEmpty());
             for (String filter : filters) {
-                long size = runQuery("select * from x" + " where " + filter);
-                maxSize = Math.max(maxSize, size);
+                long count = runQuery("x where " + filter);
+                maxCount = Math.max(maxCount, count);
 
-                assertJitQuery("select * from x" + " where " + filter, notNull);
+                assertJitQuery("x where " + filter, notNull);
+                assertJitCountQuery("select count() from x where " + filter, count);
             }
-            Assert.assertTrue("at least one query is expected to return rows", maxSize > 0);
+            Assert.assertTrue("at least one query is expected to return rows", maxCount > 0);
         });
     }
 
@@ -1344,6 +1345,16 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private void assertGeneratedQueryNullable(CharSequence ddl, FilterGenerator gen) throws Exception {
         assertGeneratedQuery(ddl, gen, false);
+    }
+
+    private void assertJitCountQuery(CharSequence countQuery, long expectedCount) throws SqlException {
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
+        long actualCount = runJitCountQuery(countQuery);
+        Assert.assertEquals("[scalar mode] count mismatch for query: " + countQuery, expectedCount, actualCount);
+
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        runJitQuery(countQuery);
+        Assert.assertEquals("[vectorized mode] count mismatch for query: " + countQuery, expectedCount, actualCount);
     }
 
     private void assertJitQuery(CharSequence query, boolean notNull) throws SqlException {
@@ -1374,10 +1385,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 execute(ddl);
             }
 
-            long size = runQuery(query);
-            Assert.assertTrue("query is expected to return rows", size > 0);
+            long count = runQuery(query);
+            Assert.assertTrue("query is expected to return rows", count > 0);
 
             assertJitQuery(query, notNull);
+            assertJitCountQuery("select count() from " + query, count);
         });
     }
 
@@ -1385,12 +1397,35 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertQuery(query, ddl, false);
     }
 
+    private void assertQueryNotNullNoCount(CharSequence query, CharSequence ddl) throws Exception {
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                execute(ddl);
+            }
+
+            long count = runQuery(query);
+            Assert.assertTrue("query is expected to return rows", count > 0);
+
+            assertJitQuery(query, false);
+        });
+    }
+
     private void assertQueryNullable(CharSequence query, CharSequence ddl) throws Exception {
         assertQuery(query, ddl, true);
     }
 
+    private long runJitCountQuery(CharSequence countQuery) throws SqlException {
+        try (RecordCursorFactory factory = select(countQuery)) {
+            Assert.assertTrue("JIT was not enabled for query: " + countQuery, factory.usesCompiledFilter());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                return cursor.getRecord().getLong(0);
+            }
+        }
+    }
+
     private void runJitQuery(CharSequence query) throws SqlException {
-        try (final RecordCursorFactory factory = select(query)) {
+        try (RecordCursorFactory factory = select(query)) {
             Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
@@ -1401,7 +1436,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private long runQuery(CharSequence query) throws SqlException {
         long resultSize;
-
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         try (RecordCursorFactory factory = select(query)) {
             Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
@@ -1410,18 +1444,17 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 resultSize = cursor.count();
             }
         }
-
         return resultSize;
     }
 
     private void testOrderBy(String orderByClause) throws Exception {
-        final String query = "select * from x where price > 0 " + orderByClause;
+        final String query = "x where price > 0 " + orderByClause;
         final String ddl = "create table x as " +
                 "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
-        assertQueryNotNull(query, ddl);
+        assertQueryNotNullNoCount(query, ddl);
     }
 
     private static class CountingRecordCursor implements RecordCursor {
