@@ -72,27 +72,30 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
         if (!arrayFunc.isConstant() && !arrayFunc.isRuntimeConstant()) {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
-        return new Func(symbolFunc, arrayFunc);
+        if (symbolFunc.isSymbolTableStatic()) {
+            return new IntSetFunc(symbolFunc, arrayFunc);
+        }
+        return new StrSetFunc(symbolFunc, arrayFunc);
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
+    /**
+     * Used when the symbol column has a static symbol table.
+     * Converts array values to symbol keys at init() time for O(1) int comparison at runtime.
+     */
+    private static class IntSetFunc extends BooleanFunction implements BinaryFunction {
         private final Function arrayFunc;
+        private final IntHashSet intSet = new IntHashSet();
         private final SymbolFunction symbolFunc;
-        private IntHashSet intSet;
         private boolean stateInherited = false;
-        private CharSequenceHashSet strSet;
-        private boolean useIntSet;
 
-        public Func(SymbolFunction symbolFunc, Function arrayFunc) {
+        public IntSetFunc(SymbolFunction symbolFunc, Function arrayFunc) {
             this.symbolFunc = symbolFunc;
             this.arrayFunc = arrayFunc;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return useIntSet
-                    ? intSet.contains(symbolFunc.getInt(rec))
-                    : strSet.contains(symbolFunc.getSymbol(rec));
+            return intSet.contains(symbolFunc.getInt(rec));
         }
 
         @Override
@@ -112,47 +115,92 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
                 return;
             }
 
-            if (intSet == null) {
-                intSet = new IntHashSet();
-            }
-            if (strSet == null) {
-                strSet = new CharSequenceHashSet();
-            }
             intSet.clear();
-            strSet.clear();
             ArrayView arrayView = arrayFunc.getArray(null);
             StaticSymbolTable symbolTable = symbolFunc.getStaticSymbolTable();
+            assert symbolTable != null;
 
-            if (symbolTable != null) {
-                for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
-                    Utf8Sequence value = arrayView.getVarchar(i);
-                    if (value == null) {
-                        intSet.add(symbolTable.keyOf(null));
-                    } else if (value.isAscii()) {
-                        intSet.add(symbolTable.keyOf(value.asAsciiCharSequence()));
-                    } else {
-                        StringSink sink = Misc.getThreadLocalSink();
-                        sink.put(value);
-                        intSet.add(symbolTable.keyOf(sink));
-                    }
+            for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
+                Utf8Sequence value = arrayView.getVarchar(i);
+                if (value == null) {
+                    intSet.add(symbolTable.keyOf(null));
+                } else if (value.isAscii()) {
+                    intSet.add(symbolTable.keyOf(value.asAsciiCharSequence()));
+                } else {
+                    StringSink sink = Misc.getThreadLocalSink();
+                    sink.put(value);
+                    intSet.add(symbolTable.keyOf(sink));
                 }
-                useIntSet = true;
-            } else {
-                for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
-                    Utf8Sequence element = arrayView.getVarchar(i);
-                    strSet.add(Utf8s.toString(element));
-                }
-                useIntSet = false;
             }
         }
 
         @Override
         public void offerStateTo(Function that) {
             BinaryFunction.super.offerStateTo(that);
-            if (that instanceof InSymbolVarcharArrayFunctionFactory.Func other) {
-                other.useIntSet = this.useIntSet;
-                other.intSet = this.intSet;
-                other.strSet = this.strSet;
+            if (that instanceof IntSetFunc other) {
+                other.intSet.clear();
+                other.intSet.addAll(intSet);
+                other.stateInherited = true;
+            }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(symbolFunc).val(" in ").val(arrayFunc);
+        }
+    }
+
+    /**
+     * Used when the symbol column does not have a static symbol table.
+     * Stores array values as strings and compares symbol values as strings at runtime.
+     */
+    private static class StrSetFunc extends BooleanFunction implements BinaryFunction {
+        private final Function arrayFunc;
+        private final CharSequenceHashSet strSet = new CharSequenceHashSet();
+        private final SymbolFunction symbolFunc;
+        private boolean stateInherited = false;
+
+        public StrSetFunc(SymbolFunction symbolFunc, Function arrayFunc) {
+            this.symbolFunc = symbolFunc;
+            this.arrayFunc = arrayFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return strSet.contains(symbolFunc.getSymbol(rec));
+        }
+
+        @Override
+        public Function getLeft() {
+            return symbolFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return arrayFunc;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+
+            strSet.clear();
+            ArrayView arrayView = arrayFunc.getArray(null);
+            for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
+                Utf8Sequence element = arrayView.getVarchar(i);
+                strSet.add(Utf8s.toString(element));
+            }
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            BinaryFunction.super.offerStateTo(that);
+            if (that instanceof StrSetFunc other) {
+                other.strSet.clear();
+                other.strSet.addAll(strSet);
                 other.stateInherited = true;
             }
         }

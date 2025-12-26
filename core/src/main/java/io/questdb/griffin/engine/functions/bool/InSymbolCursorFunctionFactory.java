@@ -86,20 +86,13 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         // use first column to create list of values (over multiple records)
         // supported column types are VARCHAR, STRING and SYMBOL
-        final Record.CharSequenceFunction func;
-        switch (zeroColumnType) {
-            case ColumnType.STRING:
-                func = Record.GET_STR;
-                break;
-            case ColumnType.SYMBOL:
-                func = Record.GET_SYM;
-                break;
-            case ColumnType.VARCHAR:
-                func = Record.GET_VARCHAR;
-                break;
-            default:
-                throw SqlException.position(position).put("supported column types are VARCHAR, SYMBOL and STRING, found: ").put(ColumnType.nameOf(zeroColumnType));
-        }
+        final Record.CharSequenceFunction func = switch (zeroColumnType) {
+            case ColumnType.STRING -> Record.GET_STR;
+            case ColumnType.SYMBOL -> Record.GET_SYM;
+            case ColumnType.VARCHAR -> Record.GET_VARCHAR;
+            default ->
+                    throw SqlException.position(position).put("supported column types are VARCHAR, SYMBOL and STRING, found: ").put(ColumnType.nameOf(zeroColumnType));
+        };
 
         if (valueFunction.isNullConstant()) {
             return new StrInCursorFunc(NullConstant.NULL, cursorFunction, func);
