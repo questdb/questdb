@@ -833,7 +833,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
                 .withAnyOf("i8", "i16", "i32", "i64")
-                .withAnyOf(" != 0");
+                .withAnyOf(" != 0", " < 42");
         assertGeneratedQueryNotNull(ddl, gen);
     }
 
