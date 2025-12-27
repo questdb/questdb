@@ -943,6 +943,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                     "from long_sequence(100000)",
                             sqlExecutionContext
                     );
+                    // edge case: table with <4 rows
+                    engine.execute(
+                            "CREATE TABLE y AS (SELECT * FROM x LIMIT 3) TIMESTAMP(ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
                     if (convertToParquet) {
                         execute(
                                 compiler,
@@ -1002,6 +1007,81 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             "select count(*) from x where i64 = 8080548038033927892L",
                             sink,
                             simdExpected
+                    );
+
+                    // simd, neq
+                    final String simdExpected2 = """
+                            count
+                            99999
+                            """;
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setLong(0, 8080548038033927892L);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i64 != $1",
+                            sink,
+                            simdExpected2
+                    );
+
+                    // simd, neq, no bind vars
+                    sqlExecutionContext.getBindVariableService().clear();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i64 != 8080548038033927892L",
+                            sink,
+                            simdExpected2
+                    );
+
+                    // simd, i32
+                    final String simdExpected3 = """
+                            count
+                            1
+                            """;
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setInt(0, 2137862371);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i32 = $1",
+                            sink,
+                            simdExpected3
+                    );
+
+                    // simd, i32, no bind vars
+                    sqlExecutionContext.getBindVariableService().clear();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i32 = 2137862371",
+                            sink,
+                            simdExpected3
+                    );
+
+                    // simd, table with <4 rows
+                    final String simdExpected4 = """
+                            count
+                            3
+                            """;
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setInt(0, 0);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from y where i64 != $1",
+                            sink,
+                            simdExpected4
+                    );
+
+                    // simd, table with <4 rows, no bind vars
+                    sqlExecutionContext.getBindVariableService().clear();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from y where i64 != 0",
+                            sink,
+                            simdExpected4
                     );
                 },
                 configuration,
