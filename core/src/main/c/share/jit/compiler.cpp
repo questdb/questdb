@@ -420,12 +420,12 @@ struct CountOnlyFunction {
         c.cmp(input_index, stop);
         c.jge(l_tail);
 
-        // For 8-byte values (step == 4), use vpsubq accumulator optimization.
-        // vpcmpeqq produces -1 (0xFFFFFFFFFFFFFFFF) for matches, 0 for non-matches.
-        // vpsubq acc, acc, mask subtracts -1 (adds 1) for matches, subtracts 0 (no-op) otherwise.
-        // This avoids vector-to-scalar domain crossing (vmovmskpd) on each iteration.
+        // For 4-byte (step == 8) and 8-byte (step == 4) values, use vpsub accumulator optimization.
+        // vpcmpeqq/vpcmpeqd produces -1 for matches, 0 for non-matches.
+        // vpsubq/vpsubd acc, acc, mask subtracts -1 (adds 1) for matches, subtracts 0 (no-op) otherwise.
+        // This avoids vector-to-scalar domain crossing (vmovmskpd/vmovmskps) on each iteration.
         Ymm acc;
-        if (step == 4) {
+        if (step == 4 || step == 8) {
             acc = c.newYmm("acc");
             c.vpxor(acc, acc, acc); // acc = 0
         }
@@ -440,6 +440,8 @@ struct CountOnlyFunction {
 
             if (step == 4) {
                 c.vpsubq(acc, acc, mask.ymm()); // acc -= mask (subtracting -1 adds 1)
+            } else if (step == 8) {
+                c.vpsubd(acc, acc, mask.ymm()); // acc -= mask (32-bit version)
             } else {
                 Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
                 c.popcnt(bits, bits);
@@ -452,14 +454,38 @@ struct CountOnlyFunction {
         c.cmp(input_index, stop);
         c.jl(l_loop); // index < stop
 
-        // Horizontal sum of the 4 x i64 lanes in acc and add to output_index.
+        // Horizontal sum of the lanes in acc and store to output_index.
         // This is placed before l_tail so that when we skip the SIMD loop entirely
         // (rows_size < step), we jump directly to l_tail without executing this code.
         // This also avoids unnecessary register spilling across the label boundary.
         if (step == 4) {
+            // 4 x i64 -> i64
             Xmm xmm_acc = acc.xmm();
             Xmm xmm_tmp = c.newXmm("hsum_tmp");
             c.vextracti128(xmm_tmp, acc, 1);      // extract high 128 bits
+            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // add high to low (2 x i64)
+            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // swap the two i64 halves
+            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // final sum in low 64 bits
+            c.vmovq(output_index, xmm_acc);       // move to output_index
+        } else if (step == 8) {
+            // 8 x i32 -> i64 (must widen to i64 to handle large row counts)
+            Xmm xmm_lo = acc.xmm();               // low 4 x i32
+            Xmm xmm_hi = c.newXmm("hsum_hi");
+            c.vextracti128(xmm_hi, acc, 1);       // high 4 x i32
+
+            // Zero-extend both halves from 4 x i32 to 4 x i64
+            Ymm ymm_lo = c.newYmm("hsum_lo_64");
+            Ymm ymm_hi = c.newYmm("hsum_hi_64");
+            c.vpmovzxdq(ymm_lo, xmm_lo);          // 4 x i32 -> 4 x i64
+            c.vpmovzxdq(ymm_hi, xmm_hi);          // 4 x i32 -> 4 x i64
+
+            // Add them: now 4 x i64
+            c.vpaddq(ymm_lo, ymm_lo, ymm_hi);
+
+            // Horizontal sum of 4 x i64 (same as step == 4)
+            Xmm xmm_acc = ymm_lo.xmm();
+            Xmm xmm_tmp = c.newXmm("hsum_tmp");
+            c.vextracti128(xmm_tmp, ymm_lo, 1);   // extract high 128 bits
             c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // add high to low (2 x i64)
             c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // swap the two i64 halves
             c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // final sum in low 64 bits
