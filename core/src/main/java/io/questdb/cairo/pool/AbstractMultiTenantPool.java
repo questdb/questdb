@@ -56,7 +56,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final int maxEntries;
     private final int maxSegments;
     private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor;
-    public int segmentSize;
+    private final int segmentSize;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
@@ -171,8 +171,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         long thread = Thread.currentThread().getId();
 
         if (firstEntry != null) {
-            // Remove the entry from the map, the token is dropped and cannot be used anymore
-            // Any attempt to return to pool after this point will simply close the tenant
+            // Mark the entry as dropped. Any attempt to return to pool after this point
+            // will simply close the tenant. The get0() method also checks this flag after
+            // CAS to catch concurrent drops.
             firstEntry.dropped = true;
             if (fullDropped) {
                 entries.remove(token.getDirName());
@@ -270,6 +271,14 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         do {
             for (int i = 0; i < segmentSize; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
+                    // Check if table was dropped concurrently. This narrows the race window
+                    // between verifyTableToken and pool allocation. Even if this check passes,
+                    // the sequencer WRITE lock provides the ultimate correctness guarantee.
+                    if (rootEntry.dropped) {
+                        Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                        throw CairoException.tableDropped(tableToken);
+                    }
+
                     Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
                     // got lock, allocate if needed
                     T tenant = e.getTenant(i);
