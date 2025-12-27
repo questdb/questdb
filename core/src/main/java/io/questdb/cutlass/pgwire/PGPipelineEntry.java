@@ -52,6 +52,7 @@ import io.questdb.griffin.CompiledQueryImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -155,6 +156,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
+    private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -337,6 +339,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateSync = SYNC_PARSE;
         tas = null;
         arrayViewPool.clear();
+        varcharArrayViewPool.clear();
         utf8StringSink.clear();
     }
 
@@ -2958,30 +2961,54 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         Function fn = bindVariableService.getFunction(variableIndex);
         // If the function type is VARCHAR, there's no need to convert to UTF-16
         try {
-            if (fn != null && fn.getType() == ColumnType.VARCHAR) {
-                final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
-                boolean ascii = switch (sequenceType) {
-                    case 0 ->
-                        // ascii sequence
-                            true;
-                    case 1 ->
-                        // non-ASCII sequence
-                            false;
-                    default ->
-                            throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
-                };
-                // varchar value is sourced from the send-receive buffer (which is volatile, e.g. will be wiped
-                // without warning). It seems to be "ok" for all situations, of which there are only two:
-                // 1. the target type is "varchar", in which case the source value is "sank" into the buffer of
-                //    the bind variable
-                // 2. the target is not a varchar, in which case varchar is parsed on-the-fly
-                bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
-            } else {
-                if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
-                    bindVariableService.setStr(variableIndex, characterStore.toImmutable());
-                } else {
-                    throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
+            if (fn != null) {
+                int type = fn.getType();
+                if (type == ColumnType.VARCHAR) {
+                    final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
+                    boolean ascii = switch (sequenceType) {
+                        case 0 ->
+                            // ascii sequence
+                                true;
+                        case 1 ->
+                            // non-ASCII sequence
+                                false;
+                        default ->
+                                throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
+                    };
+                    // varchar value is sourced from the send-receive buffer (which is volatile, e.g. will be wiped
+                    // without warning). It seems to be "ok" for all situations, of which there are only two:
+                    // 1. the target type is "varchar", in which case the source value is "sank" into the buffer of
+                    //    the bind variable
+                    // 2. the target is not a varchar, in which case varchar is parsed on-the-fly
+                    bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
+                    return;
+                } else if (ColumnType.isArray(type) && ColumnType.decodeArrayElementType(type) == ColumnType.VARCHAR) {
+                    final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
+                    boolean ascii = switch (sequenceType) {
+                        case 0 ->
+                            // ascii sequence
+                                true;
+                        case 1 ->
+                            // non-ASCII sequence
+                                false;
+                        default ->
+                                throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
+                    };
+                    if (ascii) {
+                        ((ArrayBindVariable) fn).parseVarcharArrayFromUtf8(valueAddr, valueAddr + valueSize);
+                    } else if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
+                        ((ArrayBindVariable) fn).parseArray(characterStore.toImmutable());
+                    } else {
+                        throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
+                    }
+                    return;
                 }
+            }
+
+            if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
+                bindVariableService.setStr(variableIndex, characterStore.toImmutable());
+            } else {
+                throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
             }
         } catch (PGMessageProcessingException ex) {
             throw ex;
@@ -2998,6 +3025,40 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     ) throws PGMessageProcessingException, SqlException {
         ensureValueLength(variableIndex, Long.BYTES, valueSize);
         bindVariableService.setTimestampWithType(variableIndex, ColumnType.TIMESTAMP_MICRO, getLongUnsafe(valueAddr) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
+    }
+
+    private void setBindVariableAsVarcharArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, PGMessageProcessingException {
+        int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+        if (dimensions != 1) {
+            throw kaput().put("varchar arrays must be 1-dimensional [dimensions=").put(dimensions).put(']');
+        }
+
+        getInt(lo, msgLimit, "malformed array null flag");
+        // hasNull flag is not a reliable indicator of a null element, since some clients
+        // send it as 0 even if the array element is null. we need to manually check for null
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        int componentOid = getInt(lo, msgLimit, "malformed array component oid");
+        if (componentOid != PG_VARCHAR && componentOid != PG_TEXT) {
+            throw kaput().put("invalid component type for varchar array [componentOid=").put(componentOid).put(']');
+        }
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+        PGNonNullVarcharArrayView arrayView = varcharArrayViewPool.next();
+
+        // dimensions == 1
+        int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
+        arrayView.addDimLen(dimensionSize);
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        lo += Integer.BYTES; // skip lower bound, it's always 1
+        valueSize -= Integer.BYTES;
+        arrayView.setPtrAndBuildOffsetIndex(lo, lo + valueSize, this);
+        bindVariableService.setArray(i, arrayView);
     }
 
     private void setDecimalAddTenMultiple(int index, Decimal256 decimal, int weight, int multiplier) throws PGMessageProcessingException {
@@ -3271,6 +3332,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateExec = false;
         stateClosed = false;
         arrayViewPool.clear();
+        varcharArrayViewPool.clear();
     }
 
     void copyParameterValuesToBindVariableService(
@@ -3383,6 +3445,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         case X_PG_ARR_INT8:
                         case X_PG_ARR_FLOAT8:
                             setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
+                            break;
+                        case X_PG_ARR_VARCHAR:
+                        case X_PG_ARR_TEXT:
+                            setBindVariableAsVarcharArray(i, lo, valueSize, msgLimit, bindVariableService);
                             break;
                         case X_PG_NUMERIC:
                             setDecimalBindVariable(sqlExecutionContext, i, lo, valueSize, bindVariableService, nativeType);

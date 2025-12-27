@@ -44,9 +44,9 @@ public class CharSequenceHashSetTest {
         }
 
         Assert.assertFalse(set.contains(null));
-        Assert.assertTrue(set.add(null));
+        Assert.assertTrue(set.add((CharSequence) null));
         Assert.assertEquals(n + 1, set.size());
-        Assert.assertFalse(set.add(null));
+        Assert.assertFalse(set.add((CharSequence) null));
         Assert.assertEquals(n + 1, set.size());
         Assert.assertTrue(set.contains(null));
         Assert.assertTrue(set.remove(null) > -1);

@@ -88,7 +88,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 case ColumnType.NULL:
                     CharSequence value = func.getStrA(null);
                     if (value == null) {
-                        set.add(null);
+                        set.add((CharSequence) null);
                     } else {
                         set.add(Chars.toString(value));
                     }
@@ -109,8 +109,13 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         return new Func(var, set, deferredValues, deferredValuePositions);
     }
 
+    @Override
+    public boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
+        return args.size() > 2;
+    }
+
     @FunctionalInterface
-    private interface TestFunc {
+    interface TestFunc {
         boolean test(Record rec);
     }
 

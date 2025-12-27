@@ -93,8 +93,8 @@ public interface UnaryFunction extends Function {
 
     @Override
     default void offerStateTo(Function that) {
-        if (that instanceof UnaryFunction) {
-            getArg().offerStateTo(((UnaryFunction) that).getArg());
+        if (that instanceof UnaryFunction other) {
+            getArg().offerStateTo(other.getArg());
         }
     }
 

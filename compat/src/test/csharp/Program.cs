@@ -255,6 +255,7 @@ public class TestRunner
         "date" => NpgsqlDbType.Date,
         "char" => NpgsqlDbType.Char,
         "array_float8" => NpgsqlDbType.Double | NpgsqlDbType.Array,
+        "array_varchar" => NpgsqlDbType.Varchar | NpgsqlDbType.Array,
         "numeric" => NpgsqlDbType.Numeric,
         _ => throw new ArgumentException($"Unsupported type: {type}")
     };
@@ -271,6 +272,7 @@ public class TestRunner
             "char" => Convert.ToChar(value),
             "timestamp" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             "array_float8" => ParseFloatArray(value.ToString()),
+            "array_varchar" => ParseVarcharArray(value.ToString()),
             "numeric" => Convert.ToDecimal(value, CultureInfo.InvariantCulture),
             _ => value
         };
@@ -299,6 +301,58 @@ public class TestRunner
                     return Convert.ToDouble(value, CultureInfo.InvariantCulture);
             })
             .ToArray();
+    }
+
+    private string?[] ParseVarcharArray(string? arrayString)
+    {
+        if (string.IsNullOrEmpty(arrayString))
+            return Array.Empty<string?>();
+
+        string trimmed = arrayString.Trim().TrimStart('{').TrimEnd('}');
+
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return Array.Empty<string?>();
+
+        var result = new List<string?>();
+        int i = 0;
+
+        while (i < trimmed.Length)
+        {
+            while (i < trimmed.Length && (trimmed[i] == ' ' || trimmed[i] == ','))
+                i++;
+
+            if (i >= trimmed.Length)
+                break;
+
+            if (trimmed[i] == '"')
+            {
+                i++;
+                var sb = new StringBuilder();
+                while (i < trimmed.Length && trimmed[i] != '"')
+                {
+                    sb.Append(trimmed[i]);
+                    i++;
+                }
+                i++;
+                result.Add(sb.ToString());
+            }
+            else
+            {
+                var sb = new StringBuilder();
+                while (i < trimmed.Length && trimmed[i] != ',')
+                {
+                    sb.Append(trimmed[i]);
+                    i++;
+                }
+                string value = sb.ToString().Trim();
+                if (string.Equals(value, "NULL", StringComparison.OrdinalIgnoreCase))
+                    result.Add(null);
+                else if (!string.IsNullOrEmpty(value))
+                    result.Add(value);
+            }
+        }
+
+        return result.ToArray();
     }
 
     private void AssertResult(ExpectDefinition expect, object actual)

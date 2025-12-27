@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -73,6 +74,36 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         }
 
         addAt(index, key);
+        return true;
+    }
+
+    /**
+     * Adds a UTF-8 sequence to the hash set preserving key uniqueness.
+     * <p>
+     * For ASCII sequences, uses {@link Utf8Sequence#asAsciiCharSequence()} to avoid
+     * String allocation. For non-ASCII sequences, converts to String via {@code toString()}.
+     *
+     * @param seq the UTF-8 sequence to add (can be a flyweight object)
+     * @return false if the key is already in the set, true otherwise
+     */
+    public boolean add(@Nullable Utf8Sequence seq) {
+        if (seq == null) {
+            return addNull();
+        }
+
+        // Convert to String for storage and to compute UTF-16 compatible hash
+        CharSequence charSequence;
+        if (seq.isAscii()) {
+            charSequence = seq.asAsciiCharSequence();
+        } else {
+            charSequence = seq.toString();
+        }
+        int index = keyIndex(charSequence);
+        if (index < 0) {
+            return false;
+        }
+
+        addAt(index, charSequence);
         return true;
     }
 

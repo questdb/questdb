@@ -15,6 +15,7 @@ type DatabaseDriver interface {
 	Close(ctx context.Context) error
 	DriverName() string
 	ParseArrayFloat8(value interface{}) (interface{}, error)
+	ParseArrayVarchar(value interface{}) (interface{}, error)
 }
 
 // QueryResult interface abstracts query result operations

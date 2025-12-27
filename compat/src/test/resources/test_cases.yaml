@@ -626,3 +626,277 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS decimals;"
+
+  - name: Varchar Array IN Test
+    description: Test selecting varchar column using IN clause with varchar array bind variable.
+    exclude: [ "psycopg2" ]
+    prepare:
+      - action: execute
+        query: "CREATE TABLE varchar_in_test (ts TIMESTAMP, varchar_col VARCHAR) timestamp(ts);"
+      - action: execute
+        query: |
+          INSERT INTO varchar_in_test(ts, varchar_col) VALUES
+          ('2023-01-01T09:10:00.000000Z', 'a'),
+          ('2023-01-01T09:11:00.000000Z', null),
+          ('2023-01-01T09:12:00.000000Z', null),
+          ('2023-01-01T09:13:00.000000Z', 'b'),
+          ('2023-01-01T09:14:00.000000Z', 'b'),
+          ('2023-01-01T09:15:00.000000Z', 'a'),
+          ('2023-01-01T09:16:00.000000Z', null),
+          ('2023-01-01T09:17:00.000000Z', 'a'),
+          ('2023-01-01T09:18:00.000000Z', 'b'),
+          ('2023-01-01T09:19:00.000000Z', 'a');
+    steps:
+      - action: query
+        description: Select rows where varchar_col IN (array)
+        query: "SELECT * FROM varchar_in_test WHERE varchar_col IN ($[1]);"
+        parameters:
+          - value: "{a,b}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:10:00.000000Z", "a" ]
+            - [ "2023-01-01T09:13:00.000000Z", "b" ]
+            - [ "2023-01-01T09:14:00.000000Z", "b" ]
+            - [ "2023-01-01T09:15:00.000000Z", "a" ]
+            - [ "2023-01-01T09:17:00.000000Z", "a" ]
+            - [ "2023-01-01T09:18:00.000000Z", "b" ]
+            - [ "2023-01-01T09:19:00.000000Z", "a" ]
+      - action: query
+        description: Select rows where varchar_col IN (single element array)
+        query: "SELECT * FROM varchar_in_test WHERE varchar_col IN ($[1]);"
+        parameters:
+          - value: "{a}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:10:00.000000Z", "a" ]
+            - [ "2023-01-01T09:15:00.000000Z", "a" ]
+            - [ "2023-01-01T09:17:00.000000Z", "a" ]
+            - [ "2023-01-01T09:19:00.000000Z", "a" ]
+      - action: query
+        description: Select rows where varchar_col IN (empty array) returns no rows
+        query: "SELECT count(*) FROM varchar_in_test WHERE varchar_col IN ($[1]);"
+        parameters:
+          - value: "{}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ 0 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS varchar_in_test;"
+
+  - name: Single Element IN Test
+    description: Test selecting varchar column using IN clause with varchar array bind variable.
+    exclude: [ "rust", "sqlx", "asyncpg", "psycopg2" ]
+    prepare:
+      - action: execute
+        query: "CREATE TABLE varchar_in_test (ts TIMESTAMP, varchar_col VARCHAR) timestamp(ts);"
+      - action: execute
+        query: |
+          INSERT INTO varchar_in_test(ts, varchar_col) VALUES
+          ('2023-01-01T09:10:00.000000Z', 'a'),
+          ('2023-01-01T09:11:00.000000Z', null),
+          ('2023-01-01T09:12:00.000000Z', null),
+          ('2023-01-01T09:13:00.000000Z', 'b'),
+          ('2023-01-01T09:14:00.000000Z', 'b'),
+          ('2023-01-01T09:15:00.000000Z', 'a'),
+          ('2023-01-01T09:16:00.000000Z', null),
+          ('2023-01-01T09:17:00.000000Z', 'a'),
+          ('2023-01-01T09:18:00.000000Z', 'b'),
+          ('2023-01-01T09:19:00.000000Z', 'a');
+    steps:
+      - action: query
+        description: Select rows where varchar_col IN (Single elem)
+        query: "SELECT * FROM varchar_in_test WHERE varchar_col IN ($[1]);"
+        parameters:
+          - value: "a"
+            type: "VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:10:00.000000Z", "a" ]
+            - [ "2023-01-01T09:15:00.000000Z", "a" ]
+            - [ "2023-01-01T09:17:00.000000Z", "a" ]
+            - [ "2023-01-01T09:19:00.000000Z", "a" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS varchar_in_test;"
+
+  - name: Symbol Array IN Test
+    description: Test selecting symbol column using IN clause with varchar array bind variable.
+    exclude: [ "psycopg2" ]
+    prepare:
+      - action: execute
+        query: "CREATE TABLE symbol_in_test (ts TIMESTAMP, sym_col SYMBOL) timestamp(ts);"
+      - action: execute
+        query: |
+          INSERT INTO symbol_in_test(ts, sym_col) VALUES
+          ('2023-01-01T09:10:00.000000Z', 'a'),
+          ('2023-01-01T09:11:00.000000Z', null),
+          ('2023-01-01T09:12:00.000000Z', null),
+          ('2023-01-01T09:13:00.000000Z', 'b'),
+          ('2023-01-01T09:14:00.000000Z', 'b'),
+          ('2023-01-01T09:15:00.000000Z', 'a'),
+          ('2023-01-01T09:16:00.000000Z', null),
+          ('2023-01-01T09:17:00.000000Z', 'a'),
+          ('2023-01-01T09:18:00.000000Z', 'b'),
+          ('2023-01-01T09:19:00.000000Z', 'a');
+    steps:
+      - action: query
+        description: Select rows where sym_col IN ('a', 'b')
+        query: "SELECT * FROM symbol_in_test WHERE sym_col IN ($[1]);"
+        parameters:
+          - value: "{a,b}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:10:00.000000Z", "a" ]
+            - [ "2023-01-01T09:13:00.000000Z", "b" ]
+            - [ "2023-01-01T09:14:00.000000Z", "b" ]
+            - [ "2023-01-01T09:15:00.000000Z", "a" ]
+            - [ "2023-01-01T09:17:00.000000Z", "a" ]
+            - [ "2023-01-01T09:18:00.000000Z", "b" ]
+            - [ "2023-01-01T09:19:00.000000Z", "a" ]
+      - action: query
+        description: Select rows where sym_col IN ('a')
+        query: "SELECT * FROM symbol_in_test WHERE sym_col IN ($[1]);"
+        parameters:
+          - value: "{a}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:10:00.000000Z", "a" ]
+            - [ "2023-01-01T09:15:00.000000Z", "a" ]
+            - [ "2023-01-01T09:17:00.000000Z", "a" ]
+            - [ "2023-01-01T09:19:00.000000Z", "a" ]
+      - action: query
+        description: Select rows where sym_col IN empty array returns no rows
+        query: "SELECT count(*) FROM symbol_in_test WHERE sym_col IN ($[1]);"
+        parameters:
+          - value: "{}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ 0 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS symbol_in_test;"
+
+  - name: Symbol utf-8 Array IN Test
+    description: Test selecting symbol column using IN clause with varchar array bind variable containing utf-8 characters.
+    exclude: [ "psycopg2" ]
+    prepare:
+      - action: execute
+        query: "CREATE TABLE symbol_utf8_in_test (ts TIMESTAMP, sym_col SYMBOL) timestamp(ts);"
+      - action: execute
+        query: |
+          INSERT INTO symbol_utf8_in_test(ts, sym_col) VALUES
+          ('2023-01-01T09:10:00.000000Z', 'hello'),
+          ('2023-01-01T09:11:00.000000Z', null),
+          ('2023-01-01T09:12:00.000000Z', 'world'),
+          ('2023-01-01T09:13:00.000000Z', 'Привет'),
+          ('2023-01-01T09:14:00.000000Z', '你好'),
+          ('2023-01-01T09:15:00.000000Z', 'hello'),
+          ('2023-01-01T09:16:00.000000Z', null),
+          ('2023-01-01T09:17:00.000000Z', 'Привет'),
+          ('2023-01-01T09:18:00.000000Z', '你好'),
+          ('2023-01-01T09:19:00.000000Z', 'world');
+    steps:
+      - action: query
+        description: Select rows where sym_col IN utf-8 values
+        query: "SELECT * FROM symbol_utf8_in_test WHERE sym_col IN ($[1]);"
+        parameters:
+          - value: "{Привет,你好}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:13:00.000000Z", "Привет" ]
+            - [ "2023-01-01T09:14:00.000000Z", "你好" ]
+            - [ "2023-01-01T09:17:00.000000Z", "Привет" ]
+            - [ "2023-01-01T09:18:00.000000Z", "你好" ]
+      - action: query
+        description: Select rows where sym_col IN mixed ascii and utf-8
+        query: "SELECT * FROM symbol_utf8_in_test WHERE sym_col IN ($[1]);"
+        parameters:
+          - value: "{hello,你好}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:10:00.000000Z", "hello" ]
+            - [ "2023-01-01T09:14:00.000000Z", "你好" ]
+            - [ "2023-01-01T09:15:00.000000Z", "hello" ]
+            - [ "2023-01-01T09:18:00.000000Z", "你好" ]
+      - action: query
+        description: Select rows where sym_col IN single utf-8 value
+        query: "SELECT * FROM symbol_utf8_in_test WHERE sym_col IN ($[1]);"
+        parameters:
+          - value: "{Привет}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:13:00.000000Z", "Привет" ]
+            - [ "2023-01-01T09:17:00.000000Z", "Привет" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS symbol_utf8_in_test;"
+
+  - name: String Array IN Test
+    description: Test selecting string column using IN clause with varchar array bind variable.
+    exclude: [ "psycopg2" ]
+    prepare:
+      - action: execute
+        query: "CREATE TABLE string_in_test (ts TIMESTAMP, str_col STRING) timestamp(ts);"
+      - action: execute
+        query: |
+          INSERT INTO string_in_test(ts, str_col) VALUES
+          ('2023-01-01T09:10:00.000000Z', 'a'),
+          ('2023-01-01T09:11:00.000000Z', null),
+          ('2023-01-01T09:12:00.000000Z', null),
+          ('2023-01-01T09:13:00.000000Z', 'b'),
+          ('2023-01-01T09:14:00.000000Z', 'b'),
+          ('2023-01-01T09:15:00.000000Z', 'a'),
+          ('2023-01-01T09:16:00.000000Z', null),
+          ('2023-01-01T09:17:00.000000Z', 'a'),
+          ('2023-01-01T09:18:00.000000Z', 'b'),
+          ('2023-01-01T09:19:00.000000Z', 'a');
+    steps:
+      - action: query
+        description: Select rows where str_col IN ('a', 'b')
+        query: "SELECT * FROM string_in_test WHERE str_col IN ($[1]);"
+        parameters:
+          - value: "{a,b}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:10:00.000000Z", "a" ]
+            - [ "2023-01-01T09:13:00.000000Z", "b" ]
+            - [ "2023-01-01T09:14:00.000000Z", "b" ]
+            - [ "2023-01-01T09:15:00.000000Z", "a" ]
+            - [ "2023-01-01T09:17:00.000000Z", "a" ]
+            - [ "2023-01-01T09:18:00.000000Z", "b" ]
+            - [ "2023-01-01T09:19:00.000000Z", "a" ]
+      - action: query
+        description: Select rows where str_col IN ('a')
+        query: "SELECT * FROM string_in_test WHERE str_col IN ($[1]);"
+        parameters:
+          - value: "{a}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ "2023-01-01T09:10:00.000000Z", "a" ]
+            - [ "2023-01-01T09:15:00.000000Z", "a" ]
+            - [ "2023-01-01T09:17:00.000000Z", "a" ]
+            - [ "2023-01-01T09:19:00.000000Z", "a" ]
+      - action: query
+        description: Select rows where str_col IN empty array returns no rows
+        query: "SELECT count(*) FROM string_in_test WHERE str_col IN ($[1]);"
+        parameters:
+          - value: "{}"
+            type: "ARRAY_VARCHAR"
+        expect:
+          result:
+            - [ 0 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS string_in_test;"

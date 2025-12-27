@@ -111,6 +111,29 @@ func (d *PqDriver) ParseArrayFloat8(value interface{}) (interface{}, error) {
 	}
 }
 
+// ParseArrayVarchar converts a value to a pq.Array-wrapped string slice.
+// The pq driver requires arrays to be wrapped with pq.Array() and does not
+// support null values within arrays.
+func (d *PqDriver) ParseArrayVarchar(value interface{}) (interface{}, error) {
+	switch v := value.(type) {
+	case []interface{}:
+		// Convert to []string
+		strArr := make([]string, len(v))
+		for i, item := range v {
+			if item == nil {
+				return nil, fmt.Errorf("pq driver does not support null values in arrays")
+			}
+			strArr[i] = fmt.Sprintf("%v", item)
+		}
+		return pq.Array(strArr), nil
+	case []string:
+		// Already converted, wrap with pq.Array
+		return pq.Array(v), nil
+	default:
+		return nil, fmt.Errorf("unsupported array type: %T", value)
+	}
+}
+
 // PqQueryResult wraps sql.Rows to implement QueryResult
 type PqQueryResult struct {
 	rows *sql.Rows

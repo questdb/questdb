@@ -115,10 +115,10 @@ public interface TernaryFunction extends Function {
 
     @Override
     default void offerStateTo(Function that) {
-        if (that instanceof TernaryFunction) {
-            getLeft().offerStateTo(((TernaryFunction) that).getLeft());
-            getCenter().offerStateTo(((TernaryFunction) that).getCenter());
-            getRight().offerStateTo(((TernaryFunction) that).getRight());
+        if (that instanceof TernaryFunction other) {
+            getLeft().offerStateTo(other.getLeft());
+            getCenter().offerStateTo(other.getCenter());
+            getRight().offerStateTo(other.getRight());
         }
     }
 

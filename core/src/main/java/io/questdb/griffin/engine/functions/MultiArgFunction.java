@@ -128,8 +128,8 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default void offerStateTo(Function that) {
-        if (that instanceof MultiArgFunction) {
-            ObjList<Function> thatArgs = ((MultiArgFunction) that).args();
+        if (that instanceof MultiArgFunction other) {
+            ObjList<Function> thatArgs = other.args();
             ObjList<Function> thisArgs = args();
             if (thatArgs.size() == thisArgs.size()) {
                 for (int i = 0; i < thisArgs.size(); i++) {

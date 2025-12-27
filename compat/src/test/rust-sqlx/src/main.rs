@@ -303,7 +303,7 @@ async fn execute_step(
                             expected_value,
                             result.rows_affected()
                         )
-                        .into());
+                            .into());
                     }
                 }
             }
@@ -381,6 +381,16 @@ fn bind_parameters(
                             arguments.add(float_vec)?;
                         }
                     }
+                    "array_varchar" => {
+                        let trimmed = substituted.trim_start_matches('{').trim_end_matches('}');
+                        if trimmed.is_empty() {
+                            let empty: Vec<String> = vec![];
+                            arguments.add(empty)?;
+                        } else {
+                            let str_vec: Vec<String> = parse_varchar_array(trimmed);
+                            arguments.add(str_vec)?;
+                        }
+                    }
                     "numeric" => arguments.add(substituted.parse::<BigDecimal>()?)?,
                     _ => return Err(format!("Unsupported parameter type: {}", param.type_).into()),
                 }
@@ -413,6 +423,52 @@ fn replace_param_placeholders(query: &str) -> String {
 
 fn parse_timestamp(s: &str) -> Result<NaiveDateTime, chrono::ParseError> {
     NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.fZ")
+}
+
+fn parse_varchar_array(input: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut chars = input.chars().peekable();
+
+    while chars.peek().is_some() {
+        while let Some(&c) = chars.peek() {
+            if c == ' ' || c == ',' {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        if chars.peek().is_none() {
+            break;
+        }
+
+        if chars.peek() == Some(&'"') {
+            chars.next();
+            let mut value = String::new();
+            while let Some(c) = chars.next() {
+                if c == '"' {
+                    break;
+                }
+                value.push(c);
+            }
+            result.push(value);
+        } else {
+            let mut value = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == ',' {
+                    break;
+                }
+                value.push(c);
+                chars.next();
+            }
+            let trimmed = value.trim();
+            if !trimmed.eq_ignore_ascii_case("null") {
+                result.push(trimmed.to_string());
+            }
+        }
+    }
+
+    result
 }
 
 fn value_to_string(

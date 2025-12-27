@@ -191,8 +191,7 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof StrCursorFunc) {
-                StrCursorFunc thatF = (StrCursorFunc) that;
+            if (that instanceof StrCursorFunc thatF) {
                 thatF.epoch = epoch;
                 thatF.stateInherited = this.stateShared = true;
             }
@@ -275,8 +274,7 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof TimestampCursorFunc) {
-                TimestampCursorFunc thatF = (TimestampCursorFunc) that;
+            if (that instanceof TimestampCursorFunc thatF) {
                 thatF.epoch = epoch;
                 thatF.stateInherited = this.stateShared = true;
             }
@@ -367,8 +365,7 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof VarcharCursorFunc) {
-                VarcharCursorFunc thatF = (VarcharCursorFunc) that;
+            if (that instanceof VarcharCursorFunc thatF) {
                 thatF.epoch = epoch;
                 thatF.stateInherited = this.stateShared = true;
             }
