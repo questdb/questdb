@@ -409,7 +409,7 @@ struct CountOnlyFunction {
         questdb::avx2::preload_constants_ymm(c, istream, size, const_cache_ymm);
 
         Label l_loop = c.newLabel();
-        Label l_exit = c.newLabel();
+        Label l_tail = c.newLabel();
 
         c.xor_(input_index, input_index); // input_index = 0
 
@@ -418,7 +418,17 @@ struct CountOnlyFunction {
         c.sub(stop, unroll_factor * step - 1); // stop = rows_size - unroll_factor * step + 1
 
         c.cmp(input_index, stop);
-        c.jge(l_exit);
+        c.jge(l_tail);
+
+        // For 8-byte values (step == 4), use vpsubq accumulator optimization.
+        // vpcmpeqq produces -1 (0xFFFFFFFFFFFFFFFF) for matches, 0 for non-matches.
+        // vpsubq acc, acc, mask subtracts -1 (adds 1) for matches, subtracts 0 (no-op) otherwise.
+        // This avoids vector-to-scalar domain crossing (vmovmskpd) on each iteration.
+        Ymm acc;
+        if (step == 4) {
+            acc = c.newYmm("acc");
+            c.vpxor(acc, acc, acc); // acc = 0
+        }
 
         c.bind(l_loop);
 
@@ -428,16 +438,35 @@ struct CountOnlyFunction {
 
             auto mask = values.pop();
 
-            Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
-            c.popcnt(bits, bits);
-            c.add(output_index, bits.r64());
+            if (step == 4) {
+                c.vpsubq(acc, acc, mask.ymm()); // acc -= mask (subtracting -1 adds 1)
+            } else {
+                Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
+                c.popcnt(bits, bits);
+                c.add(output_index, bits.r64());
+            }
 
             c.add(input_index, step); // index += step
         }
 
         c.cmp(input_index, stop);
         c.jl(l_loop); // index < stop
-        c.bind(l_exit);
+
+        // Horizontal sum of the 4 x i64 lanes in acc and add to output_index.
+        // This is placed before l_tail so that when we skip the SIMD loop entirely
+        // (rows_size < step), we jump directly to l_tail without executing this code.
+        // This also avoids unnecessary register spilling across the label boundary.
+        if (step == 4) {
+            Xmm xmm_acc = acc.xmm();
+            Xmm xmm_tmp = c.newXmm("hsum_tmp");
+            c.vextracti128(xmm_tmp, acc, 1);      // extract high 128 bits
+            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // add high to low (2 x i64)
+            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // swap the two i64 halves
+            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // final sum in low 64 bits
+            c.vmovq(output_index, xmm_acc);       // move to output_index
+        }
+
+        c.bind(l_tail);
 
         scalar_tail(istream, size, null_check, rows_size);
         c.ret(output_index);
