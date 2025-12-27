@@ -420,14 +420,22 @@ struct CountOnlyFunction {
         c.cmp(input_index, stop);
         c.jge(l_tail);
 
-        // For 4-byte (step == 8) and 8-byte (step == 4) values, use vpsub accumulator optimization.
-        // vpcmpeqq/vpcmpeqd produces -1 for matches, 0 for non-matches.
+        // For 2-byte (step == 16), 4-byte (step == 8), and 8-byte (step == 4) values,
+        // use vpsub accumulator optimization.
+        // vpcmpeqq/vpcmpeqd/vpcmpeqw produces -1 for matches, 0 for non-matches.
         // vpsubq/vpsubd acc, acc, mask subtracts -1 (adds 1) for matches, subtracts 0 (no-op) otherwise.
         // This avoids vector-to-scalar domain crossing (vmovmskpd/vmovmskps) on each iteration.
         Ymm acc;
-        if (step == 4 || step == 8) {
+        Ymm ones;  // for step == 16: 16 x i16 all-ones to use with vpmaddwd
+        if (step == 4 || step == 8 || step == 16) {
             acc = c.newYmm("acc");
             c.vpxor(acc, acc, acc); // acc = 0
+            if (step == 16) {
+                // Create constant with 16 x i16 value of 1 for vpmaddwd
+                ones = c.newYmm("ones");
+                c.vpcmpeqd(ones, ones, ones);     // all bits set (-1)
+                c.vpsrlw(ones, ones, 15);         // shift right 15 bits: -1 -> 1 for each i16
+            }
         }
 
         c.bind(l_loop);
@@ -442,6 +450,12 @@ struct CountOnlyFunction {
                 c.vpsubq(acc, acc, mask.ymm()); // acc -= mask (subtracting -1 adds 1)
             } else if (step == 8) {
                 c.vpsubd(acc, acc, mask.ymm()); // acc -= mask (32-bit version)
+            } else if (step == 16) {
+                // 16 x i16 mask -> 8 x i32 using vpmaddwd (pairs of i16 multiplied by 1 and summed)
+                // mask[i16] is -1 or 0, so pairs sum to -2, -1, or 0
+                Ymm pairs = c.newYmm("pairs");
+                c.vpmaddwd(pairs, mask.ymm(), ones);  // 16 x i16 -> 8 x i32
+                c.vpsubd(acc, acc, pairs);            // acc -= pairs
             } else {
                 Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
                 c.popcnt(bits, bits);
@@ -467,29 +481,19 @@ struct CountOnlyFunction {
             c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // swap the two i64 halves
             c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // final sum in low 64 bits
             c.vmovq(output_index, xmm_acc);       // move to output_index
-        } else if (step == 8) {
-            // 8 x i32 -> i64 (must widen to i64 to handle large row counts)
-            Xmm xmm_lo = acc.xmm();               // low 4 x i32
-            Xmm xmm_hi = c.newXmm("hsum_hi");
-            c.vextracti128(xmm_hi, acc, 1);       // high 4 x i32
-
-            // Zero-extend both halves from 4 x i32 to 4 x i64
-            Ymm ymm_lo = c.newYmm("hsum_lo_64");
-            Ymm ymm_hi = c.newYmm("hsum_hi_64");
-            c.vpmovzxdq(ymm_lo, xmm_lo);          // 4 x i32 -> 4 x i64
-            c.vpmovzxdq(ymm_hi, xmm_hi);          // 4 x i32 -> 4 x i64
-
-            // Add them: now 4 x i64
-            c.vpaddq(ymm_lo, ymm_lo, ymm_hi);
-
-            // Horizontal sum of 4 x i64 (same as step == 4)
-            Xmm xmm_acc = ymm_lo.xmm();
+        } else if (step == 8 || step == 16) {
+            // 8 x i32 -> i32 -> i64 (row count is guaranteed < 2^31)
+            Xmm xmm_acc = acc.xmm();
             Xmm xmm_tmp = c.newXmm("hsum_tmp");
-            c.vextracti128(xmm_tmp, ymm_lo, 1);   // extract high 128 bits
-            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // add high to low (2 x i64)
-            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // swap the two i64 halves
-            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // final sum in low 64 bits
-            c.vmovq(output_index, xmm_acc);       // move to output_index
+            c.vextracti128(xmm_tmp, acc, 1);      // extract high 4 x i32
+            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);  // add high to low (4 x i32)
+            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // rotate by 2 i32s
+            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);  // 2 x i32 partial sums
+            c.vpshufd(xmm_tmp, xmm_acc, 0xB1);    // rotate by 1 i32
+            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);  // final sum in low 32 bits
+            Gp hsum = c.newGpd("hsum");
+            c.vmovd(hsum, xmm_acc);               // move to 32-bit reg (zero-extends)
+            c.mov(output_index, hsum.r64());      // move to output_index
         }
 
         c.bind(l_tail);
