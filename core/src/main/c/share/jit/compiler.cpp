@@ -62,6 +62,12 @@ struct Function {
         values.init(&allocator);
     };
 
+    // Preload column addresses and constants before entering the loop
+    void preload_columns_and_constants(const instruction_t *istream, size_t size) {
+        questdb::x86::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
+        questdb::x86::preload_constants(c, istream, size, const_cache);
+    }
+
     void compile(const instruction_t *istream, size_t size, uint32_t options) {
         auto features = CpuInfo::host().features().as<x86::Features>();
         enum type_size : uint32_t {
@@ -86,6 +92,15 @@ struct Function {
     void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
+        Label l_next_row = c.newLabel();   // Label 0: skip row (AND failure)
+        Label l_store_row = c.newLabel();  // Label 1: store row (OR success)
+
+        // Initialize label array:
+        // - Index 0: l_next_row (skip row storage - used by AND_SC on false)
+        // - Index 1: l_store_row (store row - used by OR_SC on true)
+        questdb::x86::LabelArray labels;
+        labels.set(0, l_next_row);
+        labels.set(1, l_store_row);
 
         c.cmp(input_index, stop);
         c.jge(l_exit);
@@ -93,17 +108,34 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index);
+            // Clear value cache at the start of each row iteration
+            value_cache.clear();
+            // Pass the label array and caches to emit_code
+            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
+                                    input_index, labels, addr_cache, const_cache, value_cache);
 
-            auto mask = values.pop();
+            // If stack is empty, all predicates were resolved via short-circuit jumps
+            // No final test needed.
+            if (!values.empty()) {
+                auto mask = values.pop();
+
+                // Skip row storage if the last predicate failed
+                c.test(mask.gp().r32(), mask.gp().r32());
+                c.jz(l_next_row);
+            }
+
+            // OR_SC success jumps here to store the row
+            c.bind(l_store_row);
 
             x86::Gp adjusted_id = c.newInt64("input_index_+_rows_id_start_offset");
             c.lea(adjusted_id, ptr(input_index, rows_id_start_offset)); // input_index + rows_id_start_offset
             c.mov(qword_ptr(rows_ptr, output_index, 3), adjusted_id);
 
-            c.and_(mask.gp(), 1);
-            c.add(output_index, mask.gp().r64());
+            c.add(output_index, 1);
         }
+
+        // AND_SC failure jumps here, skipping the row storage above
+        c.bind(l_next_row);
         c.add(input_index, unroll_factor);
 
         c.cmp(input_index, stop);
@@ -112,7 +144,10 @@ struct Function {
     }
 
     void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1) {
-        if(unroll_factor > 1) {
+        // Preload column addresses and constants before the loop
+        preload_columns_and_constants(istream, size);
+
+        if (unroll_factor > 1) {
             x86::Gp stop = c.newInt64("stop");
             c.mov(stop, rows_size);
             c.sub(stop, unroll_factor - 1);
@@ -127,6 +162,12 @@ struct Function {
     void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1) {
         using namespace asmjit::x86;
 
+        // Preload column addresses and constants before the loop (for scalar tail)
+        preload_columns_and_constants(istream, size);
+
+        // Preload constants into YMM registers for the SIMD loop
+        questdb::avx2::preload_constants_ymm(c, istream, size, const_cache_ymm);
+
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
 
@@ -139,13 +180,13 @@ struct Function {
         c.cmp(input_index, stop);
         c.jge(l_exit);
 
-
+        bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
         Ymm row_ids_reg = c.newYmm("rows_ids");
         Ymm row_ids_step = c.newYmm("rows_ids_step");
 
-        //mask compress optimization for longs
-        //init row_ids_reg out of loop
-        if (step == 4) {
+        // mask compress optimization for longs
+        // init row_ids_reg out of loop
+        if (step == 4 && !is_slow_zen) {
             int64_t rows_id_mem[4] = {0, 1, 2, 3};
             Mem mem = c.newConst(ConstPool::kScopeLocal, &rows_id_mem, 32);
 
@@ -161,23 +202,35 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index);
+            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+                                     addr_cache, const_cache_ymm);
 
             auto mask = values.pop();
 
-            //mask compress optimization for longs
-            bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
             if (step == 4 && !is_slow_zen) {
+                // mask compress optimization for longs
+                Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
+
+                // short-circuit: skip scatter if no matches
+                Label l_scatter_done = c.newLabel();
+                c.test(bits, bits);
+                c.jz(l_scatter_done);
+
                 Ymm compacted = questdb::avx2::compress_register(c, row_ids_reg, mask.ymm());
                 c.vmovdqu(ymmword_ptr(rows_ptr, output_index, 3), compacted);
-                Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
                 c.popcnt(bits, bits);
                 c.add(output_index, bits.r64());
+
+                c.bind(l_scatter_done);
                 c.vpaddq(row_ids_reg, row_ids_reg, row_ids_step);
             } else {
                 Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
-                questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset,
-                                              step);
+                // short-circuit: skip scatter if no matches
+                Label l_scatter_done = c.newLabel();
+                c.test(bits, bits);
+                c.jz(l_scatter_done);
+                questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset, step);
+                c.bind(l_scatter_done);
             }
             c.add(input_index, step); // index += step
         }
@@ -245,6 +298,10 @@ struct Function {
     x86::Gp input_index;
     x86::Gp output_index;
     x86::Gp rows_id_start_offset;
+    ColumnAddressCache addr_cache;
+    ConstantCache const_cache;
+    ConstantCacheYmm const_cache_ymm;
+    ColumnValueCache value_cache;
 };
 
 void fillJitErrorObject(JNIEnv *e, jobject error, uint32_t code, const char *msg) {
@@ -276,7 +333,6 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                     jint options,
                                                     jobject error) {
 #ifndef __aarch64__
-
     auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
     if (filterAddress <= 0 || size <= 0) {
         fillJitErrorObject(e, error, ErrorCode::kErrorInvalidArgument, "Invalid argument passed");
@@ -308,11 +364,11 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
 
     Error err = errorHandler.error;
 
-    if(err == ErrorCode::kErrorOk) {
+    if (err == ErrorCode::kErrorOk) {
         err = c.finalize();
     }
 
-    if(err == ErrorCode::kErrorOk) {
+    if (err == ErrorCode::kErrorOk) {
         err = gGlobalContext.rt.add(&fn, &code);
     }
 

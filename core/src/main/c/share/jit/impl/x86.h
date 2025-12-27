@@ -32,8 +32,10 @@ namespace questdb::x86 {
     using namespace asmjit::x86;
 
     inline Gpd int32_not(Compiler &c, const Gpd &b) {
-        c.not_(b);
-        return b;
+        Gp r = c.newInt32();
+        c.mov(r, b);
+        c.xor_(r, 1);
+        return r.as<Gpd>();
     }
 
     inline Gpd int32_and(Compiler &c, const Gpd &b1, const Gpd &b2) {
@@ -337,57 +339,77 @@ namespace questdb::x86 {
     }
 
     inline Xmm float_neg(Compiler &c, const Xmm &rhs) {
+        Xmm r = c.newXmmSs();
+        c.movss(r, rhs);
         int32_t array[4] = {INT_NULL, 0, 0, 0};
         Mem mem = c.newConst(ConstPool::kScopeLocal, &array, 32);
-        c.xorps(rhs, mem);
-        return rhs;
+        c.xorps(r, mem);
+        return r;
     }
 
     inline Xmm double_neg(Compiler &c, const Xmm &rhs) {
+        Xmm r = c.newXmmSd();
+        c.movsd(r, rhs);
         int32_t array[4] = {0, INT_NULL, 0, 0};
         Mem mem = c.newConst(ConstPool::kScopeLocal, &array, 32);
-        c.xorpd(rhs, mem);
-        return rhs;
+        c.xorpd(r, mem);
+        return r;
     }
 
     inline Xmm float_add(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.addss(lhs, rhs);
-        return lhs;
+        Xmm r = c.newXmmSs();
+        c.movss(r, lhs);
+        c.addss(r, rhs);
+        return r;
     }
 
     inline Xmm float_sub(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.subss(lhs, rhs);
-        return lhs;
+        Xmm r = c.newXmmSs();
+        c.movss(r, lhs);
+        c.subss(r, rhs);
+        return r;
     }
 
     inline Xmm float_mul(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.mulss(lhs, rhs);
-        return lhs;
+        Xmm r = c.newXmmSs();
+        c.movss(r, lhs);
+        c.mulss(r, rhs);
+        return r;
     }
 
     inline Xmm float_div(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.divss(lhs, rhs);
-        return lhs;
+        Xmm r = c.newXmmSs();
+        c.movss(r, lhs);
+        c.divss(r, rhs);
+        return r;
     }
 
     inline Xmm double_add(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.addsd(lhs, rhs);
-        return lhs;
+        Xmm r = c.newXmmSd();
+        c.movsd(r, lhs);
+        c.addsd(r, rhs);
+        return r;
     }
 
     inline Xmm double_sub(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.subsd(lhs, rhs);
-        return lhs;
+        Xmm r = c.newXmmSd();
+        c.movsd(r, lhs);
+        c.subsd(r, rhs);
+        return r;
     }
 
     inline Xmm double_mul(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.mulsd(lhs, rhs);
-        return lhs;
+        Xmm r = c.newXmmSd();
+        c.movsd(r, lhs);
+        c.mulsd(r, rhs);
+        return r;
     }
 
     inline Xmm double_div(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.divsd(lhs, rhs);
-        return lhs;
+        Xmm r = c.newXmmSd();
+        c.movsd(r, lhs);
+        c.divsd(r, rhs);
+        return r;
     }
 
     inline Gpd int32_eq(Compiler &c, const Gpd &lhs, const Gpd &rhs) {
@@ -402,6 +424,22 @@ namespace questdb::x86 {
         Gp r = c.newInt32();
         c.xor_(r, r);
         c.cmp(lhs, rhs);
+        c.setne(r.r8Lo());
+        return r.as<Gpd>();
+    }
+
+    inline Gpd int32_eq_zero(Compiler &c, const Gpd &lhs) {
+        Gp r = c.newInt32();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.sete(r.r8Lo());
+        return r.as<Gpd>();
+    }
+
+    inline Gpd int32_ne_zero(Compiler &c, const Gpd &lhs) {
+        Gp r = c.newInt32();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
         c.setne(r.r8Lo());
         return r.as<Gpd>();
     }
@@ -421,11 +459,14 @@ namespace questdb::x86 {
             Gp v = c.newInt32();
             Gp l = c.newInt32();
             Gp r = c.newInt32();
+            c.xor_(l, l);
             c.cmp(lhs, INT_NULL);
             c.setne(l.r8Lo());
+            c.xor_(r, r);
             c.cmp(rhs, INT_NULL);
             c.setne(r.r8Lo());
             c.and_(r, l);
+            c.xor_(v, v);
             c.cmp(lhs, rhs);
             if (gt) {
                 c.setg(v.r8Lo());
@@ -453,11 +494,14 @@ namespace questdb::x86 {
             Gp l = c.newInt32();
             Gp r = c.newInt32();
 
+            c.xor_(l, l);
             c.cmp(lhs, INT_NULL);
             c.sete(l.r8Lo());
+            c.xor_(r, r);
             c.cmp(rhs, INT_NULL);
             c.setne(r.r8Lo());
             c.xor_(r, l);
+            c.xor_(v, v);
             c.cmp(lhs, rhs);
             if (ge) {
                 c.setge(v.r8Lo());
@@ -501,6 +545,22 @@ namespace questdb::x86 {
         return r.as<Gpq>();
     }
 
+    inline Gpq int64_eq_zero(Compiler &c, const Gpq &lhs) {
+        Gp r = c.newInt64();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.sete(r.r8Lo());
+        return r.as<Gpq>();
+    }
+
+    inline Gpq int64_ne_zero(Compiler &c, const Gpq &lhs) {
+        Gp r = c.newInt64();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.setne(r.r8Lo());
+        return r.as<Gpq>();
+    }
+
     inline void int128_cmp(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp mask = c.newInt16();
         c.pcmpeqb(lhs, rhs);
@@ -509,15 +569,17 @@ namespace questdb::x86 {
     }
 
     inline Gpq int128_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        int128_cmp(c, lhs, rhs);
         Gp r = c.newInt64();
+        c.xor_(r, r);
+        int128_cmp(c, lhs, rhs);
         c.sete(r.r8Lo());
         return r.as<Gpq>();
     }
 
     inline Gpq int128_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        int128_cmp(c, lhs, rhs);
         Gp r = c.newInt64();
+        c.xor_(r, r);
+        int128_cmp(c, lhs, rhs);
         c.setne(r.r8Lo());
         return r.as<Gpq>();
     }
@@ -537,14 +599,17 @@ namespace questdb::x86 {
             Gp v = c.newInt64();
             Gp l = c.newInt64();
             Gp r = c.newInt64();
+            Gp n = c.newInt64();
 
-            //c.movsxd(v, LONG_NULL);
-            c.movabs(v, LONG_NULL);
-            c.cmp(lhs, v);
+            c.movabs(n, LONG_NULL);
+            c.xor_(l, l);
+            c.cmp(lhs, n);
             c.setne(l.r8Lo());
-            c.cmp(rhs, v);
+            c.xor_(r, r);
+            c.cmp(rhs, n);
             c.setne(r.r8Lo());
             c.and_(r, l);
+            c.xor_(v, v);
             c.cmp(lhs, rhs);
             if (gt) {
                 c.setg(v.r8Lo());
@@ -572,14 +637,17 @@ namespace questdb::x86 {
             Gp v = c.newInt64();
             Gp l = c.newInt64();
             Gp r = c.newInt64();
+            Gp n = c.newInt64();
 
-            //c.movsxd(v, LONG_NULL);
-            c.movabs(v, LONG_NULL);
-            c.cmp(lhs, v);
+            c.movabs(n, LONG_NULL);
+            c.xor_(l, l);
+            c.cmp(lhs, n);
             c.sete(l.r8Lo());
-            c.cmp(rhs, v);
+            c.xor_(r, r);
+            c.cmp(rhs, n);
             c.setne(r.r8Lo());
             c.xor_(r, l);
+            c.xor_(v, v);
             c.cmp(lhs, rhs);
             if (ge) {
                 c.setge(v.r8Lo());
@@ -710,7 +778,7 @@ namespace questdb::x86 {
 
     // (isnan(lhs) && isnan(rhs) || fabs(l - r) < 0.0000000001);
     inline Gpd double_cmp_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double epsilon, bool eq) {
-        c.comment("float_cmp_epsilon_start");
+        c.comment("double_cmp_epsilon_start");
         int64_t nans[] = {0x7fffffffffffffff, 0x7fffffffffffffff}; // double NaN
         Mem nans_memory = c.newConst(ConstPool::kScopeLocal, &nans, 32);
         Mem d = c.newDoubleConst(ConstPool::kScopeLocal, epsilon);
@@ -719,32 +787,39 @@ namespace questdb::x86 {
         Label l_exit = c.newLabel();
         Gp r = c.newInt32();
         Gp int_r = c.newInt64();
-        c.movq(int_r, xmm0);
+        // Work on copies to avoid modifying cached registers
+        Xmm lhs = c.newXmmSd();
+        Xmm rhs = c.newXmmSd();
+        c.movsd(lhs, xmm0);
+        c.movsd(rhs, xmm1);
+        c.movq(int_r, lhs);
         c.and_(int_r, inf_memory);
         c.cmp(int_r, inf_memory);
         c.jne(l_nan);
         if (eq) {
-            c.mov(r.r8Lo(), 1);
+            c.mov(r, 1);
         } else {
             c.xor_(r, r);
         }
-        c.movq(int_r, xmm1);
+        c.movq(int_r, rhs);
         c.and_(int_r, inf_memory);
         c.cmp(int_r, inf_memory);
         c.jne(l_nan);
         c.jmp(l_exit);
 
         c.bind(l_nan);
-        c.subsd(xmm0, xmm1);
-        c.andpd(xmm0, nans_memory);
-        c.movsd(xmm1, d);
-        c.ucomisd(xmm1, xmm0);
+        c.subsd(lhs, rhs);
+        c.andpd(lhs, nans_memory);
+        c.movsd(rhs, d);
+        c.xor_(r, r);
+        c.ucomisd(rhs, lhs);
         if (eq) {
             c.seta(r.r8Lo());
         } else {
             c.setbe(r.r8Lo());
         }
         c.bind(l_exit);
+        c.comment("double_cmp_epsilon_stop");
         return r.as<Gpd>();
     }
 
@@ -757,15 +832,20 @@ namespace questdb::x86 {
     }
 
     inline Gpd float_cmp_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float epsilon, bool eq) {
+        c.comment("float_cmp_epsilon_start");
         int32_t nans[] = {0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff}; // float NaN
         Mem nans_memory = c.newConst(ConstPool::kScopeLocal, &nans, 16);
         Mem inf_memory = c.newFloatConst(ConstPool::kScopeLocal, 0x7F800000);
         Mem d = c.newFloatConst(ConstPool::kScopeLocal, epsilon);
         Label l_nan = c.newLabel();
         Label l_exit = c.newLabel();
-        c.comment("float_cmp_epsilon_start");
         Gp int_r = c.newInt32("tmp_int_r");
-        c.movd(int_r, xmm0);
+        // Work on copies to avoid modifying cached registers
+        Xmm lhs = c.newXmmSs();
+        Xmm rhs = c.newXmmSs();
+        c.movss(lhs, xmm0);
+        c.movss(rhs, xmm1);
+        c.movd(int_r, lhs);
         c.and_(int_r, 0x7F800000);
         c.cmp(int_r,  0x7F800000);
         c.jne(l_nan);
@@ -775,17 +855,18 @@ namespace questdb::x86 {
         } else {
             c.xor_(r, r);
         }
-        c.movd(int_r, xmm1);
+        c.movd(int_r, rhs);
         c.and_(int_r, 0x7F800000);
         c.cmp(int_r,  0x7F800000);
         c.jne(l_nan);
         c.jmp(l_exit);
 
         c.bind(l_nan);
-        c.subss(xmm0, xmm1);
-        c.andps(xmm0, nans_memory);
-        c.movss(xmm1, d);
-        c.ucomiss(xmm1, xmm0);
+        c.subss(lhs, rhs);
+        c.andps(lhs, nans_memory);
+        c.movss(rhs, d);
+        c.xor_(r, r);
+        c.ucomiss(rhs, lhs);
         if (eq) {
             c.seta(r.r8Lo());
         } else {
