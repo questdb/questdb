@@ -271,10 +271,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         do {
             for (int i = 0; i < segmentSize; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                    // Check if table was dropped concurrently. This narrows the race window
+                    // Check if table was fully dropped concurrently. This narrows the race window
                     // between verifyTableToken and pool allocation. Even if this check passes,
                     // the sequencer WRITE lock provides the ultimate correctness guarantee.
-                    if (rootEntry.dropped) {
+                    // Note: For TRUNCATE (fullDropped=false), dropped is set but entry stays in map.
+                    // We only throw for full drops where the entry was removed from the map.
+                    if (rootEntry.dropped && entries.get(tableToken.getDirName()) != rootEntry) {
                         Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         throw CairoException.tableDropped(tableToken);
                     }
