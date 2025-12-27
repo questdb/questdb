@@ -180,7 +180,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         boolean allFramesActive = true;
         try {
             do {
-                final long cursor = frameSequence.next(dispatchLimit);
+                final long cursor = frameSequence.next(dispatchLimit, false);
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
                     LOG.debug()

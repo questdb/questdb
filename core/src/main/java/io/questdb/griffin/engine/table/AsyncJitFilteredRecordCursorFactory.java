@@ -47,6 +47,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
@@ -67,6 +68,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final SCSequence collectSubSeq = new SCSequence();
+    private final CompiledCountOnlyFilter compiledCountOnlyFilter;
     private final CompiledFilter compiledFilter;
     private final AsyncFilteredRecordCursor cursor;
     private final Function filter;
@@ -86,6 +88,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull RecordCursorFactory base,
             @NotNull ObjList<Function> bindVarFunctions,
             @NotNull CompiledFilter compiledFilter,
+            @NotNull CompiledCountOnlyFilter compiledCountOnlyFilter,
             @NotNull Function filter,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
@@ -100,8 +103,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
         this.compiledFilter = compiledFilter;
-        this.filterExpr = filterExpr;
+        this.compiledCountOnlyFilter = compiledCountOnlyFilter;
         this.filter = filter;
+        this.filterExpr = filterExpr;
         this.cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
         this.bindVarMemory = Vm.getCARWInstance(
@@ -121,6 +125,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 filter,
                 perWorkerFilters,
                 compiledFilter,
+                compiledCountOnlyFilter,
                 bindVarMemory,
                 bindVarFunctions,
                 columnTypes,
@@ -226,6 +231,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public void halfClose() {
         Misc.free(frameSequence);
+        Misc.free(compiledCountOnlyFilter);
         cursor.freeRecords();
         negativeLimitCursor.freeRecords();
     }
@@ -310,11 +316,23 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
             final Function filter = atom.getFilter(filterId);
             try {
-                for (long r = 0; r < frameRowCount; r++) {
-                    record.setRowIndex(r);
-                    if (filter.getBool(record)) {
-                        rows.add(r);
+                if (task.isCountOnly()) {
+                    long count = 0;
+                    for (long r = 0; r < frameRowCount; r++) {
+                        record.setRowIndex(r);
+                        if (filter.getBool(record)) {
+                            count++;
+                        }
                     }
+                    task.setFilteredRowCount(count);
+                } else { // normal filter task
+                    for (long r = 0; r < frameRowCount; r++) {
+                        record.setRowIndex(r);
+                        if (filter.getBool(record)) {
+                            rows.add(r);
+                        }
+                    }
+                    task.setFilteredRowCount(rows.size());
                 }
                 return;
             } finally {
@@ -328,23 +346,33 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final DirectLongList dataAddresses = task.getDataAddresses();
         final DirectLongList auxAddresses = task.getAuxAddresses();
 
-        long hi = atom.compiledFilter.call(
-                dataAddresses.getAddress(),
-                dataAddresses.size(),
-                auxAddresses.getAddress(),
-                atom.bindVarMemory.getAddress(),
-                atom.bindVarFunctions.size(),
-                rows.getAddress(),
-                frameRowCount,
-                0
-        );
-        rows.setPos(hi);
+        if (task.isCountOnly()) {
+            final long filteredRowCount = atom.compiledCountOnlyFilter.call(
+                    dataAddresses.getAddress(),
+                    dataAddresses.size(),
+                    auxAddresses.getAddress(),
+                    atom.bindVarMemory.getAddress(),
+                    atom.bindVarFunctions.size(),
+                    frameRowCount
+            );
+            task.setFilteredRowCount(filteredRowCount);
+        } else { // normal filter task
+            final long filteredRowCount = atom.compiledFilter.call(
+                    dataAddresses.getAddress(),
+                    dataAddresses.size(),
+                    auxAddresses.getAddress(),
+                    atom.bindVarMemory.getAddress(),
+                    atom.bindVarFunctions.size(),
+                    rows.getAddress(),
+                    frameRowCount
+            );
+            rows.setPos(filteredRowCount);
+            task.setFilteredRowCount(rows.size());
 
-        task.setFilteredRowCount(rows.size());
-
-        // Pre-touch native columns, if asked.
-        if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
-            atom.preTouchColumns(record, rows, frameRowCount);
+            // Pre-touch native columns, if asked.
+            if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
+                atom.preTouchColumns(record, rows, frameRowCount);
+            }
         }
     }
 
@@ -362,6 +390,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     public static class AsyncJitFilterAtom extends AsyncFilterAtom {
         final ObjList<Function> bindVarFunctions;
         final MemoryCARW bindVarMemory;
+        final CompiledCountOnlyFilter compiledCountOnlyFilter;
         final CompiledFilter compiledFilter;
 
         public AsyncJitFilterAtom(
@@ -369,6 +398,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 Function filter,
                 ObjList<Function> perWorkerFilters,
                 CompiledFilter compiledFilter,
+                CompiledCountOnlyFilter compiledCountOnlyFilter,
                 MemoryCARW bindVarMemory,
                 ObjList<Function> bindVarFunctions,
                 IntList columnTypes,
@@ -376,6 +406,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         ) {
             super(configuration, filter, perWorkerFilters, columnTypes, enablePreTouch);
             this.compiledFilter = compiledFilter;
+            this.compiledCountOnlyFilter = compiledCountOnlyFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
         }

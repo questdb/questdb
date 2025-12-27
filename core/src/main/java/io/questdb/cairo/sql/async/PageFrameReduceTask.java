@@ -59,6 +59,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
     private boolean isCancelled;
+    // Valid for TYPE_FILTER only. When set, only filteredRowCount field is initialized by the filter,
+    // i.e. filteredRows can't be used.
+    private boolean isCountOnly;
     private boolean isOutOfMemory;
     private byte taskType;
 
@@ -80,6 +83,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     @Override
     public void clear() {
         filteredRowCount = 0;
+        isCountOnly = false;
         filteredRows.resetCapacity();
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
@@ -89,6 +93,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     @Override
     public void close() {
         filteredRowCount = 0;
+        isCountOnly = false;
         Misc.free(filteredRows);
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
@@ -162,16 +167,21 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return isCancelled;
     }
 
+    public boolean isCountOnly() {
+        return isCountOnly;
+    }
+
     public boolean isOutOfMemory() {
         return isOutOfMemory;
     }
 
-    public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
+    public void of(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
         this.frameSequence = frameSequence;
         final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();
         this.frameSequenceId = frameSequence.getId();
         this.taskType = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
+        this.isCountOnly = countOnly;
         // Initialize the memory pool if the task wasn't previously initialized for the same query,
         // or it belongs to top K. Top K uses its own frame memory pool.
         if (!sameQueryExecution && taskType != TYPE_TOP_K) {
@@ -179,6 +189,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
         frameMemory = null;
         filteredRows.clear();
+        filteredRowCount = 0;
         errorMsg.clear();
         isCancelled = false;
         isOutOfMemory = false;
@@ -216,9 +227,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             );
         }
 
-        final long rowCount = getFrameRowCount();
-        if (filteredRows.getCapacity() < rowCount) {
-            filteredRows.setCapacity(rowCount);
+        if (!isCountOnly) {
+            final long rowCount = getFrameRowCount();
+            if (filteredRows.getCapacity() < rowCount) {
+                filteredRows.setCapacity(rowCount);
+            }
         }
     }
 
