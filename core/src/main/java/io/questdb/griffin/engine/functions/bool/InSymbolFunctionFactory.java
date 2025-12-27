@@ -88,7 +88,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 case ColumnType.NULL:
                     CharSequence value = func.getStrA(null);
                     if (value == null) {
-                        set.add(null);
+                        set.add((CharSequence) null);
                     } else {
                         set.add(Chars.toString(value));
                     }

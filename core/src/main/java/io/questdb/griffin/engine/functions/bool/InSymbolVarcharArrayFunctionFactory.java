@@ -29,6 +29,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -45,7 +46,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 
 /**
  * Handles "symbol IN $1" where $1 is a VARCHAR[] bind variable.
@@ -125,11 +125,17 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
                 if (value == null) {
                     intSet.add(symbolTable.keyOf(null));
                 } else if (value.isAscii()) {
-                    intSet.add(symbolTable.keyOf(value.asAsciiCharSequence()));
+                    int key = symbolTable.keyOf(value.asAsciiCharSequence());
+                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                        intSet.add(key);
+                    }
                 } else {
                     StringSink sink = Misc.getThreadLocalSink();
                     sink.put(value);
-                    intSet.add(symbolTable.keyOf(sink));
+                    int key = symbolTable.keyOf(sink);
+                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                        intSet.add(key);
+                    }
                 }
             }
         }
@@ -190,8 +196,7 @@ public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
             strSet.clear();
             ArrayView arrayView = arrayFunc.getArray(null);
             for (int i = 0, n = arrayView.getCardinality(); i < n; i++) {
-                Utf8Sequence element = arrayView.getVarchar(i);
-                strSet.add(Utf8s.toString(element));
+                strSet.add(arrayView.getVarchar(i));
             }
         }
 

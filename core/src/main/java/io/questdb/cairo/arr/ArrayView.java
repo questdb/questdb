@@ -464,6 +464,16 @@ public abstract class ArrayView implements QuietCloseable {
                 + getCardinality() * elemSize; // data
     }
 
+    /**
+     * Returns the varchar element at the specified flat index.
+     * <p>
+     * <b>Important:</b> The returned {@link Utf8Sequence} is a flyweight object that may be
+     * reused internally. Callers must NOT cache the returned reference as it may be invalidated
+     * or point to different data on subsequent calls.
+     *
+     * @param flatIndex the flat (linear) index into the array
+     * @return the varchar at the specified index, or {@code null} if the element is NULL
+     */
     public final Utf8Sequence getVarchar(int flatIndex) {
         return flatView.getVarcharAt(flatViewOffset + flatIndex);
     }

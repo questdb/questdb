@@ -292,6 +292,35 @@ public class PGVarcharArrayBindVariablesTest extends AbstractBootstrapTest {
                                     resultSet
                             );
                         }
+
+                        stmt.clearParameters();
+                        Array array4 = connection.createArrayOf("VARCHAR", new String[]{"a", "c"});
+                        stmt.setArray(1, array4);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    """
+                                            ts[TIMESTAMP],sym_col[VARCHAR]
+                                            2023-01-01 09:10:00.0,a
+                                            2023-01-01 09:15:00.0,a
+                                            2023-01-01 09:17:00.0,a
+                                            2023-01-01 09:19:00.0,a
+                                            """,
+                                    new StringSink(),
+                                    resultSet
+                            );
+                        }
+
+                        stmt.clearParameters();
+                        stmt.setArray(1, null);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    """
+                                            ts[TIMESTAMP],sym_col[VARCHAR]
+                                            """,
+                                    new StringSink(),
+                                    resultSet
+                            );
+                        }
                     }
                 }
             }
