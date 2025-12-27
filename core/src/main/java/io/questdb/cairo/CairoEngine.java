@@ -45,6 +45,7 @@ import io.questdb.cairo.mv.NoOpMatViewStateStore;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
+import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.pool.SequencerMetadataPool;
 import io.questdb.cairo.pool.SqlCompilerPool;
@@ -173,6 +174,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
+    private final RecentWriteTracker recentWriteTracker;
     private volatile boolean closing;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
@@ -192,7 +194,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.messageBus = new MessageBusImpl(configuration);
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
-            this.writerPool = new WriterPool(configuration, this);
+            this.recentWriteTracker = new RecentWriteTracker(configuration.getRecentWriteTrackerCapacity());
+            this.writerPool = new WriterPool(configuration, this, recentWriteTracker);
             this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
             this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
@@ -589,6 +592,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableSequencerAPI.dropTable(tableToken, false);
                 matViewStateStore.removeViewState(tableToken);
                 matViewGraph.removeView(tableToken);
+                recentWriteTracker.removeTable(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
             }
@@ -608,6 +612,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // it from the registry without knowing that the table is being dropped.
                     // Then it can push the scoreboard max txn value into incorrect state.
                     scoreboardPool.remove(tableToken);
+                    recentWriteTracker.removeTable(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
                 }
@@ -1079,6 +1084,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
         return writerPool.entries();
+    }
+
+    public RecentWriteTracker getRecentWriteTracker() {
+        return recentWriteTracker;
     }
 
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {

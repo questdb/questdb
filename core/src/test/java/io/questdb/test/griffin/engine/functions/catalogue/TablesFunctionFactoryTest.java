@@ -28,10 +28,12 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -140,6 +142,48 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                             "ts1\n",
                     "select designatedTimestamp from tables where table_name = 'table1'"
             );
+        });
+    }
+
+    @Test
+    public void testRowCountAndLastWriteTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a WAL table and write data to it
+            execute("CREATE TABLE test_writes (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            RecentWriteTracker tracker = engine.getRecentWriteTracker();
+            tracker.clear();
+
+            // Before any writes, rowCount and lastWriteTimestamp should be null
+            assertSql(
+                    "table_name\trowCount\tlastWriteTimestamp\n" +
+                            "test_writes\tnull\t\n",
+                    "select table_name, rowCount, lastWriteTimestamp from tables() where table_name = 'test_writes'"
+            );
+
+            // Insert rows and drain WAL
+            long beforeWrite = configuration.getMicrosecondClock().getTicks();
+            execute("INSERT INTO test_writes VALUES (now(), 1)");
+            execute("INSERT INTO test_writes VALUES (now(), 2)");
+            execute("INSERT INTO test_writes VALUES (now(), 3)");
+            drainWalQueue();
+            long afterWrite = configuration.getMicrosecondClock().getTicks();
+
+            // Verify row count is tracked
+            TableToken tableToken = engine.verifyTableName("test_writes");
+            Assert.assertEquals(3L, tracker.getRowCount(tableToken));
+
+            // Query via tables() function
+            assertSql(
+                    "table_name\trowCount\n" +
+                            "test_writes\t3\n",
+                    "select table_name, rowCount from tables() where table_name = 'test_writes'"
+            );
+
+            // Verify lastWriteTimestamp is within expected range
+            long lastWriteTimestamp = tracker.getWriteTimestamp(tableToken);
+            Assert.assertTrue("Timestamp should be >= beforeWrite", lastWriteTimestamp >= beforeWrite);
+            Assert.assertTrue("Timestamp should be <= afterWrite", lastWriteTimestamp <= afterWrite);
         });
     }
 }

@@ -86,20 +86,24 @@ public class WriterPool extends AbstractPool {
     @NotNull
     private final CairoEngine engine;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
+    @Nullable
+    private final RecentWriteTracker recentWriteTracker;
     private final CharSequence root;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
      *
-     * @param configuration configuration parameters.
-     * @param engine        engine instance.
+     * @param configuration      configuration parameters.
+     * @param engine             engine instance.
+     * @param recentWriteTracker tracker for recent table writes, may be null.
      */
-    public WriterPool(CairoConfiguration configuration, @NotNull CairoEngine engine) {
+    public WriterPool(CairoConfiguration configuration, @NotNull CairoEngine engine, @Nullable RecentWriteTracker recentWriteTracker) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getDbRoot();
         this.engine = engine;
+        this.recentWriteTracker = recentWriteTracker;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
@@ -568,6 +572,12 @@ public class WriterPool extends AbstractPool {
 
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
+
+            // Track the write for UI/observability purposes
+            if (recentWriteTracker != null) {
+                recentWriteTracker.recordWrite(tableToken, e.lastReleaseTime, e.writer.getRowCount());
+            }
+
             Unsafe.getUnsafe().storeFence();
             Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
 

@@ -32,7 +32,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -46,6 +48,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -55,10 +58,12 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DIRECTORY_NAME_COLUMN = 7;
     private static final int ID_COLUMN = 0;
     private static final int IS_MAT_VIEW_COLUMN = 11;
+    private static final int LAST_WRITE_TIMESTAMP_COLUMN = 13;
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
     private static final RecordMetadata METADATA;
     private static final int O3_MAX_LAG_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 3;
+    private static final int ROW_COUNT_COLUMN = 12;
     private static final int TABLE_NAME = 1;
     private static final int TTL_UNIT_COLUMN = 10;
     private static final int TTL_VALUE_COLUMN = 9;
@@ -136,6 +141,7 @@ public class TablesFunctionFactory implements FunctionFactory {
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
             }
+            cursor.of(engine.getRecentWriteTracker());
             cursor.toTop();
             return cursor;
         }
@@ -159,6 +165,7 @@ public class TablesFunctionFactory implements FunctionFactory {
             private final TableListRecord record = new TableListRecord();
             private final CharSequenceObjHashMap<CairoTable> tableCache;
             private int iteratorIdx = -1;
+            private RecentWriteTracker recentWriteTracker;
 
             public TablesRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
                 this.tableCache = tableCache;
@@ -176,10 +183,14 @@ public class TablesFunctionFactory implements FunctionFactory {
             @Override
             public boolean hasNext() {
                 if (iteratorIdx < tableCache.size() - 1) {
-                    record.of(tableCache.getAt(++iteratorIdx));
+                    record.of(tableCache.getAt(++iteratorIdx), recentWriteTracker);
                     return true;
                 }
                 return false;
+            }
+
+            public void of(RecentWriteTracker recentWriteTracker) {
+                this.recentWriteTracker = recentWriteTracker;
             }
 
             @Override
@@ -199,20 +210,17 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             private static class TableListRecord implements Record {
                 private StringSink lazyStringSink = null;
+                private RecentWriteTracker recentWriteTracker;
                 private CairoTable table;
 
                 @Override
                 public boolean getBool(int col) {
-                    switch (col) {
-                        case WAL_ENABLED_COLUMN:
-                            return table.isWalEnabled();
-                        case DEDUP_NAME_COLUMN:
-                            return table.hasDedup();
-                        case IS_MAT_VIEW_COLUMN:
-                            return table.getTableToken().isMatView();
-                        default:
-                            return false;
-                    }
+                    return switch (col) {
+                        case WAL_ENABLED_COLUMN -> table.isWalEnabled();
+                        case DEDUP_NAME_COLUMN -> table.hasDedup();
+                        case IS_MAT_VIEW_COLUMN -> table.getTableToken().isMatView();
+                        default -> false;
+                    };
                 }
 
                 @Override
@@ -229,34 +237,53 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                    assert col == O3_MAX_LAG_COLUMN;
-                    return table.getO3MaxLag();
+                    if (col == O3_MAX_LAG_COLUMN) {
+                        return table.getO3MaxLag();
+                    }
+                    if (col == ROW_COUNT_COLUMN) {
+                        if (recentWriteTracker != null) {
+                            TableToken tableToken = table.getTableToken();
+                            // Returns Numbers.LONG_NULL if not tracked
+                            return recentWriteTracker.getRowCount(tableToken);
+                        }
+                        return Numbers.LONG_NULL;
+                    }
+                    assert false : "unexpected column: " + col;
+                    return Numbers.LONG_NULL;
                 }
 
                 @Override
                 public CharSequence getStrA(int col) {
-                    switch (col) {
-                        case TABLE_NAME:
-                            return table.getTableName();
-                        case PARTITION_BY_COLUMN:
-                            return table.getPartitionByName();
-                        case TTL_UNIT_COLUMN:
-                            return getTtlUnit(table.getTtlHoursOrMonths());
-                        case DESIGNATED_TIMESTAMP_COLUMN:
-                            return table.getTimestampName();
-                        case DIRECTORY_NAME_COLUMN:
+                    return switch (col) {
+                        case TABLE_NAME -> table.getTableName();
+                        case PARTITION_BY_COLUMN -> table.getPartitionByName();
+                        case TTL_UNIT_COLUMN -> getTtlUnit(table.getTtlHoursOrMonths());
+                        case DESIGNATED_TIMESTAMP_COLUMN -> table.getTimestampName();
+                        case DIRECTORY_NAME_COLUMN -> {
                             if (table.isSoftLink()) {
                                 if (lazyStringSink == null) {
                                     lazyStringSink = new StringSink();
                                 }
                                 lazyStringSink.clear();
                                 lazyStringSink.put(table.getDirectoryName()).put(" (->)");
-                                return lazyStringSink;
+                                yield lazyStringSink;
                             }
-                            return table.getDirectoryName();
-                        default:
-                            return null;
+                            yield table.getDirectoryName();
+                        }
+                        default -> null;
+                    };
+                }
+
+                @Override
+                public long getTimestamp(int col) {
+                    if (col == LAST_WRITE_TIMESTAMP_COLUMN) {
+                        if (recentWriteTracker != null) {
+                            TableToken tableToken = table.getTableToken();
+                            // Returns Numbers.LONG_NULL if not tracked, which displays as null for timestamps
+                            return recentWriteTracker.getWriteTimestamp(tableToken);
+                        }
                     }
+                    return Numbers.LONG_NULL;
                 }
 
                 @Override
@@ -269,8 +296,9 @@ public class TablesFunctionFactory implements FunctionFactory {
                     return TableUtils.lengthOf(getStrA(col));
                 }
 
-                private void of(CairoTable table) {
+                private void of(CairoTable table, RecentWriteTracker recentWriteTracker) {
                     this.table = table;
+                    this.recentWriteTracker = recentWriteTracker;
                 }
             }
         }
@@ -290,6 +318,8 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));
         metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("rowCount", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("lastWriteTimestamp", ColumnType.TIMESTAMP));
         METADATA = metadata;
     }
 }

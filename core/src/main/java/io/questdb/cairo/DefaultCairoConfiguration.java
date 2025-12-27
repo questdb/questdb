@@ -570,6 +570,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getRecentWriteTrackerCapacity() {
+        return 100;
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
     }
