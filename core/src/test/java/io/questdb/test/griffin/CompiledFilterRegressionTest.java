@@ -823,6 +823,21 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntColumnsCount() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x as byte) i8," +
+                " cast(x as short) i16," +
+                " cast(x as int) i32," +
+                " x i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i8", "i16", "i32", "i64")
+                .withAnyOf(" != 0");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
     public void testIntConstantColumnComparisonBoundaryMatch() throws Exception {
         final int boundary = 101;
         Assert.assertTrue("boundary should be within the range", N_SIMD_WITH_SCALAR_TAIL > boundary);
