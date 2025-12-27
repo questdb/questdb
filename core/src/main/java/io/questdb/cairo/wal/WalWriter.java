@@ -439,10 +439,9 @@ public class WalWriter implements TableWriterAPI {
         goActive(Long.MAX_VALUE);
     }
 
-    public boolean goActive(long maxStructureVersion) {
+    public void goActive(long maxStructureVersion) {
         try {
             applyMetadataChangeLog(maxStructureVersion);
-            return true;
         } catch (CairoException e) {
             LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken)
                     .$(", walId=").$(walId)
@@ -450,7 +449,7 @@ public class WalWriter implements TableWriterAPI {
                     .$(", errno=").$(e.getErrno())
                     .I$();
             distressed = true;
-            return false;
+            throw e;
         }
     }
 
