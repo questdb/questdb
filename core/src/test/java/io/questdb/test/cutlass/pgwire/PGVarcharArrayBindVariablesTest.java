@@ -328,6 +328,91 @@ public class PGVarcharArrayBindVariablesTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testBindVarcharArrayWithSpecialCharacters() throws Exception {
+        assertMemoryLeak(() -> {
+            createDummyConfiguration(
+                    "pg.select.cache.enabled=true"
+            );
+
+            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+                try (
+                        SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1)
+                                .with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(engine.getConfiguration()))
+                ) {
+                    engine.execute(
+                            "create table special_chars (ts TIMESTAMP, val varchar) timestamp(ts) partition by day",
+                            executionContext
+                    );
+                    engine.execute(
+                            "insert into special_chars(ts, val) values " +
+                                    "(cast('2023-01-01T09:10:00.000000Z' as TIMESTAMP), 'hello\\world')," +  // backslash
+                                    "(cast('2023-01-01T09:11:00.000000Z' as TIMESTAMP), 'say\"hi')," +       // quote
+                                    "(cast('2023-01-01T09:12:00.000000Z' as TIMESTAMP), 'a,b,c')," +         // commas
+                                    "(cast('2023-01-01T09:13:00.000000Z' as TIMESTAMP), '{braces}')," +      // braces
+                                    "(cast('2023-01-01T09:14:00.000000Z' as TIMESTAMP), 'normal')",
+                            executionContext
+                    );
+                }
+                drainWalQueue(engine);
+
+                try (Connection connection = getConnection(serverMain)) {
+                    // Test with backslash in array
+                    try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM special_chars WHERE val IN (?)")) {
+                        Array array = connection.createArrayOf("varchar", new String[]{"hello\\world", "normal"});
+                        stmt.setArray(1, array);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    """
+                                            ts[TIMESTAMP],val[VARCHAR]
+                                            2023-01-01 09:10:00.0,hello\\world
+                                            2023-01-01 09:14:00.0,normal
+                                            """,
+                                    new StringSink(),
+                                    resultSet
+                            );
+                        }
+                    }
+
+                    // Test with quote in array
+                    try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM special_chars WHERE val IN (?)")) {
+                        Array array = connection.createArrayOf("varchar", new String[]{"say\"hi"});
+                        stmt.setArray(1, array);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    """
+                                            ts[TIMESTAMP],val[VARCHAR]
+                                            2023-01-01 09:11:00.0,say"hi
+                                            """,
+                                    new StringSink(),
+                                    resultSet
+                            );
+                        }
+                    }
+
+                    // Test with commas and braces
+                    try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM special_chars WHERE val IN (?)")) {
+                        Array array = connection.createArrayOf("varchar", new String[]{"a,b,c", "{braces}"});
+                        stmt.setArray(1, array);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    """
+                                            ts[TIMESTAMP],val[VARCHAR]
+                                            2023-01-01 09:12:00.0,a,b,c
+                                            2023-01-01 09:13:00.0,{braces}
+                                            """,
+                                    new StringSink(),
+                                    resultSet
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testBindVarcharListOutput() throws Exception {
         try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
             serverMain.start();
