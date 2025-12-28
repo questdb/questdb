@@ -44,9 +44,9 @@ public class RecentWriteTrackerTest {
         TableToken table2 = createTableToken("table2", 2);
         TableToken table3 = createTableToken("table3", 3);
 
-        tracker.recordWrite(table1, 1000L, 100L);
-        tracker.recordWrite(table2, 2000L, 200L);
-        tracker.recordWrite(table3, 3000L, 300L);
+        tracker.recordWrite(table1, 1000L, 100L, 1L);
+        tracker.recordWrite(table2, 2000L, 200L, 2L);
+        tracker.recordWrite(table3, 3000L, 300L, 3L);
 
         Assert.assertEquals(3, tracker.size());
 
@@ -65,8 +65,8 @@ public class RecentWriteTrackerTest {
         TableToken table1 = createTableToken("table1", 1);
         TableToken table2 = createTableToken("table2", 2);
 
-        tracker.recordWrite(table1, 1000L, 100L);
-        tracker.recordWrite(table2, 2000L, 200L);
+        tracker.recordWrite(table1, 1000L, 100L, 1L);
+        tracker.recordWrite(table2, 2000L, 200L, 2L);
 
         Assert.assertEquals(2, tracker.size());
 
@@ -89,7 +89,7 @@ public class RecentWriteTrackerTest {
         // Pre-populate with some data
         for (int i = 0; i < 50; i++) {
             TableToken table = createTableToken("initial_table" + i, i);
-            tracker.recordWrite(table, i * 1000L, i * 10L);
+            tracker.recordWrite(table, i * 1000L, i * 10L, i);
         }
 
         CyclicBarrier barrier = new CyclicBarrier(numWriterThreads + numReaderThreads);
@@ -108,7 +108,7 @@ public class RecentWriteTrackerTest {
                         String tableName = "writer" + threadId + "_table" + tableIndex;
                         int tableId = 1000 + threadId * 100 + tableIndex;
                         TableToken table = createTableToken(tableName, tableId);
-                        tracker.recordWrite(table, System.nanoTime(), i * 10L);
+                        tracker.recordWrite(table, System.nanoTime(), i * 10L, i);
                     }
                 } catch (Exception e) {
                     errors.incrementAndGet();
@@ -170,7 +170,7 @@ public class RecentWriteTrackerTest {
                         String tableName = "thread" + threadId + "_table" + tableIndex;
                         int tableId = threadId * 1000 + tableIndex;
                         TableToken table = createTableToken(tableName, tableId);
-                        tracker.recordWrite(table, System.nanoTime(), i * 10L);
+                        tracker.recordWrite(table, System.nanoTime(), i * 10L, i);
                     }
                 } catch (Exception e) {
                     errors.incrementAndGet();
@@ -212,7 +212,7 @@ public class RecentWriteTrackerTest {
         // Add more than 2x capacity to trigger eviction
         for (int i = 0; i < 15; i++) {
             TableToken table = createTableToken("table" + i, i);
-            tracker.recordWrite(table, i * 1000L, i * 10L);
+            tracker.recordWrite(table, i * 1000L, i * 10L, i);
         }
 
         // After eviction, size should be around capacity (5)
@@ -237,7 +237,7 @@ public class RecentWriteTrackerTest {
         RecentWriteTracker tracker = new RecentWriteTracker(10);
 
         TableToken table1 = createTableToken("table1", 1);
-        tracker.recordWrite(table1, 12345L, 500L);
+        tracker.recordWrite(table1, 12345L, 500L, 10L);
 
         Assert.assertEquals(500L, tracker.getRowCount(table1));
 
@@ -250,17 +250,19 @@ public class RecentWriteTrackerTest {
         RecentWriteTracker tracker = new RecentWriteTracker(10);
 
         TableToken table1 = createTableToken("table1", 1);
-        tracker.recordWrite(table1, 12345L, 500L);
+        tracker.recordWrite(table1, 12345L, 500L, 10L);
 
         RecentWriteTracker.WriteStats stats = tracker.getWriteStats(table1);
         Assert.assertNotNull(stats);
         Assert.assertEquals(12345L, stats.getTimestamp());
         Assert.assertEquals(500L, stats.getRowCount());
+        Assert.assertEquals(10L, stats.getWriterTxn());
 
         // Update and verify same object is reused (zero-allocation for updates)
-        tracker.recordWrite(table1, 23456L, 750L);
+        tracker.recordWrite(table1, 23456L, 750L, 11L);
         Assert.assertEquals(23456L, stats.getTimestamp());
         Assert.assertEquals(750L, stats.getRowCount());
+        Assert.assertEquals(11L, stats.getWriterTxn());
 
         // Nonexistent table returns null
         TableToken nonexistent = createTableToken("nonexistent", 999);
@@ -272,7 +274,7 @@ public class RecentWriteTrackerTest {
         RecentWriteTracker tracker = new RecentWriteTracker(10);
 
         TableToken table1 = createTableToken("table1", 1);
-        tracker.recordWrite(table1, 12345L, 500L);
+        tracker.recordWrite(table1, 12345L, 500L, 10L);
 
         Assert.assertEquals(12345L, tracker.getWriteTimestamp(table1));
 
@@ -281,12 +283,25 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
+    public void testGetWriterTxn() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+        tracker.recordWrite(table1, 12345L, 500L, 42L);
+
+        Assert.assertEquals(42L, tracker.getWriterTxn(table1));
+
+        TableToken nonexistent = createTableToken("nonexistent", 999);
+        Assert.assertEquals(Numbers.LONG_NULL, tracker.getWriterTxn(nonexistent));
+    }
+
+    @Test
     public void testLimitResults() {
         RecentWriteTracker tracker = new RecentWriteTracker(100);
 
         for (int i = 0; i < 50; i++) {
             TableToken table = createTableToken("table" + i, i);
-            tracker.recordWrite(table, i * 1000L, i * 10L);
+            tracker.recordWrite(table, i * 1000L, i * 10L, i);
         }
 
         Assert.assertEquals(50, tracker.size());
@@ -303,14 +318,69 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
+    public void testRecordWriteIfAbsentDoesNotOverwrite() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+
+        // First insert via recordWrite (simulates writer)
+        tracker.recordWrite(table1, 5000L, 500L, 50L);
+
+        // Attempt to insert via recordWriteIfAbsent (simulates hydration with stale data)
+        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L);
+
+        // Should not have overwritten
+        Assert.assertFalse("recordWriteIfAbsent should return false when entry exists", inserted);
+        Assert.assertEquals("Writer timestamp should be preserved", 5000L, tracker.getWriteTimestamp(table1));
+        Assert.assertEquals("Writer rowCount should be preserved", 500L, tracker.getRowCount(table1));
+        Assert.assertEquals("Writer txn should be preserved", 50L, tracker.getWriterTxn(table1));
+        Assert.assertEquals("Size should still be 1", 1, tracker.size());
+    }
+
+    @Test
+    public void testRecordWriteIfAbsentInsertsWhenEmpty() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+
+        // Insert via recordWriteIfAbsent when no entry exists
+        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L);
+
+        Assert.assertTrue("recordWriteIfAbsent should return true when inserting new entry", inserted);
+        Assert.assertEquals(1000L, tracker.getWriteTimestamp(table1));
+        Assert.assertEquals(100L, tracker.getRowCount(table1));
+        Assert.assertEquals(10L, tracker.getWriterTxn(table1));
+        Assert.assertEquals(1, tracker.size());
+    }
+
+    @Test
+    public void testRecordWriteOverwritesHydratedData() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+
+        // First insert via recordWriteIfAbsent (simulates hydration)
+        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L);
+        Assert.assertTrue(inserted);
+
+        // Writer updates with fresh data
+        tracker.recordWrite(table1, 5000L, 500L, 50L);
+
+        // Writer data should win
+        Assert.assertEquals("Writer timestamp should overwrite", 5000L, tracker.getWriteTimestamp(table1));
+        Assert.assertEquals("Writer rowCount should overwrite", 500L, tracker.getRowCount(table1));
+        Assert.assertEquals("Writer txn should overwrite", 50L, tracker.getWriterTxn(table1));
+    }
+
+    @Test
     public void testRemoveTable() {
         RecentWriteTracker tracker = new RecentWriteTracker(10);
 
         TableToken table1 = createTableToken("table1", 1);
         TableToken table2 = createTableToken("table2", 2);
 
-        tracker.recordWrite(table1, 1000L, 100L);
-        tracker.recordWrite(table2, 2000L, 200L);
+        tracker.recordWrite(table1, 1000L, 100L, 1L);
+        tracker.recordWrite(table2, 2000L, 200L, 2L);
 
         Assert.assertEquals(2, tracker.size());
 
@@ -328,19 +398,20 @@ public class RecentWriteTrackerTest {
         TableToken table1 = createTableToken("table1", 1);
 
         // First write
-        tracker.recordWrite(table1, 1000L, 100L);
+        tracker.recordWrite(table1, 1000L, 100L, 1L);
         Assert.assertEquals(100L, tracker.getRowCount(table1));
 
         // Second write with more rows
-        tracker.recordWrite(table1, 2000L, 250L);
+        tracker.recordWrite(table1, 2000L, 250L, 2L);
         Assert.assertEquals(250L, tracker.getRowCount(table1));
 
         // Third write with even more rows
-        tracker.recordWrite(table1, 3000L, 500L);
+        tracker.recordWrite(table1, 3000L, 500L, 3L);
         Assert.assertEquals(500L, tracker.getRowCount(table1));
 
         // Verify timestamp also updated
         Assert.assertEquals(3000L, tracker.getWriteTimestamp(table1));
+        Assert.assertEquals(3L, tracker.getWriterTxn(table1));
     }
 
     @Test
@@ -350,10 +421,10 @@ public class RecentWriteTrackerTest {
         TableToken table1 = createTableToken("table1", 1);
         TableToken table2 = createTableToken("table2", 2);
 
-        tracker.recordWrite(table1, 1000L, 100L);
-        tracker.recordWrite(table2, 2000L, 200L);
+        tracker.recordWrite(table1, 1000L, 100L, 1L);
+        tracker.recordWrite(table2, 2000L, 200L, 2L);
         // Update table1 with newer timestamp and row count
-        tracker.recordWrite(table1, 3000L, 150L);
+        tracker.recordWrite(table1, 3000L, 150L, 3L);
 
         Assert.assertEquals(2, tracker.size());
 

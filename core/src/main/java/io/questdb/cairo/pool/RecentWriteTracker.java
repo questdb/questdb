@@ -59,7 +59,7 @@ import java.util.concurrent.locks.ReentrantLock;
  *       Call {@link #removeTable(TableToken)} explicitly when dropping tables.</li>
  * </ul>
  *
- * @see #recordWrite(TableToken, long, long)
+ * @see #recordWrite(TableToken, long, long, long)
  * @see #getRecentlyWrittenTables(int)
  */
 public class RecentWriteTracker {
@@ -196,6 +196,20 @@ public class RecentWriteTracker {
     }
 
     /**
+     * Returns the writer transaction number for a specific table.
+     * <p>
+     * This is the transaction number from the TableWriter, not the WAL sequence transaction.
+     * WAL transactions can be ahead of this value.
+     *
+     * @param tableToken the table to look up
+     * @return writer transaction number, or {@link Numbers#LONG_NULL} if not tracked
+     */
+    public long getWriterTxn(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.writerTxn : Numbers.LONG_NULL;
+    }
+
+    /**
      * Records a write to the specified table.
      * <p>
      * This method is thread-safe and optimized for minimal contention.
@@ -206,19 +220,20 @@ public class RecentWriteTracker {
      * @param tableToken the table that was written to
      * @param timestamp  the write timestamp in microseconds
      * @param rowCount   the total row count after the write
+     * @param writerTxn  the writer transaction number (not WAL sequence txn)
      */
-    public void recordWrite(@NotNull TableToken tableToken, long timestamp, long rowCount) {
+    public void recordWrite(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats != null) {
             // Fast path: entry exists, just update (zero allocation)
-            stats.update(timestamp, rowCount);
+            stats.update(timestamp, rowCount, writerTxn);
         } else {
             // Slow path: need to create new entry
-            WriteStats newStats = new WriteStats(timestamp, rowCount);
+            WriteStats newStats = new WriteStats(timestamp, rowCount, writerTxn);
             WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
             if (existing != null) {
                 // Another thread inserted first, update theirs
-                existing.update(timestamp, rowCount);
+                existing.update(timestamp, rowCount, writerTxn);
             }
         }
 
@@ -227,6 +242,39 @@ public class RecentWriteTracker {
         if (writeStats.size() > maxCapacity * 2) {
             evictOldest();
         }
+    }
+
+    /**
+     * Records a write only if no entry exists for this table (CAS with expected null).
+     * <p>
+     * This method is used during hydration to populate the tracker from existing tables
+     * without overwriting fresher data from concurrent writers. Writer data always wins
+     * over hydrated data.
+     *
+     * @param tableToken the table that was written to
+     * @param timestamp  the write timestamp in microseconds
+     * @param rowCount   the total row count after the write
+     * @param writerTxn  the writer transaction number (not WAL sequence txn)
+     * @return true if entry was inserted, false if entry already existed
+     */
+    public boolean recordWriteIfAbsent(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn) {
+        // Check first to avoid allocation when entry exists
+        if (writeStats.containsKey(tableToken)) {
+            return false;
+        }
+
+        // CAS insert - only succeeds if no entry exists
+        WriteStats existing = writeStats.putIfAbsent(tableToken, new WriteStats(timestamp, rowCount, writerTxn));
+        if (existing != null) {
+            // Another thread (likely a writer) inserted first - their data wins
+            return false;
+        }
+
+        // Lazy eviction
+        if (writeStats.size() > maxCapacity * 2) {
+            evictOldest();
+        }
+        return true;
     }
 
     /**
@@ -347,10 +395,12 @@ public class RecentWriteTracker {
     public static class WriteStats {
         private volatile long rowCount;
         private volatile long timestamp;
+        private volatile long writerTxn;
 
-        WriteStats(long timestamp, long rowCount) {
+        WriteStats(long timestamp, long rowCount, long writerTxn) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
+            this.writerTxn = writerTxn;
         }
 
         /**
@@ -375,9 +425,22 @@ public class RecentWriteTracker {
             return timestamp;
         }
 
-        void update(long timestamp, long rowCount) {
+        /**
+         * Returns the writer transaction number of the last write.
+         * <p>
+         * This is the transaction number from the TableWriter, not the WAL sequence transaction.
+         * WAL transactions can be ahead of this value.
+         *
+         * @return writer transaction number
+         */
+        public long getWriterTxn() {
+            return writerTxn;
+        }
+
+        void update(long timestamp, long rowCount, long writerTxn) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
+            this.writerTxn = writerTxn;
         }
     }
 }

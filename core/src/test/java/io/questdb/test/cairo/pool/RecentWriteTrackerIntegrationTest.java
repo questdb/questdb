@@ -422,4 +422,47 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             Assert.assertTrue("orders table should be tracked", foundOrders);
         });
     }
+
+    /**
+     * Demonstrates hydrating the tracker from existing tables on startup.
+     * <p>
+     * Use case: Populate tracker with existing table data when server starts.
+     */
+    @Test
+    public void testHydrateFromExistingTables() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create tables and write data
+            execute("CREATE TABLE hydrate_test1 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE hydrate_test2 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO hydrate_test1 VALUES (now(), 1)");
+            execute("INSERT INTO hydrate_test1 VALUES (now(), 2)");
+            execute("INSERT INTO hydrate_test2 VALUES (now(), 3)");
+            drainWalQueue();
+
+            // Clear the tracker to simulate a fresh start
+            RecentWriteTracker tracker = engine.getRecentWriteTracker();
+            tracker.clear();
+            Assert.assertEquals("Tracker should be empty after clear", 0, tracker.size());
+
+            // Hydrate from existing tables
+            engine.hydrateRecentWriteTracker();
+
+            // Verify tables were hydrated
+            TableToken token1 = engine.verifyTableName("hydrate_test1");
+            TableToken token2 = engine.verifyTableName("hydrate_test2");
+
+            // Row counts should be populated
+            Assert.assertEquals("hydrate_test1 should have 2 rows", 2L, tracker.getRowCount(token1));
+            Assert.assertEquals("hydrate_test2 should have 1 row", 1L, tracker.getRowCount(token2));
+
+            // Timestamps should be populated (file modification times)
+            Assert.assertTrue("hydrate_test1 should have timestamp", tracker.getWriteTimestamp(token1) > 0);
+            Assert.assertTrue("hydrate_test2 should have timestamp", tracker.getWriteTimestamp(token2) > 0);
+
+            // Tables should appear in recent list
+            ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
+            Assert.assertTrue("Should have at least 2 tables", recent.size() >= 2);
+        });
+    }
 }

@@ -51,9 +51,11 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             createPopulateTable(tm1, 0, "2020-01-01", 0);
 
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                            "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
-                            "1\ttable1\tts1\tDAY\t1000\t300000000\n",
+                    """
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag
+                            2\ttable2\tts2\tNONE\t1000\t300000000
+                            1\ttable1\tts1\tDAY\t1000\t300000000
+                            """,
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc"
             );
         });
@@ -71,8 +73,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             createPopulateTable(tm1, 0, "2020-01-01", 0);
 
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                            "1\ttable1\tts1\tDAY\t83737\t28000\n",
+                    """
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag
+                            1\ttable1\tts1\tDAY\t83737\t28000
+                            """,
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
         });
@@ -119,8 +123,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             createPopulateTable(tm1, 0, "2020-01-01", 0);
 
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                            "1\ttable1\tts1\tDAY\t1000\t300000000\n",
+                    """
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag
+                            1\ttable1\tts1\tDAY\t1000\t300000000
+                            """,
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'table1'"
             );
         });
@@ -138,8 +144,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             createPopulateTable(tm1, 0, "2020-01-01", 0);
 
             assertSql(
-                    "designatedTimestamp\n" +
-                            "ts1\n",
+                    """
+                            designatedTimestamp
+                            ts1
+                            """,
                     "select designatedTimestamp from tables where table_name = 'table1'"
             );
         });
@@ -156,8 +164,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
 
             // Before any writes, rowCount and lastWriteTimestamp should be null
             assertSql(
-                    "table_name\trowCount\tlastWriteTimestamp\n" +
-                            "test_writes\tnull\t\n",
+                    """
+                            table_name\trowCount\tlastWriteTimestamp
+                            test_writes\tnull\t
+                            """,
                     "select table_name, rowCount, lastWriteTimestamp from tables() where table_name = 'test_writes'"
             );
 
@@ -175,8 +185,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
 
             // Query via tables() function
             assertSql(
-                    "table_name\trowCount\n" +
-                            "test_writes\t3\n",
+                    """
+                            table_name\trowCount
+                            test_writes\t3
+                            """,
                     "select table_name, rowCount from tables() where table_name = 'test_writes'"
             );
 

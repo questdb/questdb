@@ -30,10 +30,14 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.RecentWriteTracker;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -48,6 +52,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static java.util.Arrays.asList;
@@ -816,6 +822,77 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             missingProps.isEmpty() && actualProps.isEmpty()
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRecentWriteTrackerHydrationOnRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            // First server: create tables and write data
+            try (
+                    final ServerMain serverMain = new ServerMain(getServerMainArgs());
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                serverMain.start();
+
+                // Create WAL tables and write data
+                serverMain.getEngine().execute("CREATE TABLE tracker_test1 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+                serverMain.getEngine().execute("CREATE TABLE tracker_test2 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+
+                serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES (now(), 1)", sqlExecutionContext);
+                serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES (now(), 2)", sqlExecutionContext);
+                serverMain.getEngine().execute("INSERT INTO tracker_test2 VALUES (now(), 3)", sqlExecutionContext);
+
+                // Wait for WAL transactions to be applied
+                StringSink sink = new StringSink();
+                TestUtils.assertSql(
+                        serverMain.getEngine(),
+                        sqlExecutionContext,
+                        "select wait_wal_table('tracker_test1')",
+                        sink,
+                        "wait_wal_table('tracker_test1')\ntrue\n"
+                );
+                TestUtils.assertSql(
+                        serverMain.getEngine(),
+                        sqlExecutionContext,
+                        "select wait_wal_table('tracker_test2')",
+                        sink,
+                        "wait_wal_table('tracker_test2')\ntrue\n"
+                );
+            }
+
+            // Second server: verify tracker is hydrated from existing tables
+            try (
+                    final ServerMain serverMain = new ServerMain(getServerMainArgs())
+            ) {
+                // Set up latch to wait for hydration to complete
+                CountDownLatch hydrationLatch = new CountDownLatch(1);
+                serverMain.getEngine().setRecentWriteTrackerHydrationCallback(hydrationLatch::countDown);
+
+                serverMain.start();
+
+                // Wait for hydration to complete (deterministic via callback)
+                Assert.assertTrue("Hydration should complete within timeout",
+                        hydrationLatch.await(30, TimeUnit.SECONDS));
+
+                RecentWriteTracker tracker = serverMain.getEngine().getRecentWriteTracker();
+                Assert.assertNotNull("Tracker should be available", tracker);
+
+                // Verify tables were hydrated with correct row counts
+                TableToken token1 = serverMain.getEngine().verifyTableName("tracker_test1");
+                TableToken token2 = serverMain.getEngine().verifyTableName("tracker_test2");
+
+                Assert.assertEquals("tracker_test1 should have 2 rows", 2L, tracker.getRowCount(token1));
+                Assert.assertEquals("tracker_test2 should have 1 row", 1L, tracker.getRowCount(token2));
+
+                // Verify timestamps are populated
+                Assert.assertTrue("tracker_test1 should have timestamp", tracker.getWriteTimestamp(token1) > 0);
+                Assert.assertTrue("tracker_test2 should have timestamp", tracker.getWriteTimestamp(token2) > 0);
+
+                // Verify tables appear in recent list
+                ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
+                Assert.assertTrue("Should have at least 2 tables", recent.size() >= 2);
             }
         });
     }

@@ -156,6 +156,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
+    private final RecentWriteTracker recentWriteTracker;
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
@@ -174,12 +175,12 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
-    private final RecentWriteTracker recentWriteTracker;
     private volatile boolean closing;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
@@ -848,6 +849,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public RecentWriteTracker getRecentWriteTracker() {
+        return recentWriteTracker;
+    }
+
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
         return getSequencerMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
@@ -1086,12 +1091,70 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.entries();
     }
 
-    public RecentWriteTracker getRecentWriteTracker() {
-        return recentWriteTracker;
-    }
-
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
         return writerPool.get(tableToken, lockReason);
+    }
+
+    /**
+     * Populates the RecentWriteTracker with data from existing tables.
+     * This should be called at startup to ensure the tracker is not empty.
+     * <p>
+     * For each table, reads the _txn file to get the row count and uses
+     * the file modification time as the last write timestamp.
+     */
+    public void hydrateRecentWriteTracker() {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence dbRoot = configuration.getDbRoot();
+        final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
+        getTableTokens(tableTokens, false);
+
+        try (TxReader txReader = new TxReader(ff); Path path = new Path().of(dbRoot)) {
+            final int rootLen = path.size();
+
+            int hydratedCount = 0;
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                TableToken tableToken = tableTokens.get(i);
+                try {
+                    path.trimTo(rootLen).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+
+                    if (!ff.exists(path.$())) {
+                        continue;
+                    }
+
+                    // Get file modification time as last write timestamp
+                    long lastModified = ff.getLastModified(path.$());
+                    if (lastModified < 0) {
+                        continue;
+                    }
+
+                    // Get metadata for timestampType and partitionBy
+                    try (TableMetadata metadata = getTableMetadata(tableToken)) {
+                        txReader.ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy());
+                        TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+
+                        long rowCount = txReader.getRowCount();
+                        long writerTxn = txReader.getTxn();
+                        // Use CAS insert - writer data always wins over hydrated data
+                        if (recentWriteTracker.recordWriteIfAbsent(tableToken, lastModified, rowCount, writerTxn)) {
+                            hydratedCount++;
+                        }
+                    }
+                } catch (CairoException | TableReferenceOutOfDateException e) {
+                    // Table may have been dropped or is in inconsistent state, skip it
+                    LOG.info().$("skipping table during write tracker hydration [table=").$(tableToken)
+                            .$(", error=").$(e.getMessage()).I$();
+                } finally {
+                    txReader.clear();
+                }
+            }
+
+            LOG.info().$("recent write tracker hydrated [tables=").$(hydratedCount).I$();
+        }
+
+        Runnable callback = recentWriteTrackerHydrationCallback;
+        if (callback != null) {
+            callback.run();
+        }
     }
 
     public boolean isClosing() {
@@ -1479,6 +1542,17 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setReaderListener(ReaderPool.ReaderListener readerListener) {
         readerPool.setTableReaderListener(readerListener);
+    }
+
+    /**
+     * Sets a callback to be invoked after {@link #hydrateRecentWriteTracker()} completes.
+     * This is primarily for testing to avoid sleep-based synchronization.
+     *
+     * @param callback the callback to invoke, or null to clear
+     */
+    @TestOnly
+    public void setRecentWriteTrackerHydrationCallback(Runnable callback) {
+        this.recentWriteTrackerHydrationCallback = callback;
     }
 
     @TestOnly

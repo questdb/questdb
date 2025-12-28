@@ -575,7 +575,7 @@ public class WriterPool extends AbstractPool {
 
             // Track the write for UI/observability purposes
             if (recentWriteTracker != null) {
-                recentWriteTracker.recordWrite(tableToken, e.lastReleaseTime, e.writer.getRowCount());
+                recentWriteTracker.recordWrite(tableToken, e.lastReleaseTime, e.writer.getRowCount(), e.writer.getTxn());
             }
 
             Unsafe.getUnsafe().storeFence();
