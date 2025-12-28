@@ -57,8 +57,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
                         assertCursor(
                                 """
-                                        id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
-                                        1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse
+                                        id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\trowCount\tlastWriteTimestamp\twriterTxn\tsequencerTxn\tlastWalTimestamp
+                                        1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\tnull\t\tnull\tnull\t
                                         """,
                                 false,
                                 true,
@@ -78,8 +78,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                         // note the ID is 2 now!
                         assertCursor(
                                 """
-                                        id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
-                                        2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse
+                                        id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\trowCount\tlastWriteTimestamp\twriterTxn\tsequencerTxn\tlastWalTimestamp
+                                        2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\tnull\t\tnull\tnull\t
                                         """,
                                 false,
                                 true,
@@ -268,9 +268,9 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
             assertSql(
                     """
-                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
-                            1\tbalances\tts\tDAY\t1000\t300000000\ttrue\tbalances~1\tfalse\t0\tHOUR\tfalse
-                            2\tbalances_1h\tts\tWEEK\t1000\t-1\ttrue\tbalances_1h~2\tfalse\t0\tHOUR\ttrue
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\trowCount\tlastWriteTimestamp\twriterTxn\tsequencerTxn\tlastWalTimestamp
+                            1\tbalances\tts\tDAY\t1000\t300000000\ttrue\tbalances~1\tfalse\t0\tHOUR\tfalse\tnull\t\tnull\tnull\t
+                            2\tbalances_1h\tts\tWEEK\t1000\t-1\ttrue\tbalances_1h~2\tfalse\t0\tHOUR\ttrue\tnull\t\tnull\tnull\t
                             """,
                     "tables() order by table_name"
             );

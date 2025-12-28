@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
+import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
@@ -36,6 +37,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -52,8 +54,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static java.util.Arrays.asList;
@@ -832,7 +832,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             // First server: create tables and write data
             try (
-                    final ServerMain serverMain = new ServerMain(getServerMainArgs());
+                    final ServerMain serverMain = new ServerMain(new Bootstrap(new PropBootstrapConfiguration() {
+                        @Override
+                        public boolean useSite() {
+                            return false;
+                        }
+                    }, getServerMainArgs()));
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 serverMain.start();
@@ -841,9 +846,11 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.getEngine().execute("CREATE TABLE tracker_test1 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
                 serverMain.getEngine().execute("CREATE TABLE tracker_test2 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
 
-                serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES (now(), 1)", sqlExecutionContext);
-                serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES (now(), 2)", sqlExecutionContext);
-                serverMain.getEngine().execute("INSERT INTO tracker_test2 VALUES (now(), 3)", sqlExecutionContext);
+                serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES ('2024-01-01T00:00:00.000000Z', 1)", sqlExecutionContext);
+                serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES ('2024-01-01T00:00:01.000000Z', 2)", sqlExecutionContext);
+                serverMain.getEngine().execute("INSERT INTO tracker_test2 VALUES ('2024-01-01T00:00:02.000000Z', 3)", sqlExecutionContext);
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
 
                 // Wait for WAL transactions to be applied
                 StringSink sink = new StringSink();
@@ -868,14 +875,13 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     final ServerMain serverMain = new ServerMain(getServerMainArgs())
             ) {
                 // Set up latch to wait for hydration to complete
-                CountDownLatch hydrationLatch = new CountDownLatch(1);
+                SOCountDownLatch hydrationLatch = new SOCountDownLatch(1);
                 serverMain.getEngine().setRecentWriteTrackerHydrationCallback(hydrationLatch::countDown);
 
                 serverMain.start();
 
                 // Wait for hydration to complete (deterministic via callback)
-                Assert.assertTrue("Hydration should complete within timeout",
-                        hydrationLatch.await(30, TimeUnit.SECONDS));
+                hydrationLatch.await();
 
                 RecentWriteTracker tracker = serverMain.getEngine().getRecentWriteTracker();
                 Assert.assertNotNull("Tracker should be available", tracker);
