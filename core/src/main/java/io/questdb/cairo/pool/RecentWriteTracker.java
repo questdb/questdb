@@ -33,6 +33,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -135,9 +136,10 @@ public class RecentWriteTracker {
 
             // Collect all entries into buffers
             // Note: forEach on ConcurrentHashMap has small internal allocations for traversal
+            // Uses max(timestamp, walTimestamp) to consider both writer and WAL activity
             writeStats.forEach((key, stats) -> {
                 readBuffer.add(key);
-                readTimestamps.add(stats.timestamp);
+                readTimestamps.add(stats.getMaxTimestamp());
             });
 
             int size = readBuffer.size();
@@ -210,6 +212,67 @@ public class RecentWriteTracker {
     }
 
     /**
+     * Returns the sequencer transaction number for a specific table.
+     * <p>
+     * This is the highest sequencerTxn seen from any WAL writer for this table.
+     * WAL transactions can be ahead of the writer transaction.
+     *
+     * @param tableToken the table to look up
+     * @return sequencer transaction number, or {@link Numbers#LONG_NULL} if not tracked
+     */
+    public long getSequencerTxn(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getSequencerTxn() : Numbers.LONG_NULL;
+    }
+
+    /**
+     * Returns the WAL write timestamp for a specific table.
+     * <p>
+     * This is the highest walTimestamp seen from any WAL writer for this table.
+     *
+     * @param tableToken the table to look up
+     * @return WAL timestamp in microseconds, or {@link Numbers#LONG_NULL} if not tracked
+     */
+    public long getWalTimestamp(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getWalTimestamp() : Numbers.LONG_NULL;
+    }
+
+    /**
+     * Records a WAL write, updating the sequencerTxn and walTimestamp fields.
+     * <p>
+     * This method is called when a WalWriter is returned to the pool. Multiple WAL
+     * writers can update the same table concurrently; the highest values win.
+     * <p>
+     * If no entry exists, creates a "blank" entry with LONG_NULL for writer fields.
+     * This blank entry will be overwritten by the real writer when it updates.
+     *
+     * @param tableToken   the table that was written to
+     * @param sequencerTxn the sequencer transaction number
+     * @param walTimestamp the max timestamp from the WAL transaction
+     */
+    public void recordWalWrite(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp) {
+        WriteStats stats = writeStats.get(tableToken);
+        if (stats != null) {
+            // Entry exists - update WAL fields
+            stats.updateWal(sequencerTxn, walTimestamp);
+        } else {
+            // No entry - create blank entry with only WAL fields set
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, sequencerTxn, walTimestamp);
+            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
+            if (existing != null) {
+                // Another thread inserted first, update their WAL fields
+                existing.updateWal(sequencerTxn, walTimestamp);
+            }
+        }
+
+        // Lazy eviction
+        if (writeStats.size() > maxCapacity * 2) {
+            evictOldest();
+        }
+    }
+
+    /**
      * Records a write to the specified table.
      * <p>
      * This method is thread-safe and optimized for minimal contention.
@@ -225,15 +288,15 @@ public class RecentWriteTracker {
     public void recordWrite(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats != null) {
-            // Fast path: entry exists, just update (zero allocation)
-            stats.update(timestamp, rowCount, writerTxn);
+            // Fast path: entry exists, just update writer fields (preserves WAL fields)
+            stats.updateWriter(timestamp, rowCount, writerTxn);
         } else {
-            // Slow path: need to create new entry
-            WriteStats newStats = new WriteStats(timestamp, rowCount, writerTxn);
+            // Slow path: need to create new entry (WAL fields start as LONG_NULL)
+            WriteStats newStats = new WriteStats(timestamp, rowCount, writerTxn, Numbers.LONG_NULL, Numbers.LONG_NULL);
             WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
             if (existing != null) {
-                // Another thread inserted first, update theirs
-                existing.update(timestamp, rowCount, writerTxn);
+                // Another thread inserted first, update theirs (preserves their WAL fields)
+                existing.updateWriter(timestamp, rowCount, writerTxn);
             }
         }
 
@@ -251,20 +314,22 @@ public class RecentWriteTracker {
      * without overwriting fresher data from concurrent writers. Writer data always wins
      * over hydrated data.
      *
-     * @param tableToken the table that was written to
-     * @param timestamp  the write timestamp in microseconds
-     * @param rowCount   the total row count after the write
-     * @param writerTxn  the writer transaction number (not WAL sequence txn)
+     * @param tableToken   the table that was written to
+     * @param timestamp    the write timestamp in microseconds
+     * @param rowCount     the total row count after the write
+     * @param writerTxn    the writer transaction number (not WAL sequence txn)
+     * @param sequencerTxn the sequencer transaction number from WAL
+     * @param walTimestamp the WAL write timestamp in microseconds (use same as timestamp for hydration)
      * @return true if entry was inserted, false if entry already existed
      */
-    public boolean recordWriteIfAbsent(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn) {
+    public boolean recordWriteIfAbsent(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp) {
         // Check first to avoid allocation when entry exists
         if (writeStats.containsKey(tableToken)) {
             return false;
         }
 
         // CAS insert - only succeeds if no entry exists
-        WriteStats existing = writeStats.putIfAbsent(tableToken, new WriteStats(timestamp, rowCount, writerTxn));
+        WriteStats existing = writeStats.putIfAbsent(tableToken, new WriteStats(timestamp, rowCount, writerTxn, sequencerTxn, walTimestamp));
         if (existing != null) {
             // Another thread (likely a writer) inserted first - their data wins
             return false;
@@ -323,13 +388,15 @@ public class RecentWriteTracker {
             int toEvict = currentSize - maxCapacity;
 
             // Simple O(n*k) approach: find and remove the oldest entry k times
+            // Uses max(timestamp, walTimestamp) to consider both writer and WAL activity
             for (int i = 0; i < toEvict; i++) {
                 evictCandidateKey = null;
                 evictCandidateTimestamp = Long.MAX_VALUE;
 
                 writeStats.forEach((key, stats) -> {
-                    if (stats.timestamp < evictCandidateTimestamp) {
-                        evictCandidateTimestamp = stats.timestamp;
+                    long maxTs = stats.getMaxTimestamp();
+                    if (maxTs < evictCandidateTimestamp) {
+                        evictCandidateTimestamp = maxTs;
                         evictCandidateKey = key;
                     }
                 });
@@ -391,16 +458,25 @@ public class RecentWriteTracker {
      * updates for existing entries, but means readers may see momentarily inconsistent
      * state between fields (e.g., timestamp from write A, rowCount from write B).
      * This trade-off is acceptable for observability use cases.
+     * <p>
+     * The sequencerTxn field uses AtomicLong for CAS operations since multiple WAL
+     * writers can update it concurrently, and the highest value must win.
      */
     public static class WriteStats {
-        private volatile long rowCount;
+        // WAL fields - updated by WalWriters only, highest wins via CAS
+        private final AtomicLong sequencerTxn;
         private volatile long timestamp;
         private volatile long writerTxn;
+        private final AtomicLong walTimestamp;
+        // Writer fields - updated by TableWriter only
+        private volatile long rowCount;
 
-        WriteStats(long timestamp, long rowCount, long writerTxn) {
+        WriteStats(long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;
+            this.sequencerTxn = new AtomicLong(sequencerTxn);
+            this.walTimestamp = new AtomicLong(walTimestamp);
         }
 
         /**
@@ -417,7 +493,33 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Returns the timestamp of the last write in microseconds.
+         * Returns the maximum of writer timestamp and WAL timestamp.
+         * Used for eviction and sorting - considers both writer and WAL activity.
+         * Treats {@link Numbers#LONG_NULL} as Long.MIN_VALUE for comparison.
+         *
+         * @return max timestamp in microseconds
+         */
+        public long getMaxTimestamp() {
+            long ts = timestamp;
+            long walTs = walTimestamp.get();
+            // Treat LONG_NULL as very old (it's Long.MIN_VALUE)
+            return Math.max(ts, walTs);
+        }
+
+        /**
+         * Returns the sequencer transaction number from WAL writers.
+         * <p>
+         * This is the highest sequencer txn seen from any WAL writer for this table.
+         * WAL transactions can be ahead of the writer transaction.
+         *
+         * @return sequencer transaction number, or {@link Numbers#LONG_NULL} if not set
+         */
+        public long getSequencerTxn() {
+            return sequencerTxn.get();
+        }
+
+        /**
+         * Returns the timestamp of the last TableWriter write in microseconds.
          *
          * @return timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
          */
@@ -426,18 +528,57 @@ public class RecentWriteTracker {
         }
 
         /**
+         * Returns the timestamp of the last WAL write in microseconds.
+         *
+         * @return timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
+         */
+        public long getWalTimestamp() {
+            return walTimestamp.get();
+        }
+
+        /**
          * Returns the writer transaction number of the last write.
          * <p>
          * This is the transaction number from the TableWriter, not the WAL sequence transaction.
          * WAL transactions can be ahead of this value.
          *
-         * @return writer transaction number
+         * @return writer transaction number, or {@link Numbers#LONG_NULL} if not available
          */
         public long getWriterTxn() {
             return writerTxn;
         }
 
-        void update(long timestamp, long rowCount, long writerTxn) {
+        /**
+         * Updates WAL fields using CAS - only succeeds if new values are higher.
+         * Multiple WAL writers may call this concurrently; highest values win.
+         *
+         * @param newTxn          the new sequencer transaction number
+         * @param newWalTimestamp the WAL write timestamp in microseconds
+         */
+        void updateWal(long newTxn, long newWalTimestamp) {
+            // CAS update walTimestamp - highest wins
+            long currentTs;
+            do {
+                currentTs = walTimestamp.get();
+                if (newWalTimestamp <= currentTs) {
+                    break;
+                }
+            } while (!walTimestamp.compareAndSet(currentTs, newWalTimestamp));
+
+            // CAS update sequencerTxn - highest wins
+            long currentTxn;
+            do {
+                currentTxn = sequencerTxn.get();
+                if (newTxn <= currentTxn) {
+                    return;
+                }
+            } while (!sequencerTxn.compareAndSet(currentTxn, newTxn));
+        }
+
+        /**
+         * Updates writer fields only, preserving sequencerTxn.
+         */
+        void updateWriter(long timestamp, long rowCount, long writerTxn) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;

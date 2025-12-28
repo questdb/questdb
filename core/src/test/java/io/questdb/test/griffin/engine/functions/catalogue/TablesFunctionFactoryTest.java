@@ -30,6 +30,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -196,6 +197,83 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             long lastWriteTimestamp = tracker.getWriteTimestamp(tableToken);
             Assert.assertTrue("Timestamp should be >= beforeWrite", lastWriteTimestamp >= beforeWrite);
             Assert.assertTrue("Timestamp should be <= afterWrite", lastWriteTimestamp <= afterWrite);
+        });
+    }
+
+    @Test
+    public void testNonWalTableTxnColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a non-WAL table
+            execute("CREATE TABLE test_non_wal (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            RecentWriteTracker tracker = engine.getRecentWriteTracker();
+            tracker.clear();
+
+            // Insert rows
+            execute("INSERT INTO test_non_wal VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+
+            TableToken tableToken = engine.verifyTableName("test_non_wal");
+            long writerTxn = tracker.getWriterTxn(tableToken);
+
+            // Non-WAL tables should have writerTxn but no sequencerTxn or walTimestamp
+            Assert.assertTrue("writerTxn should be positive for non-WAL table", writerTxn > 0);
+            Assert.assertEquals("sequencerTxn should be null for non-WAL table", Numbers.LONG_NULL, tracker.getSequencerTxn(tableToken));
+            Assert.assertEquals("walTimestamp should be null for non-WAL table", Numbers.LONG_NULL, tracker.getWalTimestamp(tableToken));
+
+            // Query via tables() function
+            assertSql(
+                    """
+                            table_name\twriterTxn\tsequencerTxn\tlastWalTimestamp
+                            test_non_wal\t""" + writerTxn + """
+                            \tnull\t
+                            """,
+                    "select table_name, writerTxn, sequencerTxn, lastWalTimestamp from tables() where table_name = 'test_non_wal'"
+            );
+        });
+    }
+
+    @Test
+    public void testTxnAndWalTimestampColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a WAL table
+            execute("CREATE TABLE test_txn (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            RecentWriteTracker tracker = engine.getRecentWriteTracker();
+            tracker.clear();
+
+            // Before any writes, all txn columns should be null
+            assertSql(
+                    """
+                            table_name\twriterTxn\tsequencerTxn\tlastWalTimestamp
+                            test_txn\tnull\tnull\t
+                            """,
+                    "select table_name, writerTxn, sequencerTxn, lastWalTimestamp from tables() where table_name = 'test_txn'"
+            );
+
+            // Insert rows and drain WAL
+            execute("INSERT INTO test_txn VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("INSERT INTO test_txn VALUES ('2024-01-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+
+            // Verify txn values are tracked
+            TableToken tableToken = engine.verifyTableName("test_txn");
+            long writerTxn = tracker.getWriterTxn(tableToken);
+            long sequencerTxn = tracker.getSequencerTxn(tableToken);
+            long walTimestamp = tracker.getWalTimestamp(tableToken);
+
+            Assert.assertTrue("writerTxn should be positive", writerTxn > 0);
+            Assert.assertTrue("sequencerTxn should be positive", sequencerTxn > 0);
+            Assert.assertTrue("walTimestamp should be positive", walTimestamp > 0);
+
+            // Query via tables() function - verify columns are present and have values
+            assertSql(
+                    """
+                            table_name\twriterTxn\tsequencerTxn
+                            test_txn\t""" + writerTxn + "\t" + sequencerTxn + """
+                            
+                            """,
+                    "select table_name, writerTxn, sequencerTxn from tables() where table_name = 'test_txn'"
+            );
         });
     }
 }

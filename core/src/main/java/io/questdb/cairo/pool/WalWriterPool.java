@@ -32,11 +32,14 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
+    private static final Log LOG = LogFactory.getLog(WalWriterPool.class);
 
     private final CairoEngine engine;
 
@@ -48,6 +51,27 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
     @Override
     protected byte getListenerSrc() {
         return PoolListener.SRC_WAL_WRITER;
+    }
+
+    @Override
+    protected boolean returnToPool(WalWriterTenant tenant) {
+        // Track the WAL write before returning to pool.
+        // Use try-catch to ensure tenant is always returned even if tracking fails.
+        try {
+            long lastSeqTxn = tenant.getLastSeqTxn();
+            if (lastSeqTxn >= 0) {
+                RecentWriteTracker tracker = engine.getRecentWriteTracker();
+                if (tracker != null) {
+                    long txnMaxTimestamp = tenant.getLastTxnMaxTimestamp();
+                    tracker.recordWalWrite(tenant.getTableToken(), lastSeqTxn, txnMaxTimestamp);
+                }
+            }
+        } catch (Throwable th) {
+            // Log and continue - tracking failure should not prevent pool return
+            LOG.error().$("failed to track WAL write [table=").$(tenant.getTableToken())
+                    .$(", error=").$(th).I$();
+        }
+        return super.returnToPool(tenant);
     }
 
     @Override

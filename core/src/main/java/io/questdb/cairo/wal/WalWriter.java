@@ -156,6 +156,7 @@ public class WalWriter implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
+    private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
@@ -433,6 +434,25 @@ public class WalWriter implements TableWriterAPI {
 
     public String getWalName() {
         return walName;
+    }
+
+    /**
+     * Returns the last sequencer transaction number obtained by this WalWriter.
+     * This value is set when a transaction is committed and the sequencer assigns a txn.
+     *
+     * @return the last sequencer txn, or -1 if no transaction has been committed yet
+     */
+    public long getLastSeqTxn() {
+        return lastSeqTxn;
+    }
+
+    /**
+     * Returns the max timestamp from the last committed transaction.
+     *
+     * @return the max timestamp, or -1 if no transaction has been committed yet
+     */
+    public long getLastTxnMaxTimestamp() {
+        return lastTxnMaxTimestamp;
     }
 
     public void goActive() {
@@ -1382,7 +1402,16 @@ public class WalWriter implements TableWriterAPI {
     private long getSequencerTxn() {
         long seqTxn;
         do {
-            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
+            seqTxn = sequencer.nextTxn(
+                    tableToken,
+                    walId,
+                    getColumnStructureVersion(),
+                    segmentId,
+                    lastSegmentTxn,
+                    txnMinTimestamp,
+                    txnMaxTimestamp,
+                    segmentRowCount - currentTxnStartRowNum
+            );
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
@@ -1639,6 +1668,8 @@ public class WalWriter implements TableWriterAPI {
     private void resetDataTxnProperties() {
         currentTxnStartRowNum = segmentRowCount;
         txnMinTimestamp = Long.MAX_VALUE;
+        // Store the max timestamp before resetting for tracking purposes
+        lastTxnMaxTimestamp = txnMaxTimestamp;
         txnMaxTimestamp = -1;
         txnOutOfOrder = false;
         resetSymbolMaps();

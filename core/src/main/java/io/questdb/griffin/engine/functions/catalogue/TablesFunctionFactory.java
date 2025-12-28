@@ -58,16 +58,19 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DIRECTORY_NAME_COLUMN = 7;
     private static final int ID_COLUMN = 0;
     private static final int IS_MAT_VIEW_COLUMN = 11;
+    private static final int LAST_WAL_TIMESTAMP_COLUMN = 16;
     private static final int LAST_WRITE_TIMESTAMP_COLUMN = 13;
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
     private static final RecordMetadata METADATA;
     private static final int O3_MAX_LAG_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 3;
     private static final int ROW_COUNT_COLUMN = 12;
+    private static final int SEQUENCER_TXN_COLUMN = 15;
     private static final int TABLE_NAME = 1;
     private static final int TTL_UNIT_COLUMN = 10;
     private static final int TTL_VALUE_COLUMN = 9;
     private static final int WAL_ENABLED_COLUMN = 6;
+    private static final int WRITER_TXN_COLUMN = 14;
 
     public static String getTtlUnit(int ttl) {
         if (ttl == 0) {
@@ -240,13 +243,21 @@ public class TablesFunctionFactory implements FunctionFactory {
                     if (col == O3_MAX_LAG_COLUMN) {
                         return table.getO3MaxLag();
                     }
-                    if (col == ROW_COUNT_COLUMN) {
-                        if (recentWriteTracker != null) {
-                            TableToken tableToken = table.getTableToken();
-                            // Returns Numbers.LONG_NULL if not tracked
+                    if (recentWriteTracker != null) {
+                        TableToken tableToken = table.getTableToken();
+                        if (col == ROW_COUNT_COLUMN) {
                             return recentWriteTracker.getRowCount(tableToken);
                         }
-                        return Numbers.LONG_NULL;
+                        if (col == WRITER_TXN_COLUMN) {
+                            return recentWriteTracker.getWriterTxn(tableToken);
+                        }
+                        if (col == SEQUENCER_TXN_COLUMN) {
+                            return recentWriteTracker.getSequencerTxn(tableToken);
+                        }
+                    } else {
+                        if (col == ROW_COUNT_COLUMN || col == WRITER_TXN_COLUMN || col == SEQUENCER_TXN_COLUMN) {
+                            return Numbers.LONG_NULL;
+                        }
                     }
                     assert false : "unexpected column: " + col;
                     return Numbers.LONG_NULL;
@@ -276,11 +287,13 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getTimestamp(int col) {
-                    if (col == LAST_WRITE_TIMESTAMP_COLUMN) {
-                        if (recentWriteTracker != null) {
-                            TableToken tableToken = table.getTableToken();
-                            // Returns Numbers.LONG_NULL if not tracked, which displays as null for timestamps
+                    if (recentWriteTracker != null) {
+                        TableToken tableToken = table.getTableToken();
+                        if (col == LAST_WRITE_TIMESTAMP_COLUMN) {
                             return recentWriteTracker.getWriteTimestamp(tableToken);
+                        }
+                        if (col == LAST_WAL_TIMESTAMP_COLUMN) {
+                            return recentWriteTracker.getWalTimestamp(tableToken);
                         }
                     }
                     return Numbers.LONG_NULL;
@@ -320,6 +333,9 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("rowCount", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("lastWriteTimestamp", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("writerTxn", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("sequencerTxn", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("lastWalTimestamp", ColumnType.TIMESTAMP));
         METADATA = metadata;
     }
 }

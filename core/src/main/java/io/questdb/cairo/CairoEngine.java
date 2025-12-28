@@ -108,6 +108,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -475,6 +476,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
+    @SuppressWarnings("unused")
     @TestOnly
     // this is used in replication test
     public void clearWalWriterPool() {
@@ -1121,21 +1123,31 @@ public class CairoEngine implements Closeable, WriterSource {
                         continue;
                     }
 
-                    // Get file modification time as last write timestamp
-                    long lastModified = ff.getLastModified(path.$());
-                    if (lastModified < 0) {
-                        continue;
-                    }
-
                     // Get metadata for timestampType and partitionBy
                     try (TableMetadata metadata = getTableMetadata(tableToken)) {
                         txReader.ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy());
                         TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
+                        long maxTimestamp = txReader.getMaxTimestamp();
                         long rowCount = txReader.getRowCount();
                         long writerTxn = txReader.getTxn();
+
+                        // For WAL tables, get sequencerTxn from the sequencer
+                        long sequencerTxn = Numbers.LONG_NULL;
+                        long walTimestamp = Numbers.LONG_NULL;
+                        if (tableToken.isWal()) {
+                            try {
+                                sequencerTxn = tableSequencerAPI.lastTxn(tableToken);
+                                walTimestamp = maxTimestamp;
+                            } catch (CairoException e) {
+                                // Sequencer may not be available, use LONG_NULL
+                                LOG.debug().$("could not get sequencer txn during hydration [table=").$(tableToken)
+                                        .$(", error=").$(e.getMessage()).I$();
+                            }
+                        }
+
                         // Use CAS insert - writer data always wins over hydrated data
-                        if (recentWriteTracker.recordWriteIfAbsent(tableToken, lastModified, rowCount, writerTxn)) {
+                        if (recentWriteTracker.recordWriteIfAbsent(tableToken, maxTimestamp, rowCount, writerTxn, sequencerTxn, walTimestamp)) {
                             hydratedCount++;
                         }
                     }

@@ -318,58 +318,70 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
-    public void testRecordWriteIfAbsentDoesNotOverwrite() {
-        RecentWriteTracker tracker = new RecentWriteTracker(10);
+    public void testEvictionUsesMaxTimestamp() {
+        // Capacity 2, eviction at 4 (2x)
+        RecentWriteTracker tracker = new RecentWriteTracker(2);
 
         TableToken table1 = createTableToken("table1", 1);
+        TableToken table2 = createTableToken("table2", 2);
+        TableToken table3 = createTableToken("table3", 3);
+        TableToken table4 = createTableToken("table4", 4);
+        TableToken table5 = createTableToken("table5", 5);
 
-        // First insert via recordWrite (simulates writer)
-        tracker.recordWrite(table1, 5000L, 500L, 50L);
+        // table1: writer timestamp 1000 (oldest writer)
+        tracker.recordWrite(table1, 1000L, 100L, 1L);
+        // table2: writer timestamp 2000
+        tracker.recordWrite(table2, 2000L, 200L, 2L);
+        // table3: writer timestamp 3000
+        tracker.recordWrite(table3, 3000L, 300L, 3L);
+        // table4: writer timestamp 4000
+        tracker.recordWrite(table4, 4000L, 400L, 4L);
 
-        // Attempt to insert via recordWriteIfAbsent (simulates hydration with stale data)
-        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L);
+        // Now give table1 a recent WAL write - this should protect it from eviction
+        tracker.recordWalWrite(table1, 10L, 10000L);
 
-        // Should not have overwritten
-        Assert.assertFalse("recordWriteIfAbsent should return false when entry exists", inserted);
-        Assert.assertEquals("Writer timestamp should be preserved", 5000L, tracker.getWriteTimestamp(table1));
-        Assert.assertEquals("Writer rowCount should be preserved", 500L, tracker.getRowCount(table1));
-        Assert.assertEquals("Writer txn should be preserved", 50L, tracker.getWriterTxn(table1));
-        Assert.assertEquals("Size should still be 1", 1, tracker.size());
+        // Add table5 to trigger eviction (size becomes 5, exceeds 2*2=4)
+        tracker.recordWrite(table5, 5000L, 500L, 5L);
+
+        // After eviction, should have 2 entries
+        // table2 should be evicted (oldest maxTimestamp without WAL activity)
+        // table1 should survive due to recent WAL timestamp
+        Assert.assertEquals(2, tracker.size());
+        Assert.assertNotNull("table1 should survive (recent WAL activity)", tracker.getWriteStats(table1));
+        Assert.assertNull("table2 should be evicted (oldest)", tracker.getWriteStats(table2));
     }
 
     @Test
-    public void testRecordWriteIfAbsentInsertsWhenEmpty() {
+    public void testGetMaxTimestamp() {
         RecentWriteTracker tracker = new RecentWriteTracker(10);
 
         TableToken table1 = createTableToken("table1", 1);
 
-        // Insert via recordWriteIfAbsent when no entry exists
-        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L);
+        // Writer only - maxTimestamp should be writer timestamp
+        tracker.recordWrite(table1, 1000L, 100L, 1L);
+        RecentWriteTracker.WriteStats stats = tracker.getWriteStats(table1);
+        Assert.assertEquals(1000L, stats.getMaxTimestamp());
 
-        Assert.assertTrue("recordWriteIfAbsent should return true when inserting new entry", inserted);
-        Assert.assertEquals(1000L, tracker.getWriteTimestamp(table1));
-        Assert.assertEquals(100L, tracker.getRowCount(table1));
-        Assert.assertEquals(10L, tracker.getWriterTxn(table1));
-        Assert.assertEquals(1, tracker.size());
+        // WAL write with higher timestamp - maxTimestamp should be WAL timestamp
+        tracker.recordWalWrite(table1, 5L, 2000L);
+        Assert.assertEquals(2000L, stats.getWalTimestamp());
+        Assert.assertEquals(2000L, stats.getMaxTimestamp());
     }
 
     @Test
-    public void testRecordWriteOverwritesHydratedData() {
+    public void testGetMaxTimestampWithNulls() {
         RecentWriteTracker tracker = new RecentWriteTracker(10);
 
         TableToken table1 = createTableToken("table1", 1);
 
-        // First insert via recordWriteIfAbsent (simulates hydration)
-        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L);
-        Assert.assertTrue(inserted);
+        // WAL-only entry (blank writer fields)
+        tracker.recordWalWrite(table1, 5L, 5000L);
+        RecentWriteTracker.WriteStats stats = tracker.getWriteStats(table1);
 
-        // Writer updates with fresh data
-        tracker.recordWrite(table1, 5000L, 500L, 50L);
-
-        // Writer data should win
-        Assert.assertEquals("Writer timestamp should overwrite", 5000L, tracker.getWriteTimestamp(table1));
-        Assert.assertEquals("Writer rowCount should overwrite", 500L, tracker.getRowCount(table1));
-        Assert.assertEquals("Writer txn should overwrite", 50L, tracker.getWriterTxn(table1));
+        // Writer timestamp is LONG_NULL, maxTimestamp should be WAL timestamp
+        Assert.assertEquals(Numbers.LONG_NULL, stats.getTimestamp());
+        Assert.assertEquals(5000L, stats.getWalTimestamp());
+        Assert.assertEquals(5000L, stats.getMaxTimestamp());
     }
 
     @Test
@@ -433,6 +445,169 @@ public class RecentWriteTrackerTest {
         // table1 should now be first (most recent)
         Assert.assertEquals("table1", recent.get(0).getTableName());
         Assert.assertEquals("table2", recent.get(1).getTableName());
+    }
+
+    @Test
+    public void testGetWalTimestampAccessor() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+        TableToken table2 = createTableToken("table2", 2);
+
+        // No entry - should return LONG_NULL
+        Assert.assertEquals(Numbers.LONG_NULL, tracker.getWalTimestamp(table1));
+
+        // Writer-only entry - walTimestamp should be LONG_NULL
+        tracker.recordWrite(table1, 1000L, 100L, 1L);
+        Assert.assertEquals(Numbers.LONG_NULL, tracker.getWalTimestamp(table1));
+
+        // WAL write - walTimestamp should be set
+        tracker.recordWalWrite(table2, 5L, 3000L);
+        Assert.assertEquals(3000L, tracker.getWalTimestamp(table2));
+    }
+
+    @Test
+    public void testRecordWriteIfAbsentDoesNotOverwrite() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+
+        // First insert via recordWrite (simulates writer)
+        tracker.recordWrite(table1, 5000L, 500L, 50L);
+
+        // Attempt to insert via recordWriteIfAbsent (simulates hydration with stale data)
+        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L, 5L, 1000L);
+
+        // Should not have overwritten
+        Assert.assertFalse("recordWriteIfAbsent should return false when entry exists", inserted);
+        Assert.assertEquals("Writer timestamp should be preserved", 5000L, tracker.getWriteTimestamp(table1));
+        Assert.assertEquals("Writer rowCount should be preserved", 500L, tracker.getRowCount(table1));
+        Assert.assertEquals("Writer txn should be preserved", 50L, tracker.getWriterTxn(table1));
+        Assert.assertEquals("Size should still be 1", 1, tracker.size());
+    }
+
+    @Test
+    public void testRecordWriteIfAbsentInsertsWhenEmpty() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+
+        // Insert via recordWriteIfAbsent when no entry exists (with sequencerTxn)
+        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L, 5L, 1000L);
+
+        Assert.assertTrue("recordWriteIfAbsent should return true when inserting new entry", inserted);
+        Assert.assertEquals(1000L, tracker.getWriteTimestamp(table1));
+        Assert.assertEquals(100L, tracker.getRowCount(table1));
+        Assert.assertEquals(10L, tracker.getWriterTxn(table1));
+        Assert.assertEquals(5L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals(1, tracker.size());
+    }
+
+    @Test
+    public void testRecordWriteOverwritesHydratedData() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+
+        // First insert via recordWriteIfAbsent (simulates hydration with sequencerTxn)
+        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L, 5L, 1000L);
+        Assert.assertTrue(inserted);
+        Assert.assertEquals(5L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals(1000L, tracker.getWriteStats(table1).getWalTimestamp());
+
+        // Writer updates with fresh data (preserves sequencerTxn)
+        tracker.recordWrite(table1, 5000L, 500L, 50L);
+
+        // Writer data should win, but sequencerTxn preserved
+        Assert.assertEquals("Writer timestamp should overwrite", 5000L, tracker.getWriteTimestamp(table1));
+        Assert.assertEquals("Writer rowCount should overwrite", 500L, tracker.getRowCount(table1));
+        Assert.assertEquals("Writer txn should overwrite", 50L, tracker.getWriterTxn(table1));
+        Assert.assertEquals("SequencerTxn should be preserved", 5L, tracker.getSequencerTxn(table1));
+    }
+
+    @Test
+    public void testSortingUsesMaxTimestamp() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+        TableToken table2 = createTableToken("table2", 2);
+        TableToken table3 = createTableToken("table3", 3);
+
+        // table1: old writer timestamp
+        tracker.recordWrite(table1, 1000L, 100L, 1L);
+        // table2: medium writer timestamp
+        tracker.recordWrite(table2, 2000L, 200L, 2L);
+        // table3: newest writer timestamp
+        tracker.recordWrite(table3, 3000L, 300L, 3L);
+
+        // Before WAL: table3 > table2 > table1
+        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
+        Assert.assertEquals("table3", recent.get(0).getTableName());
+        Assert.assertEquals("table2", recent.get(1).getTableName());
+        Assert.assertEquals("table1", recent.get(2).getTableName());
+
+        // Give table1 a WAL write with high timestamp (higher than 3000)
+        tracker.recordWalWrite(table1, 5L, 5000L);
+
+        // After WAL: table1 should be first (highest maxTimestamp)
+        recent = tracker.getRecentlyWrittenTables(10);
+        Assert.assertEquals("table1 should be first after WAL write", "table1", recent.get(0).getTableName());
+    }
+
+    @Test
+    public void testUpdateWalHigherTxnWins() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+
+        // First WAL write with txn=5, timestamp=1000
+        tracker.recordWalWrite(table1, 5L, 1000L);
+        Assert.assertEquals(5L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals(1000L, tracker.getWalTimestamp(table1));
+
+        // Higher txn and higher timestamp should both update
+        tracker.recordWalWrite(table1, 10L, 2000L);
+        Assert.assertEquals(10L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals(2000L, tracker.getWalTimestamp(table1));
+    }
+
+    @Test
+    public void testUpdateWalLowerTxnBacksOff() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+
+        // First WAL write with higher txn=10, timestamp=2000
+        tracker.recordWalWrite(table1, 10L, 2000L);
+        Assert.assertEquals(10L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals(2000L, tracker.getWalTimestamp(table1));
+
+        // Lower txn should NOT update sequencerTxn, lower timestamp should NOT update walTimestamp
+        tracker.recordWalWrite(table1, 5L, 1000L);
+        Assert.assertEquals("SequencerTxn should remain 10", 10L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals("WalTimestamp should remain 2000", 2000L, tracker.getWalTimestamp(table1));
+    }
+
+    @Test
+    public void testUpdateWalMixedUpdates() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+
+        // First WAL write: txn=10, timestamp=1000
+        tracker.recordWalWrite(table1, 10L, 1000L);
+        Assert.assertEquals(10L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals(1000L, tracker.getWalTimestamp(table1));
+
+        // Lower txn but higher timestamp: txn should stay, timestamp should update
+        tracker.recordWalWrite(table1, 5L, 2000L);
+        Assert.assertEquals("SequencerTxn should remain 10 (higher wins)", 10L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals("WalTimestamp should update to 2000 (higher wins)", 2000L, tracker.getWalTimestamp(table1));
+
+        // Higher txn but lower timestamp: txn should update, timestamp should stay
+        tracker.recordWalWrite(table1, 15L, 1500L);
+        Assert.assertEquals("SequencerTxn should update to 15", 15L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals("WalTimestamp should remain 2000 (higher wins)", 2000L, tracker.getWalTimestamp(table1));
     }
 
     private static TableToken createTableToken(String tableName, int tableId) {
