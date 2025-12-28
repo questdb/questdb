@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DdlListener;
@@ -34,6 +33,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -61,7 +61,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
             long lastSeqTxn = tenant.getLastSeqTxn();
             if (lastSeqTxn >= 0) {
                 long txnMaxTimestamp = tenant.getLastTxnMaxTimestamp();
-                engine.getRecentWriteTracker().recordWalWrite(tenant.getTableToken(), lastSeqTxn, txnMaxTimestamp);
+                engine.getRecentWriteTracker().recordWalWrite(tenant.getTableToken(), lastSeqTxn, txnMaxTimestamp == -1 ? Numbers.LONG_NULL : txnMaxTimestamp);
             }
         } catch (Throwable th) {
             // Log and continue - tracking failure should not prevent pool return
@@ -85,8 +85,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 tableToken,
                 engine.getTableSequencerAPI(),
                 engine.getDdlListener(tableToken),
-                engine.getWalDirectoryPolicy(),
-                engine.getMetrics()
+                engine.getWalDirectoryPolicy()
         );
     }
 
@@ -102,8 +101,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
                 DdlListener ddlListener,
-                WalDirectoryPolicy walDirectoryPolicy,
-                Metrics metrics
+                WalDirectoryPolicy walDirectoryPolicy
         ) {
             super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy);
             this.pool = pool;
