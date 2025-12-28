@@ -123,11 +123,10 @@ namespace questdb::avx2 {
                                       const Gp &rows_ptr,
                                       const Gp &input,
                                       const Gp &output,
-                                      const Gp &rows_id_offset,
                                       int32_t step) {
         Gp offset = c.newInt64();
         for (int32_t i = 0; i < step; ++i) {
-            c.lea(offset, asmjit::x86::ptr(input, rows_id_offset, 0, i, 0));
+            c.lea(offset, asmjit::x86::ptr(input, i, 0));
             c.mov(qword_ptr(rows_ptr, output, 3), offset);
             c.mov(offset, bits);
             c.shr(offset, i);
