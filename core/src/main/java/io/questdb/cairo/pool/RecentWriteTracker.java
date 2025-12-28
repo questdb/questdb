@@ -233,9 +233,9 @@ public class RecentWriteTracker {
      * @param tableToken the table to look up
      * @return WAL timestamp in microseconds, or {@link Numbers#LONG_NULL} if not tracked
      */
-    public long getWalTimestamp(@NotNull TableToken tableToken) {
+    public long getLastWalTimestamp(@NotNull TableToken tableToken) {
         WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getWalTimestamp() : Numbers.LONG_NULL;
+        return stats != null ? stats.getLastWalTimestamp() : Numbers.LONG_NULL;
     }
 
     /**
@@ -532,7 +532,7 @@ public class RecentWriteTracker {
          *
          * @return timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
          */
-        public long getWalTimestamp() {
+        public long getLastWalTimestamp() {
             return walTimestamp.get();
         }
 

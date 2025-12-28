@@ -3124,7 +3124,7 @@ if __name__ == "__main__":
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
-                try (ResultSet rs = stmt.executeQuery("tables();")) {
+                try (ResultSet rs = stmt.executeQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables();")) {
                     assertResultSet("""
                                     id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]
                                     2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false
@@ -3137,7 +3137,7 @@ if __name__ == "__main__":
                 drainWalQueue();
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
 
-                try (ResultSet rs = stmt.executeQuery("tables();")) {
+                try (ResultSet rs = stmt.executeQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables();")) {
                     assertResultSet("""
                                     id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]
                                     3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false

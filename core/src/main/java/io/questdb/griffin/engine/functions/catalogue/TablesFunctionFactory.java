@@ -32,7 +32,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.Function;
@@ -240,27 +239,13 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                    if (col == O3_MAX_LAG_COLUMN) {
-                        return table.getO3MaxLag();
-                    }
-                    if (recentWriteTracker != null) {
-                        TableToken tableToken = table.getTableToken();
-                        if (col == ROW_COUNT_COLUMN) {
-                            return recentWriteTracker.getRowCount(tableToken);
-                        }
-                        if (col == WRITER_TXN_COLUMN) {
-                            return recentWriteTracker.getWriterTxn(tableToken);
-                        }
-                        if (col == SEQUENCER_TXN_COLUMN) {
-                            return recentWriteTracker.getSequencerTxn(tableToken);
-                        }
-                    } else {
-                        if (col == ROW_COUNT_COLUMN || col == WRITER_TXN_COLUMN || col == SEQUENCER_TXN_COLUMN) {
-                            return Numbers.LONG_NULL;
-                        }
-                    }
-                    assert false : "unexpected column: " + col;
-                    return Numbers.LONG_NULL;
+                    return switch (col) {
+                        case O3_MAX_LAG_COLUMN -> table.getO3MaxLag();
+                        case ROW_COUNT_COLUMN -> recentWriteTracker.getRowCount(table.getTableToken());
+                        case WRITER_TXN_COLUMN -> recentWriteTracker.getWriterTxn(table.getTableToken());
+                        case SEQUENCER_TXN_COLUMN -> recentWriteTracker.getSequencerTxn(table.getTableToken());
+                        default -> Numbers.LONG_NULL;
+                    };
                 }
 
                 @Override
@@ -287,16 +272,11 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getTimestamp(int col) {
-                    if (recentWriteTracker != null) {
-                        TableToken tableToken = table.getTableToken();
-                        if (col == LAST_WRITE_TIMESTAMP_COLUMN) {
-                            return recentWriteTracker.getWriteTimestamp(tableToken);
-                        }
-                        if (col == LAST_WAL_TIMESTAMP_COLUMN) {
-                            return recentWriteTracker.getWalTimestamp(tableToken);
-                        }
-                    }
-                    return Numbers.LONG_NULL;
+                    return switch (col) {
+                        case LAST_WRITE_TIMESTAMP_COLUMN -> recentWriteTracker.getWriteTimestamp(table.getTableToken());
+                        case LAST_WAL_TIMESTAMP_COLUMN -> recentWriteTracker.getLastWalTimestamp(table.getTableToken());
+                        default -> Numbers.LONG_NULL;
+                    };
                 }
 
                 @Override

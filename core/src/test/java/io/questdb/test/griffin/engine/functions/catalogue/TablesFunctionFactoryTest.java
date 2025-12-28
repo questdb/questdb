@@ -218,7 +218,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // Non-WAL tables should have writerTxn but no sequencerTxn or walTimestamp
             Assert.assertTrue("writerTxn should be positive for non-WAL table", writerTxn > 0);
             Assert.assertEquals("sequencerTxn should be null for non-WAL table", Numbers.LONG_NULL, tracker.getSequencerTxn(tableToken));
-            Assert.assertEquals("walTimestamp should be null for non-WAL table", Numbers.LONG_NULL, tracker.getWalTimestamp(tableToken));
+            Assert.assertEquals("walTimestamp should be null for non-WAL table", Numbers.LONG_NULL, tracker.getLastWalTimestamp(tableToken));
 
             // Query via tables() function
             assertSql(
@@ -259,7 +259,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("test_txn");
             long writerTxn = tracker.getWriterTxn(tableToken);
             long sequencerTxn = tracker.getSequencerTxn(tableToken);
-            long walTimestamp = tracker.getWalTimestamp(tableToken);
+            long walTimestamp = tracker.getLastWalTimestamp(tableToken);
 
             Assert.assertTrue("writerTxn should be positive", writerTxn > 0);
             Assert.assertTrue("sequencerTxn should be positive", sequencerTxn > 0);

@@ -60,11 +60,8 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         try {
             long lastSeqTxn = tenant.getLastSeqTxn();
             if (lastSeqTxn >= 0) {
-                RecentWriteTracker tracker = engine.getRecentWriteTracker();
-                if (tracker != null) {
-                    long txnMaxTimestamp = tenant.getLastTxnMaxTimestamp();
-                    tracker.recordWalWrite(tenant.getTableToken(), lastSeqTxn, txnMaxTimestamp);
-                }
+                long txnMaxTimestamp = tenant.getLastTxnMaxTimestamp();
+                engine.getRecentWriteTracker().recordWalWrite(tenant.getTableToken(), lastSeqTxn, txnMaxTimestamp);
             }
         } catch (Throwable th) {
             // Log and continue - tracking failure should not prevent pool return

@@ -86,7 +86,6 @@ public class WriterPool extends AbstractPool {
     @NotNull
     private final CairoEngine engine;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
-    @Nullable
     private final RecentWriteTracker recentWriteTracker;
     private final CharSequence root;
 
@@ -95,9 +94,9 @@ public class WriterPool extends AbstractPool {
      *
      * @param configuration      configuration parameters.
      * @param engine             engine instance.
-     * @param recentWriteTracker tracker for recent table writes, may be null.
+     * @param recentWriteTracker tracker for recent table writes.
      */
-    public WriterPool(CairoConfiguration configuration, @NotNull CairoEngine engine, @Nullable RecentWriteTracker recentWriteTracker) {
+    public WriterPool(CairoConfiguration configuration, @NotNull CairoEngine engine, @NotNull RecentWriteTracker recentWriteTracker) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.clock = configuration.getMicrosecondClock();
@@ -573,9 +572,13 @@ public class WriterPool extends AbstractPool {
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
 
-            // Track the write for UI/observability purposes
-            if (recentWriteTracker != null) {
+            // Track the write for UI/observability purposes.
+            // Use try-catch to ensure writer is always returned even if tracking fails.
+            try {
                 recentWriteTracker.recordWrite(tableToken, e.lastReleaseTime, e.writer.getRowCount(), e.writer.getTxn());
+            } catch (Throwable th) {
+                LOG.error().$("failed to track write [table=").$(tableToken)
+                        .$(", error=").$(th).I$();
             }
 
             Unsafe.getUnsafe().storeFence();

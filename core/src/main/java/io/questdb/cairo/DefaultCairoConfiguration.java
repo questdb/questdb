@@ -571,7 +571,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getRecentWriteTrackerCapacity() {
-        return 100;
+        return 1000;
     }
 
     @Override
