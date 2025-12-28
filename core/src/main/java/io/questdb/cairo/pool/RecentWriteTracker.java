@@ -31,6 +31,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -65,8 +66,6 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class RecentWriteTracker {
 
-    // Eviction state - protected by evictionInProgress flag
-    // Using instance fields avoids allocation during eviction
     private final AtomicBoolean evictionInProgress = new AtomicBoolean(false);
     private final int maxCapacity;
     private final ObjList<TableToken> readBuffer;
@@ -77,8 +76,6 @@ public class RecentWriteTracker {
     // ConcurrentHashMap provides lock-free reads and fine-grained locking for writes
     // Different keys can be updated concurrently without contention
     private final ConcurrentHashMap<TableToken, WriteStats> writeStats = new ConcurrentHashMap<>();
-    private TableToken evictCandidateKey;
-    private long evictCandidateTimestamp;
 
     /**
      * Creates a new tracker with the specified maximum capacity.
@@ -97,6 +94,19 @@ public class RecentWriteTracker {
      */
     public void clear() {
         writeStats.clear();
+    }
+
+    /**
+     * Returns the WAL write timestamp for a specific table.
+     * <p>
+     * This is the highest walTimestamp seen from any WAL writer for this table.
+     *
+     * @param tableToken the table to look up
+     * @return WAL timestamp in microseconds, or {@link Numbers#LONG_NULL} if not tracked
+     */
+    public long getLastWalTimestamp(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getLastWalTimestamp() : Numbers.LONG_NULL;
     }
 
     /**
@@ -177,6 +187,20 @@ public class RecentWriteTracker {
     }
 
     /**
+     * Returns the sequencer transaction number for a specific table.
+     * <p>
+     * This is the highest sequencerTxn seen from any WAL writer for this table.
+     * WAL transactions can be ahead of the writer transaction.
+     *
+     * @param tableToken the table to look up
+     * @return sequencer transaction number, or {@link Numbers#LONG_NULL} if not tracked
+     */
+    public long getSequencerTxn(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getSequencerTxn() : Numbers.LONG_NULL;
+    }
+
+    /**
      * Returns the write statistics for a specific table, or null if not tracked.
      *
      * @param tableToken the table to look up
@@ -209,33 +233,6 @@ public class RecentWriteTracker {
     public long getWriterTxn(@NotNull TableToken tableToken) {
         WriteStats stats = writeStats.get(tableToken);
         return stats != null ? stats.writerTxn : Numbers.LONG_NULL;
-    }
-
-    /**
-     * Returns the sequencer transaction number for a specific table.
-     * <p>
-     * This is the highest sequencerTxn seen from any WAL writer for this table.
-     * WAL transactions can be ahead of the writer transaction.
-     *
-     * @param tableToken the table to look up
-     * @return sequencer transaction number, or {@link Numbers#LONG_NULL} if not tracked
-     */
-    public long getSequencerTxn(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getSequencerTxn() : Numbers.LONG_NULL;
-    }
-
-    /**
-     * Returns the WAL write timestamp for a specific table.
-     * <p>
-     * This is the highest walTimestamp seen from any WAL writer for this table.
-     *
-     * @param tableToken the table to look up
-     * @return WAL timestamp in microseconds, or {@link Numbers#LONG_NULL} if not tracked
-     */
-    public long getLastWalTimestamp(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getLastWalTimestamp() : Numbers.LONG_NULL;
     }
 
     /**
@@ -390,19 +387,19 @@ public class RecentWriteTracker {
             // Simple O(n*k) approach: find and remove the oldest entry k times
             // Uses max(timestamp, walTimestamp) to consider both writer and WAL activity
             for (int i = 0; i < toEvict; i++) {
-                evictCandidateKey = null;
-                evictCandidateTimestamp = Long.MAX_VALUE;
+                TableToken oldestKey = null;
+                long oldestTimestamp = Long.MAX_VALUE;
 
-                writeStats.forEach((key, stats) -> {
-                    long maxTs = stats.getMaxTimestamp();
-                    if (maxTs < evictCandidateTimestamp) {
-                        evictCandidateTimestamp = maxTs;
-                        evictCandidateKey = key;
+                for (Map.Entry<TableToken, WriteStats> entry : writeStats.entrySet()) {
+                    long maxTs = entry.getValue().getMaxTimestamp();
+                    if (maxTs < oldestTimestamp) {
+                        oldestTimestamp = maxTs;
+                        oldestKey = entry.getKey();
                     }
-                });
+                }
 
-                if (evictCandidateKey != null) {
-                    writeStats.remove(evictCandidateKey);
+                if (oldestKey != null) {
+                    writeStats.remove(oldestKey);
                 }
             }
         } finally {
@@ -465,11 +462,11 @@ public class RecentWriteTracker {
     public static class WriteStats {
         // WAL fields - updated by WalWriters only, highest wins via CAS
         private final AtomicLong sequencerTxn;
-        private volatile long timestamp;
-        private volatile long writerTxn;
         private final AtomicLong walTimestamp;
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
+        private volatile long timestamp;
+        private volatile long writerTxn;
 
         WriteStats(long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp) {
             this.timestamp = timestamp;
@@ -480,16 +477,12 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Returns the row count at the time of the last write.
-         * <p>
-         * <b>Note:</b> This value may be stale if rows were deleted after the last write.
-         * Due to lock-free updates, this value may also be momentarily inconsistent
-         * with {@link #getTimestamp()} during concurrent writes.
+         * Returns the timestamp of the last WAL write in microseconds.
          *
-         * @return row count, or {@link Numbers#LONG_NULL} if not available
+         * @return timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
          */
-        public long getRowCount() {
-            return rowCount;
+        public long getLastWalTimestamp() {
+            return walTimestamp.get();
         }
 
         /**
@@ -504,6 +497,19 @@ public class RecentWriteTracker {
             long walTs = walTimestamp.get();
             // Treat LONG_NULL as very old (it's Long.MIN_VALUE)
             return Math.max(ts, walTs);
+        }
+
+        /**
+         * Returns the row count at the time of the last write.
+         * <p>
+         * <b>Note:</b> This value may be stale if rows were deleted after the last write.
+         * Due to lock-free updates, this value may also be momentarily inconsistent
+         * with {@link #getTimestamp()} during concurrent writes.
+         *
+         * @return row count, or {@link Numbers#LONG_NULL} if not available
+         */
+        public long getRowCount() {
+            return rowCount;
         }
 
         /**
@@ -525,15 +531,6 @@ public class RecentWriteTracker {
          */
         public long getTimestamp() {
             return timestamp;
-        }
-
-        /**
-         * Returns the timestamp of the last WAL write in microseconds.
-         *
-         * @return timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
-         */
-        public long getLastWalTimestamp() {
-            return walTimestamp.get();
         }
 
         /**
