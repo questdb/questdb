@@ -56,7 +56,9 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -95,8 +97,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
+    // Initialized lazily.
+    private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final ColumnTypes valueTypes;
+    // Initialized lazily.
+    private DirectLongLongSortedList ownerLongTopKList;
     private volatile boolean sharded;
     // A hint whether to shard during the next query execution.
     private boolean shardedHint;
@@ -217,6 +223,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             } else {
                 perWorkerAllocators = null;
             }
+
+            perWorkerLongTopKLists = new ObjList<>(slotCount);
+            perWorkerLongTopKLists.setAll(slotCount, null);
         } catch (Throwable th) {
             close();
             throw th;
@@ -237,6 +246,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
         Misc.free(ownerAllocator);
         Misc.freeObjListAndKeepObjects(perWorkerAllocators);
+        Misc.free(ownerLongTopKList);
+        Misc.freeObjListAndKeepObjects(perWorkerLongTopKLists);
     }
 
     @Override
@@ -252,6 +263,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.freeObjList(perWorkerFilters);
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
+        Misc.free(ownerLongTopKList);
+        Misc.freeObjListAndKeepObjects(perWorkerLongTopKLists);
         if (perWorkerKeyFunctions != null) {
             for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
@@ -319,6 +332,27 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
+    public DirectLongLongSortedList getLongTopKList(int slotId, int order, int limit) {
+        if (slotId == -1) {
+            if (ownerLongTopKList == null) {
+                ownerLongTopKList = DirectLongLongSortedList.getInstance(order, limit, MemoryTag.NATIVE_DEFAULT);
+            } else if (ownerLongTopKList.getOrder() != order) {
+                Misc.free(ownerLongTopKList);
+                ownerLongTopKList = DirectLongLongSortedList.getInstance(order, limit, MemoryTag.NATIVE_DEFAULT);
+            }
+            ownerLongTopKList.reopen(limit);
+            return ownerLongTopKList;
+        }
+        DirectLongLongSortedList workerList = perWorkerLongTopKLists.getQuick(slotId);
+        if (workerList == null || workerList.getOrder() != order) {
+            Misc.free(workerList);
+            workerList = DirectLongLongSortedList.getInstance(order, limit, MemoryTag.NATIVE_DEFAULT);
+            perWorkerLongTopKLists.setQuick(slotId, workerList);
+        }
+        workerList.reopen(limit);
+        return workerList;
+    }
+
     public RecordSink getMapSink(int slotId) {
         if (slotId == -1 || perWorkerMapSinks == null) {
             return ownerMapSink;
@@ -329,6 +363,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // thread-unsafe
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
         return ownerGroupByFunctions;
+    }
+
+    // thread-unsafe
+    public DirectLongLongSortedList getOwnerLongTopKList() {
+        return ownerLongTopKList;
+    }
+
+    // thread-unsafe
+    public ObjList<DirectLongLongSortedList> getPerWorkerLongTopKLists() {
+        return perWorkerLongTopKLists;
     }
 
     public int getShardCount() {

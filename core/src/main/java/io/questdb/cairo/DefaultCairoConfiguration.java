@@ -392,6 +392,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByParallelTopKThreshold() {
+        return 1_000_000;
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return 1024;
     }
@@ -409,6 +414,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getGroupByShardingThreshold() {
         return 1000;
+    }
+
+    @Override
+    public int getGroupByTopKQueueCapacity() {
+        return 32;
     }
 
     @Override
