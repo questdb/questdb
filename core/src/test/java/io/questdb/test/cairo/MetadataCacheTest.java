@@ -258,7 +258,9 @@ public class MetadataCacheTest extends AbstractCairoTest {
                                 1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse
                                 """,
                         "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()",
-                        ""
+                        "",
+                        false,
+                        true
                 );
             }
         });

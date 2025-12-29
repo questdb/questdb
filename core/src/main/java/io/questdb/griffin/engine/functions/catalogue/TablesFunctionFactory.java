@@ -39,6 +39,8 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,24 +54,26 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class TablesFunctionFactory implements FunctionFactory {
-    private static final int DEDUP_NAME_COLUMN = 8;
+    private static final int DEDUP_NAME_COLUMN = 6;
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
-    private static final int DIRECTORY_NAME_COLUMN = 7;
+    private static final int DIRECTORY_NAME_COLUMN = 15;
     private static final int ID_COLUMN = 0;
-    private static final int IS_MAT_VIEW_COLUMN = 11;
-    private static final int LAST_WAL_TIMESTAMP_COLUMN = 16;
-    private static final int LAST_WRITE_TIMESTAMP_COLUMN = 13;
-    private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
+    private static final int IS_MAT_VIEW_COLUMN = 9;
+    private static final int LAST_WAL_TIMESTAMP_COLUMN = 14;
+    private static final int LAST_WRITE_TIMESTAMP_COLUMN = 11;
+    private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 17;
+    private static final int MEMORY_PRESSURE_LEVEL_COLUMN = 16;
     private static final RecordMetadata METADATA;
-    private static final int O3_MAX_LAG_COLUMN = 5;
+    private static final int O3_MAX_LAG_COLUMN = 18;
     private static final int PARTITION_BY_COLUMN = 3;
-    private static final int ROW_COUNT_COLUMN = 12;
-    private static final int SEQUENCER_TXN_COLUMN = 15;
+    private static final int ROW_COUNT_COLUMN = 10;
+    private static final int SEQUENCER_TXN_COLUMN = 13;
+    private static final int SUSPENDED_COLUMN = 5;
     private static final int TABLE_NAME = 1;
-    private static final int TTL_UNIT_COLUMN = 10;
-    private static final int TTL_VALUE_COLUMN = 9;
-    private static final int WAL_ENABLED_COLUMN = 6;
-    private static final int WRITER_TXN_COLUMN = 14;
+    private static final int TTL_UNIT_COLUMN = 8;
+    private static final int TTL_VALUE_COLUMN = 7;
+    private static final int WAL_ENABLED_COLUMN = 4;
+    private static final int WRITER_TXN_COLUMN = 12;
 
     public static String getTtlUnit(int ttl) {
         if (ttl == 0) {
@@ -143,7 +147,7 @@ public class TablesFunctionFactory implements FunctionFactory {
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
             }
-            cursor.of(engine.getRecentWriteTracker());
+            cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI());
             cursor.toTop();
             return cursor;
         }
@@ -167,10 +171,13 @@ public class TablesFunctionFactory implements FunctionFactory {
             private final TableListRecord record = new TableListRecord();
             private final CharSequenceObjHashMap<CairoTable> tableCache;
             private int iteratorIdx = -1;
+            private int iteratorLim;
             private RecentWriteTracker recentWriteTracker;
+            private TableSequencerAPI tableSequencerAPI;
 
             public TablesRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
                 this.tableCache = tableCache;
+                this.iteratorLim = tableCache.size() - 1;
             }
 
             @Override
@@ -184,25 +191,28 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                if (iteratorIdx < tableCache.size() - 1) {
-                    record.of(tableCache.getAt(++iteratorIdx), recentWriteTracker);
+                if (iteratorIdx < iteratorLim) {
+                    record.of(tableCache.getAt(++iteratorIdx), recentWriteTracker, tableSequencerAPI);
                     return true;
                 }
                 return false;
             }
 
-            public void of(RecentWriteTracker recentWriteTracker) {
+            public void of(RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI) {
                 this.recentWriteTracker = recentWriteTracker;
-            }
-
-            @Override
-            public long size() {
-                return -1;
+                this.tableSequencerAPI = tableSequencerAPI;
+                // can is refreshed every time cursor is refreshed
+                this.iteratorLim = tableCache.size() - 1;
             }
 
             @Override
             public long preComputedStateSize() {
                 return 0;
+            }
+
+            @Override
+            public long size() {
+                return iteratorLim + 1;
             }
 
             @Override
@@ -214,6 +224,7 @@ public class TablesFunctionFactory implements FunctionFactory {
                 private StringSink lazyStringSink = null;
                 private RecentWriteTracker recentWriteTracker;
                 private CairoTable table;
+                private TableSequencerAPI tableSequencerAPI;
 
                 @Override
                 public boolean getBool(int col) {
@@ -221,6 +232,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case WAL_ENABLED_COLUMN -> table.isWalEnabled();
                         case DEDUP_NAME_COLUMN -> table.hasDedup();
                         case IS_MAT_VIEW_COLUMN -> table.getTableToken().isMatView();
+                        case SUSPENDED_COLUMN ->
+                                table.isWalEnabled() && tableSequencerAPI.isSuspended(table.getTableToken());
                         default -> false;
                     };
                 }
@@ -232,6 +245,13 @@ public class TablesFunctionFactory implements FunctionFactory {
                     }
                     if (col == TTL_VALUE_COLUMN) {
                         return getTtlValue(table.getTtlHoursOrMonths());
+                    }
+                    if (col == MEMORY_PRESSURE_LEVEL_COLUMN) {
+                        if (!table.isWalEnabled()) {
+                            return Numbers.INT_NULL;
+                        }
+                        SeqTxnTracker tracker = tableSequencerAPI.getTxnTracker(table.getTableToken());
+                        return tracker.getMemPressureControl().getMemoryPressureLevel();
                     }
                     assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
                     return table.getMaxUncommittedRows();
@@ -271,15 +291,6 @@ public class TablesFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
-                public long getTimestamp(int col) {
-                    return switch (col) {
-                        case LAST_WRITE_TIMESTAMP_COLUMN -> recentWriteTracker.getWriteTimestamp(table.getTableToken());
-                        case LAST_WAL_TIMESTAMP_COLUMN -> recentWriteTracker.getLastWalTimestamp(table.getTableToken());
-                        default -> Numbers.LONG_NULL;
-                    };
-                }
-
-                @Override
                 public CharSequence getStrB(int col) {
                     return getStrA(col);
                 }
@@ -289,9 +300,19 @@ public class TablesFunctionFactory implements FunctionFactory {
                     return TableUtils.lengthOf(getStrA(col));
                 }
 
-                private void of(CairoTable table, RecentWriteTracker recentWriteTracker) {
+                @Override
+                public long getTimestamp(int col) {
+                    return switch (col) {
+                        case LAST_WRITE_TIMESTAMP_COLUMN -> recentWriteTracker.getWriteTimestamp(table.getTableToken());
+                        case LAST_WAL_TIMESTAMP_COLUMN -> recentWriteTracker.getLastWalTimestamp(table.getTableToken());
+                        default -> Numbers.LONG_NULL;
+                    };
+                }
+
+                private void of(CairoTable table, RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI) {
                     this.table = table;
                     this.recentWriteTracker = recentWriteTracker;
+                    this.tableSequencerAPI = tableSequencerAPI;
                 }
             }
         }
@@ -299,23 +320,25 @@ public class TablesFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("id", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("rowCount", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("lastWriteTimestamp", ColumnType.TIMESTAMP));
-        metadata.add(new TableColumnMetadata("writerTxn", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("sequencerTxn", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("lastWalTimestamp", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("id", ColumnType.INT));                        // 0
+        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));             // 1
+        metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING));    // 2
+        metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));            // 3
+        metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));            // 4
+        metadata.add(new TableColumnMetadata("suspended", ColumnType.BOOLEAN));             // 5
+        metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));                 // 6
+        metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));                  // 7
+        metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));                // 8
+        metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));               // 9
+        metadata.add(new TableColumnMetadata("rowCount", ColumnType.LONG));                 // 10
+        metadata.add(new TableColumnMetadata("lastWriteTimestamp", ColumnType.TIMESTAMP));  // 11
+        metadata.add(new TableColumnMetadata("writerTxn", ColumnType.LONG));                // 12
+        metadata.add(new TableColumnMetadata("sequencerTxn", ColumnType.LONG));             // 13
+        metadata.add(new TableColumnMetadata("lastWalTimestamp", ColumnType.TIMESTAMP));    // 14
+        metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));          // 15
+        metadata.add(new TableColumnMetadata("memoryPressureLevel", ColumnType.INT));       // 16
+        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));        // 17
+        metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));                 // 18
         METADATA = metadata;
     }
 }

@@ -26,9 +26,11 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.RecentWriteTracker;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -233,6 +235,111 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryPressureColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a WAL table
+            execute("CREATE TABLE test_mem_pressure (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            TableToken tableToken = engine.verifyTableName("test_mem_pressure");
+
+            // Insert some data to initialize the tracker
+            execute("INSERT INTO test_mem_pressure VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Initially, memoryPressureLevel should be 0 (no pressure)
+            assertSql(
+                    """
+                            table_name\tmemoryPressureLevel
+                            test_mem_pressure\t0
+                            """,
+                    "select table_name, memoryPressureLevel from tables() where table_name = 'test_mem_pressure'"
+            );
+        });
+    }
+
+    @Test
+    public void testMemoryPressureColumnNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a non-WAL table
+            execute("CREATE TABLE test_non_wal_mem (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Non-WAL tables should show null for memoryPressureLevel
+            assertSql(
+                    """
+                            table_name\tmemoryPressureLevel
+                            test_non_wal_mem\tnull
+                            """,
+                    "select table_name, memoryPressureLevel from tables() where table_name = 'test_non_wal_mem'"
+            );
+        });
+    }
+
+    @Test
+    public void testSuspendedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a WAL table
+            execute("CREATE TABLE test_suspended (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            TableToken tableToken = engine.verifyTableName("test_suspended");
+            TableSequencerAPI sequencerAPI = engine.getTableSequencerAPI();
+
+            // Insert some data to initialize the tracker
+            execute("INSERT INTO test_suspended VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Initially, the table should not be suspended
+            assertSql(
+                    """
+                            table_name\tsuspended
+                            test_suspended\tfalse
+                            """,
+                    "select table_name, suspended from tables() where table_name = 'test_suspended'"
+            );
+
+            // Suspend the table
+            sequencerAPI.suspendTable(tableToken, ErrorTag.DISK_FULL, "test suspension");
+
+            // Now the table should be suspended
+            assertSql(
+                    """
+                            table_name\tsuspended
+                            test_suspended\ttrue
+                            """,
+                    "select table_name, suspended from tables() where table_name = 'test_suspended'"
+            );
+
+            // Resume the table
+            sequencerAPI.resumeTable(tableToken, 0);
+
+            // Table should no longer be suspended
+            assertSql(
+                    """
+                            table_name\tsuspended
+                            test_suspended\tfalse
+                            """,
+                    "select table_name, suspended from tables() where table_name = 'test_suspended'"
+            );
+        });
+    }
+
+    @Test
+    public void testSuspendedColumnNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a non-WAL table
+            execute("CREATE TABLE test_non_wal_suspended (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Non-WAL tables should always show suspended=false
+            assertSql(
+                    """
+                            table_name\tsuspended
+                            test_non_wal_suspended\tfalse
+                            """,
+                    "select table_name, suspended from tables() where table_name = 'test_non_wal_suspended'"
+            );
+        });
+    }
+
+    @Test
     public void testTxnAndWalTimestampColumns() throws Exception {
         assertMemoryLeak(() -> {
             // Create a WAL table
@@ -270,7 +377,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                     """
                             table_name\twriterTxn\tsequencerTxn
                             test_txn\t""" + writerTxn + "\t" + sequencerTxn + """
-                            
+
                             """,
                     "select table_name, writerTxn, sequencerTxn from tables() where table_name = 'test_txn'"
             );
