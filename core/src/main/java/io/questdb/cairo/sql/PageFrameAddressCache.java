@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.ByteList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -57,8 +58,7 @@ public class PageFrameAddressCache implements Mutable {
     private final long nativeCacheSizeThreshold;
     private final ObjList<LongList> pageAddresses = new ObjList<>();
     private final ObjList<LongList> pageSizes = new ObjList<>();
-    private final LongList parquetAddresses = new LongList();
-    private final LongList parquetFileSizes = new LongList();
+    private final ObjList<PartitionDecoder> parquetPartitionDecoders = new ObjList<>();
     private final IntList parquetRowGroupHis = new IntList();
     private final IntList parquetRowGroupLos = new IntList();
     private final IntList parquetRowGroups = new IntList();
@@ -112,10 +112,9 @@ public class PageFrameAddressCache implements Mutable {
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(frame.getFormat());
-        parquetAddresses.add(frame.getParquetAddr());
-        final long fileSize = frame.getParquetFileSize();
-        assert fileSize > 0 || frame.getFormat() != PartitionFormat.PARQUET;
-        parquetFileSizes.add(fileSize);
+        PartitionDecoder decoder = frame.getParquetPartitionDecoder();
+        parquetPartitionDecoders.add(decoder);
+        assert (decoder != null && (decoder.getFileSize() > 0)) || frame.getFormat() != PartitionFormat.PARQUET;
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
@@ -126,9 +125,8 @@ public class PageFrameAddressCache implements Mutable {
     public void clear() {
         frameSizes.clear();
         frameFormats.clear();
-        parquetAddresses.clear();
+        parquetPartitionDecoders.clear();
         parquetRowGroups.clear();
-        parquetFileSizes.clear();
         parquetRowGroupLos.clear();
         parquetRowGroupHis.clear();
         pageAddresses.clear();
@@ -182,14 +180,10 @@ public class PageFrameAddressCache implements Mutable {
         return pageSizes.getQuick(frameIndex);
     }
 
-    public long getParquetAddr(int frameIndex) {
-        return parquetAddresses.getQuick(frameIndex);
-    }
-
-    public long getParquetFileSize(int frameIndex) {
-        final long fileSize = parquetFileSizes.getQuick(frameIndex);
-        assert fileSize > 0;
-        return fileSize;
+    public PartitionDecoder getParquetPartitionDecoder(int frameIndex) {
+        final PartitionDecoder decoder = parquetPartitionDecoders.getQuick(frameIndex);
+        assert decoder != null;
+        return decoder;
     }
 
     public int getParquetRowGroup(int frameIndex) {
