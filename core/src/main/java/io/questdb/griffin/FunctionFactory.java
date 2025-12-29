@@ -144,4 +144,8 @@ public interface FunctionFactory {
     default boolean supportImplicitCastCharToStr() {
         return true;
     }
+
+    default boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
+        return true;
+    }
 }
