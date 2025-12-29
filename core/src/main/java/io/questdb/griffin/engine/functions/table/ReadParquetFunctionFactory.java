@@ -91,9 +91,9 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 }
 
                 if (context.isParallelReadParquetEnabled()) {
-                    return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(configuration, path, metadata));
+                    return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(path, metadata));
                 } else {
-                    return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, ff));
+                    return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata));
                 }
             } finally {
                 ff.close(fd);
