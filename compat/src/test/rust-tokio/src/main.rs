@@ -343,6 +343,16 @@ fn extract_parameters(
                             Box::new(float_array)
                         }
 
+                        "array_varchar" => {
+                            let trimmed = substituted.trim_start_matches('{').trim_end_matches('}');
+                            if trimmed.is_empty() {
+                                Box::new(Vec::<Option<String>>::new())
+                            } else {
+                                let str_array: Vec<Option<String>> = parse_varchar_array(trimmed);
+                                Box::new(str_array)
+                            }
+                        }
+
                         "numeric" => Box::new(substituted.parse::<Decimal>()?),
 
                         _ => return Err("Unsupported parameter type".into()),
@@ -357,6 +367,54 @@ fn extract_parameters(
 
 fn parse_timestamp(s: &str) -> Result<NaiveDateTime, chrono::ParseError> {
     NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.fZ")
+}
+
+fn parse_varchar_array(input: &str) -> Vec<Option<String>> {
+    let mut result = Vec::new();
+    let mut chars = input.chars().peekable();
+
+    while chars.peek().is_some() {
+        while let Some(&c) = chars.peek() {
+            if c == ' ' || c == ',' {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        if chars.peek().is_none() {
+            break;
+        }
+
+        if chars.peek() == Some(&'"') {
+            chars.next();
+            let mut value = String::new();
+            while let Some(c) = chars.next() {
+                if c == '"' {
+                    break;
+                }
+                value.push(c);
+            }
+            result.push(Some(value));
+        } else {
+            let mut value = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == ',' {
+                    break;
+                }
+                value.push(c);
+                chars.next();
+            }
+            let trimmed = value.trim();
+            if trimmed.eq_ignore_ascii_case("null") {
+                result.push(None);
+            } else {
+                result.push(Some(trimmed.to_string()));
+            }
+        }
+    }
+
+    result
 }
 
 #[derive(Error, Debug)]
@@ -485,7 +543,7 @@ fn handle_execute_result(
                             "Expected result {:?}, got {:?}",
                             expected_value, rows_affected
                         )
-                        .into());
+                            .into());
                     }
                 }
             }
@@ -499,7 +557,7 @@ fn handle_execute_result(
                             "Expected error '{}', but got '{}'",
                             expected_error, error_message
                         )
-                        .into());
+                            .into());
                     }
                 } else {
                     return Err(e.into());

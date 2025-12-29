@@ -68,6 +68,7 @@ public class SqlJitCompilerSimdBenchmark {
     @Param({"EQ", "NEQ"})
     public Predicate predicate;
     private SqlCompilerImpl compiler;
+    private RecordCursorFactory countFactory;
     private SqlExecutionContextImpl ctx;
     private CairoEngine engine;
     private RecordCursorFactory factory;
@@ -129,12 +130,19 @@ public class SqlJitCompilerSimdBenchmark {
                 break;
         }
         compiler = new SqlCompilerImpl(engine);
-        final String query = "select * from x where " + column + (predicate == Predicate.EQ ? " = " : " != ") + "0;";
+        final String query = "x where " + column + (predicate == Predicate.EQ ? " = " : " != ") + "0;";
         factory = compiler.compile(query, ctx).getRecordCursorFactory();
         if (factory.usesCompiledFilter() != jitShouldBeEnabled) {
             throw new IllegalStateException("Unexpected JIT usage reported by factory: " +
                     "expected=" + jitShouldBeEnabled +
                     ", actual=" + factory.usesCompiledFilter());
+        }
+        final String countQuery = "select count(*) from " + query;
+        countFactory = compiler.compile(countQuery, ctx).getRecordCursorFactory();
+        if (countFactory.usesCompiledFilter() != jitShouldBeEnabled) {
+            throw new IllegalStateException("Unexpected JIT usage reported by count factory: " +
+                    "expected=" + jitShouldBeEnabled +
+                    ", actual=" + countFactory.usesCompiledFilter());
         }
     }
 
@@ -143,17 +151,30 @@ public class SqlJitCompilerSimdBenchmark {
         compiler.close();
         engine.close();
         factory.close();
+        countFactory.close();
     }
 
     @Benchmark
-    public void testFilter() throws SqlException {
-        try (RecordCursor cursor = factory.getCursor(ctx)) {
-            final Record ignored = cursor.getRecord();
-            // noinspection StatementWithEmptyBody
-            while (cursor.hasNext()) {
-                // access 'record' instance for field values
+    public long testCountOnlyFilter() throws SqlException {
+        long count = 0;
+        try (RecordCursor cursor = countFactory.getCursor(ctx)) {
+            if (cursor.hasNext()) {
+                count = cursor.getRecord().getLong(0);
             }
         }
+        return count;
+    }
+
+    @Benchmark
+    public long testFilter() throws SqlException {
+        long count = 0;
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            final Record ignored = cursor.getRecord();
+            while (cursor.hasNext()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public enum JitMode {

@@ -99,13 +99,13 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     }
 
     @Override
-    protected R newCopyOfTenant(R srcReader, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
-        return new R(this, entry, index, srcReader, txnScoreboardPool, messageBus, readerListener, partitionOverwriteControl, supervisor);
+    protected R newCopyOfTenant(R srcReader, Entry<R> rootEntry, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
+        return new R(this, rootEntry, entry, index, srcReader, txnScoreboardPool, messageBus, readerListener, partitionOverwriteControl, supervisor);
     }
 
     @Override
-    protected R newTenant(TableToken tableToken, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
-        return new R(this, entry, index, tableToken, txnScoreboardPool, messageBus, readerListener, partitionOverwriteControl, supervisor);
+    protected R newTenant(TableToken tableToken, Entry<R> rootEntry, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
+        return new R(this, rootEntry, entry, index, tableToken, txnScoreboardPool, messageBus, readerListener, partitionOverwriteControl, supervisor);
     }
 
     @TestOnly
@@ -117,6 +117,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     public static class R extends TableReader implements PoolTenant<R> {
         private final int index;
         private final ReaderListener readerListener;
+        private final Entry<R> rootEntry;
         private boolean detached;
         // Reference counter that may be used to track usage of detached readers.
         // A reader may be obtained from the pool and closed on different threads,
@@ -129,6 +130,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
         public R(
                 AbstractMultiTenantPool<R> pool,
+                Entry<R> rootEntry,
                 Entry<R> entry,
                 int index,
                 TableToken tableToken,
@@ -138,8 +140,9 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 PartitionOverwriteControl partitionOverwriteControl,
                 ResourcePoolSupervisor<R> supervisor
         ) {
-            super(entry.getIndex() * ENTRY_SIZE + index, pool.getConfiguration(), tableToken, txnScoreboardPool, messageBus, partitionOverwriteControl);
+            super(entry.getIndex() * pool.getSegmentSize() + index, pool.getConfiguration(), tableToken, txnScoreboardPool, messageBus, partitionOverwriteControl);
             this.pool = pool;
+            this.rootEntry = rootEntry;
             this.entry = entry;
             this.index = index;
             this.readerListener = readerListener;
@@ -148,6 +151,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
         public R(
                 AbstractMultiTenantPool<R> pool,
+                Entry<R> rootEntry,
                 Entry<R> entry,
                 int index,
                 R srcReader,
@@ -157,8 +161,9 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 PartitionOverwriteControl partitionOverwriteControl,
                 ResourcePoolSupervisor<R> supervisor
         ) {
-            super(entry.getIndex() * ENTRY_SIZE + index, pool.getConfiguration(), srcReader, txnScoreboardPool, messageBus, partitionOverwriteControl);
+            super(entry.getIndex() * pool.getSegmentSize() + index, pool.getConfiguration(), srcReader, txnScoreboardPool, messageBus, partitionOverwriteControl);
             this.pool = pool;
+            this.rootEntry = rootEntry;
             this.entry = entry;
             this.index = index;
             this.readerListener = readerListener;
@@ -209,6 +214,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         @Override
         public int getIndex() {
             return index;
+        }
+
+        @Override
+        public Entry<R> getRootEntry() {
+            return rootEntry;
         }
 
         public ResourcePoolSupervisor<R> getSupervisor() {
