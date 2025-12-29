@@ -31,6 +31,16 @@ final class FiltersCompiler {
     private FiltersCompiler() {
     }
 
+    public static native long callCountOnlyFunction(
+            long fnAddress,
+            long colsAddress,
+            long colsSize,
+            long varSizeIndexesAddress,
+            long varsAddress,
+            long varsSize,
+            long rowsCount
+    );
+
     public static native long callFunction(
             long fnAddress,
             long colsAddress,
@@ -38,17 +48,17 @@ final class FiltersCompiler {
             long varSizeIndexesAddress,
             long varsAddress,
             long varsSize,
-            long rowsAddress,
-            long rowsSize,
-            long rowsStartOffset
+            long filteredRowsAddress,
+            long rowsCount
     );
+
+    public static native long compileCountOnlyFunction(long filterAddress, long filterSize, int options, JitError error);
 
     public static native long compileFunction(long filterAddress, long filterSize, int options, JitError error);
 
     public static native long freeFunction(long fnAddress);
 
     static class JitError {
-
         private final StringSink message = new StringSink();
         private int errorCode = 0;
 
@@ -72,5 +82,4 @@ final class FiltersCompiler {
             message.clear();
         }
     }
-
 }

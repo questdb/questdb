@@ -300,6 +300,7 @@ import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WindowJoinContext;
+import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.jit.JitUtil;
@@ -2830,6 +2831,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
             if (useJit && canCompile) {
                 CompiledFilter compiledFilter = null;
+                CompiledCountOnlyFilter compiledCountOnlyFilter = null;
                 try {
                     int jitOptions;
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
@@ -2841,6 +2843,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     compiledFilter = new CompiledFilter();
                     compiledFilter.compile(jitIRMem, jitOptions);
+
+                    compiledCountOnlyFilter = new CompiledCountOnlyFilter();
+                    compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
 
                     final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                     final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
@@ -2856,6 +2861,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory,
                             bindVarFunctions,
                             compiledFilter,
+                            compiledCountOnlyFilter,
                             filter,
                             reduceTaskFactory,
                             compileWorkerFilterConditionally(
@@ -2875,6 +2881,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // for these errors we are intentionally **not** rethrowing the exception
                     // if a JIT filter cannot be used, we will simply use a Java filter
                     Misc.free(compiledFilter);
+                    Misc.free(compiledCountOnlyFilter);
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
                             .$(", ex=").$safe(ex.getFlyweightMessage())
@@ -2882,6 +2889,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } catch (Throwable t) {
                     // other errors are fatal -> rethrow them
                     Misc.free(compiledFilter);
+                    Misc.free(compiledCountOnlyFilter);
                     Misc.free(filter);
                     Misc.free(factory);
                     throw t;
