@@ -45,7 +45,9 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecor
      * The row list for the tree set.
      */
     final DirectLongList rows;
-    /** The page frame record cursor. */
+    /**
+     * The page frame record cursor.
+     */
     protected PageFrameRecordCursor cursor;
 
     /**
