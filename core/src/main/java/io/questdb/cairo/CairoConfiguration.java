@@ -443,8 +443,6 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
-    int getPoolSegmentSize();
-
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();

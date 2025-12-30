@@ -1118,6 +1118,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 drainWalQueue();
                 checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
             }
+
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+            }
             drainWalQueue();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
