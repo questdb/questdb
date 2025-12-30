@@ -760,15 +760,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testMinMaxDesignatedTimestampOptimization() throws Exception {
+    public void testMultipleFirstLastOptimization() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades (Ωprice double, amount double, ts timestamp) timestamp(ts);");
+            execute("create table trades (price double, amount double, ts timestamp) timestamp(ts);");
             execute("insert into trades select 100.0, 50.0, timestamp_sequence('2023-01-01', 1000000L) from long_sequence(100);");
 
             final String query = "select min(ts), max(ts) from trades";
             final QueryModel model = compileModel(query);
-
-            assertNotNull(model);
 
             QueryModel nested = model.getNestedModel();
             assertNotNull(nested);
