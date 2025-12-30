@@ -57,8 +57,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
                         assertCursor(
                                 """
-                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	suspended	dedup	ttlValue	ttlUnit	matView	rowCount	lastWriteTimestamp	writerTxn	sequencerTxn	lastWalTimestamp	directoryName	memoryPressureLevel	maxUncommittedRows	o3MaxLag
-                                        1	x	ts	DAY	false	false	false	0	HOUR	false	null		null	null		x~	null	1000	300000000
+                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	suspended	dedup	ttlValue	ttlUnit	matView	rowCount	pendingRowCount	dedupeRowCount	lastWriteTimestamp	writerTxn	sequencerTxn	lastWalTimestamp	directoryName	memoryPressureLevel	maxUncommittedRows	o3MaxLag
+                                        1	x	ts	DAY	false	false	false	0	HOUR	false	null	0	0		null	null		x~	null	1000	300000000
                                         """,
                                 false,
                                 true,
@@ -78,8 +78,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                         // note the ID is 2 now!
                         assertCursor(
                                 """
-                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	suspended	dedup	ttlValue	ttlUnit	matView	rowCount	lastWriteTimestamp	writerTxn	sequencerTxn	lastWalTimestamp	directoryName	memoryPressureLevel	maxUncommittedRows	o3MaxLag
-                                        2	x	ts	DAY	false	false	false	0	HOUR	false	null		null	null		x~	null	1000	300000000
+                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	suspended	dedup	ttlValue	ttlUnit	matView	rowCount	pendingRowCount	dedupeRowCount	lastWriteTimestamp	writerTxn	sequencerTxn	lastWalTimestamp	directoryName	memoryPressureLevel	maxUncommittedRows	o3MaxLag
+                                        2	x	ts	DAY	false	false	false	0	HOUR	false	null	0	0		null	null		x~	null	1000	300000000
                                         """,
                                 false,
                                 true,
@@ -268,9 +268,9 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
             assertSql(
                     """
-                            id	table_name	designatedTimestamp	partitionBy	walEnabled	suspended	dedup	ttlValue	ttlUnit	matView	rowCount	lastWriteTimestamp	writerTxn	sequencerTxn	lastWalTimestamp	directoryName	memoryPressureLevel	maxUncommittedRows	o3MaxLag
-                            1	balances	ts	DAY	true	false	false	0	HOUR	false	null		null	null		balances~1	0	1000	300000000
-                            2	balances_1h	ts	WEEK	true	false	false	0	HOUR	true	null		null	null		balances_1h~2	0	1000	-1
+                            id	table_name	designatedTimestamp	partitionBy	walEnabled	suspended	dedup	ttlValue	ttlUnit	matView	rowCount	pendingRowCount	dedupeRowCount	lastWriteTimestamp	writerTxn	sequencerTxn	lastWalTimestamp	directoryName	memoryPressureLevel	maxUncommittedRows	o3MaxLag
+                            1	balances	ts	DAY	true	false	false	0	HOUR	false	null	0	0		null	null		balances~1	0	1000	300000000
+                            2	balances_1h	ts	WEEK	true	false	false	0	HOUR	true	null	0	0		null	null		balances_1h~2	0	1000	-1
                             """,
                     "tables() order by table_name"
             );

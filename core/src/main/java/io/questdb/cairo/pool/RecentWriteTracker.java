@@ -229,20 +229,48 @@ public class RecentWriteTracker {
     /**
      * Records that WAL rows have been processed (applied to the table).
      * <p>
-     * This decrements the pending WAL row count and accumulates dedup row count.
+     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
      * Called after successful WAL transaction application.
      *
      * @param tableToken        the table whose WAL was processed
+     * @param seqTxn            the sequencer transaction number being processed
      * @param walRowCount       the number of WAL rows that were processed (before dedup)
      * @param committedRowCount the number of rows actually committed (after dedup)
      */
-    public void recordWalProcessed(@NotNull TableToken tableToken, long walRowCount, long committedRowCount) {
+    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats != null) {
-            stats.walRowCount.add(-walRowCount);
+            // Only subtract if seqTxn is above the floor (rows added after tracking started)
+            if (seqTxn > stats.getFloorSeqTxn()) {
+                stats.walRowCount.add(-walRowCount);
+            }
             long dedupCount = walRowCount - committedRowCount;
             if (dedupCount > 0) {
                 stats.dedupRowCount.add(dedupCount);
+            }
+        }
+    }
+
+    /**
+     * Sets the floor seqTxn for a table. WAL rows with seqTxn <= floor will not be subtracted
+     * from pending count since they were never added (existed before tracking started).
+     * Called on startup for tables with pending WALs. Creates WriteStats if it doesn't exist.
+     *
+     * @param tableToken  the table to set floor for
+     * @param floorSeqTxn the floor seqTxn value
+     */
+    public void setFloorSeqTxn(@NotNull TableToken tableToken, long floorSeqTxn) {
+        WriteStats stats = writeStats.get(tableToken);
+        if (stats != null) {
+            stats.setFloorSeqTxn(floorSeqTxn);
+        } else {
+            // Create new entry with only floor set
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            newStats.setFloorSeqTxn(floorSeqTxn);
+            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
+            if (existing != null) {
+                // Another thread inserted first, set floor on theirs
+                existing.setFloorSeqTxn(floorSeqTxn);
             }
         }
     }
@@ -518,6 +546,8 @@ public class RecentWriteTracker {
         private final LongAdder dedupRowCount = new LongAdder();
         // WAL row count - incremented by WalWriters, contention-free via LongAdder
         private final LongAdder walRowCount = new LongAdder();
+        // Floor seqTxn - set on startup, WAL rows with seqTxn <= floor are not subtracted
+        private final AtomicLong floorSeqTxn = new AtomicLong(0);
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
         private volatile long timestamp;
@@ -623,6 +653,26 @@ public class RecentWriteTracker {
          */
         public long getWriterTxn() {
             return writerTxn;
+        }
+
+        /**
+         * Returns the floor seqTxn. WAL rows with seqTxn <= floor are not subtracted
+         * from pending count (they were never added because they existed before tracking started).
+         *
+         * @return floor seqTxn, or 0 if not set
+         */
+        public long getFloorSeqTxn() {
+            return floorSeqTxn.get();
+        }
+
+        /**
+         * Sets the floor seqTxn. Only succeeds if not already set (floor is 0).
+         * Called on startup to mark WAL transactions that existed before tracking started.
+         *
+         * @param floor the floor seqTxn to set
+         */
+        void setFloorSeqTxn(long floor) {
+            floorSeqTxn.compareAndSet(0, floor);
         }
 
         /**

@@ -654,7 +654,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 // Decrement pending WAL row count and track dedup after successful processing
-                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedRows, rowsCommitted);
+                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, rowsCommitted);
 
                 if (writer.getTableToken().isMatView()) {
                     for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
