@@ -49,7 +49,6 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
     private static final Log LOG = LogFactory.getLog(TableReaderMetadataTenantImpl.class);
     private final MillisecondClock clock;
     private final int index;
-    private final AbstractMultiTenantPool.Entry<TableReaderMetadataTenantImpl> rootEntry;
     private AbstractMultiTenantPool.Entry<TableReaderMetadataTenantImpl> entry;
     private boolean initialized;
     private AbstractMultiTenantPool<TableReaderMetadataTenantImpl> pool;
@@ -59,7 +58,6 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
 
     TableReaderMetadataTenantImpl(
             AbstractMultiTenantPool<TableReaderMetadataTenantImpl> pool,
-            AbstractMultiTenantPool.Entry<TableReaderMetadataTenantImpl> rootEntry,
             AbstractMultiTenantPool.Entry<TableReaderMetadataTenantImpl> entry,
             int index,
             TableToken tableToken,
@@ -71,7 +69,6 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
             TableReaderMetadataTenantImpl.this.initialize(configuration, tableToken);
         }
         this.pool = pool;
-        this.rootEntry = rootEntry;
         this.entry = entry;
         this.index = index;
     }
@@ -103,11 +100,6 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
 
     public long getMinTimestamp() {
         return txFile.getMinTimestamp();
-    }
-
-    @Override
-    public AbstractMultiTenantPool.Entry<TableReaderMetadataTenantImpl> getRootEntry() {
-        return rootEntry;
     }
 
     public long getTransientRowCount() {
