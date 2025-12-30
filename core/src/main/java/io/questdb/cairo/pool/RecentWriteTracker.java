@@ -186,6 +186,16 @@ public class RecentWriteTracker {
         return stats != null ? stats.getMergeThroughputP99() : 0;
     }
 
+    public WriteStats getOrCreateStats(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        if (stats == null) {
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
+            stats = existing != null ? existing : newStats;
+        }
+        return stats;
+    }
+
     /**
      * Returns the most recently written tables, sorted by write time (most recent first).
      * <p>
@@ -339,16 +349,6 @@ public class RecentWriteTracker {
         return stats != null ? stats.getWalRowCount() : 0;
     }
 
-    public WriteStats getStats(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        if (stats == null) {
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
-            stats = existing != null ? existing : newStats;
-        }
-        return stats;
-    }
-
     /**
      * Returns the total number of write amplification samples for a specific table.
      *
@@ -394,6 +394,17 @@ public class RecentWriteTracker {
     }
 
     /**
+     * Returns the 99th percentile write amplification for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return 99th percentile write amplification, or 0.0 if not tracked
+     */
+    public double getWriteAmplificationP99(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getWriteAmplificationP99() : 0.0;
+    }
+
+    /**
      * Returns the write statistics for a specific table, or null if not tracked.
      *
      * @param tableToken the table to look up
@@ -429,17 +440,6 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Returns the 99th percentile write amplification for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return 99th percentile write amplification, or 0.0 if not tracked
-     */
-    public double getWriteAmplificationP99(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getWriteAmplificationP99() : 0.0;
-    }
-
-    /**
      * Records a merge throughput sample for a specific table.
      * <p>
      * Merge throughput is measured in rows/second during WAL apply.
@@ -449,7 +449,30 @@ public class RecentWriteTracker {
      * @param throughput the throughput in rows/second
      */
     public void recordMergeThroughput(@NotNull TableToken tableToken, long throughput) {
-        getStats(tableToken).recordMergeThroughput(throughput);
+        getOrCreateStats(tableToken).recordMergeThroughput(throughput);
+    }
+
+    /**
+     * Records that WAL rows have been processed (applied to the table).
+     * <p>
+     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
+     * Called after successful WAL transaction application.
+     *
+     * @param tableToken        the table whose WAL was processed
+     * @param seqTxn            the sequencer transaction number being processed
+     * @param walRowCount       the number of WAL rows that were processed (before dedup)
+     * @param committedRowCount the number of rows actually committed (after dedup)
+     */
+    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
+        WriteStats stats = getOrCreateStats(tableToken);
+        // Only subtract if seqTxn is above the floor (rows added after tracking started)
+        if (seqTxn > stats.getFloorSeqTxn()) {
+            stats.walRowCount.add(-walRowCount);
+        }
+        long dedupCount = walRowCount - committedRowCount;
+        if (dedupCount > 0) {
+            stats.dedupRowCount.add(dedupCount);
+        }
     }
 
     /**
@@ -468,24 +491,7 @@ public class RecentWriteTracker {
      * @param txnRowCount  the number of rows in this WAL segment
      */
     public void recordWalWrite(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long txnRowCount) {
-        WriteStats stats = writeStats.get(tableToken);
-        if (stats != null) {
-            // Entry exists - update WAL fields
-            stats.updateWal(sequencerTxn, walTimestamp, txnRowCount);
-        } else {
-            // No entry - create blank entry with only WAL fields set
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, sequencerTxn, walTimestamp);
-            // Add row count and record in histogram after construction
-            newStats.walRowCount.add(txnRowCount);
-            if (txnRowCount > 0) {
-                newStats.txnSizeHistogram.recordValue(txnRowCount);
-            }
-            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
-            if (existing != null) {
-                // Another thread inserted first, update their WAL fields
-                existing.updateWal(sequencerTxn, walTimestamp, txnRowCount);
-            }
-        }
+        getOrCreateStats(tableToken).updateWal(sequencerTxn, walTimestamp, txnRowCount);
 
         // Lazy eviction
         if (writeStats.size() > maxCapacity * 2) {
@@ -507,19 +513,7 @@ public class RecentWriteTracker {
      * @param writerTxn  the writer transaction number (not WAL sequence txn)
      */
     public void recordWrite(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn) {
-        WriteStats stats = writeStats.get(tableToken);
-        if (stats != null) {
-            // Fast path: entry exists, just update writer fields (preserves WAL fields)
-            stats.updateWriter(timestamp, rowCount, writerTxn);
-        } else {
-            // Slow path: need to create new entry (WAL fields start as LONG_NULL)
-            WriteStats newStats = new WriteStats(timestamp, rowCount, writerTxn, Numbers.LONG_NULL, Numbers.LONG_NULL);
-            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
-            if (existing != null) {
-                // Another thread inserted first, update theirs (preserves their WAL fields)
-                existing.updateWriter(timestamp, rowCount, writerTxn);
-            }
-        }
+        getOrCreateStats(tableToken).updateWriter(timestamp, rowCount, writerTxn);
 
         // Lazy eviction: only clean up when we exceed 2x capacity
         // This amortizes the cleanup cost and reduces contention
@@ -529,26 +523,16 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Records that WAL rows have been processed (applied to the table).
+     * Records a write amplification sample for a specific table.
      * <p>
-     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
-     * Called after successful WAL transaction application.
+     * Write amplification is the ratio of physical rows written to logical rows.
+     * Called after WAL transactions are applied to the table.
      *
-     * @param tableToken        the table whose WAL was processed
-     * @param seqTxn            the sequencer transaction number being processed
-     * @param walRowCount       the number of WAL rows that were processed (before dedup)
-     * @param committedRowCount the number of rows actually committed (after dedup)
+     * @param tableToken    the table that was written to
+     * @param amplification the write amplification ratio (physicalRows / logicalRows)
      */
-    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
-        WriteStats stats = getStats(tableToken);
-        // Only subtract if seqTxn is above the floor (rows added after tracking started)
-        if (seqTxn > stats.getFloorSeqTxn()) {
-            stats.walRowCount.add(-walRowCount);
-        }
-        long dedupCount = walRowCount - committedRowCount;
-        if (dedupCount > 0) {
-            stats.dedupRowCount.add(dedupCount);
-        }
+    public void recordWriteAmplification(@NotNull TableToken tableToken, double amplification) {
+        getOrCreateStats(tableToken).recordWriteAmplification(amplification);
     }
 
     /**
@@ -607,19 +591,7 @@ public class RecentWriteTracker {
      * @param floorSeqTxn the floor seqTxn value
      */
     public void setFloorSeqTxn(@NotNull TableToken tableToken, long floorSeqTxn) {
-        WriteStats stats = writeStats.get(tableToken);
-        if (stats != null) {
-            stats.setFloorSeqTxn(floorSeqTxn);
-        } else {
-            // Create new entry with only floor set
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-            newStats.setFloorSeqTxn(floorSeqTxn);
-            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
-            if (existing != null) {
-                // Another thread inserted first, set floor on theirs
-                existing.setFloorSeqTxn(floorSeqTxn);
-            }
-        }
+        getOrCreateStats(tableToken).setFloorSeqTxn(floorSeqTxn);
     }
 
     /**
@@ -628,19 +600,6 @@ public class RecentWriteTracker {
     @TestOnly
     public int size() {
         return writeStats.size();
-    }
-
-    /**
-     * Records a write amplification sample for a specific table.
-     * <p>
-     * Write amplification is the ratio of physical rows written to logical rows.
-     * Called after WAL transactions are applied to the table.
-     *
-     * @param tableToken    the table that was written to
-     * @param amplification the write amplification ratio (physicalRows / logicalRows)
-     */
-    public void recordWriteAmplification(@NotNull TableToken tableToken, double amplification) {
-        getStats(tableToken).recordWriteAmplification(amplification);
     }
 
     /**
