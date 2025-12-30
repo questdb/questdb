@@ -29,9 +29,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 
+/**
+ * Abstract base class for functions that cast values to varchar.
+ */
 public abstract class AbstractCastToVarcharFunction extends VarcharFunction implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to varchar function.
+     *
+     * @param arg the function argument to cast
+     */
     protected AbstractCastToVarcharFunction(Function arg) {
         this.arg = arg;
     }

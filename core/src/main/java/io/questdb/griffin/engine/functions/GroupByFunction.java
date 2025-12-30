@@ -106,6 +106,9 @@ public interface GroupByFunction extends Function, Mutable {
      * Returns true if the aggregate function's value is already calculation
      * and further row scan is not necessary. Only makes sense for non-keyed,
      * single-threaded group by.
+     *
+     * @param mapValue the map value to check
+     * @return true if early exit is possible
      */
     default boolean earlyExit(MapValue mapValue) {
         return false;
@@ -115,6 +118,8 @@ public interface GroupByFunction extends Function, Mutable {
      * Returns recorded cardinality for hash set based functions such as count_distinct().
      * <p>
      * A prior {@link #resetStats()} call should be made to reset the counter before computing any values.
+     *
+     * @return the cardinality statistic
      */
     default long getCardinalityStat() {
         return 0;
@@ -122,6 +127,8 @@ public interface GroupByFunction extends Function, Mutable {
 
     /**
      * Returns the compute batch argument function for this group by function.
+     *
+     * @return the compute batch argument function, or null if not applicable
      */
     default Function getComputeBatchArg() {
         if (this instanceof UnaryFunction thisUnary) {
@@ -140,6 +147,8 @@ public interface GroupByFunction extends Function, Mutable {
      * DOUBLE. This means that the input values need to be materialized in
      * an intermediate buffer via getDouble calls before to calling
      * {@link #computeBatch(MapValue, long, int)}.
+     *
+     * @return the column type of the batch argument
      */
     default int getComputeBatchArgType() {
         if (this instanceof UnaryFunction) {
@@ -149,10 +158,20 @@ public interface GroupByFunction extends Function, Mutable {
         return ColumnType.UNDEFINED;
     }
 
+    /**
+     * Returns the sample by flags supported by this function.
+     *
+     * @return the sample by flags
+     */
     default int getSampleByFlags() {
         return SAMPLE_BY_FILL_VALUE | SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
     }
 
+    /**
+     * Returns the value index for this function in the map.
+     *
+     * @return the value index
+     */
     int getValueIndex();
 
     /**
@@ -194,6 +213,8 @@ public interface GroupByFunction extends Function, Mutable {
     /**
      * Returns true if {@link #earlyExit(MapValue)} method can be used.
      * Only makes sense for non-keyed, single-threaded group by.
+     *
+     * @return true if early exit is supported
      */
     default boolean isEarlyExitSupported() {
         return false;
@@ -210,6 +231,9 @@ public interface GroupByFunction extends Function, Mutable {
     /**
      * Used in parallel GROUP BY to merge partial results. Both values are guaranteed to be not new
      * when this method is called, i.e. {@code !destValue.isNew() && !srcValue.isNew()} is true.
+     *
+     * @param destValue the destination map value to merge into
+     * @param srcValue  the source map value to merge from
      */
     default void merge(MapValue destValue, MapValue srcValue) {
         throw new UnsupportedOperationException();
@@ -222,11 +246,21 @@ public interface GroupByFunction extends Function, Mutable {
     default void resetStats() {
     }
 
+    /**
+     * Sets the allocator for this group by function.
+     *
+     * @param allocator the group by allocator
+     */
     default void setAllocator(GroupByAllocator allocator) {
         // no-op
     }
 
-    // used when doing interpolation
+    /**
+     * Sets a byte value in the map value, used for interpolation.
+     *
+     * @param mapValue the map value to set
+     * @param value    the byte value
+     */
     default void setByte(MapValue mapValue, byte value) {
         throw new UnsupportedOperationException();
     }
@@ -241,17 +275,31 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
-    // used when doing interpolation
+    /**
+     * Sets a double value in the map value, used for interpolation.
+     *
+     * @param mapValue the map value to set
+     * @param value    the double value
+     */
     default void setDouble(MapValue mapValue, double value) {
         throw new UnsupportedOperationException();
     }
 
-    // used by generated code
+    /**
+     * Sets the map value to empty state, used by generated code.
+     *
+     * @param value the map value to set
+     */
     default void setEmpty(MapValue value) {
         setNull(value);
     }
 
-    // used when doing interpolation
+    /**
+     * Sets a float value in the map value, used for interpolation.
+     *
+     * @param mapValue the map value to set
+     * @param value    the float value
+     */
     default void setFloat(MapValue mapValue, float value) {
         throw new UnsupportedOperationException();
     }
@@ -261,11 +309,21 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
-    // used when doing interpolation
+    /**
+     * Sets a long value in the map value, used for interpolation.
+     *
+     * @param mapValue the map value to set
+     * @param value    the long value
+     */
     default void setLong(MapValue mapValue, long value) {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Sets the map value to null.
+     *
+     * @param mapValue the map value to set
+     */
     void setNull(MapValue mapValue);
 
     // used when doing interpolation

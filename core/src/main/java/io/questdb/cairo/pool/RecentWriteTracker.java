@@ -239,20 +239,24 @@ public class RecentWriteTracker {
      */
     public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
         WriteStats stats = writeStats.get(tableToken);
-        if (stats != null) {
-            // Only subtract if seqTxn is above the floor (rows added after tracking started)
-            if (seqTxn > stats.getFloorSeqTxn()) {
-                stats.walRowCount.add(-walRowCount);
-            }
-            long dedupCount = walRowCount - committedRowCount;
-            if (dedupCount > 0) {
-                stats.dedupRowCount.add(dedupCount);
-            }
+        if (stats == null) {
+            // Create new entry if it doesn't exist
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
+            stats = existing != null ? existing : newStats;
+        }
+        // Only subtract if seqTxn is above the floor (rows added after tracking started)
+        if (seqTxn > stats.getFloorSeqTxn()) {
+            stats.walRowCount.add(-walRowCount);
+        }
+        long dedupCount = walRowCount - committedRowCount;
+        if (dedupCount > 0) {
+            stats.dedupRowCount.add(dedupCount);
         }
     }
 
     /**
-     * Sets the floor seqTxn for a table. WAL rows with seqTxn <= floor will not be subtracted
+     * Sets the floor seqTxn for a table. WAL rows with seqTxn &lt;= floor will not be subtracted
      * from pending count since they were never added (existed before tracking started).
      * Called on startup for tables with pending WALs. Creates WriteStats if it doesn't exist.
      *
@@ -656,7 +660,7 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Returns the floor seqTxn. WAL rows with seqTxn <= floor are not subtracted
+         * Returns the floor seqTxn. WAL rows with seqTxn &lt;= floor are not subtracted
          * from pending count (they were never added because they existed before tracking started).
          *
          * @return floor seqTxn, or 0 if not set
