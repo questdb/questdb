@@ -1720,6 +1720,24 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void verifyViewToken(TableToken tableToken, long expectedTxn) {
+        TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
+        if (tt == null || TableNameRegistry.isLocked(tt)) {
+            throw CairoException.tableDoesNotExist(tableToken.getTableName());
+        }
+        if (!tt.equals(tableToken)) {
+            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
+        }
+        ViewDefinition vd = viewGraph.getViewDefinition(tableToken);
+        if (vd == null) {
+            // there is a race: tt.equals() passed but view definition got removed meanwhile
+            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
+        }
+        if (vd.getSeqTxn() != expectedTxn) {
+            throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedTxn, vd.getSeqTxn());
+        }
+    }
+
     private static void insert(
             CompiledQuery cq,
             SqlExecutionContext sqlExecutionContext

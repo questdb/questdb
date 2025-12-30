@@ -20,12 +20,15 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
     private final CairoEngine engine;
     private final TableToken[] viewTokens;
+    private final long[] viewTxns;
 
     public StaleViewCheckFactory(RecordCursorFactory base, ObjList<ViewDefinition> views, CairoEngine engine) {
         this.base = base;
         this.viewTokens = new TableToken[views.size()];
+        this.viewTxns = new long[views.size()];
         for (int i = 0; i < views.size(); i++) {
             this.viewTokens[i] = views.getQuick(i).getViewToken();
+            this.viewTxns[i] = views.getQuick(i).getSeqTxn();
         }
         this.engine = engine;
     }
@@ -68,7 +71,8 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0, n = viewTokens.length; i < n; i++) {
             var token = viewTokens[i];
-            engine.verifyTableToken(token);
+            long txn = viewTxns[i];
+            engine.verifyViewToken(token, txn);
         }
         return base.getCursor(executionContext);
     }
