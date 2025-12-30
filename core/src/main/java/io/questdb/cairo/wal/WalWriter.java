@@ -127,6 +127,7 @@ public class WalWriter implements TableWriterAPI {
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
+    private final RecentWriteTracker recentWriteTracker;
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableSequencerAPI sequencer;
@@ -160,7 +161,6 @@ public class WalWriter implements TableWriterAPI {
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
     private boolean open;
-    private final RecentWriteTracker recentWriteTracker;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
     private long segmentLockFd = -1;
@@ -409,16 +409,6 @@ public class WalWriter implements TableWriterAPI {
         return segmentRowCount;
     }
 
-    /**
-     * Returns the total number of rows written by this WalWriter instance
-     * across all segments (including the current segment).
-     *
-     * @return total row count written by this writer
-     */
-    public long getTotalRowCount() {
-        return totalSegmentsRowCount + segmentRowCount;
-    }
-
     @Override
     public int getSymbolCountWatermark(int columnIndex) {
         // It could be the case that ILP I/O thread has newer metadata version than
@@ -448,25 +438,6 @@ public class WalWriter implements TableWriterAPI {
 
     public String getWalName() {
         return walName;
-    }
-
-    /**
-     * Returns the last sequencer transaction number obtained by this WalWriter.
-     * This value is set when a transaction is committed and the sequencer assigns a txn.
-     *
-     * @return the last sequencer txn, or -1 if no transaction has been committed yet
-     */
-    public long getLastSeqTxn() {
-        return lastSeqTxn;
-    }
-
-    /**
-     * Returns the max timestamp from the last committed transaction.
-     *
-     * @return the max timestamp, or -1 if no transaction has been committed yet
-     */
-    public long getLastTxnMaxTimestamp() {
-        return lastTxnMaxTimestamp;
     }
 
     public void goActive() {

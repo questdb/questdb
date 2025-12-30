@@ -43,6 +43,44 @@ import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TablesFunctionFactoryTest extends AbstractCairoTest {
     @Test
+    public void testMemoryPressureColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a WAL table
+            execute("CREATE TABLE test_mem_pressure (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Insert some data to initialize the tracker
+            execute("INSERT INTO test_mem_pressure VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Initially, memoryPressureLevel should be 0 (no pressure)
+            assertSql(
+                    """
+                            table_name\tmemoryPressureLevel
+                            test_mem_pressure\t0
+                            """,
+                    "select table_name, memoryPressureLevel from tables() where table_name = 'test_mem_pressure'"
+            );
+        });
+    }
+
+    @Test
+    public void testMemoryPressureColumnNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a non-WAL table
+            execute("CREATE TABLE test_non_wal_mem (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Non-WAL tables should show null for memoryPressureLevel
+            assertSql(
+                    """
+                            table_name\tmemoryPressureLevel
+                            test_non_wal_mem\tnull
+                            """,
+                    "select table_name, memoryPressureLevel from tables() where table_name = 'test_non_wal_mem'"
+            );
+        });
+    }
+
+    @Test
     public void testMetadataQuery() throws Exception {
         assertMemoryLeak(() -> {
             TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
@@ -157,6 +195,38 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonWalTableTxnColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a non-WAL table
+            execute("CREATE TABLE test_non_wal (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            RecentWriteTracker tracker = engine.getRecentWriteTracker();
+            tracker.clear();
+
+            // Insert rows
+            execute("INSERT INTO test_non_wal VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+
+            TableToken tableToken = engine.verifyTableName("test_non_wal");
+            long writerTxn = tracker.getWriterTxn(tableToken);
+
+            // Non-WAL tables should have writerTxn but no sequencerTxn or walTimestamp
+            Assert.assertTrue("writerTxn should be positive for non-WAL table", writerTxn > 0);
+            Assert.assertEquals("sequencerTxn should be null for non-WAL table", Numbers.LONG_NULL, tracker.getSequencerTxn(tableToken));
+            Assert.assertEquals("walTimestamp should be null for non-WAL table", Numbers.LONG_NULL, tracker.getLastWalTimestamp(tableToken));
+
+            // Query via tables() function
+            assertSql(
+                    """
+                            table_name\twriterTxn\tsequencerTxn\tlastWalTimestamp
+                            test_non_wal\t""" + writerTxn + """
+                            \tnull\t
+                            """,
+                    "select table_name, writerTxn, sequencerTxn, lastWalTimestamp from tables() where table_name = 'test_non_wal'"
+            );
+        });
+    }
+
+    @Test
     public void testRowCountAndLastWriteTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             // Create a WAL table and write data to it
@@ -199,76 +269,6 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             long lastWriteTimestamp = tracker.getWriteTimestamp(tableToken);
             Assert.assertTrue("Timestamp should be >= beforeWrite", lastWriteTimestamp >= beforeWrite);
             Assert.assertTrue("Timestamp should be <= afterWrite", lastWriteTimestamp <= afterWrite);
-        });
-    }
-
-    @Test
-    public void testNonWalTableTxnColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            // Create a non-WAL table
-            execute("CREATE TABLE test_non_wal (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
-
-            RecentWriteTracker tracker = engine.getRecentWriteTracker();
-            tracker.clear();
-
-            // Insert rows
-            execute("INSERT INTO test_non_wal VALUES ('2024-01-01T00:00:00.000000Z', 1)");
-
-            TableToken tableToken = engine.verifyTableName("test_non_wal");
-            long writerTxn = tracker.getWriterTxn(tableToken);
-
-            // Non-WAL tables should have writerTxn but no sequencerTxn or walTimestamp
-            Assert.assertTrue("writerTxn should be positive for non-WAL table", writerTxn > 0);
-            Assert.assertEquals("sequencerTxn should be null for non-WAL table", Numbers.LONG_NULL, tracker.getSequencerTxn(tableToken));
-            Assert.assertEquals("walTimestamp should be null for non-WAL table", Numbers.LONG_NULL, tracker.getLastWalTimestamp(tableToken));
-
-            // Query via tables() function
-            assertSql(
-                    """
-                            table_name\twriterTxn\tsequencerTxn\tlastWalTimestamp
-                            test_non_wal\t""" + writerTxn + """
-                            \tnull\t
-                            """,
-                    "select table_name, writerTxn, sequencerTxn, lastWalTimestamp from tables() where table_name = 'test_non_wal'"
-            );
-        });
-    }
-
-    @Test
-    public void testMemoryPressureColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            // Create a WAL table
-            execute("CREATE TABLE test_mem_pressure (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            // Insert some data to initialize the tracker
-            execute("INSERT INTO test_mem_pressure VALUES ('2024-01-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-
-            // Initially, memoryPressureLevel should be 0 (no pressure)
-            assertSql(
-                    """
-                            table_name\tmemoryPressureLevel
-                            test_mem_pressure\t0
-                            """,
-                    "select table_name, memoryPressureLevel from tables() where table_name = 'test_mem_pressure'"
-            );
-        });
-    }
-
-    @Test
-    public void testMemoryPressureColumnNonWalTable() throws Exception {
-        assertMemoryLeak(() -> {
-            // Create a non-WAL table
-            execute("CREATE TABLE test_non_wal_mem (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
-
-            // Non-WAL tables should show null for memoryPressureLevel
-            assertSql(
-                    """
-                            table_name\tmemoryPressureLevel
-                            test_non_wal_mem\tnull
-                            """,
-                    "select table_name, memoryPressureLevel from tables() where table_name = 'test_non_wal_mem'"
-            );
         });
     }
 
@@ -375,7 +375,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                     """
                             table_name\twriterTxn\tsequencerTxn
                             test_txn\t""" + writerTxn + "\t" + sequencerTxn + """
-
+                            
                             """,
                     "select table_name, writerTxn, sequencerTxn from tables() where table_name = 'test_txn'"
             );

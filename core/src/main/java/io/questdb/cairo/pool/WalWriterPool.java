@@ -31,14 +31,11 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
-    private static final Log LOG = LogFactory.getLog(WalWriterPool.class);
 
     private final CairoEngine engine;
 
