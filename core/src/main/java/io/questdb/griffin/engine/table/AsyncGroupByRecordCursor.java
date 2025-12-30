@@ -145,8 +145,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     @Override
     public void longTopK(DirectLongLongSortedList list, int columnIndex) {
         buildMapConditionally();
-        // TODO: use key & group by functions
         final Function recordFunction = recordFunctions.getQuick(columnIndex);
+        // Only run in parallel when the function is thread-safe. This is a simplified check that won't
+        // pass for functions like count(varchar), but it's good enough for now since it'll pass for
+        // count() and count() over a fixed-size column.
+        //
+        // Later on, we can introduce a special method for GroupByFunction that will stand for aggregation
+        // thread-safety (the current value of the isThreadSafe() flag) while the isThreadSafe() flag
+        // will stand for read thread-safety, just like for non-GROUP BY functions.
         if (recordFunction.isThreadSafe() && mapCursor == shardedCursor && mapCursor.size() > configuration.getGroupByParallelTopKThreshold()) {
             parallelLongTopK(list, recordFunction);
         } else {
