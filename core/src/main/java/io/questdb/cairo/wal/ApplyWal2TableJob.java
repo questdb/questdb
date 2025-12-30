@@ -518,6 +518,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 finishedAll = finishedAll || (writer.getAppliedSeqTxn() == transactionLogCursor.getMaxTxn() && !transactionLogCursor.hasNext());
                 if (totalTransactionCount > 0) {
+                    double amplification = (double) Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0;
+                    long throughput = rowsAdded * 1000000L / Math.max(1, insertTimespan);
                     LOG.info().$("job ")
                             .$(finishedAll ? "finished" : "ejected")
                             .$(" [table=").$(writer.getTableToken())
@@ -525,9 +527,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$(", transactions=").$(totalTransactionCount)
                             .$(", rows=").$(rowsAdded)
                             .$(", time=").$(insertTimespan / 1000)
-                            .$("ms, rate=").$(rowsAdded * 1000000L / Math.max(1, insertTimespan))
-                            .$("rows/s, ampl=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
+                            .$("ms, rate=").$(throughput)
+                            .$("rows/s, ampl=").$(amplification)
                             .I$();
+                    engine.getRecentWriteTracker().recordWriteAmplification(writer.getTableToken(), amplification);
+                    engine.getRecentWriteTracker().recordMergeThroughput(writer.getTableToken(), throughput);
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {

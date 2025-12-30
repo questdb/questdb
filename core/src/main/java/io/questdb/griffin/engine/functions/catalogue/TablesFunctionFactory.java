@@ -62,16 +62,16 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int IS_MAT_VIEW_COLUMN = 9;
     private static final int LAST_WAL_TIMESTAMP_COLUMN = 16;
     private static final int LAST_WRITE_TIMESTAMP_COLUMN = 13;
-    private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 19;
+    private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 34;
     private static final int MEMORY_PRESSURE_LEVEL_COLUMN = 18;
+    private static final int MERGE_THROUGHPUT_COUNT_COLUMN = 29;
+    private static final int MERGE_THROUGHPUT_MAX_COLUMN = 33;
+    private static final int MERGE_THROUGHPUT_P50_COLUMN = 30;
+    private static final int MERGE_THROUGHPUT_P90_COLUMN = 31;
+    private static final int MERGE_THROUGHPUT_P99_COLUMN = 32;
     private static final RecordMetadata METADATA;
-    private static final int O3_MAX_LAG_COLUMN = 20;
+    private static final int O3_MAX_LAG_COLUMN = 35;
     private static final int PARTITION_BY_COLUMN = 3;
-    private static final int TXN_COUNT_COLUMN = 21;
-    private static final int TXN_SIZE_MAX_COLUMN = 25;
-    private static final int TXN_SIZE_P50_COLUMN = 22;
-    private static final int TXN_SIZE_P90_COLUMN = 23;
-    private static final int TXN_SIZE_P99_COLUMN = 24;
     private static final int PENDING_ROW_COUNT_COLUMN = 11;
     private static final int ROW_COUNT_COLUMN = 10;
     private static final int SEQUENCER_TXN_COLUMN = 15;
@@ -79,7 +79,17 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int TABLE_NAME = 1;
     private static final int TTL_UNIT_COLUMN = 8;
     private static final int TTL_VALUE_COLUMN = 7;
+    private static final int TXN_COUNT_COLUMN = 19;
+    private static final int TXN_SIZE_MAX_COLUMN = 23;
+    private static final int TXN_SIZE_P50_COLUMN = 20;
+    private static final int TXN_SIZE_P90_COLUMN = 21;
+    private static final int TXN_SIZE_P99_COLUMN = 22;
     private static final int WAL_ENABLED_COLUMN = 4;
+    private static final int WRITE_AMPLIFICATION_COUNT_COLUMN = 24;
+    private static final int WRITE_AMPLIFICATION_MAX_COLUMN = 28;
+    private static final int WRITE_AMPLIFICATION_P50_COLUMN = 25;
+    private static final int WRITE_AMPLIFICATION_P90_COLUMN = 26;
+    private static final int WRITE_AMPLIFICATION_P99_COLUMN = 27;
     private static final int WRITER_TXN_COLUMN = 14;
 
     public static String getTtlUnit(int ttl) {
@@ -265,6 +275,21 @@ public class TablesFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
+                public double getDouble(int col) {
+                    return switch (col) {
+                        case WRITE_AMPLIFICATION_P50_COLUMN ->
+                                recentWriteTracker.getWriteAmplificationP50(table.getTableToken());
+                        case WRITE_AMPLIFICATION_P90_COLUMN ->
+                                recentWriteTracker.getWriteAmplificationP90(table.getTableToken());
+                        case WRITE_AMPLIFICATION_P99_COLUMN ->
+                                recentWriteTracker.getWriteAmplificationP99(table.getTableToken());
+                        case WRITE_AMPLIFICATION_MAX_COLUMN ->
+                                recentWriteTracker.getWriteAmplificationMax(table.getTableToken());
+                        default -> Double.NaN;
+                    };
+                }
+
+                @Override
                 public long getLong(int col) {
                     return switch (col) {
                         case O3_MAX_LAG_COLUMN -> table.getO3MaxLag();
@@ -278,6 +303,18 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case TXN_SIZE_P90_COLUMN -> recentWriteTracker.getTxnSizeP90(table.getTableToken());
                         case TXN_SIZE_P99_COLUMN -> recentWriteTracker.getTxnSizeP99(table.getTableToken());
                         case TXN_SIZE_MAX_COLUMN -> recentWriteTracker.getTxnSizeMax(table.getTableToken());
+                        case WRITE_AMPLIFICATION_COUNT_COLUMN ->
+                                recentWriteTracker.getWriteAmplificationCount(table.getTableToken());
+                        case MERGE_THROUGHPUT_COUNT_COLUMN ->
+                                recentWriteTracker.getMergeThroughputCount(table.getTableToken());
+                        case MERGE_THROUGHPUT_P50_COLUMN ->
+                                recentWriteTracker.getMergeThroughputP50(table.getTableToken());
+                        case MERGE_THROUGHPUT_P90_COLUMN ->
+                                recentWriteTracker.getMergeThroughputP90(table.getTableToken());
+                        case MERGE_THROUGHPUT_P99_COLUMN ->
+                                recentWriteTracker.getMergeThroughputP99(table.getTableToken());
+                        case MERGE_THROUGHPUT_MAX_COLUMN ->
+                                recentWriteTracker.getMergeThroughputMax(table.getTableToken());
                         default -> Numbers.LONG_NULL;
                     };
                 }
@@ -353,13 +390,23 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("lastWalTimestamp", ColumnType.TIMESTAMP));    // 16
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));          // 17
         metadata.add(new TableColumnMetadata("memoryPressureLevel", ColumnType.INT));       // 18
-        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));        // 19
-        metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));                 // 20
-        metadata.add(new TableColumnMetadata("txnCount", ColumnType.LONG));                 // 21
-        metadata.add(new TableColumnMetadata("txnSizeP50", ColumnType.LONG));               // 22
-        metadata.add(new TableColumnMetadata("txnSizeP90", ColumnType.LONG));               // 23
-        metadata.add(new TableColumnMetadata("txnSizeP99", ColumnType.LONG));               // 24
-        metadata.add(new TableColumnMetadata("txnSizeMax", ColumnType.LONG));               // 25
+        metadata.add(new TableColumnMetadata("txnCount", ColumnType.LONG));                 // 19
+        metadata.add(new TableColumnMetadata("txnSizeP50", ColumnType.LONG));               // 20
+        metadata.add(new TableColumnMetadata("txnSizeP90", ColumnType.LONG));               // 21
+        metadata.add(new TableColumnMetadata("txnSizeP99", ColumnType.LONG));               // 22
+        metadata.add(new TableColumnMetadata("txnSizeMax", ColumnType.LONG));               // 23
+        metadata.add(new TableColumnMetadata("writeAmplificationCount", ColumnType.LONG));  // 24
+        metadata.add(new TableColumnMetadata("writeAmplificationP50", ColumnType.DOUBLE));  // 25
+        metadata.add(new TableColumnMetadata("writeAmplificationP90", ColumnType.DOUBLE));  // 26
+        metadata.add(new TableColumnMetadata("writeAmplificationP99", ColumnType.DOUBLE));  // 27
+        metadata.add(new TableColumnMetadata("writeAmplificationMax", ColumnType.DOUBLE));  // 28
+        metadata.add(new TableColumnMetadata("mergeThroughputCount", ColumnType.LONG));     // 29
+        metadata.add(new TableColumnMetadata("mergeThroughputP50", ColumnType.LONG));       // 30
+        metadata.add(new TableColumnMetadata("mergeThroughputP90", ColumnType.LONG));       // 31
+        metadata.add(new TableColumnMetadata("mergeThroughputP99", ColumnType.LONG));       // 32
+        metadata.add(new TableColumnMetadata("mergeThroughputMax", ColumnType.LONG));       // 33
+        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));        // 34
+        metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));                 // 35
         METADATA = metadata;
     }
 }

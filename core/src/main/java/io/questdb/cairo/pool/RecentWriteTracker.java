@@ -29,6 +29,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -128,6 +129,61 @@ public class RecentWriteTracker {
      */
     public int getMaxCapacity() {
         return maxCapacity;
+    }
+
+    /**
+     * Returns the total number of merge throughput samples for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return total sample count, or 0 if not tracked
+     */
+    public long getMergeThroughputCount(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getMergeThroughputCount() : 0;
+    }
+
+    /**
+     * Returns the maximum merge throughput for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return maximum throughput in rows/second, or 0 if not tracked
+     */
+    public long getMergeThroughputMax(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getMergeThroughputMax() : 0;
+    }
+
+    /**
+     * Returns the 50th percentile (median) merge throughput for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return median throughput in rows/second, or 0 if not tracked
+     */
+    public long getMergeThroughputP50(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getMergeThroughputP50() : 0;
+    }
+
+    /**
+     * Returns the 90th percentile merge throughput for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return 90th percentile throughput in rows/second, or 0 if not tracked
+     */
+    public long getMergeThroughputP90(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getMergeThroughputP90() : 0;
+    }
+
+    /**
+     * Returns the 99th percentile merge throughput for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return 99th percentile throughput in rows/second, or 0 if not tracked
+     */
+    public long getMergeThroughputP99(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getMergeThroughputP99() : 0;
     }
 
     /**
@@ -283,6 +339,60 @@ public class RecentWriteTracker {
         return stats != null ? stats.getWalRowCount() : 0;
     }
 
+    public WriteStats getStats(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        if (stats == null) {
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
+            stats = existing != null ? existing : newStats;
+        }
+        return stats;
+    }
+
+    /**
+     * Returns the total number of write amplification samples for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return total sample count, or 0 if not tracked
+     */
+    public long getWriteAmplificationCount(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getWriteAmplificationCount() : 0;
+    }
+
+    /**
+     * Returns the maximum write amplification for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return maximum write amplification, or 0.0 if not tracked
+     */
+    public double getWriteAmplificationMax(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getWriteAmplificationMax() : 0.0;
+    }
+
+    /**
+     * Returns the 50th percentile (median) write amplification for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return median write amplification, or 0.0 if not tracked
+     */
+    public double getWriteAmplificationP50(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getWriteAmplificationP50() : 0.0;
+    }
+
+    /**
+     * Returns the 90th percentile write amplification for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return 90th percentile write amplification, or 0.0 if not tracked
+     */
+    public double getWriteAmplificationP90(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getWriteAmplificationP90() : 0.0;
+    }
+
     /**
      * Returns the write statistics for a specific table, or null if not tracked.
      *
@@ -319,32 +429,27 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Records that WAL rows have been processed (applied to the table).
-     * <p>
-     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
-     * Called after successful WAL transaction application.
+     * Returns the 99th percentile write amplification for a specific table.
      *
-     * @param tableToken        the table whose WAL was processed
-     * @param seqTxn            the sequencer transaction number being processed
-     * @param walRowCount       the number of WAL rows that were processed (before dedup)
-     * @param committedRowCount the number of rows actually committed (after dedup)
+     * @param tableToken the table to look up
+     * @return 99th percentile write amplification, or 0.0 if not tracked
      */
-    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
+    public double getWriteAmplificationP99(@NotNull TableToken tableToken) {
         WriteStats stats = writeStats.get(tableToken);
-        if (stats == null) {
-            // Create new entry if it doesn't exist
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
-            stats = existing != null ? existing : newStats;
-        }
-        // Only subtract if seqTxn is above the floor (rows added after tracking started)
-        if (seqTxn > stats.getFloorSeqTxn()) {
-            stats.walRowCount.add(-walRowCount);
-        }
-        long dedupCount = walRowCount - committedRowCount;
-        if (dedupCount > 0) {
-            stats.dedupRowCount.add(dedupCount);
-        }
+        return stats != null ? stats.getWriteAmplificationP99() : 0.0;
+    }
+
+    /**
+     * Records a merge throughput sample for a specific table.
+     * <p>
+     * Merge throughput is measured in rows/second during WAL apply.
+     * Called after WAL transactions are applied to the table.
+     *
+     * @param tableToken the table that was written to
+     * @param throughput the throughput in rows/second
+     */
+    public void recordMergeThroughput(@NotNull TableToken tableToken, long throughput) {
+        getStats(tableToken).recordMergeThroughput(throughput);
     }
 
     /**
@@ -420,6 +525,29 @@ public class RecentWriteTracker {
         // This amortizes the cleanup cost and reduces contention
         if (writeStats.size() > maxCapacity * 2) {
             evictOldest();
+        }
+    }
+
+    /**
+     * Records that WAL rows have been processed (applied to the table).
+     * <p>
+     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
+     * Called after successful WAL transaction application.
+     *
+     * @param tableToken        the table whose WAL was processed
+     * @param seqTxn            the sequencer transaction number being processed
+     * @param walRowCount       the number of WAL rows that were processed (before dedup)
+     * @param committedRowCount the number of rows actually committed (after dedup)
+     */
+    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
+        WriteStats stats = getStats(tableToken);
+        // Only subtract if seqTxn is above the floor (rows added after tracking started)
+        if (seqTxn > stats.getFloorSeqTxn()) {
+            stats.walRowCount.add(-walRowCount);
+        }
+        long dedupCount = walRowCount - committedRowCount;
+        if (dedupCount > 0) {
+            stats.dedupRowCount.add(dedupCount);
         }
     }
 
@@ -500,6 +628,19 @@ public class RecentWriteTracker {
     @TestOnly
     public int size() {
         return writeStats.size();
+    }
+
+    /**
+     * Records a write amplification sample for a specific table.
+     * <p>
+     * Write amplification is the ratio of physical rows written to logical rows.
+     * Called after WAL transactions are applied to the table.
+     *
+     * @param tableToken    the table that was written to
+     * @param amplification the write amplification ratio (physicalRows / logicalRows)
+     */
+    public void recordWriteAmplification(@NotNull TableToken tableToken, double amplification) {
+        getStats(tableToken).recordWriteAmplification(amplification);
     }
 
     /**
@@ -607,15 +748,23 @@ public class RecentWriteTracker {
         private final LongAdder dedupRowCount = new LongAdder();
         // Floor seqTxn - set on startup, WAL rows with seqTxn <= floor are not subtracted
         private final AtomicLong floorSeqTxn = new AtomicLong(0);
+        // Merge throughput histogram - tracks rows/second during WAL apply
+        private final Histogram mergeThroughputHistogram = new Histogram(2);
+        // Lock for merge throughput histogram access
+        private final SimpleReadWriteLock mergeThroughputHistogramLock = new SimpleReadWriteLock();
         // WAL fields - updated by WalWriters only, highest wins via CAS
         private final AtomicLong sequencerTxn;
         // Transaction size histogram - tracks distribution of WAL transaction sizes
         private final Histogram txnSizeHistogram = new Histogram(2);
-        // Lock for histogram access - writers record values, readers get percentiles
+        // Lock for transaction size histogram access
         private final SimpleReadWriteLock txnSizeHistogramLock = new SimpleReadWriteLock();
         // WAL row count - incremented by WalWriters, contention-free via LongAdder
         private final LongAdder walRowCount = new LongAdder();
         private final AtomicLong walTimestamp;
+        // Write amplification histogram - tracks ratio of physical rows written to logical rows
+        private final DoubleHistogram writeAmplificationHistogram = new DoubleHistogram(2);
+        // Lock for write amplification histogram access
+        private final SimpleReadWriteLock writeAmplificationHistogramLock = new SimpleReadWriteLock();
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
         private volatile long timestamp;
@@ -672,6 +821,76 @@ public class RecentWriteTracker {
             long walTs = walTimestamp.get();
             // Treat LONG_NULL as very old (it's Long.MIN_VALUE)
             return Math.max(ts, walTs);
+        }
+
+        /**
+         * Returns the total number of merge throughput samples recorded.
+         *
+         * @return total sample count
+         */
+        public long getMergeThroughputCount() {
+            mergeThroughputHistogramLock.readLock().lock();
+            try {
+                return mergeThroughputHistogram.getTotalCount();
+            } finally {
+                mergeThroughputHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the maximum merge throughput recorded.
+         *
+         * @return maximum throughput in rows/second, or 0 if no samples recorded
+         */
+        public long getMergeThroughputMax() {
+            mergeThroughputHistogramLock.readLock().lock();
+            try {
+                return mergeThroughputHistogram.getMaxValue();
+            } finally {
+                mergeThroughputHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 50th percentile (median) merge throughput.
+         *
+         * @return median throughput in rows/second, or 0 if no samples recorded
+         */
+        public long getMergeThroughputP50() {
+            mergeThroughputHistogramLock.readLock().lock();
+            try {
+                return mergeThroughputHistogram.getValueAtPercentile(50);
+            } finally {
+                mergeThroughputHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 90th percentile merge throughput.
+         *
+         * @return 90th percentile throughput in rows/second, or 0 if no samples recorded
+         */
+        public long getMergeThroughputP90() {
+            mergeThroughputHistogramLock.readLock().lock();
+            try {
+                return mergeThroughputHistogram.getValueAtPercentile(90);
+            } finally {
+                mergeThroughputHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 99th percentile merge throughput.
+         *
+         * @return 99th percentile throughput in rows/second, or 0 if no samples recorded
+         */
+        public long getMergeThroughputP99() {
+            mergeThroughputHistogramLock.readLock().lock();
+            try {
+                return mergeThroughputHistogram.getValueAtPercentile(99);
+            } finally {
+                mergeThroughputHistogramLock.readLock().unlock();
+            }
         }
 
         /**
@@ -792,6 +1011,76 @@ public class RecentWriteTracker {
         }
 
         /**
+         * Returns the total number of write amplification samples recorded.
+         *
+         * @return total sample count
+         */
+        public long getWriteAmplificationCount() {
+            writeAmplificationHistogramLock.readLock().lock();
+            try {
+                return writeAmplificationHistogram.getTotalCount();
+            } finally {
+                writeAmplificationHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the maximum write amplification recorded.
+         *
+         * @return maximum write amplification, or 0.0 if no samples recorded
+         */
+        public double getWriteAmplificationMax() {
+            writeAmplificationHistogramLock.readLock().lock();
+            try {
+                return writeAmplificationHistogram.getMaxValue();
+            } finally {
+                writeAmplificationHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 50th percentile (median) write amplification.
+         *
+         * @return median write amplification, or 0.0 if no samples recorded
+         */
+        public double getWriteAmplificationP50() {
+            writeAmplificationHistogramLock.readLock().lock();
+            try {
+                return writeAmplificationHistogram.getValueAtPercentile(50);
+            } finally {
+                writeAmplificationHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 90th percentile write amplification.
+         *
+         * @return 90th percentile write amplification, or 0.0 if no samples recorded
+         */
+        public double getWriteAmplificationP90() {
+            writeAmplificationHistogramLock.readLock().lock();
+            try {
+                return writeAmplificationHistogram.getValueAtPercentile(90);
+            } finally {
+                writeAmplificationHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 99th percentile write amplification.
+         *
+         * @return 99th percentile write amplification, or 0.0 if no samples recorded
+         */
+        public double getWriteAmplificationP99() {
+            writeAmplificationHistogramLock.readLock().lock();
+            try {
+                return writeAmplificationHistogram.getValueAtPercentile(99);
+            } finally {
+                writeAmplificationHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
          * Returns the writer transaction number of the last write.
          * <p>
          * This is the transaction number from the TableWriter, not the WAL sequence transaction.
@@ -852,6 +1141,38 @@ public class RecentWriteTracker {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;
+        }
+
+        /**
+         * Records a merge throughput sample.
+         *
+         * @param throughput the throughput in rows/second
+         */
+        void recordMergeThroughput(long throughput) {
+            if (throughput > 0) {
+                mergeThroughputHistogramLock.writeLock().lock();
+                try {
+                    mergeThroughputHistogram.recordValue(throughput);
+                } finally {
+                    mergeThroughputHistogramLock.writeLock().unlock();
+                }
+            }
+        }
+
+        /**
+         * Records a write amplification sample.
+         *
+         * @param amplification the write amplification ratio (physicalRows / logicalRows)
+         */
+        void recordWriteAmplification(double amplification) {
+            if (amplification > 0) {
+                writeAmplificationHistogramLock.writeLock().lock();
+                try {
+                    writeAmplificationHistogram.recordValue(amplification);
+                } finally {
+                    writeAmplificationHistogramLock.writeLock().unlock();
+                }
+            }
         }
 
         /**

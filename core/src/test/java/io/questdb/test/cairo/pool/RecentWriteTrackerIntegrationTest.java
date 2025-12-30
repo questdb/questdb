@@ -424,6 +424,78 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     }
 
     /**
+     * Tests WAL pending row count and dedup tracking via the tables() SQL function.
+     * <p>
+     * This test verifies that:
+     * - pendingRowCount reflects uncommitted WAL rows before draining
+     * - After draining, pendingRowCount becomes 0 and rowCount is updated
+     * - Duplicate rows are tracked via dedupeRowCount
+     */
+    @Test
+    public void testWalPendingAndDedupTracking() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a WAL table with dedup enabled on timestamp
+            execute("CREATE TABLE dedup_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+
+            engine.getRecentWriteTracker().clear();
+
+            // Insert 500 unique rows from "thread 1" - use seconds to ensure unique timestamps
+            // Timestamps: 1970-01-01T00:00:01 through 1970-01-01T00:08:20 (1-500 seconds)
+            execute("INSERT INTO dedup_test SELECT (x * 1000000)::timestamp, x::int FROM long_sequence(500)");
+
+            // Drain after first insert to apply it
+            drainWalQueue();
+
+            // Insert 500 more unique rows from "thread 2"
+            // Timestamps: 1970-01-01T00:08:21 through 1970-01-01T00:16:40 (501-1000 seconds)
+            execute("INSERT INTO dedup_test SELECT ((500 + x) * 1000000)::timestamp, (500 + x)::int FROM long_sequence(500)");
+
+            // Before draining second batch - pendingRowCount should be 500 (second batch pending)
+            assertSql(
+                    "pendingRowCount\n500\n",
+                    "SELECT pendingRowCount FROM tables() WHERE table_name = 'dedup_test'"
+            );
+
+            // Row count should be 500 (first batch applied)
+            assertSql(
+                    "rowCount\n500\n",
+                    "SELECT rowCount FROM tables() WHERE table_name = 'dedup_test'"
+            );
+
+            // Drain the WAL queue to apply second batch
+            drainWalQueue();
+
+            // After draining - rowCount should be 1000, pendingRowCount should be 0, no dedup yet
+            assertSql(
+                    "rowCount\tpendingRowCount\tdedupeRowCount\n1000\t0\t0\n",
+                    "SELECT rowCount, pendingRowCount, dedupeRowCount FROM tables() WHERE table_name = 'dedup_test'"
+            );
+
+            // Now insert duplicate data - same timestamps as first 300 rows (1-300 seconds)
+            execute("INSERT INTO dedup_test SELECT (x * 1000000)::timestamp, (x + 1000)::int FROM long_sequence(300)");
+
+            // Drain the queue again
+            drainWalQueue();
+
+            // After draining duplicates:
+            // - rowCount should still be 1000 (300 duplicates replaced existing rows)
+            // - pendingRowCount should be 0
+            // - dedupeRowCount should be 300 (cumulative - the 300 duplicates just added)
+            assertSql(
+                    "rowCount\tpendingRowCount\tdedupeRowCount\n1000\t0\t300\n",
+                    "SELECT rowCount, pendingRowCount, dedupeRowCount FROM tables() WHERE table_name = 'dedup_test'"
+            );
+
+            // Verify the values were actually updated (not just row count unchanged)
+            // The first 300 rows should now have v = x + 1000
+            assertSql(
+                    "count\n300\n",
+                    "SELECT count() FROM dedup_test WHERE v > 1000"
+            );
+        });
+    }
+
+    /**
      * Demonstrates hydrating the tracker from existing tables on startup.
      * <p>
      * Use case: Populate tracker with existing table data when server starts.

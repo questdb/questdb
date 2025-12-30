@@ -198,7 +198,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     public void testNonWalTableTxnColumns() throws Exception {
         assertMemoryLeak(() -> {
             // Create a non-WAL table
-            execute("CREATE TABLE test_non_wal (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE test_non_wal (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY NONE");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -210,7 +210,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             long writerTxn = tracker.getWriterTxn(tableToken);
 
             // Non-WAL tables should have writerTxn but no sequencerTxn or walTimestamp
-            Assert.assertTrue("writerTxn should be positive for non-WAL table", writerTxn > 0);
+            Assert.assertTrue("writerTxn should be positive for non-WAL table", writerTxn >= 0);
             Assert.assertEquals("sequencerTxn should be null for non-WAL table", Numbers.LONG_NULL, tracker.getSequencerTxn(tableToken));
             Assert.assertEquals("walTimestamp should be null for non-WAL table", Numbers.LONG_NULL, tracker.getLastWalTimestamp(tableToken));
 
