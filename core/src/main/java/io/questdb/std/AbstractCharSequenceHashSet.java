@@ -36,17 +36,29 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
      * Minimum initial capacity.
      */
     protected static final int MIN_INITIAL_CAPACITY = 16;
-    /** Marker for empty slots. */
+    /**
+     * Marker for empty slots.
+     */
     protected static final CharSequence noEntryKey = null;
-    /** The load factor for the hash set. */
+    /**
+     * The load factor for the hash set.
+     */
     protected final double loadFactor;
-    /** The capacity of the hash set. */
+    /**
+     * The capacity of the hash set.
+     */
     protected int capacity;
-    /** The number of free slots. */
+    /**
+     * The number of free slots.
+     */
     protected int free;
-    /** The keys array. */
+    /**
+     * The keys array.
+     */
     protected CharSequence[] keys;
-    /** The mask for index calculation. */
+    /**
+     * The mask for index calculation.
+     */
     protected int mask;
 
     /**

@@ -49,15 +49,25 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
      * The column indexes.
      */
     protected final IntList columnIndexes;
-    /** The column size shifts. */
+    /**
+     * The column size shifts.
+     */
     protected final IntList columnSizeShifts;
-    /** The partition frame cursor factory. */
+    /**
+     * The partition frame cursor factory.
+     */
     protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
-    /** The page frame cursor. */
+    /**
+     * The page frame cursor.
+     */
     protected TablePageFrameCursor pageFrameCursor;
-    /** Maximum rows per page frame. */
+    /**
+     * Maximum rows per page frame.
+     */
     protected int pageFrameMaxRows;
-    /** Minimum rows per page frame. */
+    /**
+     * Minimum rows per page frame.
+     */
     protected int pageFrameMinRows;
 
     /**

@@ -42,11 +42,17 @@ public abstract class AbstractGenerateSeriesRecordCursorFactory extends Abstract
      * The end function for the series.
      */
     public final Function endFunc;
-    /** The start function for the series. */
+    /**
+     * The start function for the series.
+     */
     public final Function startFunc;
-    /** The step function for the series. */
+    /**
+     * The step function for the series.
+     */
     public final Function stepFunc;
-    /** The step argument position for error reporting. */
+    /**
+     * The step argument position for error reporting.
+     */
     int stepPosition;
 
     /**
@@ -96,11 +102,17 @@ public abstract class AbstractGenerateSeriesRecordCursorFactory extends Abstract
      * Abstract base class for generate_series record cursors.
      */
     public abstract static class AbstractGenerateSeriesRecordCursor implements NoRandomAccessRecordCursor {
-        /** The end function for the series. */
+        /**
+         * The end function for the series.
+         */
         public final Function endFunc;
-        /** The start function for the series. */
+        /**
+         * The start function for the series.
+         */
         public final Function startFunc;
-        /** The step function for the series. */
+        /**
+         * The step function for the series.
+         */
         public final Function stepFunc;
 
         /**

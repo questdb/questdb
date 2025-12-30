@@ -41,9 +41,13 @@ public abstract class AbstractCastToGeoHashFunction extends GeoByteFunction impl
      * The function argument to cast.
      */
     protected final Function arg;
-    /** The bits precision for the geohash. */
+    /**
+     * The bits precision for the geohash.
+     */
     protected final int bitsPrecision;
-    /** The position in the SQL statement. */
+    /**
+     * The position in the SQL statement.
+     */
     protected final int position;
 
     /**

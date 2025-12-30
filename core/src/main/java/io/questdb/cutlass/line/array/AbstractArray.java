@@ -62,11 +62,17 @@ public abstract class AbstractArray implements QuietCloseable {
      * The underlying direct array storage.
      */
     protected final DirectArray array = new DirectArray();
-    /** Flag indicating if this array has been closed. */
+    /**
+     * Flag indicating if this array has been closed.
+     */
     protected boolean closed = false;
-    /** The total number of elements in the flattened array. */
+    /**
+     * The total number of elements in the flattened array.
+     */
     protected int flatLength;
-    /** Memory appender for writing array elements. */
+    /**
+     * Memory appender for writing array elements.
+     */
     protected MemoryA memA = array.startMemoryA();
 
     /**

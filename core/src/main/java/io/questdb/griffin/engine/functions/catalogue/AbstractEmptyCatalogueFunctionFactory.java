@@ -42,7 +42,9 @@ public abstract class AbstractEmptyCatalogueFunctionFactory implements FunctionF
      * The record metadata for the empty table.
      */
     private final RecordMetadata metadata;
-    /** The function signature. */
+    /**
+     * The function signature.
+     */
     private final String signature;
 
     /**

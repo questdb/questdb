@@ -48,13 +48,21 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
      * The function argument to cast.
      */
     protected final Function arg;
-    /** Sink for building symbol strings. */
+    /**
+     * Sink for building symbol strings.
+     */
     protected final StringSink sink = new StringSink();
-    /** Map for symbol table shortcuts. */
+    /**
+     * Map for symbol table shortcuts.
+     */
     protected final IntIntHashMap symbolTableShortcut = new IntIntHashMap();
-    /** List of symbol values. */
+    /**
+     * List of symbol values.
+     */
     protected final ObjList<String> symbols = new ObjList<>();
-    /** Next symbol index. */
+    /**
+     * Next symbol index.
+     */
     protected int next = 1;
 
     /**

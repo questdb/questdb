@@ -43,7 +43,9 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction imple
      * The interval result value.
      */
     protected final Interval interval = new Interval();
-    /** The timestamp driver for interval calculations. */
+    /**
+     * The timestamp driver for interval calculations.
+     */
     protected TimestampDriver timestampDriver;
 
     /**

@@ -51,11 +51,17 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
      * The column index for symbol filtering.
      */
     protected final int columnIndex;
-    /** Functions for deferred symbol resolution. */
+    /**
+     * Functions for deferred symbol resolution.
+     */
     protected final ObjList<Function> deferredSymbolFuncs;
-    /** Keys for deferred symbols. */
+    /**
+     * Keys for deferred symbols.
+     */
     protected final IntHashSet deferredSymbolKeys;
-    /** Symbol keys that were resolved during construction. */
+    /**
+     * Symbol keys that were resolved during construction.
+     */
     protected final IntHashSet symbolKeys;
 
     /**

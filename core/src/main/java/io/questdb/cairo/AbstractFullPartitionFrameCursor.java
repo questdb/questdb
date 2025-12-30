@@ -39,11 +39,17 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
      * The partition frame.
      */
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
-    /** The partition high boundary. */
+    /**
+     * The partition high boundary.
+     */
     protected int partitionHi;
-    /** The current partition index. */
+    /**
+     * The current partition index.
+     */
     protected int partitionIndex;
-    /** The table reader. */
+    /**
+     * The table reader.
+     */
     protected TableReader reader;
 
     @Override
@@ -101,15 +107,25 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
      * A partition frame representing a full table partition.
      */
     protected static class FullTablePartitionFrame implements PartitionFrame {
-        /** The partition format. */
+        /**
+         * The partition format.
+         */
         protected byte format;
-        /** The Parquet decoder if applicable. */
+        /**
+         * The Parquet decoder if applicable.
+         */
         protected PartitionDecoder parquetDecoder;
-        /** The partition index. */
+        /**
+         * The partition index.
+         */
         protected int partitionIndex;
-        /** The high row boundary. */
+        /**
+         * The high row boundary.
+         */
         protected long rowHi;
-        /** The low row boundary. */
+        /**
+         * The low row boundary.
+         */
         protected long rowLo;
 
         @Override

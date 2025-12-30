@@ -47,13 +47,21 @@ public abstract class AbstractCountVectorAggregateFunction extends LongFunction 
      * The main count accumulator.
      */
     protected final LongAdder count = new LongAdder();
-    /** The column index. */
+    /**
+     * The column index.
+     */
     private final int columnIndex;
-    /** The distinct function for distinct aggregates. */
+    /**
+     * The distinct function for distinct aggregates.
+     */
     protected DistinctFunc distinctFunc;
-    /** The key-value function. */
+    /**
+     * The key-value function.
+     */
     protected KeyValueFunc keyValueFunc;
-    /** The value offset in the map. */
+    /**
+     * The value offset in the map.
+     */
     protected int valueOffset;
 
     /**

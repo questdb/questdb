@@ -44,13 +44,21 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
      * The function argument.
      */
     protected final Function arg;
-    /** Primary hash set for counting distinct values. */
+    /**
+     * Primary hash set for counting distinct values.
+     */
     protected final GroupByIntHashSet setA;
-    /** Secondary hash set for counting distinct values. */
+    /**
+     * Secondary hash set for counting distinct values.
+     */
     protected final GroupByIntHashSet setB;
-    /** The cardinality counter. */
+    /**
+     * The cardinality counter.
+     */
     protected long cardinality;
-    /** The value index in the map. */
+    /**
+     * The value index in the map.
+     */
     protected int valueIndex;
 
     /**

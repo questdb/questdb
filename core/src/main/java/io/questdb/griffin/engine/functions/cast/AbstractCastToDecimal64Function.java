@@ -39,11 +39,17 @@ public abstract class AbstractCastToDecimal64Function extends ToDecimal64Functio
      * The function argument to cast.
      */
     protected final Function arg;
-    /** The position in the SQL statement. */
+    /**
+     * The position in the SQL statement.
+     */
     protected final int position;
-    /** The target decimal precision. */
+    /**
+     * The target decimal precision.
+     */
     protected final int precision;
-    /** The target decimal scale. */
+    /**
+     * The target decimal scale.
+     */
     protected final int scale;
 
     /**

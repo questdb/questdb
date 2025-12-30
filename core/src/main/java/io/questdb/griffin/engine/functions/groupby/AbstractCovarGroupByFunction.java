@@ -48,9 +48,13 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
      * The X (independent variable) function.
      */
     protected final Function xFunc;
-    /** The Y (dependent variable) function. */
+    /**
+     * The Y (dependent variable) function.
+     */
     protected final Function yFunc;
-    /** The value index in the map. */
+    /**
+     * The value index in the map.
+     */
     protected int valueIndex;
 
     /**

@@ -37,7 +37,9 @@ public abstract class AbstractEqBinaryFunction extends NegatableBooleanFunction 
      * The left argument function.
      */
     protected final Function left;
-    /** The right argument function. */
+    /**
+     * The right argument function.
+     */
     protected final Function right;
 
     /**

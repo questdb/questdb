@@ -43,7 +43,9 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
      * The function argument.
      */
     protected final Function arg;
-    /** The value index in the map. */
+    /**
+     * The value index in the map.
+     */
     protected int valueIndex;
 
     /**

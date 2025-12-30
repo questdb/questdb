@@ -47,9 +47,9 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * If valueAddress == 0 it means that value page frame is 'empty' (due to column tops) and contains null values,
      * so only keys should be processed.
      *
-     * @param pRosti       pointer to rosti
-     * @param keyAddress   key address
-     * @param valueAddress value address
+     * @param pRosti        pointer to rosti
+     * @param keyAddress    key address
+     * @param valueAddress  value address
      * @param frameRowCount row count in the frame
      * @return true if processing went fine and false if it failed on memory allocation
      */
