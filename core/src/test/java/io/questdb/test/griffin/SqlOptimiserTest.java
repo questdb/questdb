@@ -5768,12 +5768,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
             assertEquals(ExecutionModel.QUERY, model.getModelType());
-            QueryModel qm = (QueryModel) model;
-            System.out.println("*** compileModel returning: " + qm.toString0());
-            if (qm.getNestedModel() != null) {
-                System.out.println("*** compileModel nested has union: " + (qm.getNestedModel().getUnionModel() != null));
-            }
-            return qm;
+            return (QueryModel) model;
         }
     }
 }
