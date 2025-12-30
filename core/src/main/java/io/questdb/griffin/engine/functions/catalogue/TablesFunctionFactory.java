@@ -239,9 +239,9 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             private static class TableListRecord implements Record {
                 private StringSink lazyStringSink = null;
-                private RecentWriteTracker recentWriteTracker;
                 private CairoTable table;
                 private TableSequencerAPI tableSequencerAPI;
+                private RecentWriteTracker.WriteStats writeStats;
 
                 @Override
                 public boolean getBool(int col) {
@@ -276,45 +276,49 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public double getDouble(int col) {
+                    if (writeStats == null) {
+                        return 0.0;
+                    }
                     return switch (col) {
-                        case WRITE_AMPLIFICATION_P50_COLUMN ->
-                                recentWriteTracker.getWriteAmplificationP50(table.getTableToken());
-                        case WRITE_AMPLIFICATION_P90_COLUMN ->
-                                recentWriteTracker.getWriteAmplificationP90(table.getTableToken());
-                        case WRITE_AMPLIFICATION_P99_COLUMN ->
-                                recentWriteTracker.getWriteAmplificationP99(table.getTableToken());
-                        case WRITE_AMPLIFICATION_MAX_COLUMN ->
-                                recentWriteTracker.getWriteAmplificationMax(table.getTableToken());
+                        case WRITE_AMPLIFICATION_P50_COLUMN -> writeStats.getWriteAmplificationP50();
+                        case WRITE_AMPLIFICATION_P90_COLUMN -> writeStats.getWriteAmplificationP90();
+                        case WRITE_AMPLIFICATION_P99_COLUMN -> writeStats.getWriteAmplificationP99();
+                        case WRITE_AMPLIFICATION_MAX_COLUMN -> writeStats.getWriteAmplificationMax();
                         default -> Double.NaN;
                     };
                 }
 
                 @Override
                 public long getLong(int col) {
+                    if (col == O3_MAX_LAG_COLUMN) {
+                        return table.getO3MaxLag();
+                    }
+                    if (writeStats == null) {
+                        return col == PENDING_ROW_COUNT_COLUMN || col == DEDUPE_ROW_COUNT_COLUMN
+                                || col == TXN_COUNT_COLUMN || col == TXN_SIZE_P50_COLUMN
+                                || col == TXN_SIZE_P90_COLUMN || col == TXN_SIZE_P99_COLUMN
+                                || col == TXN_SIZE_MAX_COLUMN || col == WRITE_AMPLIFICATION_COUNT_COLUMN
+                                || col == MERGE_THROUGHPUT_COUNT_COLUMN || col == MERGE_THROUGHPUT_P50_COLUMN
+                                || col == MERGE_THROUGHPUT_P90_COLUMN || col == MERGE_THROUGHPUT_P99_COLUMN
+                                || col == MERGE_THROUGHPUT_MAX_COLUMN ? 0 : Numbers.LONG_NULL;
+                    }
                     return switch (col) {
-                        case O3_MAX_LAG_COLUMN -> table.getO3MaxLag();
-                        case ROW_COUNT_COLUMN -> recentWriteTracker.getRowCount(table.getTableToken());
-                        case WRITER_TXN_COLUMN -> recentWriteTracker.getWriterTxn(table.getTableToken());
-                        case SEQUENCER_TXN_COLUMN -> recentWriteTracker.getSequencerTxn(table.getTableToken());
-                        case PENDING_ROW_COUNT_COLUMN -> recentWriteTracker.getWalRowCount(table.getTableToken());
-                        case DEDUPE_ROW_COUNT_COLUMN -> recentWriteTracker.getDedupRowCount(table.getTableToken());
-                        case TXN_COUNT_COLUMN -> recentWriteTracker.getTxnCount(table.getTableToken());
-                        case TXN_SIZE_P50_COLUMN -> recentWriteTracker.getTxnSizeP50(table.getTableToken());
-                        case TXN_SIZE_P90_COLUMN -> recentWriteTracker.getTxnSizeP90(table.getTableToken());
-                        case TXN_SIZE_P99_COLUMN -> recentWriteTracker.getTxnSizeP99(table.getTableToken());
-                        case TXN_SIZE_MAX_COLUMN -> recentWriteTracker.getTxnSizeMax(table.getTableToken());
-                        case WRITE_AMPLIFICATION_COUNT_COLUMN ->
-                                recentWriteTracker.getWriteAmplificationCount(table.getTableToken());
-                        case MERGE_THROUGHPUT_COUNT_COLUMN ->
-                                recentWriteTracker.getMergeThroughputCount(table.getTableToken());
-                        case MERGE_THROUGHPUT_P50_COLUMN ->
-                                recentWriteTracker.getMergeThroughputP50(table.getTableToken());
-                        case MERGE_THROUGHPUT_P90_COLUMN ->
-                                recentWriteTracker.getMergeThroughputP90(table.getTableToken());
-                        case MERGE_THROUGHPUT_P99_COLUMN ->
-                                recentWriteTracker.getMergeThroughputP99(table.getTableToken());
-                        case MERGE_THROUGHPUT_MAX_COLUMN ->
-                                recentWriteTracker.getMergeThroughputMax(table.getTableToken());
+                        case ROW_COUNT_COLUMN -> writeStats.getRowCount();
+                        case WRITER_TXN_COLUMN -> writeStats.getWriterTxn();
+                        case SEQUENCER_TXN_COLUMN -> writeStats.getSequencerTxn();
+                        case PENDING_ROW_COUNT_COLUMN -> writeStats.getWalRowCount();
+                        case DEDUPE_ROW_COUNT_COLUMN -> writeStats.getDedupRowCount();
+                        case TXN_COUNT_COLUMN -> writeStats.getTxnCount();
+                        case TXN_SIZE_P50_COLUMN -> writeStats.getTxnSizeP50();
+                        case TXN_SIZE_P90_COLUMN -> writeStats.getTxnSizeP90();
+                        case TXN_SIZE_P99_COLUMN -> writeStats.getTxnSizeP99();
+                        case TXN_SIZE_MAX_COLUMN -> writeStats.getTxnSizeMax();
+                        case WRITE_AMPLIFICATION_COUNT_COLUMN -> writeStats.getWriteAmplificationCount();
+                        case MERGE_THROUGHPUT_COUNT_COLUMN -> writeStats.getMergeThroughputCount();
+                        case MERGE_THROUGHPUT_P50_COLUMN -> writeStats.getMergeThroughputP50();
+                        case MERGE_THROUGHPUT_P90_COLUMN -> writeStats.getMergeThroughputP90();
+                        case MERGE_THROUGHPUT_P99_COLUMN -> writeStats.getMergeThroughputP99();
+                        case MERGE_THROUGHPUT_MAX_COLUMN -> writeStats.getMergeThroughputMax();
                         default -> Numbers.LONG_NULL;
                     };
                 }
@@ -353,17 +357,20 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getTimestamp(int col) {
+                    if (writeStats == null) {
+                        return Numbers.LONG_NULL;
+                    }
                     return switch (col) {
-                        case LAST_WRITE_TIMESTAMP_COLUMN -> recentWriteTracker.getWriteTimestamp(table.getTableToken());
-                        case LAST_WAL_TIMESTAMP_COLUMN -> recentWriteTracker.getLastWalTimestamp(table.getTableToken());
+                        case LAST_WRITE_TIMESTAMP_COLUMN -> writeStats.getTimestamp();
+                        case LAST_WAL_TIMESTAMP_COLUMN -> writeStats.getLastWalTimestamp();
                         default -> Numbers.LONG_NULL;
                     };
                 }
 
                 private void of(CairoTable table, RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI) {
                     this.table = table;
-                    this.recentWriteTracker = recentWriteTracker;
                     this.tableSequencerAPI = tableSequencerAPI;
+                    this.writeStats = recentWriteTracker.getWriteStats(table.getTableToken());
                 }
             }
         }

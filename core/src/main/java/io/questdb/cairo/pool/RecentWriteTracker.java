@@ -25,6 +25,8 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -69,6 +71,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * @see #getRecentlyWrittenTables(int)
  */
 public class RecentWriteTracker {
+    private static final Log LOG = LogFactory.getLog(RecentWriteTracker.class);
 
     private final AtomicBoolean evictionInProgress = new AtomicBoolean(false);
     private final int maxCapacity;
@@ -101,17 +104,6 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Returns the cumulative count of rows removed by deduplication for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return cumulative dedup row count, or 0 if not tracked
-     */
-    public long getDedupRowCount(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getDedupRowCount() : 0;
-    }
-
-    /**
      * Returns the WAL write timestamp for a specific table.
      * <p>
      * This is the highest walTimestamp seen from any WAL writer for this table.
@@ -129,61 +121,6 @@ public class RecentWriteTracker {
      */
     public int getMaxCapacity() {
         return maxCapacity;
-    }
-
-    /**
-     * Returns the total number of merge throughput samples for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return total sample count, or 0 if not tracked
-     */
-    public long getMergeThroughputCount(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getMergeThroughputCount() : 0;
-    }
-
-    /**
-     * Returns the maximum merge throughput for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return maximum throughput in rows/second, or 0 if not tracked
-     */
-    public long getMergeThroughputMax(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getMergeThroughputMax() : 0;
-    }
-
-    /**
-     * Returns the 50th percentile (median) merge throughput for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return median throughput in rows/second, or 0 if not tracked
-     */
-    public long getMergeThroughputP50(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getMergeThroughputP50() : 0;
-    }
-
-    /**
-     * Returns the 90th percentile merge throughput for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return 90th percentile throughput in rows/second, or 0 if not tracked
-     */
-    public long getMergeThroughputP90(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getMergeThroughputP90() : 0;
-    }
-
-    /**
-     * Returns the 99th percentile merge throughput for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return 99th percentile throughput in rows/second, or 0 if not tracked
-     */
-    public long getMergeThroughputP99(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getMergeThroughputP99() : 0;
     }
 
     public WriteStats getOrCreateStats(@NotNull TableToken tableToken) {
@@ -292,119 +229,6 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Returns the maximum transaction size for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return maximum transaction size in rows, or 0 if not tracked
-     */
-    public long getTxnSizeMax(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getTxnSizeMax() : 0;
-    }
-
-    /**
-     * Returns the 50th percentile (median) transaction size for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return median transaction size in rows, or 0 if not tracked
-     */
-    public long getTxnSizeP50(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getTxnSizeP50() : 0;
-    }
-
-    /**
-     * Returns the 90th percentile transaction size for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return 90th percentile transaction size in rows, or 0 if not tracked
-     */
-    public long getTxnSizeP90(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getTxnSizeP90() : 0;
-    }
-
-    /**
-     * Returns the 99th percentile transaction size for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return 99th percentile transaction size in rows, or 0 if not tracked
-     */
-    public long getTxnSizeP99(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getTxnSizeP99() : 0;
-    }
-
-    /**
-     * Returns the cumulative WAL row count for a specific table.
-     * <p>
-     * This is the total number of rows written via WAL segments since the tracker
-     * started tracking this table. The counter is never reset and only increments.
-     *
-     * @param tableToken the table to look up
-     * @return cumulative WAL row count, or 0 if not tracked
-     */
-    public long getWalRowCount(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getWalRowCount() : 0;
-    }
-
-    /**
-     * Returns the total number of write amplification samples for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return total sample count, or 0 if not tracked
-     */
-    public long getWriteAmplificationCount(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getWriteAmplificationCount() : 0;
-    }
-
-    /**
-     * Returns the maximum write amplification for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return maximum write amplification, or 0.0 if not tracked
-     */
-    public double getWriteAmplificationMax(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getWriteAmplificationMax() : 0.0;
-    }
-
-    /**
-     * Returns the 50th percentile (median) write amplification for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return median write amplification, or 0.0 if not tracked
-     */
-    public double getWriteAmplificationP50(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getWriteAmplificationP50() : 0.0;
-    }
-
-    /**
-     * Returns the 90th percentile write amplification for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return 90th percentile write amplification, or 0.0 if not tracked
-     */
-    public double getWriteAmplificationP90(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getWriteAmplificationP90() : 0.0;
-    }
-
-    /**
-     * Returns the 99th percentile write amplification for a specific table.
-     *
-     * @param tableToken the table to look up
-     * @return 99th percentile write amplification, or 0.0 if not tracked
-     */
-    public double getWriteAmplificationP99(@NotNull TableToken tableToken) {
-        WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getWriteAmplificationP99() : 0.0;
-    }
-
-    /**
      * Returns the write statistics for a specific table, or null if not tracked.
      *
      * @param tableToken the table to look up
@@ -450,7 +274,11 @@ public class RecentWriteTracker {
      * @param throughput    the throughput in rows/second
      */
     public void recordMergeStats(@NotNull TableToken tableToken, double amplification, long throughput) {
-        getOrCreateStats(tableToken).recordMergeStats(amplification, throughput);
+        try {
+            getOrCreateStats(tableToken).recordMergeStats(amplification, throughput);
+        } catch (Throwable th) {
+            LOG.error().$("could not record merge stats [table=").$(tableToken).$(", error=").$(th).I$();
+        }
     }
 
     /**
@@ -465,14 +293,18 @@ public class RecentWriteTracker {
      * @param committedRowCount the number of rows actually committed (after dedup)
      */
     public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
-        WriteStats stats = getOrCreateStats(tableToken);
-        // Only subtract if seqTxn is above the floor (rows added after tracking started)
-        if (seqTxn > stats.getFloorSeqTxn()) {
-            stats.walRowCount.add(-walRowCount);
-        }
-        long dedupCount = walRowCount - committedRowCount;
-        if (dedupCount > 0) {
-            stats.dedupRowCount.add(dedupCount);
+        try {
+            WriteStats stats = getOrCreateStats(tableToken);
+            // Only subtract if seqTxn is above the floor (rows added after tracking started)
+            if (seqTxn > stats.getFloorSeqTxn()) {
+                stats.walRowCount.add(-walRowCount);
+            }
+            long dedupCount = walRowCount - committedRowCount;
+            if (dedupCount > 0) {
+                stats.dedupRowCount.add(dedupCount);
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not record WAL processed [table=").$(tableToken).$(", error=").$(th).I$();
         }
     }
 
@@ -492,11 +324,15 @@ public class RecentWriteTracker {
      * @param txnRowCount  the number of rows in this WAL segment
      */
     public void recordWalWrite(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long txnRowCount) {
-        getOrCreateStats(tableToken).updateWal(sequencerTxn, walTimestamp, txnRowCount);
+        try {
+            getOrCreateStats(tableToken).updateWal(sequencerTxn, walTimestamp, txnRowCount);
 
-        // Lazy eviction
-        if (writeStats.size() > maxCapacity * 2) {
-            evictOldest();
+            // Lazy eviction
+            if (writeStats.size() > maxCapacity * 2) {
+                evictOldest();
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not record WAL write [table=").$(tableToken).$(", error=").$(th).I$();
         }
     }
 
@@ -514,12 +350,16 @@ public class RecentWriteTracker {
      * @param writerTxn  the writer transaction number (not WAL sequence txn)
      */
     public void recordWrite(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn) {
-        getOrCreateStats(tableToken).updateWriter(timestamp, rowCount, writerTxn);
+        try {
+            getOrCreateStats(tableToken).updateWriter(timestamp, rowCount, writerTxn);
 
-        // Lazy eviction: only clean up when we exceed 2x capacity
-        // This amortizes the cleanup cost and reduces contention
-        if (writeStats.size() > maxCapacity * 2) {
-            evictOldest();
+            // Lazy eviction: only clean up when we exceed 2x capacity
+            // This amortizes the cleanup cost and reduces contention
+            if (writeStats.size() > maxCapacity * 2) {
+                evictOldest();
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not record write [table=").$(tableToken).$(", error=").$(th).I$();
         }
     }
 
@@ -539,23 +379,28 @@ public class RecentWriteTracker {
      * @return true if entry was inserted, false if entry already existed
      */
     public boolean recordWriteIfAbsent(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp) {
-        // Check first to avoid allocation when entry exists
-        if (writeStats.containsKey(tableToken)) {
+        try {
+            // Check first to avoid allocation when entry exists
+            if (writeStats.containsKey(tableToken)) {
+                return false;
+            }
+
+            // CAS insert - only succeeds if no entry exists
+            WriteStats existing = writeStats.putIfAbsent(tableToken, new WriteStats(timestamp, rowCount, writerTxn, sequencerTxn, walTimestamp));
+            if (existing != null) {
+                // Another thread (likely a writer) inserted first - their data wins
+                return false;
+            }
+
+            // Lazy eviction
+            if (writeStats.size() > maxCapacity * 2) {
+                evictOldest();
+            }
+            return true;
+        } catch (Throwable th) {
+            LOG.error().$("could not record write if absent [table=").$(tableToken).$(", error=").$(th).I$();
             return false;
         }
-
-        // CAS insert - only succeeds if no entry exists
-        WriteStats existing = writeStats.putIfAbsent(tableToken, new WriteStats(timestamp, rowCount, writerTxn, sequencerTxn, walTimestamp));
-        if (existing != null) {
-            // Another thread (likely a writer) inserted first - their data wins
-            return false;
-        }
-
-        // Lazy eviction
-        if (writeStats.size() > maxCapacity * 2) {
-            evictOldest();
-        }
-        return true;
     }
 
     /**
@@ -695,10 +540,10 @@ public class RecentWriteTracker {
         private final LongAdder dedupRowCount = new LongAdder();
         // Floor seqTxn - set on startup, WAL rows with seqTxn <= floor are not subtracted
         private final AtomicLong floorSeqTxn = new AtomicLong(0);
-        // Merge throughput histogram - tracks rows/second during WAL apply
-        private final Histogram mergeThroughputHistogram = new Histogram(2);
         // Lock for merge stats (write amplification and merge throughput) access
         private final SimpleReadWriteLock mergeStatsLock = new SimpleReadWriteLock();
+        // Merge throughput histogram - tracks rows/second during WAL apply
+        private final Histogram mergeThroughputHistogram = new Histogram(2);
         // WAL fields - updated by WalWriters only, highest wins via CAS
         private final AtomicLong sequencerTxn;
         // Transaction size histogram - tracks distribution of WAL transaction sizes
