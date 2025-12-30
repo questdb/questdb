@@ -316,7 +316,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxCapacity());
         Assert.assertEquals(Numbers.SIZE_1GB, configuration.getCairoConfiguration().getGroupByPresizeMaxHeapSize());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorDefaultChunkSize());
-        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getGroupByParallelTopKThreshold());
+        Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getGroupByParallelTopKThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlOrderBySortEnabled());
         Assert.assertEquals(600, configuration.getCairoConfiguration().getSqlOrderByRadixSortThreshold());
 

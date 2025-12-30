@@ -393,7 +393,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getGroupByParallelTopKThreshold() {
-        return 1_000_000;
+        return 5_000_000;
     }
 
     @Override

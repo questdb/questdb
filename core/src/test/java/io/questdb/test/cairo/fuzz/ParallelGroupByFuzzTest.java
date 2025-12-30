@@ -91,7 +91,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1 + rnd.nextInt(PAGE_FRAME_COUNT));
         // Set the sharding threshold to a small value to test sharding.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(50));
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOPK_THRESHOLD, rnd.nextBoolean() ? 4 : Integer.MAX_VALUE);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD, rnd.nextBoolean() ? 4 : Integer.MAX_VALUE);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
