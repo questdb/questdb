@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DdlListener;
@@ -52,42 +53,39 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
     @Override
     protected WalWriterTenant newTenant(
             TableToken tableToken,
-            Entry<WalWriterTenant> rootEntry,
             Entry<WalWriterTenant> entry,
             int index,
             @Nullable ResourcePoolSupervisor<WalWriterTenant> supervisor
     ) {
         return new WalWriterTenant(
                 this,
-                rootEntry,
                 entry,
                 index,
                 tableToken,
                 engine.getTableSequencerAPI(),
                 engine.getDdlListener(tableToken),
-                engine.getWalDirectoryPolicy()
+                engine.getWalDirectoryPolicy(),
+                engine.getMetrics()
         );
     }
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant<WalWriterTenant> {
         private final int index;
-        private final Entry<WalWriterTenant> rootEntry;
         private Entry<WalWriterTenant> entry;
         private AbstractMultiTenantPool<WalWriterTenant> pool;
 
         public WalWriterTenant(
                 AbstractMultiTenantPool<WalWriterTenant> pool,
-                Entry<WalWriterTenant> rootEntry,
                 Entry<WalWriterTenant> entry,
                 int index,
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
                 DdlListener ddlListener,
-                WalDirectoryPolicy walDirectoryPolicy
+                WalDirectoryPolicy walDirectoryPolicy,
+                Metrics metrics
         ) {
             super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy);
             this.pool = pool;
-            this.rootEntry = rootEntry;
             this.entry = entry;
             this.index = index;
         }
@@ -123,11 +121,6 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public int getIndex() {
             return index;
-        }
-
-        @Override
-        public Entry<WalWriterTenant> getRootEntry() {
-            return rootEntry;
         }
 
         public void goodbye() {

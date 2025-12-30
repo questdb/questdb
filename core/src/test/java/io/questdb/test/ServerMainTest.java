@@ -30,21 +30,13 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.ConcurrentIntHashMap;
 import io.questdb.std.Files;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -56,7 +48,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static java.util.Arrays.asList;
@@ -104,96 +95,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 }
             } finally {
                 Files.ASYNC_MUNMAP_ENABLED = false;
-            }
-        });
-    }
-
-    @Test
-    public void testConcurrentTableDrop() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.DEBUG_CAIRO_POOL_SEGMENT_SIZE.getEnvVarName(), "2",
-                    PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS.getEnvVarName(), "30",
-                    PropertyKey.CAIRO_WAL_PURGE_INTERVAL.getEnvVarName(), "1"
-            )) {
-                serverMain.start();
-
-                int tableCount = 20;
-                AtomicInteger errorCount = new AtomicInteger(0);
-                ObjList<Thread> threads = new ObjList<>();
-                ConcurrentIntHashMap<Boolean> tableMap = new ConcurrentIntHashMap<>();
-                var configuration = serverMain.getConfiguration();
-
-                Rnd rnd = TestUtils.generateRandom(LOG);
-                for (int i = 0; i < tableCount; i++) {
-                    serverMain.getEngine().execute("create table test" + i + " (ts timestamp, x int) timestamp(ts) partition by day WAL");
-                    tableMap.put(i, true);
-                    int threadId = i;
-
-                    Thread dropThread = new Thread(() -> {
-                        Os.sleep(10);
-                        try (SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1)
-                                .with(
-                                        configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                                        null,
-                                        null,
-                                        -1,
-                                        null
-                                )) {
-                            serverMain.getEngine().execute("drop table test" + threadId, sqlExecutionContext);
-                            tableMap.remove(threadId);
-                        } catch (Throwable e) {
-                            errorCount.incrementAndGet();
-                            LOG.error().$(e).$();
-                            throw new RuntimeException(e);
-                        } finally {
-                            Path.clearThreadLocals();
-                        }
-                    });
-
-                    Rnd rndForInserts = new Rnd(rnd.nextLong(), rnd.nextLong());
-                    for (int t = 0; t < 5; t++) {
-                        Thread insertThread = new Thread(() -> {
-                            ObjList<WalWriter> writerObjList = new ObjList<>();
-                            try {
-                                TableToken tableToken = serverMain.getEngine().getTableTokenIfExists("test" + threadId);
-                                for (int in = 0; in < 5; in++) {
-                                    WalWriter ww = commitRow(serverMain, tableToken, in);
-                                    if (rndForInserts.nextBoolean()) {
-                                        ww.close();
-                                    } else {
-                                        writerObjList.add(ww);
-                                    }
-                                }
-                            } catch (CairoException ex) {
-                                if (ex.isTableDropped() || ex.isTableDoesNotExist()) {
-                                    // expected
-                                    return;
-                                }
-                                errorCount.incrementAndGet();
-                                LOG.error().$((Throwable) ex).$();
-                            } catch (Throwable e) {
-                                errorCount.incrementAndGet();
-                                LOG.error().$(e).$();
-                                throw new RuntimeException(e);
-                            } finally {
-                                Misc.freeObjList(writerObjList);
-                                Path.clearThreadLocals();
-                            }
-                        });
-                        insertThread.start();
-                        threads.add(insertThread);
-                    }
-
-                    dropThread.start();
-                    threads.add(dropThread);
-                }
-
-                for (int i = 0; i < threads.size(); i++) {
-                    threads.get(i).join();
-                }
-
-                Assert.assertEquals(0, errorCount.get());
             }
         });
     }
@@ -917,19 +818,5 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    private static @NotNull WalWriter commitRow(TestServerMain serverMain, TableToken tableToken, int in) {
-        WalWriter ww = serverMain.getEngine().getWalWriter(tableToken);
-        try {
-            var row = ww.newRow(1234567890L);
-            row.putInt(1, in + 1);
-            row.append();
-            ww.commit();
-            return ww;
-        } catch (Throwable e) {
-            Misc.free(ww);
-            throw e;
-        }
     }
 }

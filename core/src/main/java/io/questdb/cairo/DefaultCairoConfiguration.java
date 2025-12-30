@@ -741,11 +741,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPoolSegmentSize() {
-        return 32;
-    }
-
-    @Override
     public int getPreferencesStringPoolCapacity() {
         return 64;
     }
