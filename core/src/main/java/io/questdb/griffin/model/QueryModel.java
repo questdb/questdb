@@ -143,6 +143,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // list of "and" concatenated expressions
     private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConstants = new IntHashSet();
+    private final ObjList<PivotForColumn> pivotForColumns = new ObjList<>();
+    private final ObjList<QueryColumn> pivotGroupByColumns = new ObjList<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
@@ -371,6 +373,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         parsedWhere.add(node);
     }
 
+    public void addPivotForColumn(PivotForColumn column) {
+        pivotForColumns.add(column);
+    }
+
+    public void addPivotGroupByColumn(QueryColumn column) {
+        pivotGroupByColumns.add(column);
+    }
+
     public void addSampleByFill(ExpressionNode sampleByFill) {
         this.sampleByFill.add(sampleByFill);
     }
@@ -500,6 +510,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         hintsMap.clear();
         asOfJoinTolerance = null;
         windowJoinContext.clear();
+        pivotGroupByColumns.clear();
+        pivotForColumns.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -514,6 +526,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void clearOrderBy() {
         orderBy.clear();
         orderByDirection.clear();
+    }
+
+    public void clearPivot() {
+        pivotGroupByColumns.clear();
+        pivotForColumns.clear();
     }
 
     public void clearSampleBy() {
@@ -720,7 +737,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && Objects.equals(decls, that.decls)
                 && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance)
-                && Objects.equals(windowJoinContext, that.windowJoinContext);
+                && Objects.equals(windowJoinContext, that.windowJoinContext)
+                && Objects.equals(pivotGroupByColumns, that.pivotGroupByColumns)
+                && Objects.equals(pivotForColumns, that.pivotForColumns);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -2149,6 +2168,45 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 first = false;
             }
             sink.putAscii(']');
+        }
+
+        if (pivotGroupByColumns.size() > 0) {
+            sink.putAscii(" pivot ");
+            pivotGroupByColumns.toSink(sink);
+            sink.putAscii(" for ");
+
+            for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
+                PivotForColumn pivotForName = pivotForColumns.getQuick(i);
+
+                sink.put(pivotForName.getInExpr()).put("in").put("(");
+                if (pivotForName.isValueList()) {
+                    ObjList<ExpressionNode> pivotForValueList = pivotForName.getValueList();
+                    ObjList<CharSequence> valueAliases = pivotForName.getValueAliases();
+
+                    for (int j = 0, m = pivotForValueList.size(); j < m; j++) {
+                        if (j > 0) {
+                            sink.put(',');
+                        }
+                        sink.put(pivotForValueList.getQuick(j));
+                        CharSequence alias = valueAliases.getQuick(j);
+                        if (alias != null) {
+                            sink.putAscii(" as ");
+                            sink.put(alias);
+                        }
+                    }
+                } else {
+                    sink.put(pivotForName.getSelectSubqueryExpr());
+                }
+
+                sink.put(')');
+                if (pivotForName.getElseAlias() != null) {
+                    sink.putAscii(" else ");
+                    sink.put(pivotForName.getElseAlias());
+                }
+                if (i + 1 < n) {
+                    sink.putAscii(' ');
+                }
+            }
         }
     }
 

@@ -741,6 +741,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPivotColumnPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return 64;
     }

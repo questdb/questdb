@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -46,6 +47,7 @@ import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -86,6 +88,7 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
+    private static final LowerCaseAsciiCharSequenceHashSet pivotForStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final IntList tableNamePositions = new IntList();
@@ -93,6 +96,7 @@ public class SqlParser {
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final CairoEngine cairoEngine;
     private final CharacterStore characterStore;
     private final CharSequence column;
     private final CairoConfiguration configuration;
@@ -105,6 +109,7 @@ public class SqlParser {
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<InsertModel> insertModelPool;
+    private final ObjectPool<PivotForColumn> pivotQueryColumnPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
@@ -122,9 +127,11 @@ public class SqlParser {
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private int digit;
     private boolean overClauseMode = false;
+    private boolean pivotMode = false;
     private boolean subQueryMode = false;
 
     SqlParser(
+            CairoEngine cairoEngine,
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
@@ -132,6 +139,7 @@ public class SqlParser {
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo
     ) {
+        this.cairoEngine = cairoEngine;
         this.expressionNodePool = expressionNodePool;
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
@@ -143,6 +151,7 @@ public class SqlParser {
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
         this.copyModelPool = new ObjectPool<>(ExportModel.FACTORY, configuration.getCopyPoolCapacity());
         this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
+        this.pivotQueryColumnPool = new ObjectPool<>(PivotForColumn.FACTORY, configuration.getPivotColumnPoolCapacity());
         this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
@@ -775,7 +784,7 @@ public class SqlParser {
 
     private CharSequence optTok(GenericLexer lexer) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode && !pivotMode)) {
             return null;
         }
         return tok;
@@ -791,6 +800,38 @@ public class SqlParser {
         final QueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls);
         expectTok(lexer, ')');
         return model;
+    }
+
+    private QueryColumn parseColumnInPivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback, String expectedList, String expressionMessage) throws SqlException {
+        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+        if (expr == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), expressionMessage);
+        }
+
+        CharSequence tok = tok(lexer, expectedList);
+        QueryColumn col = queryColumnPool.next().of(null, expr);
+
+        if (!isForKeyword(tok) && columnAliasStop.excludes(tok)) {
+            CharSequence alias;
+            assertNotDot(lexer, tok);
+            if (isAsKeyword(tok)) {
+                tok = tok(lexer, "alias");
+                SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                CharSequence aliasTok = GenericLexer.immutableOf(tok);
+                validateIdentifier(lexer, aliasTok);
+                alias = unquote(aliasTok);
+            } else {
+                validateIdentifier(lexer, tok);
+                SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                alias = GenericLexer.immutableOf(unquote(tok));
+            }
+
+            col.setAlias(alias, lexer.lastTokenPosition());
+        } else {
+            lexer.unparseLast();
+        }
+
+        return col;
     }
 
     private ExecutionModel parseCopy(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
@@ -2350,6 +2391,15 @@ public class SqlParser {
                 parseLatestBy(lexer, model);
                 tok = optTok(lexer);
             }
+
+            if (tok != null && isPivotKeyword(tok)) {
+                try {
+                    pivotMode = true;
+                    tok = parsePivot(lexer, model, sqlParserCallback);
+                } finally {
+                    pivotMode = false;
+                }
+            }
         }
 
         // expect multiple [[inner | outer | cross] join]
@@ -3048,6 +3098,217 @@ public class SqlParser {
         if (tok != null) {
             lexer.unparseLast();
         }
+    }
+
+    /**
+     * Parse expressions of the form:
+     * <p>
+     * `tableName` PIVOT (sum(value) FOR name IN ('a', 'b', 'c') GROUP BY something);
+     */
+    private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+        CharSequence tok;
+        expectTok(lexer, '(');
+
+        // Parse aggregate functions: func(param) AS alias, ... terminated by FOR
+        FunctionFactoryCache functionFactoryCache = cairoEngine.getFunctionFactoryCache();
+        do {
+            final QueryColumn nextAggregateCol = parseColumnInPivot(lexer, model, sqlParserCallback, "'FOR' or ',' or ')'", "missing aggregate function expression");
+            if (nextAggregateCol.getAst().type != ExpressionNode.FUNCTION || !functionFactoryCache.isGroupBy((nextAggregateCol.getAst().token))) {
+                throw SqlException.$(nextAggregateCol.getAst().position, "expected aggregate function [col=").put(nextAggregateCol.getAst()).put(']');
+            }
+
+            model.addPivotGroupByColumn(nextAggregateCol);
+            tok = optTok(lexer);
+        } while (tok != null && !isForKeyword(tok) && isComma(tok));
+
+        if (tok == null || !isForKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected FOR");
+        }
+
+        // Parse FOR expressions: FOR col1 IN (v1 as v1_val, v2 v2_val) col2 IN (v3, v4)
+        // We parse column + "IN" + values list separately instead of parsing as a standard IN expression,
+        // because PIVOT requires alias support for each value in the list (e.g., 'value' AS alias),
+        // which is not supported by regular IN expression parsing.
+        while (true) {
+            ExpressionNode inColumnExpr;
+            try {
+                // Disable greedy parsing mode, stop at top-level IN operator
+                // so we can handle the IN values list separately with alias support
+                expressionParser.setStopOnTopINOperator(true);
+                inColumnExpr = expr(lexer, model, sqlParserCallback);
+            } finally {
+                expressionParser.setStopOnTopINOperator(false);
+            }
+            if (inColumnExpr == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected IN expression");
+            }
+            if (inColumnExpr.type == ExpressionNode.FUNCTION && functionFactoryCache.isGroupBy((inColumnExpr.token))) {
+                throw SqlException.$(inColumnExpr.position, "aggregate functions are not supported in PIVOT FOR expressions");
+            }
+
+            expectTok(lexer, "in");
+            expectTok(lexer, '(');
+            tok = tok(lexer, "'select' or constant");
+            lexer.unparseLast();
+            boolean isSubquery = isSelectKeyword(tok);
+            final PivotForColumn pivotForColumn = pivotQueryColumnPool.next().of(inColumnExpr, !isSubquery);
+            model.addPivotForColumn(pivotForColumn);
+
+            if (isSubquery) { // IN list from subquery
+                ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+                if (expr == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "missing subquery");
+                }
+                pivotForColumn.setSelectSubqueryExpr(expr);
+                expectTok(lexer, ')');
+            } else {
+                do {
+                    ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+                    if (expr == null) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "missing constant");
+                    }
+                    CharSequence nextTok = tok(lexer, "',' or ')'");
+                    CharSequence alias = null;
+                    if (!isForKeyword(nextTok) && columnAliasStop.excludes(nextTok)) {
+                        assertNotDot(lexer, nextTok);
+                        if (isAsKeyword(nextTok)) {
+                            nextTok = tok(lexer, "alias");
+                            SqlKeywords.assertNameIsQuotedOrNotAKeyword(nextTok, lexer.lastTokenPosition());
+                            CharSequence aliasTok = GenericLexer.immutableOf(nextTok);
+                            validateIdentifier(lexer, aliasTok);
+                            alias = unquote(aliasTok);
+                        } else {
+                            validateIdentifier(lexer, nextTok);
+                            SqlKeywords.assertNameIsQuotedOrNotAKeyword(nextTok, lexer.lastTokenPosition());
+                            alias = GenericLexer.immutableOf(unquote(nextTok));
+                        }
+                    } else {
+                        lexer.unparseLast();
+                    }
+                    pivotForColumn.addValue(expr, alias);
+                    tok = tok(lexer, "constant list");
+                } while (isComma(tok));
+
+                if (!isRightParen(tok)) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                }
+            }
+
+            tok = optTok(lexer);
+            // ELSE clause: catch-all column with NOT IN filter
+            if (tok != null && isElseKeyword(tok)) {
+                tok = optTok(lexer);
+                pivotForColumn.setElseAlias(GenericLexer.immutableOf(unquote(tok)));
+                tok = optTok(lexer);
+            }
+
+            if (tok != null && pivotForStop.contains(tok)) {
+                break;
+            } else {
+                lexer.unparseLast();
+            }
+        }
+
+        // Parse GROUP BY (no inference, PIVOT only accepts wildcard selects)
+        if (isGroupKeyword(tok)) {
+            expectBy(lexer);
+            do {
+                tokIncludingLocalBrace(lexer, "literal");
+                lexer.unparseLast();
+                ExpressionNode groupByExpr = expr(lexer, model, sqlParserCallback, model.getDecls());
+
+                if (groupByExpr == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "group by expression expected");
+                }
+
+                switch (groupByExpr.type) {
+                    case ExpressionNode.LITERAL:
+                    case ExpressionNode.CONSTANT:
+                    case ExpressionNode.FUNCTION:
+                    case ExpressionNode.OPERATION:
+                        break;
+                    default:
+                        throw SqlException.$(lexer.lastTokenPosition(), "group by expression expected");
+                }
+
+                model.addGroupBy(groupByExpr);
+                tok = optTok(lexer);
+            } while (tok != null && !isRightParen(tok) && isComma(tok));
+        }
+
+        // Parse optional ORDER BY and LIMIT
+        if (tok != null && isOrderKeyword(tok)) {
+            tok = parsePivotOrderBy(model, lexer, sqlParserCallback);
+        }
+
+        if (tok != null && isLimitKeyword(tok)) {
+            tok = parsePivotLimit(model, lexer, sqlParserCallback);
+        }
+
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
+        }
+
+        if (!isRightParen(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
+        }
+        tok = optTok(lexer);
+
+        return tok;
+    }
+
+    private CharSequence parsePivotLimit(QueryModel model, GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+        CharSequence tok;
+        model.setLimitPosition(lexer.lastTokenPosition());
+        ExpressionNode lo = expr(lexer, model, sqlParserCallback, model.getDecls());
+        ExpressionNode hi = null;
+
+        tok = optTok(lexer);
+        if (tok != null && isComma(tok)) {
+            hi = expr(lexer, model, sqlParserCallback, model.getDecls());
+        } else {
+            lexer.unparseLast();
+        }
+        model.setLimit(lo, hi);
+        tok = optTok(lexer);
+        return tok;
+    }
+
+    private CharSequence parsePivotOrderBy(QueryModel model, GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+        CharSequence tok;
+        model.setOrderByPosition(lexer.lastTokenPosition());
+        expectBy(lexer);
+        do {
+            tokIncludingLocalBrace(lexer, "literal");
+            lexer.unparseLast();
+
+            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+            if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
+            }
+
+            if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token)) ||
+                    (n.type == ExpressionNode.LITERAL && n.token.isEmpty())) {
+                throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
+            }
+
+            tok = optTok(lexer);
+
+            if (tok != null && isDescKeyword(tok)) {
+                model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
+                tok = optTok(lexer);
+            } else {
+                model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
+                if (tok != null && isAscKeyword(tok)) {
+                    tok = optTok(lexer);
+                }
+            }
+
+            if (model.getOrderBy().size() >= MAX_ORDER_BY_COLUMNS) {
+                throw err(lexer, tok, "Too many columns");
+            }
+        } while (tok != null && isComma(tok));
+        return tok;
     }
 
     private ExecutionModel parseRenameStatement(GenericLexer lexer) throws SqlException {
@@ -4395,6 +4656,7 @@ public class SqlParser {
         subQueryMode = false;
         characterStore.clear();
         insertModelPool.clear();
+        pivotQueryColumnPool.clear();
         expressionTreeBuilder.reset();
         copyModelPool.clear();
         topLevelWithModel.clear();
@@ -4561,6 +4823,7 @@ public class SqlParser {
         tableAliasStop.add("except");
         tableAliasStop.add("intersect");
         tableAliasStop.add("from");
+        tableAliasStop.add("pivot");
         tableAliasStop.add("tolerance");
         tableAliasStop.add("right");
         tableAliasStop.add("full");
@@ -4575,6 +4838,7 @@ public class SqlParser {
         columnAliasStop.add("intersect");
         columnAliasStop.add(")");
         columnAliasStop.add(";");
+        columnAliasStop.add("FOR");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");
@@ -4598,5 +4862,11 @@ public class SqlParser {
         setOperations.add("union");
         setOperations.add("except");
         setOperations.add("intersect");
+        //
+        pivotForStop.add("group");
+        pivotForStop.add(";");
+        pivotForStop.add(")");
+        pivotForStop.add("order");
+        pivotForStop.add("limit");
     }
 }

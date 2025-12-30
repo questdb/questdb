@@ -260,6 +260,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             );
 
             parser = new SqlParser(
+                    engine,
                     configuration,
                     characterStore,
                     sqlNodePool,
