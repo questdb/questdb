@@ -1036,7 +1036,7 @@ public class WalWriter implements TableWriterAPI {
         checkDistressed();
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
-                final long rowsToCommit = getUncommittedRowCount();
+                final long txnRowCount = getUncommittedRowCount();
 
                 this.isCommittingData = true;
                 this.lastTxnType = txnType;
@@ -1046,7 +1046,7 @@ public class WalWriter implements TableWriterAPI {
                 this.lastMatViewRefreshBaseTxn = lastRefreshBaseTxn;
                 this.lastMatViewRefreshTimestamp = lastRefreshTimestamp;
                 this.lastMatViewPeriodHi = lastPeriodHi;
-                if (rowsToCommit == 0) {
+                if (txnRowCount == 0) {
                     // Sometimes symbols are added but rows are cancelled.
                     // This can only theoretically happen for replace range commits
                     // but at the moment it can only happen in fuzz tests because
@@ -1087,14 +1087,14 @@ public class WalWriter implements TableWriterAPI {
                 }
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.walMetrics().addRowsWritten(rowsToCommit);
+                metrics.walMetrics().addRowsWritten(txnRowCount);
                 // Track WAL commit for tables() function
                 if (recentWriteTracker != null) {
                     recentWriteTracker.recordWalWrite(
                             tableToken,
                             seqTxn,
                             lastTxnMaxTimestamp == -1 ? Numbers.LONG_NULL : lastTxnMaxTimestamp,
-                            rowsToCommit
+                            txnRowCount
                     );
                 }
             }

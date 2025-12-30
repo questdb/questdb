@@ -1130,7 +1130,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                         long maxTimestamp = txReader.getMaxTimestamp();
                         long rowCount = txReader.getRowCount();
-                        long writerTxn = txReader.getTxn();
+                        long writerTxn = txReader.getSeqTxn();
 
                         // For WAL tables, get sequencerTxn from the sequencer
                         long sequencerTxn = Numbers.LONG_NULL;

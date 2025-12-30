@@ -67,6 +67,11 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final int O3_MAX_LAG_COLUMN = 20;
     private static final int PARTITION_BY_COLUMN = 3;
+    private static final int TXN_COUNT_COLUMN = 21;
+    private static final int TXN_SIZE_MAX_COLUMN = 25;
+    private static final int TXN_SIZE_P50_COLUMN = 22;
+    private static final int TXN_SIZE_P90_COLUMN = 23;
+    private static final int TXN_SIZE_P99_COLUMN = 24;
     private static final int PENDING_ROW_COUNT_COLUMN = 11;
     private static final int ROW_COUNT_COLUMN = 10;
     private static final int SEQUENCER_TXN_COLUMN = 15;
@@ -268,6 +273,11 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case SEQUENCER_TXN_COLUMN -> recentWriteTracker.getSequencerTxn(table.getTableToken());
                         case PENDING_ROW_COUNT_COLUMN -> recentWriteTracker.getWalRowCount(table.getTableToken());
                         case DEDUPE_ROW_COUNT_COLUMN -> recentWriteTracker.getDedupRowCount(table.getTableToken());
+                        case TXN_COUNT_COLUMN -> recentWriteTracker.getTxnCount(table.getTableToken());
+                        case TXN_SIZE_P50_COLUMN -> recentWriteTracker.getTxnSizeP50(table.getTableToken());
+                        case TXN_SIZE_P90_COLUMN -> recentWriteTracker.getTxnSizeP90(table.getTableToken());
+                        case TXN_SIZE_P99_COLUMN -> recentWriteTracker.getTxnSizeP99(table.getTableToken());
+                        case TXN_SIZE_MAX_COLUMN -> recentWriteTracker.getTxnSizeMax(table.getTableToken());
                         default -> Numbers.LONG_NULL;
                     };
                 }
@@ -345,6 +355,11 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("memoryPressureLevel", ColumnType.INT));       // 18
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));        // 19
         metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));                 // 20
+        metadata.add(new TableColumnMetadata("txnCount", ColumnType.LONG));                 // 21
+        metadata.add(new TableColumnMetadata("txnSizeP50", ColumnType.LONG));               // 22
+        metadata.add(new TableColumnMetadata("txnSizeP90", ColumnType.LONG));               // 23
+        metadata.add(new TableColumnMetadata("txnSizeP99", ColumnType.LONG));               // 24
+        metadata.add(new TableColumnMetadata("txnSizeMax", ColumnType.LONG));               // 25
         METADATA = metadata;
     }
 }

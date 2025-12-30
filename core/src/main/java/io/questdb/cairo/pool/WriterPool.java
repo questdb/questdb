@@ -575,7 +575,7 @@ public class WriterPool extends AbstractPool {
             // Track the write for UI/observability purposes.
             // Use try-catch to ensure writer is always returned even if tracking fails.
             try {
-                recentWriteTracker.recordWrite(tableToken, e.lastReleaseTime, e.writer.getRowCount(), e.writer.getTxn());
+                recentWriteTracker.recordWrite(tableToken, e.lastReleaseTime, e.writer.getRowCount(), e.writer.getAppliedSeqTxn());
             } catch (Throwable th) {
                 LOG.error().$("failed to track write [table=").$(tableToken)
                         .$(", error=").$(th).I$();

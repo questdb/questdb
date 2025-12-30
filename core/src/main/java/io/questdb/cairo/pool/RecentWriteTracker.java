@@ -28,6 +28,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -95,6 +97,17 @@ public class RecentWriteTracker {
      */
     public void clear() {
         writeStats.clear();
+    }
+
+    /**
+     * Returns the cumulative count of rows removed by deduplication for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return cumulative dedup row count, or 0 if not tracked
+     */
+    public long getDedupRowCount(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getDedupRowCount() : 0;
     }
 
     /**
@@ -202,14 +215,58 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Returns the cumulative count of rows removed by deduplication for a specific table.
+     * Returns the total number of WAL transactions recorded for a specific table.
      *
      * @param tableToken the table to look up
-     * @return cumulative dedup row count, or 0 if not tracked
+     * @return total transaction count, or 0 if not tracked
      */
-    public long getDedupRowCount(@NotNull TableToken tableToken) {
+    public long getTxnCount(@NotNull TableToken tableToken) {
         WriteStats stats = writeStats.get(tableToken);
-        return stats != null ? stats.getDedupRowCount() : 0;
+        return stats != null ? stats.getTxnCount() : 0;
+    }
+
+    /**
+     * Returns the maximum transaction size for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return maximum transaction size in rows, or 0 if not tracked
+     */
+    public long getTxnSizeMax(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getTxnSizeMax() : 0;
+    }
+
+    /**
+     * Returns the 50th percentile (median) transaction size for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return median transaction size in rows, or 0 if not tracked
+     */
+    public long getTxnSizeP50(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getTxnSizeP50() : 0;
+    }
+
+    /**
+     * Returns the 90th percentile transaction size for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return 90th percentile transaction size in rows, or 0 if not tracked
+     */
+    public long getTxnSizeP90(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getTxnSizeP90() : 0;
+    }
+
+    /**
+     * Returns the 99th percentile transaction size for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return 99th percentile transaction size in rows, or 0 if not tracked
+     */
+    public long getTxnSizeP99(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getTxnSizeP99() : 0;
     }
 
     /**
@@ -224,59 +281,6 @@ public class RecentWriteTracker {
     public long getWalRowCount(@NotNull TableToken tableToken) {
         WriteStats stats = writeStats.get(tableToken);
         return stats != null ? stats.getWalRowCount() : 0;
-    }
-
-    /**
-     * Records that WAL rows have been processed (applied to the table).
-     * <p>
-     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
-     * Called after successful WAL transaction application.
-     *
-     * @param tableToken        the table whose WAL was processed
-     * @param seqTxn            the sequencer transaction number being processed
-     * @param walRowCount       the number of WAL rows that were processed (before dedup)
-     * @param committedRowCount the number of rows actually committed (after dedup)
-     */
-    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
-        WriteStats stats = writeStats.get(tableToken);
-        if (stats == null) {
-            // Create new entry if it doesn't exist
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
-            stats = existing != null ? existing : newStats;
-        }
-        // Only subtract if seqTxn is above the floor (rows added after tracking started)
-        if (seqTxn > stats.getFloorSeqTxn()) {
-            stats.walRowCount.add(-walRowCount);
-        }
-        long dedupCount = walRowCount - committedRowCount;
-        if (dedupCount > 0) {
-            stats.dedupRowCount.add(dedupCount);
-        }
-    }
-
-    /**
-     * Sets the floor seqTxn for a table. WAL rows with seqTxn &lt;= floor will not be subtracted
-     * from pending count since they were never added (existed before tracking started).
-     * Called on startup for tables with pending WALs. Creates WriteStats if it doesn't exist.
-     *
-     * @param tableToken  the table to set floor for
-     * @param floorSeqTxn the floor seqTxn value
-     */
-    public void setFloorSeqTxn(@NotNull TableToken tableToken, long floorSeqTxn) {
-        WriteStats stats = writeStats.get(tableToken);
-        if (stats != null) {
-            stats.setFloorSeqTxn(floorSeqTxn);
-        } else {
-            // Create new entry with only floor set
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-            newStats.setFloorSeqTxn(floorSeqTxn);
-            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
-            if (existing != null) {
-                // Another thread inserted first, set floor on theirs
-                existing.setFloorSeqTxn(floorSeqTxn);
-            }
-        }
     }
 
     /**
@@ -315,34 +319,66 @@ public class RecentWriteTracker {
     }
 
     /**
+     * Records that WAL rows have been processed (applied to the table).
+     * <p>
+     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
+     * Called after successful WAL transaction application.
+     *
+     * @param tableToken        the table whose WAL was processed
+     * @param seqTxn            the sequencer transaction number being processed
+     * @param walRowCount       the number of WAL rows that were processed (before dedup)
+     * @param committedRowCount the number of rows actually committed (after dedup)
+     */
+    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
+        WriteStats stats = writeStats.get(tableToken);
+        if (stats == null) {
+            // Create new entry if it doesn't exist
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
+            stats = existing != null ? existing : newStats;
+        }
+        // Only subtract if seqTxn is above the floor (rows added after tracking started)
+        if (seqTxn > stats.getFloorSeqTxn()) {
+            stats.walRowCount.add(-walRowCount);
+        }
+        long dedupCount = walRowCount - committedRowCount;
+        if (dedupCount > 0) {
+            stats.dedupRowCount.add(dedupCount);
+        }
+    }
+
+    /**
      * Records a WAL write, updating the sequencerTxn, walTimestamp, and walRowCount fields.
      * <p>
      * This method is called when a WalWriter is returned to the pool. Multiple WAL
      * writers can update the same table concurrently; the highest values win for
-     * sequencerTxn and walTimestamp, while segmentRowCount is accumulated.
+     * sequencerTxn and walTimestamp, while txnRowCount is accumulated.
      * <p>
      * If no entry exists, creates a "blank" entry with LONG_NULL for writer fields.
      * This blank entry will be overwritten by the real writer when it updates.
      *
-     * @param tableToken      the table that was written to
-     * @param sequencerTxn    the sequencer transaction number
-     * @param walTimestamp    the max timestamp from the WAL transaction
-     * @param segmentRowCount the number of rows in this WAL segment
+     * @param tableToken   the table that was written to
+     * @param sequencerTxn the sequencer transaction number
+     * @param walTimestamp the max timestamp from the WAL transaction
+     * @param txnRowCount  the number of rows in this WAL segment
      */
-    public void recordWalWrite(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long segmentRowCount) {
+    public void recordWalWrite(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long txnRowCount) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats != null) {
             // Entry exists - update WAL fields
-            stats.updateWal(sequencerTxn, walTimestamp, segmentRowCount);
+            stats.updateWal(sequencerTxn, walTimestamp, txnRowCount);
         } else {
             // No entry - create blank entry with only WAL fields set
             WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, sequencerTxn, walTimestamp);
-            // Add row count after construction since LongAdder is initialized in field declaration
-            newStats.walRowCount.add(segmentRowCount);
+            // Add row count and record in histogram after construction
+            newStats.walRowCount.add(txnRowCount);
+            if (txnRowCount > 0) {
+                newStats.txnSizeHistogram.recordValue(txnRowCount);
+            }
             WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
             if (existing != null) {
                 // Another thread inserted first, update their WAL fields
-                existing.updateWal(sequencerTxn, walTimestamp, segmentRowCount);
+                existing.updateWal(sequencerTxn, walTimestamp, txnRowCount);
             }
         }
 
@@ -432,6 +468,30 @@ public class RecentWriteTracker {
      */
     public void removeTable(@NotNull TableToken tableToken) {
         writeStats.remove(tableToken);
+    }
+
+    /**
+     * Sets the floor seqTxn for a table. WAL rows with seqTxn &lt;= floor will not be subtracted
+     * from pending count since they were never added (existed before tracking started).
+     * Called on startup for tables with pending WALs. Creates WriteStats if it doesn't exist.
+     *
+     * @param tableToken  the table to set floor for
+     * @param floorSeqTxn the floor seqTxn value
+     */
+    public void setFloorSeqTxn(@NotNull TableToken tableToken, long floorSeqTxn) {
+        WriteStats stats = writeStats.get(tableToken);
+        if (stats != null) {
+            stats.setFloorSeqTxn(floorSeqTxn);
+        } else {
+            // Create new entry with only floor set
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            newStats.setFloorSeqTxn(floorSeqTxn);
+            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
+            if (existing != null) {
+                // Another thread inserted first, set floor on theirs
+                existing.setFloorSeqTxn(floorSeqTxn);
+            }
+        }
     }
 
     /**
@@ -543,15 +603,19 @@ public class RecentWriteTracker {
      * writers can update it concurrently, and the highest value must win.
      */
     public static class WriteStats {
-        // WAL fields - updated by WalWriters only, highest wins via CAS
-        private final AtomicLong sequencerTxn;
-        private final AtomicLong walTimestamp;
         // Dedup row count - accumulated count of rows removed by deduplication
         private final LongAdder dedupRowCount = new LongAdder();
-        // WAL row count - incremented by WalWriters, contention-free via LongAdder
-        private final LongAdder walRowCount = new LongAdder();
         // Floor seqTxn - set on startup, WAL rows with seqTxn <= floor are not subtracted
         private final AtomicLong floorSeqTxn = new AtomicLong(0);
+        // WAL fields - updated by WalWriters only, highest wins via CAS
+        private final AtomicLong sequencerTxn;
+        // Transaction size histogram - tracks distribution of WAL transaction sizes
+        private final Histogram txnSizeHistogram = new Histogram(2);
+        // Lock for histogram access - writers record values, readers get percentiles
+        private final SimpleReadWriteLock txnSizeHistogramLock = new SimpleReadWriteLock();
+        // WAL row count - incremented by WalWriters, contention-free via LongAdder
+        private final LongAdder walRowCount = new LongAdder();
+        private final AtomicLong walTimestamp;
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
         private volatile long timestamp;
@@ -563,6 +627,28 @@ public class RecentWriteTracker {
             this.writerTxn = writerTxn;
             this.sequencerTxn = new AtomicLong(sequencerTxn);
             this.walTimestamp = new AtomicLong(walTimestamp);
+        }
+
+        /**
+         * Returns the cumulative count of rows removed by deduplication.
+         * <p>
+         * This is the difference between WAL rows before dedup and physical rows written.
+         * Accumulated during WAL apply processing.
+         *
+         * @return cumulative dedup row count (always >= 0)
+         */
+        public long getDedupRowCount() {
+            return dedupRowCount.sum();
+        }
+
+        /**
+         * Returns the floor seqTxn. WAL rows with seqTxn &lt;= floor are not subtracted
+         * from pending count (they were never added because they existed before tracking started).
+         *
+         * @return floor seqTxn, or 0 if not set
+         */
+        public long getFloorSeqTxn() {
+            return floorSeqTxn.get();
         }
 
         /**
@@ -614,15 +700,82 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Returns the cumulative count of rows removed by deduplication.
-         * <p>
-         * This is the difference between WAL rows before dedup and physical rows written.
-         * Accumulated during WAL apply processing.
+         * Returns the timestamp of the last TableWriter write in microseconds.
          *
-         * @return cumulative dedup row count (always >= 0)
+         * @return timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
          */
-        public long getDedupRowCount() {
-            return dedupRowCount.sum();
+        public long getTimestamp() {
+            return timestamp;
+        }
+
+        /**
+         * Returns the total number of WAL transactions recorded in the histogram.
+         *
+         * @return total transaction count
+         */
+        public long getTxnCount() {
+            txnSizeHistogramLock.readLock().lock();
+            try {
+                return txnSizeHistogram.getTotalCount();
+            } finally {
+                txnSizeHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the maximum transaction size recorded.
+         *
+         * @return maximum transaction size in rows, or 0 if no transactions recorded
+         */
+        public long getTxnSizeMax() {
+            txnSizeHistogramLock.readLock().lock();
+            try {
+                return txnSizeHistogram.getMaxValue();
+            } finally {
+                txnSizeHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 50th percentile (median) transaction size.
+         *
+         * @return median transaction size in rows, or 0 if no transactions recorded
+         */
+        public long getTxnSizeP50() {
+            txnSizeHistogramLock.readLock().lock();
+            try {
+                return txnSizeHistogram.getValueAtPercentile(50);
+            } finally {
+                txnSizeHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 90th percentile transaction size.
+         *
+         * @return 90th percentile transaction size in rows, or 0 if no transactions recorded
+         */
+        public long getTxnSizeP90() {
+            txnSizeHistogramLock.readLock().lock();
+            try {
+                return txnSizeHistogram.getValueAtPercentile(90);
+            } finally {
+                txnSizeHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 99th percentile transaction size.
+         *
+         * @return 99th percentile transaction size in rows, or 0 if no transactions recorded
+         */
+        public long getTxnSizeP99() {
+            txnSizeHistogramLock.readLock().lock();
+            try {
+                return txnSizeHistogram.getValueAtPercentile(99);
+            } finally {
+                txnSizeHistogramLock.readLock().unlock();
+            }
         }
 
         /**
@@ -639,15 +792,6 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Returns the timestamp of the last TableWriter write in microseconds.
-         *
-         * @return timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
-         */
-        public long getTimestamp() {
-            return timestamp;
-        }
-
-        /**
          * Returns the writer transaction number of the last write.
          * <p>
          * This is the transaction number from the TableWriter, not the WAL sequence transaction.
@@ -660,37 +804,27 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Returns the floor seqTxn. WAL rows with seqTxn &lt;= floor are not subtracted
-         * from pending count (they were never added because they existed before tracking started).
-         *
-         * @return floor seqTxn, or 0 if not set
-         */
-        public long getFloorSeqTxn() {
-            return floorSeqTxn.get();
-        }
-
-        /**
-         * Sets the floor seqTxn. Only succeeds if not already set (floor is 0).
-         * Called on startup to mark WAL transactions that existed before tracking started.
-         *
-         * @param floor the floor seqTxn to set
-         */
-        void setFloorSeqTxn(long floor) {
-            floorSeqTxn.compareAndSet(0, floor);
-        }
-
-        /**
          * Updates WAL fields using CAS - only succeeds if new values are higher.
          * Multiple WAL writers may call this concurrently; highest values win.
          * Row count is always added (accumulated).
          *
          * @param newTxn          the new sequencer transaction number
          * @param newWalTimestamp the WAL write timestamp in microseconds
-         * @param segmentRowCount the number of rows in this WAL segment
+         * @param txnRowCount     the number of rows in this WAL transaction
          */
-        void updateWal(long newTxn, long newWalTimestamp, long segmentRowCount) {
+        private void updateWal(long newTxn, long newWalTimestamp, long txnRowCount) {
             // Always increment WAL row count - contention-free via LongAdder
-            walRowCount.add(segmentRowCount);
+            walRowCount.add(txnRowCount);
+
+            // Record transaction size in histogram
+            if (txnRowCount > 0) {
+                txnSizeHistogramLock.writeLock().lock();
+                try {
+                    txnSizeHistogram.recordValue(txnRowCount);
+                } finally {
+                    txnSizeHistogramLock.writeLock().unlock();
+                }
+            }
 
             // CAS update walTimestamp - highest wins
             long currentTs;
@@ -714,10 +848,20 @@ public class RecentWriteTracker {
         /**
          * Updates writer fields only, preserving sequencerTxn.
          */
-        void updateWriter(long timestamp, long rowCount, long writerTxn) {
+        private void updateWriter(long timestamp, long rowCount, long writerTxn) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;
+        }
+
+        /**
+         * Sets the floor seqTxn. Only succeeds if not already set (floor is 0).
+         * Called on startup to mark WAL transactions that existed before tracking started.
+         *
+         * @param floor the floor seqTxn to set
+         */
+        void setFloorSeqTxn(long floor) {
+            floorSeqTxn.compareAndSet(0, floor);
         }
     }
 }
