@@ -338,7 +338,7 @@ public class RecentWriteTrackerTest {
         tracker.recordWrite(table4, 4000L, 400L, 4L);
 
         // Now give table1 a recent WAL write - this should protect it from eviction
-        tracker.recordWalWrite(table1, 10L, 10000L);
+        tracker.recordWalWrite(table1, 10L, 10000L, 0L);
 
         // Add table5 to trigger eviction (size becomes 5, exceeds 2*2=4)
         tracker.recordWrite(table5, 5000L, 500L, 5L);
@@ -363,7 +363,7 @@ public class RecentWriteTrackerTest {
         Assert.assertEquals(1000L, stats.getMaxTimestamp());
 
         // WAL write with higher timestamp - maxTimestamp should be WAL timestamp
-        tracker.recordWalWrite(table1, 5L, 2000L);
+        tracker.recordWalWrite(table1, 5L, 2000L, 0L);
         Assert.assertEquals(2000L, stats.getLastWalTimestamp());
         Assert.assertEquals(2000L, stats.getMaxTimestamp());
     }
@@ -375,7 +375,7 @@ public class RecentWriteTrackerTest {
         TableToken table1 = createTableToken("table1", 1);
 
         // WAL-only entry (blank writer fields)
-        tracker.recordWalWrite(table1, 5L, 5000L);
+        tracker.recordWalWrite(table1, 5L, 5000L, 0L);
         RecentWriteTracker.WriteStats stats = tracker.getWriteStats(table1);
 
         // Writer timestamp is LONG_NULL, maxTimestamp should be WAL timestamp
@@ -462,7 +462,7 @@ public class RecentWriteTrackerTest {
         Assert.assertEquals(Numbers.LONG_NULL, tracker.getLastWalTimestamp(table1));
 
         // WAL write - walTimestamp should be set
-        tracker.recordWalWrite(table2, 5L, 3000L);
+        tracker.recordWalWrite(table2, 5L, 3000L, 0L);
         Assert.assertEquals(3000L, tracker.getLastWalTimestamp(table2));
     }
 
@@ -547,7 +547,7 @@ public class RecentWriteTrackerTest {
         Assert.assertEquals("table1", recent.get(2).getTableName());
 
         // Give table1 a WAL write with high timestamp (higher than 3000)
-        tracker.recordWalWrite(table1, 5L, 5000L);
+        tracker.recordWalWrite(table1, 5L, 5000L, 0L);
 
         // After WAL: table1 should be first (highest maxTimestamp)
         recent = tracker.getRecentlyWrittenTables(10);
@@ -561,12 +561,12 @@ public class RecentWriteTrackerTest {
         TableToken table1 = createTableToken("table1", 1);
 
         // First WAL write with txn=5, timestamp=1000
-        tracker.recordWalWrite(table1, 5L, 1000L);
+        tracker.recordWalWrite(table1, 5L, 1000L, 0L);
         Assert.assertEquals(5L, tracker.getSequencerTxn(table1));
         Assert.assertEquals(1000L, tracker.getLastWalTimestamp(table1));
 
         // Higher txn and higher timestamp should both update
-        tracker.recordWalWrite(table1, 10L, 2000L);
+        tracker.recordWalWrite(table1, 10L, 2000L, 0L);
         Assert.assertEquals(10L, tracker.getSequencerTxn(table1));
         Assert.assertEquals(2000L, tracker.getLastWalTimestamp(table1));
     }
@@ -578,12 +578,12 @@ public class RecentWriteTrackerTest {
         TableToken table1 = createTableToken("table1", 1);
 
         // First WAL write with higher txn=10, timestamp=2000
-        tracker.recordWalWrite(table1, 10L, 2000L);
+        tracker.recordWalWrite(table1, 10L, 2000L, 0L);
         Assert.assertEquals(10L, tracker.getSequencerTxn(table1));
         Assert.assertEquals(2000L, tracker.getLastWalTimestamp(table1));
 
         // Lower txn should NOT update sequencerTxn, lower timestamp should NOT update walTimestamp
-        tracker.recordWalWrite(table1, 5L, 1000L);
+        tracker.recordWalWrite(table1, 5L, 1000L, 0L);
         Assert.assertEquals("SequencerTxn should remain 10", 10L, tracker.getSequencerTxn(table1));
         Assert.assertEquals("WalTimestamp should remain 2000", 2000L, tracker.getLastWalTimestamp(table1));
     }
@@ -595,17 +595,17 @@ public class RecentWriteTrackerTest {
         TableToken table1 = createTableToken("table1", 1);
 
         // First WAL write: txn=10, timestamp=1000
-        tracker.recordWalWrite(table1, 10L, 1000L);
+        tracker.recordWalWrite(table1, 10L, 1000L, 0L);
         Assert.assertEquals(10L, tracker.getSequencerTxn(table1));
         Assert.assertEquals(1000L, tracker.getLastWalTimestamp(table1));
 
         // Lower txn but higher timestamp: txn should stay, timestamp should update
-        tracker.recordWalWrite(table1, 5L, 2000L);
+        tracker.recordWalWrite(table1, 5L, 2000L, 0L);
         Assert.assertEquals("SequencerTxn should remain 10 (higher wins)", 10L, tracker.getSequencerTxn(table1));
         Assert.assertEquals("WalTimestamp should update to 2000 (higher wins)", 2000L, tracker.getLastWalTimestamp(table1));
 
         // Higher txn but lower timestamp: txn should update, timestamp should stay
-        tracker.recordWalWrite(table1, 15L, 1500L);
+        tracker.recordWalWrite(table1, 15L, 1500L, 0L);
         Assert.assertEquals("SequencerTxn should update to 15", 15L, tracker.getSequencerTxn(table1));
         Assert.assertEquals("WalTimestamp should remain 2000 (higher wins)", 2000L, tracker.getLastWalTimestamp(table1));
     }

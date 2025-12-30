@@ -144,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -1283,7 +1283,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.commit(denseSymbolMapWriters);
     }
 
-    public void commitWalInsertTransactions(
+    public long commitWalInsertTransactions(
             @Transient Path walPath,
             long seqTxn,
             TableWriterPressureControl pressureControl
@@ -1373,7 +1373,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Sometimes data from LAG is made visible to the table using fast commit that increment transient row count.
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
-        metrics.tableWriterMetrics().addCommittedRows(txWriter.getRowCount() - initialCommittedRowCount);
+        long rowsCommitted = txWriter.getRowCount() - initialCommittedRowCount;
+        metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
+        return rowsCommitted;
     }
 
     @Override

@@ -57,7 +57,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private boolean notificationQueueIsFull = false;
     private Path threadLocalPath;
 
-
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
         this.ff = engine.getConfiguration().getFilesFacade();

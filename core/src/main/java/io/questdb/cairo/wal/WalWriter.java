@@ -49,6 +49,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -159,6 +160,7 @@ public class WalWriter implements TableWriterAPI {
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
     private boolean open;
+    private final RecentWriteTracker recentWriteTracker;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
     private long segmentLockFd = -1;
@@ -177,10 +179,12 @@ public class WalWriter implements TableWriterAPI {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
-            WalDirectoryPolicy walDirectoryPolicy
+            WalDirectoryPolicy walDirectoryPolicy,
+            RecentWriteTracker recentWriteTracker
     ) {
         LOG.info().$("open [table=").$(tableToken).I$();
         this.sequencer = tableSequencerAPI;
+        this.recentWriteTracker = recentWriteTracker;
         this.configuration = configuration;
         this.ddlListener = ddlListener;
         this.mkDirMode = configuration.getMkDirMode();
@@ -403,6 +407,16 @@ public class WalWriter implements TableWriterAPI {
 
     public long getSegmentRowCount() {
         return segmentRowCount;
+    }
+
+    /**
+     * Returns the total number of rows written by this WalWriter instance
+     * across all segments (including the current segment).
+     *
+     * @return total row count written by this writer
+     */
+    public long getTotalRowCount() {
+        return totalSegmentsRowCount + segmentRowCount;
     }
 
     @Override
@@ -1102,6 +1116,15 @@ public class WalWriter implements TableWriterAPI {
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.walMetrics().addRowsWritten(rowsToCommit);
+                // Track WAL commit for tables() function
+                if (recentWriteTracker != null) {
+                    recentWriteTracker.recordWalWrite(
+                            tableToken,
+                            seqTxn,
+                            lastTxnMaxTimestamp == -1 ? Numbers.LONG_NULL : lastTxnMaxTimestamp,
+                            rowsToCommit
+                    );
+                }
             }
         } catch (CairoException ex) {
             distressed = true;

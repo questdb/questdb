@@ -384,6 +384,22 @@ public class WalTxnDetails implements QuietCloseable {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_ROW_LO_OFFSET);
     }
 
+    /**
+     * Calculates the total WAL row count for a range of transactions (inclusive).
+     * This is the row count BEFORE deduplication - the actual number of rows in the WAL segments.
+     *
+     * @param fromSeqTxn the starting transaction (inclusive)
+     * @param toSeqTxn   the ending transaction (inclusive)
+     * @return total WAL row count for the transaction range
+     */
+    public long getTransactionRowCount(long fromSeqTxn, long toSeqTxn) {
+        long totalRowCount = 0;
+        for (long seqTxn = fromSeqTxn; seqTxn <= toSeqTxn; seqTxn++) {
+            totalRowCount += getSegmentRowHi(seqTxn) - getSegmentRowLo(seqTxn);
+        }
+        return totalRowCount;
+    }
+
     public boolean getTxnInOrder(long seqTxn) {
         int isOutOfOrder = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
         return (isOutOfOrder & FLAG_IS_OOO) == 0;

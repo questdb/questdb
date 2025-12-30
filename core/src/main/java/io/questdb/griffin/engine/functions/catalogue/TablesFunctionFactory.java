@@ -54,26 +54,28 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class TablesFunctionFactory implements FunctionFactory {
+    private static final int DEDUPE_ROW_COUNT_COLUMN = 12;
     private static final int DEDUP_NAME_COLUMN = 6;
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
-    private static final int DIRECTORY_NAME_COLUMN = 15;
+    private static final int DIRECTORY_NAME_COLUMN = 17;
     private static final int ID_COLUMN = 0;
     private static final int IS_MAT_VIEW_COLUMN = 9;
-    private static final int LAST_WAL_TIMESTAMP_COLUMN = 14;
-    private static final int LAST_WRITE_TIMESTAMP_COLUMN = 11;
-    private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 17;
-    private static final int MEMORY_PRESSURE_LEVEL_COLUMN = 16;
+    private static final int LAST_WAL_TIMESTAMP_COLUMN = 16;
+    private static final int LAST_WRITE_TIMESTAMP_COLUMN = 13;
+    private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 19;
+    private static final int MEMORY_PRESSURE_LEVEL_COLUMN = 18;
     private static final RecordMetadata METADATA;
-    private static final int O3_MAX_LAG_COLUMN = 18;
+    private static final int O3_MAX_LAG_COLUMN = 20;
     private static final int PARTITION_BY_COLUMN = 3;
+    private static final int PENDING_ROW_COUNT_COLUMN = 11;
     private static final int ROW_COUNT_COLUMN = 10;
-    private static final int SEQUENCER_TXN_COLUMN = 13;
+    private static final int SEQUENCER_TXN_COLUMN = 15;
     private static final int SUSPENDED_COLUMN = 5;
     private static final int TABLE_NAME = 1;
     private static final int TTL_UNIT_COLUMN = 8;
     private static final int TTL_VALUE_COLUMN = 7;
     private static final int WAL_ENABLED_COLUMN = 4;
-    private static final int WRITER_TXN_COLUMN = 12;
+    private static final int WRITER_TXN_COLUMN = 14;
 
     public static String getTtlUnit(int ttl) {
         if (ttl == 0) {
@@ -264,6 +266,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case ROW_COUNT_COLUMN -> recentWriteTracker.getRowCount(table.getTableToken());
                         case WRITER_TXN_COLUMN -> recentWriteTracker.getWriterTxn(table.getTableToken());
                         case SEQUENCER_TXN_COLUMN -> recentWriteTracker.getSequencerTxn(table.getTableToken());
+                        case PENDING_ROW_COUNT_COLUMN -> recentWriteTracker.getWalRowCount(table.getTableToken());
+                        case DEDUPE_ROW_COUNT_COLUMN -> recentWriteTracker.getDedupRowCount(table.getTableToken());
                         default -> Numbers.LONG_NULL;
                     };
                 }
@@ -331,14 +335,16 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));                // 8
         metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));               // 9
         metadata.add(new TableColumnMetadata("rowCount", ColumnType.LONG));                 // 10
-        metadata.add(new TableColumnMetadata("lastWriteTimestamp", ColumnType.TIMESTAMP));  // 11
-        metadata.add(new TableColumnMetadata("writerTxn", ColumnType.LONG));                // 12
-        metadata.add(new TableColumnMetadata("sequencerTxn", ColumnType.LONG));             // 13
-        metadata.add(new TableColumnMetadata("lastWalTimestamp", ColumnType.TIMESTAMP));    // 14
-        metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));          // 15
-        metadata.add(new TableColumnMetadata("memoryPressureLevel", ColumnType.INT));       // 16
-        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));        // 17
-        metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));                 // 18
+        metadata.add(new TableColumnMetadata("pendingRowCount", ColumnType.LONG));          // 11
+        metadata.add(new TableColumnMetadata("dedupeRowCount", ColumnType.LONG));           // 12
+        metadata.add(new TableColumnMetadata("lastWriteTimestamp", ColumnType.TIMESTAMP));  // 13
+        metadata.add(new TableColumnMetadata("writerTxn", ColumnType.LONG));                // 14
+        metadata.add(new TableColumnMetadata("sequencerTxn", ColumnType.LONG));             // 15
+        metadata.add(new TableColumnMetadata("lastWalTimestamp", ColumnType.TIMESTAMP));    // 16
+        metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));          // 17
+        metadata.add(new TableColumnMetadata("memoryPressureLevel", ColumnType.INT));       // 18
+        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));        // 19
+        metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));                 // 20
         METADATA = metadata;
     }
 }

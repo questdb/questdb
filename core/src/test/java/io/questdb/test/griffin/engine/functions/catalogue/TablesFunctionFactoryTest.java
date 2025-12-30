@@ -240,8 +240,6 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // Create a WAL table
             execute("CREATE TABLE test_mem_pressure (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            TableToken tableToken = engine.verifyTableName("test_mem_pressure");
-
             // Insert some data to initialize the tracker
             execute("INSERT INTO test_mem_pressure VALUES ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();

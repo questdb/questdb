@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -201,6 +202,52 @@ public class RecentWriteTracker {
     }
 
     /**
+     * Returns the cumulative count of rows removed by deduplication for a specific table.
+     *
+     * @param tableToken the table to look up
+     * @return cumulative dedup row count, or 0 if not tracked
+     */
+    public long getDedupRowCount(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getDedupRowCount() : 0;
+    }
+
+    /**
+     * Returns the cumulative WAL row count for a specific table.
+     * <p>
+     * This is the total number of rows written via WAL segments since the tracker
+     * started tracking this table. The counter is never reset and only increments.
+     *
+     * @param tableToken the table to look up
+     * @return cumulative WAL row count, or 0 if not tracked
+     */
+    public long getWalRowCount(@NotNull TableToken tableToken) {
+        WriteStats stats = writeStats.get(tableToken);
+        return stats != null ? stats.getWalRowCount() : 0;
+    }
+
+    /**
+     * Records that WAL rows have been processed (applied to the table).
+     * <p>
+     * This decrements the pending WAL row count and accumulates dedup row count.
+     * Called after successful WAL transaction application.
+     *
+     * @param tableToken        the table whose WAL was processed
+     * @param walRowCount       the number of WAL rows that were processed (before dedup)
+     * @param committedRowCount the number of rows actually committed (after dedup)
+     */
+    public void recordWalProcessed(@NotNull TableToken tableToken, long walRowCount, long committedRowCount) {
+        WriteStats stats = writeStats.get(tableToken);
+        if (stats != null) {
+            stats.walRowCount.add(-walRowCount);
+            long dedupCount = walRowCount - committedRowCount;
+            if (dedupCount > 0) {
+                stats.dedupRowCount.add(dedupCount);
+            }
+        }
+    }
+
+    /**
      * Returns the write statistics for a specific table, or null if not tracked.
      *
      * @param tableToken the table to look up
@@ -236,30 +283,34 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Records a WAL write, updating the sequencerTxn and walTimestamp fields.
+     * Records a WAL write, updating the sequencerTxn, walTimestamp, and walRowCount fields.
      * <p>
      * This method is called when a WalWriter is returned to the pool. Multiple WAL
-     * writers can update the same table concurrently; the highest values win.
+     * writers can update the same table concurrently; the highest values win for
+     * sequencerTxn and walTimestamp, while segmentRowCount is accumulated.
      * <p>
      * If no entry exists, creates a "blank" entry with LONG_NULL for writer fields.
      * This blank entry will be overwritten by the real writer when it updates.
      *
-     * @param tableToken   the table that was written to
-     * @param sequencerTxn the sequencer transaction number
-     * @param walTimestamp the max timestamp from the WAL transaction
+     * @param tableToken      the table that was written to
+     * @param sequencerTxn    the sequencer transaction number
+     * @param walTimestamp    the max timestamp from the WAL transaction
+     * @param segmentRowCount the number of rows in this WAL segment
      */
-    public void recordWalWrite(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp) {
+    public void recordWalWrite(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long segmentRowCount) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats != null) {
             // Entry exists - update WAL fields
-            stats.updateWal(sequencerTxn, walTimestamp);
+            stats.updateWal(sequencerTxn, walTimestamp, segmentRowCount);
         } else {
             // No entry - create blank entry with only WAL fields set
             WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, sequencerTxn, walTimestamp);
+            // Add row count after construction since LongAdder is initialized in field declaration
+            newStats.walRowCount.add(segmentRowCount);
             WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
             if (existing != null) {
                 // Another thread inserted first, update their WAL fields
-                existing.updateWal(sequencerTxn, walTimestamp);
+                existing.updateWal(sequencerTxn, walTimestamp, segmentRowCount);
             }
         }
 
@@ -463,6 +514,10 @@ public class RecentWriteTracker {
         // WAL fields - updated by WalWriters only, highest wins via CAS
         private final AtomicLong sequencerTxn;
         private final AtomicLong walTimestamp;
+        // Dedup row count - accumulated count of rows removed by deduplication
+        private final LongAdder dedupRowCount = new LongAdder();
+        // WAL row count - incremented by WalWriters, contention-free via LongAdder
+        private final LongAdder walRowCount = new LongAdder();
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
         private volatile long timestamp;
@@ -525,6 +580,31 @@ public class RecentWriteTracker {
         }
 
         /**
+         * Returns the cumulative count of rows removed by deduplication.
+         * <p>
+         * This is the difference between WAL rows before dedup and physical rows written.
+         * Accumulated during WAL apply processing.
+         *
+         * @return cumulative dedup row count (always >= 0)
+         */
+        public long getDedupRowCount() {
+            return dedupRowCount.sum();
+        }
+
+        /**
+         * Returns the cumulative row count from all WAL segments written to this table.
+         * <p>
+         * This counter is incremented each time a WAL segment is written, and never reset.
+         * It represents the total number of rows written via WAL since the tracker started
+         * tracking this table.
+         *
+         * @return cumulative WAL row count (always >= 0)
+         */
+        public long getWalRowCount() {
+            return walRowCount.sum();
+        }
+
+        /**
          * Returns the timestamp of the last TableWriter write in microseconds.
          *
          * @return timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
@@ -548,11 +628,16 @@ public class RecentWriteTracker {
         /**
          * Updates WAL fields using CAS - only succeeds if new values are higher.
          * Multiple WAL writers may call this concurrently; highest values win.
+         * Row count is always added (accumulated).
          *
          * @param newTxn          the new sequencer transaction number
          * @param newWalTimestamp the WAL write timestamp in microseconds
+         * @param segmentRowCount the number of rows in this WAL segment
          */
-        void updateWal(long newTxn, long newWalTimestamp) {
+        void updateWal(long newTxn, long newWalTimestamp, long segmentRowCount) {
+            // Always increment WAL row count - contention-free via LongAdder
+            walRowCount.add(segmentRowCount);
+
             // CAS update walTimestamp - highest wins
             long currentTs;
             do {

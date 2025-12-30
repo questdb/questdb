@@ -624,6 +624,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case MAT_VIEW_DATA:
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                 long skipTxnCount = calculateSkipTransactionCount(seqTxn, txnDetails);
+                long rowsCommitted = 0;
 
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
@@ -633,7 +634,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 // Cannot skip, possibly there are rows in LAG that need to be committed
                 if (!skipped) {
-                    writer.commitWalInsertTransactions(
+                    rowsCommitted = writer.commitWalInsertTransactions(
                             walPath,
                             seqTxn,
                             pressureControl
@@ -651,6 +652,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency);
                     lastCommittedRows += walRowCount;
                 }
+
+                // Decrement pending WAL row count and track dedup after successful processing
+                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedRows, rowsCommitted);
 
                 if (writer.getTableToken().isMatView()) {
                     for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
