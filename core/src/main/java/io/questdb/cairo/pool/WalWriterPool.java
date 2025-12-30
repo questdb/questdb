@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DdlListener;
@@ -66,8 +65,6 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 engine.getDdlListener(tableToken),
                 engine.getWalDirectoryPolicy(),
                 engine.getRecentWriteTracker()
-                engine.getWalDirectoryPolicy(),
-                engine.getMetrics()
         );
     }
 
@@ -91,8 +88,6 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 DdlListener ddlListener,
                 WalDirectoryPolicy walDirectoryPolicy,
                 RecentWriteTracker recentWriteTracker
-                WalDirectoryPolicy walDirectoryPolicy,
-                Metrics metrics
         ) {
             super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy, recentWriteTracker);
             this.pool = pool;
