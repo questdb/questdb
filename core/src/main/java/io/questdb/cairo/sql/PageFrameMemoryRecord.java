@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -481,18 +481,21 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public CharSequence getSymA(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
-        int key = NullMemoryCMR.INSTANCE.getInt(0);
         if (address != 0) {
-            key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+            int key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+            return getSymbolTable(columnIndex).valueOf(key);
         }
-        return getSymbolTable(columnIndex).valueOf(key);
+        return null;
     }
 
     @Override
     public CharSequence getSymB(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
-        final int key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-        return getSymbolTable(columnIndex).valueBOf(key);
+        if (address != 0) {
+            int key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+            return getSymbolTable(columnIndex).valueBOf(key);
+        }
+        return null;
     }
 
     @Override

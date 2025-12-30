@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -100,6 +100,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD("cairo.sql.parallel.filter.pretouch.threshold"),
     CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT("cairo.sql.parallel.filter.dispatch.limit"),
     CAIRO_SQL_PARALLEL_TOP_K_ENABLED("cairo.sql.parallel.topk.enabled"),
+    CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED("cairo.sql.parallel.window.join.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
@@ -124,6 +125,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY("cairo.sql.with.clause.model.pool.capacity"),
     CAIRO_SQL_ORDER_BY_SORT_ENABLED("cairo.sql.orderby.sort.enabled"),
     CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD("cairo.sql.orderby.radix.sort.threshold"),
+    CAIRO_SQL_COPIER_CHUNKED("cairo.sql.copier.chunked"),
     CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY("cairo.sql.insert.model.pool.capacity"),
     CAIRO_SQL_INSERT_MODEL_BATCH_SIZE("cairo.sql.insert.model.batch.size"),
     CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE("cairo.writer.data.index.key.append.page.size"),
@@ -154,6 +156,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR("cairo.sql.distinct.timestamp.load.factor"),
     CAIRO_SQL_PAGE_FRAME_MIN_ROWS("cairo.sql.page.frame.min.rows"),
     CAIRO_SQL_PAGE_FRAME_MAX_ROWS("cairo.sql.page.frame.max.rows"),
+    CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS("cairo.sql.small.page.frame.min.rows"),
+    CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS("cairo.sql.small.page.frame.max.rows"),
     CAIRO_SQL_JIT_IR_MEMORY_PAGE_SIZE("cairo.sql.jit.ir.memory.page.size"),
     CAIRO_SQL_JIT_IR_MEMORY_MAX_PAGES("cairo.sql.jit.ir.memory.max.pages"),
     CAIRO_SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE("cairo.sql.jit.bind.vars.memory.page.size"),
@@ -550,6 +554,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_ENABLE_TEST_FACTORIES("debug.enable.test.factories", false, true),
     DEBUG_CAIRO_ALLOW_MIXED_IO("debug.cairo.allow.mixed.io", false, true),
     DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true),
+    DEBUG_CAIRO_COPIER_TYPE("debug.cairo.copier.type", false, true),
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled"),
@@ -609,7 +614,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled"),
     CAIRO_FILE_ASYNC_MUNMAP_ENABLED("cairo.file.async.munmap.enabled"),
     CAIRO_RMDIR_MAX_DEPTH("cairo.rmdir.max.depth"),
-    CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled");
+    CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled"),
+    CAIRO_TTL_USE_WALL_CLOCK("cairo.ttl.use.wall.clock");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

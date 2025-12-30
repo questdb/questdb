@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,21 +56,25 @@ public class DistinctTest extends AbstractCairoTest {
                         ") timestamp(created);"
         );
         assertQueryAndPlan(
-                "sym\torigin\tlag\n" +
-                        "foo\t315515118\tnull\n" +
-                        "foo\t73575701\t315515118\n" +
-                        "foo\t592859671\t73575701\n" +
-                        "foo\t-1191262516\t592859671\n" +
-                        "foo\t-1575378703\t-1191262516\n",
-                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
-                        "    Distinct\n" +
-                        "      keys: sym,origin,lag\n" +
-                        "      earlyExit: 5\n" +
-                        "        Window\n" +
-                        "          functions: [lag(origin, 1, NULL) over ()]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: x\n",
+                """
+                        sym\torigin\tlag
+                        foo\t315515118\tnull
+                        foo\t73575701\t315515118
+                        foo\t592859671\t73575701
+                        foo\t-1191262516\t592859671
+                        foo\t-1575378703\t-1191262516
+                        """,
+                """
+                        Limit value: 5 skip-rows: 0 take-rows: 5
+                            Distinct
+                              keys: sym,origin,lag
+                              earlyExit: 5
+                                Window
+                                  functions: [lag(origin, 1, NULL) over ()]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                        """,
                 "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 5",
                 null,
                 false,
@@ -78,24 +82,28 @@ public class DistinctTest extends AbstractCairoTest {
         );
 
         assertQueryAndPlan(
-                "sym\torigin\tlag\n" +
-                        "foo\t2137969456\t264240638\n" +
-                        "foo\t68265578\t2137969456\n" +
-                        "foo\t44173540\t68265578\n" +
-                        "foo\t-2144581835\t44173540\n" +
-                        "foo\t-1162267908\t-2144581835\n" +
-                        "foo\t-1575135393\t-1162267908\n" +
-                        "foo\t326010667\t-1575135393\n" +
-                        "foo\t-2034804966\t326010667\n",
-                "Limit lo: 20 hi: 28 skip-over-rows: 20 limit: 8\n" +
-                        "    Distinct\n" +
-                        "      keys: sym,origin,lag\n" +
-                        "      earlyExit: 28\n" +
-                        "        Window\n" +
-                        "          functions: [lag(origin, 1, NULL) over ()]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: x\n",
+                """
+                        sym\torigin\tlag
+                        foo\t2137969456\t264240638
+                        foo\t68265578\t2137969456
+                        foo\t44173540\t68265578
+                        foo\t-2144581835\t44173540
+                        foo\t-1162267908\t-2144581835
+                        foo\t-1575135393\t-1162267908
+                        foo\t326010667\t-1575135393
+                        foo\t-2034804966\t326010667
+                        """,
+                """
+                        Limit left: 20 right: 28 skip-rows: 20 take-rows: 8
+                            Distinct
+                              keys: sym,origin,lag
+                              earlyExit: 28
+                                Window
+                                  functions: [lag(origin, 1, NULL) over ()]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                        """,
                 "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 20, 28",
                 null,
                 false,
@@ -104,20 +112,24 @@ public class DistinctTest extends AbstractCairoTest {
 
         // no early exit
         assertQueryAndPlan(
-                "sym\torigin\tlag\n" +
-                        "foo\t874367915\t-1775036711\n" +
-                        "foo\t1431775887\t874367915\n" +
-                        "foo\t-1822590290\t1431775887\n" +
-                        "foo\t957075831\t-1822590290\n" +
-                        "foo\t-2043541236\t957075831\n",
-                "Limit lo: -5 skip-over-rows: 95 limit: 5\n" +
-                        "    Distinct\n" +
-                        "      keys: sym,origin,lag\n" +
-                        "        Window\n" +
-                        "          functions: [lag(origin, 1, NULL) over ()]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: x\n",
+                """
+                        sym\torigin\tlag
+                        foo\t874367915\t-1775036711
+                        foo\t1431775887\t874367915
+                        foo\t-1822590290\t1431775887
+                        foo\t957075831\t-1822590290
+                        foo\t-2043541236\t957075831
+                        """,
+                """
+                        Limit value: -5 skip-rows: 95 take-rows: 5
+                            Distinct
+                              keys: sym,origin,lag
+                                Window
+                                  functions: [lag(origin, 1, NULL) over ()]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                        """,
                 "SELECT DISTINCT sym, origin, lag(origin) over() from x limit -5",
                 null,
                 false,
@@ -126,22 +138,26 @@ public class DistinctTest extends AbstractCairoTest {
 
         // no early exit
         assertQueryAndPlan(
-                "sym\torigin\tlag\n" +
-                        "foo\t315515118\tnull\n" +
-                        "foo\t73575701\t315515118\n" +
-                        "foo\t592859671\t73575701\n" +
-                        "foo\t-1191262516\t592859671\n" +
-                        "foo\t-1575378703\t-1191262516\n",
-                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
-                        "    Sort\n" +
-                        "      keys: [sym]\n" +
-                        "        Distinct\n" +
-                        "          keys: sym,origin,lag\n" +
-                        "            Window\n" +
-                        "              functions: [lag(origin, 1, NULL) over ()]\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: x\n",
+                """
+                        sym\torigin\tlag
+                        foo\t315515118\tnull
+                        foo\t73575701\t315515118
+                        foo\t592859671\t73575701
+                        foo\t-1191262516\t592859671
+                        foo\t-1575378703\t-1191262516
+                        """,
+                """
+                        Limit value: 5 skip-rows: 0 take-rows: 5
+                            Sort
+                              keys: [sym]
+                                Distinct
+                                  keys: sym,origin,lag
+                                    Window
+                                      functions: [lag(origin, 1, NULL) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                        """,
                 "SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5",
                 null,
                 true,
@@ -153,8 +169,10 @@ public class DistinctTest extends AbstractCairoTest {
     public void testDistinctWithAlias() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
         assertQuery(
-                "created\n" +
-                        "1970-01-01T00:00:00.000000Z\n",
+                """
+                        created
+                        1970-01-01T00:00:00.000000Z
+                        """,
                 "SELECT distinct sa.created FROM x sa;",
                 "create table x as (" +
                         "  select" +
@@ -172,10 +190,12 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumn() throws Exception {
         assertQuery(
-                "e1\te2\n" +
-                        "24814\t24814\n" +
-                        "-13027\t-13027\n" +
-                        "-22955\t-22955\n",
+                """
+                        e1\te2
+                        24814\t24814
+                        -13027\t-13027
+                        -22955\t-22955
+                        """,
                 "SELECT DISTINCT event e1, event e2 FROM x order by 1 desc;",
                 "create table x as (" +
                         "  select" +
@@ -193,10 +213,12 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumnInWhereClauseSubQuery() throws Exception {
         assertQuery(
-                "origin\tevent\tcreated\n" +
-                        "-27056\ta\t1970-01-01T00:00:00.000000Z\n" +
-                        "-11455\tc\t1970-01-01T00:00:00.000000Z\n" +
-                        "-21227\tc\t1970-01-01T00:00:00.000000Z\n",
+                """
+                        origin\tevent\tcreated
+                        -27056\ta\t1970-01-01T00:00:00.000000Z
+                        -11455\tc\t1970-01-01T00:00:00.000000Z
+                        -21227\tc\t1970-01-01T00:00:00.000000Z
+                        """,
                 "SELECT * FROM x WHERE event IN (SELECT * FROM (SELECT DISTINCT event, event FROM x));",
                 "create table x as (" +
                         "  select" +
@@ -214,10 +236,12 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumnWithSubQuery() throws Exception {
         assertQuery(
-                "e1\te2\n" +
-                        "-24814\t-24814\n" +
-                        "13027\t13027\n" +
-                        "22955\t22955\n",
+                """
+                        e1\te2
+                        -24814\t-24814
+                        13027\t13027
+                        22955\t22955
+                        """,
                 "SELECT DISTINCT event e1, event e2 FROM (SELECT origin, (-event) event FROM x) order by 1;",
                 "create table x as (" +
                         "  select" +
@@ -235,11 +259,13 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumnWithUnion() throws Exception {
         assertQuery(
-                "e1\te2\n" +
-                        "42\t42\n" +
-                        "-22955\t-22955\n" +
-                        "-13027\t-13027\n" +
-                        "24814\t24814\n",
+                """
+                        e1\te2
+                        42\t42
+                        -22955\t-22955
+                        -13027\t-13027
+                        24814\t24814
+                        """,
                 "(SELECT 42 e1, 42 e2) UNION (SELECT DISTINCT event e1, event e2 FROM x order by 1);",
                 "create table x as (" +
                         "  select" +
@@ -257,8 +283,10 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateCount() throws Exception {
         assertQuery(
-                "count\tcount1\n" +
-                        "10\t10\n",
+                """
+                        count\tcount1
+                        10\t10
+                        """,
                 "SELECT DISTINCT count(*), count(*) FROM x;",
                 "create table x as (" +
                         "  select" +
@@ -276,8 +304,10 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateCount2() throws Exception {
         assertQuery(
-                "sym\tcount\tcount1\n" +
-                        "foo\t10\t10\n",
+                """
+                        sym\tcount\tcount1
+                        foo\t10\t10
+                        """,
                 "SELECT DISTINCT sym, count(*), count(*) FROM x;",
                 "create table x as (" +
                         "  select" +
@@ -296,8 +326,10 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateCountNested() throws Exception {
         assertQuery(
-                "count\tcount1\n" +
-                        "10\t10\n",
+                """
+                        count\tcount1
+                        10\t10
+                        """,
                 "SELECT * FROM (SELECT DISTINCT count(*), count(*) FROM x);",
                 "create table x as (" +
                         "  select" +
@@ -347,8 +379,10 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:01');");
 
             assertQueryNoLeakCheck(
-                    "sensor_id\tapptype\n" +
-                            "air\t1\n",
+                    """
+                            sensor_id\tapptype
+                            air\t1
+                            """,
                     "select distinct sensors.sensor_id, sensors.apptype " +
                             "from sensors"
             );
@@ -377,8 +411,10 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
             assertQueryNoLeakCheck(
-                    "sensor_id\tapptype\n" +
-                            "air\t1\n",
+                    """
+                            sensor_id\tapptype
+                            air\t1
+                            """,
                     "select distinct samples.sensor_id, sensors.apptype " +
                             "from samples " +
                             "inner join sensors on sensors.sensor_id = samples.sensor_id"

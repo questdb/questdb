@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -232,7 +232,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "SELECT MIN(EventDate), MAX(EventDate) FROM hits;",
                         """
                                 GroupBy vectorized: true workers: 1
-                                  values: [min(EventDate),max(EventDate)]
+                                  values: [min(Eventdate),max(Eventdate)]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits
@@ -392,7 +392,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q17",
                         "SELECT UserID, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, SearchPhrase LIMIT 10;",
                         """
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
+                                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                     Async Group By workers: 1
                                       keys: [UserID,SearchPhrase]
                                       values: [count(*)]
@@ -799,15 +799,6 @@ public class ClickBenchTest extends AbstractCairoTest {
         });
     }
 
-    private static class TestCase {
-        final String expectedPlan;
-        final String name;
-        final String query;
-
-        private TestCase(String name, String query, String expectedPlan) {
-            this.name = name;
-            this.query = query;
-            this.expectedPlan = expectedPlan;
-        }
+    private record TestCase(String name, String query, String expectedPlan) {
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
+import io.questdb.cairo.arr.VarcharArrayParser;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
@@ -862,6 +863,15 @@ public class SqlUtil {
     public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
         try {
             // the parser will handle the weak dimensionality case (-1)
+            parser.of(value, ColumnType.decodeWeakArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        return parser;
+    }
+
+    public static ArrayView implicitCastStringAsVarcharArray(CharSequence value, VarcharArrayParser parser, int expectedType) {
+        try {
             parser.of(value, ColumnType.decodeWeakArrayDimensionality(expectedType));
         } catch (IllegalArgumentException e) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);

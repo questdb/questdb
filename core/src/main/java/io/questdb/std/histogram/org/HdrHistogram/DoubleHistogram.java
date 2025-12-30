@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1268,10 +1268,20 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
                 while (value >= currentHighestValueLimitInAutoRange);
             }
         } catch (CairoException ex) {
-            throw CairoException.nonCritical().put("The value ").put(value)
+            // Build the base error message first
+            CairoException err = CairoException.nonCritical().put("The value ").put(value)
                     .put(" is out of bounds for histogram, current covered range [")
                     .put(currentLowestValueInAutoRange).put(", ").put(currentHighestValueLimitInAutoRange)
                     .put(") cannot be extended any further.\nCaused by: ").put(ex.getMessage());
+
+
+            err.put("\nHint: Try normalizing your values to fit into the covered range");
+            if (getNumberOfSignificantValueDigits() > 0) {
+                err.put("\nOr lower the histogram precision (for example, use approx_median(x, 0))");
+            }
+
+
+            throw err;
         }
     }
 

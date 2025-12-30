@@ -8,7 +8,7 @@
 #    \__\_\\__,_|\___||___/\__|____/|____/
 #
 #  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2024 QuestDB
+#  Copyright (c) 2019-2026 QuestDB
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -148,15 +148,41 @@ function export_java {
 }
 
 function export_jemalloc() {
+    local arch=$(uname -m)
+
+    # auto-enable jemalloc on Linux x86_64 for open source edition with bundled JRE
+    # if QDB_JEMALLOC is not explicitly set
+    if [[ -z "${QDB_JEMALLOC+x}" ]]; then
+        if [[ "$QDB_OS" == "Linux" && "$arch" == "x86_64" && "$JAVA_MAIN" == *"io.questdb"* && "$QDB_PACKAGE" == "withjre" ]]; then
+            QDB_JEMALLOC="true"
+        fi
+    fi
+
     if [[ "$QDB_JEMALLOC" = "true" ]]; then
-      jemalloc_so=$(ls $BASE/libjemalloc*)
-      if [[ "$QDB_OS" != "FreeBSD" && -r "${jemalloc_so}" ]]; then
-          if [[ "$QDB_OS" == "Darwin" ]]; then
-              export DYLD_INSERT_LIBRARIES=${jemalloc_so}
-          else
-              export LD_PRELOAD=${jemalloc_so}
-          fi
+      if [[ "$QDB_OS" != "Linux" ]]; then
+          echo "Error: QDB_JEMALLOC is enabled but jemalloc is only supported on Linux (detected OS: $QDB_OS)"
+          echo "QuestDB works with the default system allocator on this platform."
+          echo ""
+          echo "To disable jemalloc, either:"
+          echo "  - Unset the environment variable: unset QDB_JEMALLOC"
+          echo "  - Set the environment variable to false: export QDB_JEMALLOC=false"
+          echo "  - Remove or comment out 'export QDB_JEMALLOC=true' from your env.sh or shell profile"
+          exit 55
+      fi
+      jemalloc_so=$(ls $BASE/libjemalloc* 2>/dev/null)
+      if [[ -r "${jemalloc_so}" ]]; then
+          export LD_PRELOAD=${jemalloc_so}
           echo "Using jemalloc"
+      else
+          echo "Error: QDB_JEMALLOC is enabled but jemalloc library not found in ${BASE}"
+          echo "Your QuestDB distribution may not include jemalloc."
+          echo "QuestDB works with the default system allocator too."
+          echo ""
+          echo "To disable jemalloc, either:"
+          echo "  - Unset the environment variable: unset QDB_JEMALLOC"
+          echo "  - Set the environment variable to false: export QDB_JEMALLOC=false"
+          echo "  - Remove or comment out 'export QDB_JEMALLOC=true' from your env.sh or shell profile"
+          exit 55
       fi
     fi
 }

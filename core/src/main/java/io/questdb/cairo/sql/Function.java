@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -231,6 +231,20 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     default boolean isConstantOrRuntimeConstant() {
         return isConstant() || isRuntimeConstant();
+    }
+
+    /**
+     * Performs a best-effort comparison to check if two functions are equivalent.
+     * This is used for optimization purposes to identify duplicate or equivalent expressions.
+     * <p>
+     * Note: A false result does not guarantee that the functions are different - it just means
+     * equivalence could not be determined through this best-effort comparison.
+     *
+     * @param obj the function to compare with
+     * @return true if the functions are definitely equivalent, false if they may or may not be equivalent.
+     */
+    default boolean isEquivalentTo(Function obj) {
+        return this == obj;
     }
 
     default boolean isNonDeterministic() {

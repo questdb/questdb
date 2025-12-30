@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
-    protected PartitionDecoder parquetDecoder;
     protected int partitionHi;
     protected int partitionIndex;
     protected TableReader reader;
@@ -45,7 +44,6 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         if (reader != null && reader.isActive()) {
             reader = Misc.free(reader);
         }
-        Misc.free(parquetDecoder);
     }
 
     @Override

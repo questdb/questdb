@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -910,7 +910,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                         }
                     } else {
-                        // Replacing data with no O3 data, e.g. effectively deleting a part of the partition
+                        // Replacing data with no O3 data, e.g. effectively deleting a part of the partition.
 
                         // O3 data is supposed to be merged into the middle of an existing partition
                         // but there is no O3 data, it's a replacing commit with no new rows, just the range.

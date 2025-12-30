@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -43,6 +44,32 @@ public interface GroupByFunction extends Function, Mutable {
 
     @Override
     default void clear() {
+    }
+
+    /**
+     * Aggregates the buffered argument values for the current group in one go.
+     * <p>
+     * The engine materialises the argument column into a
+     * {@link io.questdb.griffin.engine.groupby.GroupByColumnSink}, exposing the values in native
+     * memory starting at {@code ptr}. Each entry has the fixed size implied by the function's
+     * argument type. Implementations can use vectorised routines to consume the {@code count}
+     * consecutive values and must write the resulting aggregate into {@code mapValue}.
+     * <p>
+     * This method:
+     * <ul>
+     *     <li>runs at most once per group {@link MapValue}, immediately after {@link #setEmpty(MapValue)};</li>
+     *     <li>runs without a preceding {@link #computeFirst(MapValue, Record, long)} invocation;</li>
+     *     <li>is not followed by {@link #merge(MapValue, MapValue)};</li>
+     *     <li>always receives a non-zero {@code ptr} pointing to readable memory;</li>
+     *     <li>is used only when {@link #supportsBatchComputation()} returns {@code true}.</li>
+     * </ul>
+     *
+     * @param mapValue group state that must be updated with the aggregated result
+     * @param ptr      native memory address of the first buffered value for the group
+     * @param count    number of buffered values that can be read starting from {@code ptr}
+     */
+    default void computeBatch(MapValue mapValue, long ptr, int count) {
+        throw new UnsupportedOperationException();
     }
 
     /**
@@ -91,6 +118,35 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default long getCardinalityStat() {
         return 0;
+    }
+
+    /**
+     * Returns the compute batch argument function for this group by function.
+     */
+    default Function getComputeBatchArg() {
+        if (this instanceof UnaryFunction thisUnary) {
+            // for unary functions, default to the function's argument.
+            return thisUnary.getArg();
+        }
+        return null;
+    }
+
+    /**
+     * Returns the compute batch argument type for this group by function.
+     * <p>
+     * Note: the returned type may not match the type of the function returned by
+     * {@link #getComputeBatchArg()}. Example: in case of avg(long_col) the type of
+     * the argument function is LONG, but the aggregate function's argument type is
+     * DOUBLE. This means that the input values need to be materialized in
+     * an intermediate buffer via getDouble calls before to calling
+     * {@link #computeBatch(MapValue, long, int)}.
+     */
+    default int getComputeBatchArgType() {
+        if (this instanceof UnaryFunction) {
+            // for unary functions, default to the function's output type.
+            return getType();
+        }
+        return ColumnType.UNDEFINED;
     }
 
     default int getSampleByFlags() {
@@ -215,6 +271,18 @@ public interface GroupByFunction extends Function, Mutable {
     // used when doing interpolation
     default void setShort(MapValue mapValue, short value) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Indicates whether {@link #computeBatch(MapValue, long, int)}, {@link #getComputeBatchArg()},
+     * and {@link #getComputeBatchArgType()} are implemented for this function. When {@code true},
+     * the engine may materialise the argument column into native memory buffers and invoke
+     * {@code computeBatch} instead of per-row aggregation for compatible execution paths.
+     *
+     * @return {@code true} if the function can consume batches via {@code computeBatch}, {@code false} otherwise
+     */
+    default boolean supportsBatchComputation() {
+        return false;
     }
 
     @Override

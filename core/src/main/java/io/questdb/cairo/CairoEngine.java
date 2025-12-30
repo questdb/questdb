@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -471,6 +471,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
+    @TestOnly
+    // this is used in replication test
+    public void clearWalWriterPool() {
+        walWriterPool.releaseAll();
+    }
+
     @Override
     public void close() {
         Misc.free(sqlCompilerPool);
@@ -648,7 +654,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 DefaultLifecycleManager.INSTANCE,
                 backupDirName,
                 getDdlListener(tableToken),
-                checkpointAgent,
                 this
         );
     }

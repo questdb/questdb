@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,13 +73,11 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final double value = Vect.avgIntAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
-            if (Numbers.isFinite(value)) {
-                final long count = Unsafe.getUnsafe().getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
-                // we have to include "weight" of this avg value in the formula,
-                // which calculates final result
-                sum.add(value * count);
-                this.count.add(count);
+            final double s = Vect.sumIntAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
+            if (Numbers.isFinite(s)) {
+                final long c = Unsafe.getUnsafe().getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
+                sum.add(s);
+                count.add(c);
             }
         }
     }

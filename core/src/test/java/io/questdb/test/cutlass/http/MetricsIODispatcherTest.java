@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,13 +62,15 @@ public class MetricsIODispatcherTest {
     // This number should be lower than the maximum IODispatcher connection limit,
     // which by default is 64.
     private static final int PARALLEL_REQUESTS = 16;
-    private static final String prometheusRequest = "GET /metrics HTTP/1.1\r\n" +
-            "Host: localhost:9003\r\n" +
-            "User-Agent: Prometheus/2.22.0\r\n" +
-            "Accept: application/openmetrics-text; version=0.0.1,text/plain;version=0.0.4;q=0.5,*/*;q=0.1\r\n" +
-            "Accept-Encoding: gzip\r\n" +
-            "X-Prometheus-Scrape-Timeout-Seconds: 10.000000\r\n" +
-            "\r\n";
+    private static final String prometheusRequest = """
+            GET /metrics HTTP/1.1\r
+            Host: localhost:9003\r
+            User-Agent: Prometheus/2.22.0\r
+            Accept: application/openmetrics-text; version=0.0.1,text/plain;version=0.0.4;q=0.5,*/*;q=0.1\r
+            Accept-Encoding: gzip\r
+            X-Prometheus-Scrape-Timeout-Seconds: 10.000000\r
+            \r
+            """;
 
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
@@ -158,32 +160,34 @@ public class MetricsIODispatcherTest {
                     metrics.markSyntaxError();
                     metrics.markInsertCancelled();
 
-                    String expectedResponse = "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n" +
-                            "\r\n" +
-                            "02f0\r\n" +
-                            "# TYPE questdb_test_json_queries_total counter\n" +
-                            "questdb_test_json_queries_total 1\n" +
-                            "\n" +
-                            "# TYPE questdb_test_json_queries_failed_total counter\n" +
-                            "questdb_test_json_queries_failed_total{reason=\"cancelled\"} 0\n" +
-                            "questdb_test_json_queries_failed_total{reason=\"syntax_error\"} 1\n" +
-                            "\n" +
-                            "# TYPE questdb_test_compiled_json_queries_failed_total counter\n" +
-                            "questdb_test_compiled_json_queries_failed_total{type=\"insert\",reason=\"cancelled\"} 1\n" +
-                            "questdb_test_compiled_json_queries_failed_total{type=\"insert\",reason=\"syntax_error\"} 0\n" +
-                            "questdb_test_compiled_json_queries_failed_total{type=\"select\",reason=\"cancelled\"} 0\n" +
-                            "questdb_test_compiled_json_queries_failed_total{type=\"select\",reason=\"syntax_error\"} 0\n" +
-                            "\n" +
-                            "# TYPE questdb_test_json_queries_running gauge\n" +
-                            "questdb_test_json_queries_running 1\n" +
-                            "\n" +
-                            "\r\n" +
-                            "00\r\n" +
-                            "\r\n";
+                    String expectedResponse = """
+                            HTTP/1.1 200 OK\r
+                            Server: questDB/1.0\r
+                            Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                            Transfer-Encoding: chunked\r
+                            Content-Type: text/plain; version=0.0.4; charset=utf-8\r
+                            \r
+                            02f0\r
+                            # TYPE questdb_test_json_queries_total counter
+                            questdb_test_json_queries_total 1
+                            
+                            # TYPE questdb_test_json_queries_failed_total counter
+                            questdb_test_json_queries_failed_total{reason="cancelled"} 0
+                            questdb_test_json_queries_failed_total{reason="syntax_error"} 1
+                            
+                            # TYPE questdb_test_compiled_json_queries_failed_total counter
+                            questdb_test_compiled_json_queries_failed_total{type="insert",reason="cancelled"} 1
+                            questdb_test_compiled_json_queries_failed_total{type="insert",reason="syntax_error"} 0
+                            questdb_test_compiled_json_queries_failed_total{type="select",reason="cancelled"} 0
+                            questdb_test_compiled_json_queries_failed_total{type="select",reason="syntax_error"} 0
+                            
+                            # TYPE questdb_test_json_queries_running gauge
+                            questdb_test_json_queries_running 1
+                            
+                            \r
+                            00\r
+                            \r
+                            """;
 
                     new SendAndReceiveRequestBuilder()
                             .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
@@ -281,7 +285,7 @@ public class MetricsIODispatcherTest {
 
                         utf16Sink.clear();
                         Fragment fragment;
-                        while ((fragment = chunkedResponse.recv(5_000)) != null) {
+                        while ((fragment = chunkedResponse.recv()) != null) {
                             Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), utf16Sink);
                         }
                         TestUtils.assertEquals(expectedResponse, utf16Sink);

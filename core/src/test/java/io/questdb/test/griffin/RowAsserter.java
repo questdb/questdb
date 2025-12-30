@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -176,6 +176,11 @@ public class RowAsserter implements TableWriter.Row {
     }
 
     @Override
+    public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
+        Assert.fail("Unexpected call to putLong256Utf8");
+    }
+
+    @Override
     public void putShort(int columnIndex, short value) {
         Assert.fail("Unexpected call to putShort");
     }
@@ -197,6 +202,11 @@ public class RowAsserter implements TableWriter.Row {
 
     @Override
     public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+        Assert.fail("Unexpected call to putStrUtf8");
+    }
+
+    @Override
+    public void putStrUtf8(int columnIndex, Utf8Sequence value) {
         Assert.fail("Unexpected call to putStrUtf8");
     }
 

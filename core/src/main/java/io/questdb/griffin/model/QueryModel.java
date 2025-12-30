@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -71,8 +71,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_LEFT_OUTER = 2;
     public static final int JOIN_LT = 6;
     public static final int JOIN_MAX = JOIN_CROSS_FULL;
+    public static final int JOIN_NONE = 0;
     public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
+    public static final int JOIN_WINDOW = 7;
     public static final int LATEST_BY_DEPRECATED = 1;
     public static final int LATEST_BY_NEW = 2;
     public static final int LATEST_BY_NONE = 0;
@@ -87,6 +89,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_SHOW = 7;
     public static final int SELECT_MODEL_VIRTUAL = 2;
     public static final int SELECT_MODEL_WINDOW = 3;
+    public static final int SELECT_MODEL_WINDOW_JOIN = 8;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_EXCEPT_ALL = 3;
     public static final int SET_OPERATION_INTERSECT = 4;
@@ -98,6 +101,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_CREATE_MAT_VIEW = 15;
     public static final int SHOW_CREATE_TABLE = 14;
     public static final int SHOW_DATE_STYLE = 9;
+    public static final int SHOW_DEFAULT_TRANSACTION_READ_ONLY = 16;
     public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
     public static final int SHOW_PARAMETERS = 11;
     public static final int SHOW_PARTITIONS = 3;
@@ -147,6 +151,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
+    private final WindowJoinContext windowJoinContext = new WindowJoinContext();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     // used for the parallel sample by rewrite. In the future, if we deprecate original SAMPLE BY, then these will
     // be the only fields for these values.
@@ -169,17 +174,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
-    //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
-    //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
-    private boolean isLimitImplemented;
+    private boolean isCteModel;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
     private boolean isUpdateModel;
-    private boolean isCteModel;
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
-    private int joinType = JOIN_INNER;
+    private int joinType = JOIN_NONE;
     private int latestByType = LATEST_BY_NONE;
     private ExpressionNode limitAdviceHi;
     private ExpressionNode limitAdviceLo;
@@ -245,6 +247,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);
             current = current.nestedModel;
         }
+    }
+
+    // Window join must be the last join in the query; no other join types can follow it.
+    // This constraint is enforced at the SQL parser stage.
+    public static boolean isWindowJoin(QueryModel model) {
+        if (model == null) {
+            return false;
+        }
+        ObjList<QueryModel> ms = model.getJoinModels();
+        return ms.size() > 1 && ms.get(ms.size() - 1).getJoinType() == JOIN_WINDOW;
     }
 
     /**
@@ -424,7 +436,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         latestByType = LATEST_BY_NONE;
         latestBy.clear();
         joinCriteria = null;
-        joinType = JOIN_INNER;
+        joinType = JOIN_NONE;
         joinKeywordPosition = 0;
         orderedJoinModels1.clear();
         orderedJoinModels2.clear();
@@ -440,7 +452,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         limitAdviceHi = null;
         limitAdviceLo = null;
         limitPosition = 0;
-        isLimitImplemented = false;
         timestamp = null;
         sqlNodeStack.clear();
         joinColumns.clear();
@@ -488,6 +499,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         forceBackwardScan = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
+        windowJoinContext.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -635,7 +647,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && joinType == that.joinType
                 && joinKeywordPosition == that.joinKeywordPosition
                 && limitPosition == that.limitPosition
-                && isLimitImplemented == that.isLimitImplemented
                 && isSelectTranslation == that.isSelectTranslation
                 && selectModelType == that.selectModelType
                 && nestedModelIsSubQuery == that.nestedModelIsSubQuery
@@ -645,6 +656,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && orderByAdviceMnemonic == that.orderByAdviceMnemonic
                 && tableId == that.tableId
                 && isUpdateModel == that.isUpdateModel
+                && isCteModel == that.isCteModel
                 && modelType == that.modelType
                 && artificialStar == that.artificialStar
                 && skipped == that.skipped
@@ -707,7 +719,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && Objects.equals(decls, that.decls)
-                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance);
+                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance)
+                && Objects.equals(windowJoinContext, that.windowJoinContext);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -1038,6 +1051,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return wildcardColumnNames;
     }
 
+    public WindowJoinContext getWindowJoinContext() {
+        return windowJoinContext;
+    }
+
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
         return withClauseModel;
     }
@@ -1076,17 +1093,21 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 sampleByUnit, sampleByTo, sampleByFrom, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
                 limitLo, limitHi, limitPosition,
-                limitAdviceLo, limitAdviceHi, isLimitImplemented,
+                limitAdviceLo, limitAdviceHi,
                 isSelectTranslation, selectModelType, nestedModelIsSubQuery,
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
-                isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
+                isUpdateModel, isCteModel, modelType, updateTableModel,
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls, windowJoinContext
         );
     }
 
     public boolean isArtificialStar() {
         return artificialStar;
+    }
+
+    public boolean isCteModel() {
+        return isCteModel;
     }
 
     public boolean isDistinct() {
@@ -1099,10 +1120,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isForceBackwardScan() {
         return forceBackwardScan;
-    }
-
-    public boolean isLimitImplemented() {
-        return isLimitImplemented;
     }
 
     public boolean isNestedModelIsSubQuery() {
@@ -1132,10 +1149,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isUpdate() {
         return isUpdateModel;
-    }
-
-    public boolean isCteModel() {
-        return isCteModel;
     }
 
     /**
@@ -1287,6 +1300,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         dependencies.remove(index);
     }
 
+    public void replaceColumn(int columnIndex, QueryColumn newColumn) {
+        if (topDownColumns.size() > 0) {
+            topDownColumns.setQuick(columnIndex, newColumn);
+        } else {
+            bottomUpColumns.setQuick(columnIndex, newColumn);
+        }
+    }
+
     public void replaceJoinModel(int pos, QueryModel model) {
         joinModels.setQuick(pos, model);
     }
@@ -1347,12 +1368,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.forceBackwardScan = forceBackwardScan;
     }
 
-    public void setIsUpdate(boolean isUpdate) {
-        this.isUpdateModel = isUpdate;
-    }
-
     public void setIsCteModel(boolean isCteModel) {
         this.isCteModel = isCteModel;
+    }
+
+    public void setIsUpdate(boolean isUpdate) {
+        this.isUpdateModel = isUpdate;
     }
 
     public void setJoinCriteria(ExpressionNode joinCriteria) {
@@ -1379,10 +1400,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void setLimitAdvice(ExpressionNode lo, ExpressionNode hi) {
         this.limitAdviceLo = lo;
         this.limitAdviceHi = hi;
-    }
-
-    public void setLimitImplemented(boolean limitImplemented) {
-        isLimitImplemented = limitImplemented;
     }
 
     public void setLimitPosition(int limitPosition) {
@@ -1803,6 +1820,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             case JOIN_LEFT_OUTER:
                                 sink.putAscii(" left join ");
                                 break;
+                            case JOIN_WINDOW:
+                                sink.putAscii(" window join ");
+                                break;
                             case JOIN_RIGHT_OUTER:
                                 sink.putAscii(" right join ");
                                 break;
@@ -1850,6 +1870,73 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                 jc.aNodes.getQuick(k).toSink(sink);
                                 sink.putAscii(" = ");
                                 jc.bNodes.getQuick(k).toSink(sink);
+                            }
+                        }
+
+                        WindowJoinContext wjc = model.getWindowJoinContext();
+                        if (model.joinType == JOIN_WINDOW) {
+                            sink.put(" between ");
+                            if (wjc.getLoExpr() != null) {
+                                wjc.getLoExpr().toSink(sink);
+                                unitToSink(sink, wjc.getLoExprTimeUnit());
+                                switch (wjc.getLoKind()) {
+                                    case WindowJoinContext.PRECEDING:
+                                        sink.putAscii(" preceding");
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        sink.putAscii(" following");
+                                        break;
+                                    default:
+                                        sink.putAscii("current row");
+                                        break;
+                                }
+                            } else {
+                                switch (wjc.getLoKind()) {
+                                    case WindowJoinContext.PRECEDING:
+                                        sink.putAscii("unbounded preceding");
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        sink.putAscii("unbounded following");
+                                        break;
+                                    default:
+                                        sink.putAscii("current row");
+                                        break;
+                                }
+                            }
+                            sink.putAscii(" and ");
+
+                            if (wjc.getHiExpr() != null) {
+                                wjc.getHiExpr().toSink(sink);
+                                unitToSink(sink, wjc.getHiExprTimeUnit());
+                                switch (wjc.getHiKind()) {
+                                    case WindowJoinContext.PRECEDING:
+                                        sink.putAscii(" preceding");
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        sink.putAscii(" following");
+                                        break;
+                                    default:
+                                        sink.putAscii("current row");
+                                        break;
+                                }
+                            } else {
+                                switch (wjc.getHiKind()) {
+                                    case WindowJoinContext.PRECEDING:
+                                        sink.putAscii("unbounded preceding");
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        sink.putAscii("unbounded following");
+                                        break;
+                                    default:
+                                        sink.put("current row");
+                                        break;
+                                }
+                            }
+
+                            if (wjc.isIncludePrevailing()) {
+                                sink.putAscii(" include prevailing");
+                            } else {
+                                sink.putAscii(" exclude prevailing");
                             }
                         }
 
@@ -2107,5 +2194,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
         modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, "select-cursor");
         modelTypeName.extendAndSet(SELECT_MODEL_SHOW, "show");
+        modelTypeName.extendAndSet(SELECT_MODEL_WINDOW_JOIN, "select-window-join");
     }
 }

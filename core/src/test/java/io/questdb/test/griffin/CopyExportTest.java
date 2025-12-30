@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
@@ -37,9 +38,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1120,6 +1124,7 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+
     // Demonstration of proper copy export test pattern
     @Test
     public void testCopyTableToParquetWithExportLog() throws Exception {
@@ -1300,6 +1305,32 @@ public class CopyExportTest extends AbstractCairoTest {
                                         2\tworld\t2.5
                                         """,
                                 "select * from read_parquet('" + exportRoot + File.separator + "output13.parquet" + "') order by x");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithNowFunc() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2023-01-01T10:00:01.000Z"));
+            execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
+            execute("insert into test_table values ('2023-01-01T10:00:00.000Z', 1), ('2023-01-02T10:00:00.000Z', 2)");
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy (select * from test_table where ts < now()) to 'output11' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output11.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        // Verify partitioned data
+                        assertSql("""
+                                        ts	x
+                                        2023-01-01T10:00:00.000000Z	1
+                                        """,
+                                "select * from read_parquet('" + exportRoot + File.separator + "output11.parquet') order by ts");
                     });
 
             testCopyExport(stmt, test);
@@ -1581,9 +1612,23 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyWithSameOutput() throws Exception {
-        assertMemoryLeak(() -> {
+        AtomicBoolean pause = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (pause.get() && Utf8s.containsAscii(to, "output8")) {
+                    while (pause.get()) {
+                        Os.sleep(100);
+                    }
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
+            drainWalQueue();
 
             Callable<Exception> callback = () -> {
                 try {
@@ -1593,6 +1638,8 @@ public class CopyExportTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), contains);
                     LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
                     return e;
+                } finally {
+                    pause.set(false);
                 }
                 return new UnsupportedOperationException();
             };
@@ -1621,7 +1668,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyWithSameSql() throws Exception {
-        assertMemoryLeak(() -> {
+        AtomicBoolean pause = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (pause.get() && Utf8s.containsAscii(to, "output8")) {
+                    while (pause.get()) {
+                        Os.sleep(100);
+                    }
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
 
@@ -1633,6 +1693,8 @@ public class CopyExportTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), contains);
                     LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
                     return e;
+                } finally {
+                    pause.set(false);
                 }
                 return new UnsupportedOperationException();
             };
@@ -1657,15 +1719,31 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyWithSameTable() throws Exception {
-        assertMemoryLeak(() -> {
+        AtomicBoolean pause = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (pause.get() && Utf8s.containsAscii(to, "output8")) {
+                    while (pause.get()) {
+                        Os.sleep(100);
+                    }
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table values (1, 'test')");
+            pause.set(true);
             runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
             try {
                 runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
                 Assert.fail("Expected failure due to ongoing export to same sql statement");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
+            } finally {
+                pause.set(false);
             }
 
             CopyExportRunnable test = () ->
