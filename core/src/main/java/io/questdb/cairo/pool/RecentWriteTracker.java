@@ -440,16 +440,17 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Records a merge throughput sample for a specific table.
+     * Records both write amplification and merge throughput for a specific table.
      * <p>
-     * Merge throughput is measured in rows/second during WAL apply.
-     * Called after WAL transactions are applied to the table.
+     * This is a convenience method that records both metrics in a single call,
+     * avoiding redundant map lookups and using a single lock acquisition.
      *
-     * @param tableToken the table that was written to
-     * @param throughput the throughput in rows/second
+     * @param tableToken    the table that was written to
+     * @param amplification the write amplification ratio (physicalRows / logicalRows)
+     * @param throughput    the throughput in rows/second
      */
-    public void recordMergeThroughput(@NotNull TableToken tableToken, long throughput) {
-        getOrCreateStats(tableToken).recordMergeThroughput(throughput);
+    public void recordMergeStats(@NotNull TableToken tableToken, double amplification, long throughput) {
+        getOrCreateStats(tableToken).recordMergeStats(amplification, throughput);
     }
 
     /**
@@ -520,19 +521,6 @@ public class RecentWriteTracker {
         if (writeStats.size() > maxCapacity * 2) {
             evictOldest();
         }
-    }
-
-    /**
-     * Records a write amplification sample for a specific table.
-     * <p>
-     * Write amplification is the ratio of physical rows written to logical rows.
-     * Called after WAL transactions are applied to the table.
-     *
-     * @param tableToken    the table that was written to
-     * @param amplification the write amplification ratio (physicalRows / logicalRows)
-     */
-    public void recordWriteAmplification(@NotNull TableToken tableToken, double amplification) {
-        getOrCreateStats(tableToken).recordWriteAmplification(amplification);
     }
 
     /**
@@ -709,8 +697,8 @@ public class RecentWriteTracker {
         private final AtomicLong floorSeqTxn = new AtomicLong(0);
         // Merge throughput histogram - tracks rows/second during WAL apply
         private final Histogram mergeThroughputHistogram = new Histogram(2);
-        // Lock for merge throughput histogram access
-        private final SimpleReadWriteLock mergeThroughputHistogramLock = new SimpleReadWriteLock();
+        // Lock for merge stats (write amplification and merge throughput) access
+        private final SimpleReadWriteLock mergeStatsLock = new SimpleReadWriteLock();
         // WAL fields - updated by WalWriters only, highest wins via CAS
         private final AtomicLong sequencerTxn;
         // Transaction size histogram - tracks distribution of WAL transaction sizes
@@ -722,8 +710,6 @@ public class RecentWriteTracker {
         private final AtomicLong walTimestamp;
         // Write amplification histogram - tracks ratio of physical rows written to logical rows
         private final DoubleHistogram writeAmplificationHistogram = new DoubleHistogram(2);
-        // Lock for write amplification histogram access
-        private final SimpleReadWriteLock writeAmplificationHistogramLock = new SimpleReadWriteLock();
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
         private volatile long timestamp;
@@ -788,11 +774,11 @@ public class RecentWriteTracker {
          * @return total sample count
          */
         public long getMergeThroughputCount() {
-            mergeThroughputHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return mergeThroughputHistogram.getTotalCount();
             } finally {
-                mergeThroughputHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -802,11 +788,11 @@ public class RecentWriteTracker {
          * @return maximum throughput in rows/second, or 0 if no samples recorded
          */
         public long getMergeThroughputMax() {
-            mergeThroughputHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return mergeThroughputHistogram.getMaxValue();
             } finally {
-                mergeThroughputHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -816,11 +802,11 @@ public class RecentWriteTracker {
          * @return median throughput in rows/second, or 0 if no samples recorded
          */
         public long getMergeThroughputP50() {
-            mergeThroughputHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return mergeThroughputHistogram.getValueAtPercentile(50);
             } finally {
-                mergeThroughputHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -830,11 +816,11 @@ public class RecentWriteTracker {
          * @return 90th percentile throughput in rows/second, or 0 if no samples recorded
          */
         public long getMergeThroughputP90() {
-            mergeThroughputHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return mergeThroughputHistogram.getValueAtPercentile(90);
             } finally {
-                mergeThroughputHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -844,11 +830,11 @@ public class RecentWriteTracker {
          * @return 99th percentile throughput in rows/second, or 0 if no samples recorded
          */
         public long getMergeThroughputP99() {
-            mergeThroughputHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return mergeThroughputHistogram.getValueAtPercentile(99);
             } finally {
-                mergeThroughputHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -975,11 +961,11 @@ public class RecentWriteTracker {
          * @return total sample count
          */
         public long getWriteAmplificationCount() {
-            writeAmplificationHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return writeAmplificationHistogram.getTotalCount();
             } finally {
-                writeAmplificationHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -989,11 +975,11 @@ public class RecentWriteTracker {
          * @return maximum write amplification, or 0.0 if no samples recorded
          */
         public double getWriteAmplificationMax() {
-            writeAmplificationHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return writeAmplificationHistogram.getMaxValue();
             } finally {
-                writeAmplificationHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -1003,11 +989,11 @@ public class RecentWriteTracker {
          * @return median write amplification, or 0.0 if no samples recorded
          */
         public double getWriteAmplificationP50() {
-            writeAmplificationHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return writeAmplificationHistogram.getValueAtPercentile(50);
             } finally {
-                writeAmplificationHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -1017,11 +1003,11 @@ public class RecentWriteTracker {
          * @return 90th percentile write amplification, or 0.0 if no samples recorded
          */
         public double getWriteAmplificationP90() {
-            writeAmplificationHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return writeAmplificationHistogram.getValueAtPercentile(90);
             } finally {
-                writeAmplificationHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -1031,11 +1017,11 @@ public class RecentWriteTracker {
          * @return 99th percentile write amplification, or 0.0 if no samples recorded
          */
         public double getWriteAmplificationP99() {
-            writeAmplificationHistogramLock.readLock().lock();
+            mergeStatsLock.readLock().lock();
             try {
                 return writeAmplificationHistogram.getValueAtPercentile(99);
             } finally {
-                writeAmplificationHistogramLock.readLock().unlock();
+                mergeStatsLock.readLock().unlock();
             }
         }
 
@@ -1103,34 +1089,22 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Records a merge throughput sample.
-         *
-         * @param throughput the throughput in rows/second
-         */
-        void recordMergeThroughput(long throughput) {
-            if (throughput > 0) {
-                mergeThroughputHistogramLock.writeLock().lock();
-                try {
-                    mergeThroughputHistogram.recordValue(throughput);
-                } finally {
-                    mergeThroughputHistogramLock.writeLock().unlock();
-                }
-            }
-        }
-
-        /**
-         * Records a write amplification sample.
+         * Records both write amplification and merge throughput under a single lock.
          *
          * @param amplification the write amplification ratio (physicalRows / logicalRows)
+         * @param throughput    the throughput in rows/second
          */
-        void recordWriteAmplification(double amplification) {
-            if (amplification > 0) {
-                writeAmplificationHistogramLock.writeLock().lock();
-                try {
+        void recordMergeStats(double amplification, long throughput) {
+            mergeStatsLock.writeLock().lock();
+            try {
+                if (amplification > 0) {
                     writeAmplificationHistogram.recordValue(amplification);
-                } finally {
-                    writeAmplificationHistogramLock.writeLock().unlock();
                 }
+                if (throughput > 0) {
+                    mergeThroughputHistogram.recordValue(throughput);
+                }
+            } finally {
+                mergeStatsLock.writeLock().unlock();
             }
         }
 

@@ -56,6 +56,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
@@ -518,7 +519,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 finishedAll = finishedAll || (writer.getAppliedSeqTxn() == transactionLogCursor.getMaxTxn() && !transactionLogCursor.hasNext());
                 if (totalTransactionCount > 0) {
-                    double amplification = (double) Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0;
+                    double amplification = rowsAdded > 0 ? Numbers.roundUp(Numbers.roundUp(100.0 * physicalRowsAdded / rowsAdded, 2) / 100.0, 2) : 0;
                     long throughput = rowsAdded * 1000000L / Math.max(1, insertTimespan);
                     LOG.info().$("job ")
                             .$(finishedAll ? "finished" : "ejected")
@@ -530,8 +531,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("ms, rate=").$(throughput)
                             .$("rows/s, ampl=").$(amplification)
                             .I$();
-                    engine.getRecentWriteTracker().recordWriteAmplification(writer.getTableToken(), amplification);
-                    engine.getRecentWriteTracker().recordMergeThroughput(writer.getTableToken(), throughput);
+                    engine.getRecentWriteTracker().recordMergeStats(writer.getTableToken(), amplification, throughput);
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
