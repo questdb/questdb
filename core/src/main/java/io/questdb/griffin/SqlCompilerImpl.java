@@ -1637,6 +1637,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             engine.getViewGraph().validateNoCycle(viewToken, queryModel);
 
             try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
+                final RecordMetadata metadata = factory.getMetadata();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    final CharSequence columnName = metadata.getColumnName(i);
+                    if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                        throw SqlException.position(0)
+                                .put("invalid column name [name=")
+                                .put(columnName)
+                                .put(", position=")
+                                .put(i)
+                                .put(']');
+                    }
+                }
                 // test the cursor, if no exception thrown viewSql is working
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     cursor.hasNext();

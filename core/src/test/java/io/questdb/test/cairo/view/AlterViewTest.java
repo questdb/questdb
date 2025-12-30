@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.PropertyKey;
 import org.junit.Test;
 
 public class AlterViewTest extends AbstractViewTest {
@@ -136,6 +137,28 @@ public class AlterViewTest extends AbstractViewTest {
                     "]," +
                     "\"timestampIndex\":0" +
                     "}");
+        });
+    }
+
+    @Test
+    public void testAlterViewRejectsInvalidColumnName() throws Exception {
+        // explicitly enable expression-based column names to test that view alteration
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
+            createView(VIEW1, query1, TABLE1);
+
+            drainWalAndViewQueues();
+
+            // when altering the view then column names must still be valid - the same as for table creation
+            assertExceptionNoLeakCheck(
+                    "CREATE OR REPLACE VIEW " + VIEW1 + " AS (SELECT v * 10 FROM " + TABLE1 + ")",
+                    32,
+                    "invalid column name [name=v * 10"
+            );
         });
     }
 
