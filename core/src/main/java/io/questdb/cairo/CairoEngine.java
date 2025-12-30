@@ -1072,6 +1072,12 @@ public class CairoEngine implements Closeable, WriterSource {
                 // throw table dropped exception instead to make it clear what happened.
                 throw CairoException.tableDropped(tableToken);
             }
+            // Check if the table is concurrently dropped after token verification
+            TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
+            if (tt == null || TableNameRegistry.isLocked(tt)) {
+                // Throw table does not exist exception to indicate that the table is gone.
+                throw CairoException.tableDoesNotExist(tableToken.getTableName());
+            }
             throw e;
         }
     }

@@ -443,12 +443,16 @@ public class WalWriter implements TableWriterAPI {
         try {
             applyMetadataChangeLog(maxStructureVersion);
         } catch (CairoException e) {
+            distressed = true;
+            if (e.isTableDropped()) {
+                // Throw table dropped exception as is
+                throw e;
+            }
             LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .$(", ex=").$((Throwable) e)
                     .$(", errno=").$(e.getErrno())
                     .I$();
-            distressed = true;
             throw e;
         }
     }
