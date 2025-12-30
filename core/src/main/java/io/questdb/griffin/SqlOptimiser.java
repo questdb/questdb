@@ -6645,6 +6645,105 @@ public class SqlOptimiser implements Mutable {
         return root;
     }
 
+    private void replaceNestedWithFirstLastUnion(
+            QueryModel model,
+            QueryModel baseNested,
+            CharSequence timestampColumn
+    ) {
+        final QueryModel firstRowModel = createSelectModelWithLimit(baseNested, timestampColumn, "1");
+        final QueryModel lastRowModel = createSelectModelWithLimit(baseNested, timestampColumn, "-1");
+
+        firstRowModel.setUnionModel(lastRowModel);
+        firstRowModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
+
+        model.setNestedModel(firstRowModel);
+    }
+
+    private boolean canOptimizeMultipleFirstLast(
+            ObjList<QueryColumn> queryColumns,
+            CharSequence timestampColumn
+    ) {
+        boolean hasMinOrFirst = false;
+        boolean hasMaxOrLast = false;
+
+        for (int i = 0, n = queryColumns.size(); i < n; i++) {
+            final QueryColumn column = queryColumns.get(i);
+            final ExpressionNode ast = column.getAst();
+            if (ast == null || ast.type != FUNCTION || ast.rhs == null) {
+                return false;
+            }
+            final CharSequence token = ast.token;
+            final CharSequence rhs = ast.rhs.token;
+            if (!Chars.equals(timestampColumn, rhs)) {
+                return false;
+            }
+            if (Chars.equalsIgnoreCase("min", token) || Chars.equalsIgnoreCase("first", token)) {
+                hasMinOrFirst = true;
+            } else if (Chars.equalsIgnoreCase("max", token) || Chars.equalsIgnoreCase("last", token)) {
+                hasMaxOrLast = true;
+            } else {
+                return false;
+            }
+        }
+
+        return hasMinOrFirst && hasMaxOrLast;
+    }
+
+    private QueryModel createSelectModelWithLimit(QueryModel baseNested, CharSequence timestampColumn, String limitValue) {
+        final QueryModel nested = queryModelPool.next();
+        nested.setTableNameExpr(baseNested.getTableNameExpr());
+        nested.setModelType(baseNested.getModelType());
+        nested.setTimestamp(baseNested.getTimestamp());
+        nested.setWhereClause(baseNested.getWhereClause());
+        nested.copyColumnsFrom(baseNested, queryColumnPool, expressionNodePool);
+
+        final QueryModel selectModel = queryModelPool.next();
+        selectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        selectModel.setNestedModel(nested);
+
+        final ExpressionNode tsNode = expressionNodePool.next().of(LITERAL, timestampColumn, 0, 0);
+        final QueryColumn tsCol = queryColumnPool.next().of(timestampColumn, tsNode);
+        selectModel.addBottomUpColumnIfNotExists(tsCol);
+
+        final ExpressionNode limitNode = expressionNodePool.next().of(CONSTANT, limitValue, 0, 0);
+        selectModel.setLimit(limitNode, null);
+
+        return selectModel;
+    }
+
+    private void rewriteMultipleFirstLastGroupBy(QueryModel model) {
+        if (model.getSelectModelType() != QueryModel.SELECT_MODEL_GROUP_BY) {
+            final QueryModel nested = model.getNestedModel();
+            if (nested != null) {
+                rewriteMultipleFirstLastGroupBy(nested);
+            }
+            final QueryModel union = model.getUnionModel();
+            if (union != null) {
+                rewriteMultipleFirstLastGroupBy(union);
+            }
+            ObjList<QueryModel> joinModels = model.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                rewriteMultipleFirstLastGroupBy(joinModels.getQuick(i));
+            }
+            return;
+        }
+
+        final QueryModel nested = model.getNestedModel();
+        if (nested == null || nested.getTimestamp() == null) {
+            return;
+        }
+
+        final ObjList<QueryColumn> queryColumns = model.getBottomUpColumns();
+        if (queryColumns.size() <= 1) {
+            return;
+        }
+
+        final CharSequence timestampColumn = nested.getTimestamp().token;
+        if (canOptimizeMultipleFirstLast(queryColumns, timestampColumn)) {
+            replaceNestedWithFirstLastUnion(model, nested, timestampColumn);
+        }
+    }
+
     /**
      * Rewrites queries like
      * <p>
@@ -7448,6 +7547,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            rewriteMultipleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);

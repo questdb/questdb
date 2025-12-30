@@ -41,6 +41,8 @@ import java.util.List;
 
 import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
     private static final String orderByAdviceDdl = """
@@ -753,6 +755,32 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Row forward scan
                                     Frame forward scan on: y
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxDesignatedTimestampOptimization() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (Ωprice double, amount double, ts timestamp) timestamp(ts);");
+            execute("insert into trades select 100.0, 50.0, timestamp_sequence('2023-01-01', 1000000L) from long_sequence(100);");
+
+            final String query = "select min(ts), max(ts) from trades";
+            final QueryModel model = compileModel(query);
+
+            assertNotNull(model);
+
+            QueryModel nested = model.getNestedModel();
+            assertNotNull(nested);
+            assertNotNull(nested.getUnionModel());
+            assertEquals(QueryModel.SET_OPERATION_UNION, nested.getSetOperationType());
+
+            assertQuery(
+                    "min\tmax\n2023-01-01T00:00:00.000000Z\t2023-01-01T00:01:39.000000Z\n",
+                    query,
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -5740,7 +5768,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
             assertEquals(ExecutionModel.QUERY, model.getModelType());
-            return (QueryModel) model;
+            QueryModel qm = (QueryModel) model;
+            System.out.println("*** compileModel returning: " + qm.toString0());
+            if (qm.getNestedModel() != null) {
+                System.out.println("*** compileModel nested has union: " + (qm.getNestedModel().getUnionModel() != null));
+            }
+            return qm;
         }
     }
 }
