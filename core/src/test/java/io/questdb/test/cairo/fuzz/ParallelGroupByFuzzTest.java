@@ -91,6 +91,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1 + rnd.nextInt(PAGE_FRAME_COUNT));
         // Set the sharding threshold to a small value to test sharding.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(50));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOPK_THRESHOLD, rnd.nextBoolean() ? 4 : Integer.MAX_VALUE);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
@@ -1471,6 +1472,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         k0\t3244000
                         """,
                 "Long Top K lo: 5"
+        );
+    }
+
+    @Test
+    public void testParallelKeyedGroupByWithLongTopK6() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT quantity::long q, avg(price/quantity) avg_unit_price FROM tab ORDER BY q DESC LIMIT 10",
+                """
+                        q\tavg_unit_price
+                        4050\t1.0
+                        4049\t1.0
+                        4048\t1.0
+                        4047\t1.0
+                        4046\t1.0
+                        4045\t1.0
+                        4044\t1.0
+                        4043\t1.0
+                        4042\t1.0
+                        4041\t1.0
+                        """,
+                "Long Top K lo: 10"
         );
     }
 
