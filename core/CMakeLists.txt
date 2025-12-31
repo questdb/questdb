@@ -169,7 +169,7 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(asmjit)
-include_directories(${asmjit_SOURCE_DIR}/src SYSTEM)
+include_directories(${asmjit_SOURCE_DIR} SYSTEM)
 add_compile_definitions(ASMJIT_NO_STDCXX)
 
 # use this is for debug purposes
