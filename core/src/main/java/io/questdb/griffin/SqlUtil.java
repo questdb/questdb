@@ -112,7 +112,7 @@ public class SqlUtil {
                 }
             }
 
-            final ExpressionNode viewNameExpr = m.getViewNameExpr();
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
             if (viewNameExpr != null) {
                 outTableNames.add(unquote(viewNameExpr.token));
             }
@@ -221,7 +221,7 @@ public class SqlUtil {
             }
 
             // Process views
-            final ExpressionNode viewNameExpr = m.getViewNameExpr();
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
             if (viewNameExpr != null) {
                 String viewName = unquote(viewNameExpr.token).toString();
                 if (!depMap.contains(viewName)) {

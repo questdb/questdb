@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
@@ -321,7 +322,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 "1980-01-02T04:00:00.000000Z\n" +
                 "1980-01-02T02:00:00.000000Z\n", timestampType.getTypeName());
 
-        testReload(increment, intervals, N, expected, null);
+        testReload(increment, intervals, N, expected);
     }
 
     @Test
@@ -432,9 +433,12 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ),
                             timestampIndex,
                             metadata,
-                            ORDER_DESC
+                            ORDER_DESC,
+                            null,
+                            0,
+                            false
                     );
-                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_DESC)
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, new IntList(), ORDER_DESC)
             ) {
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -484,7 +488,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 try {
-                    factory.getCursor(executionContext, ORDER_DESC);
+                    factory.getCursor(executionContext, new IntList(), ORDER_DESC);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }
@@ -721,7 +725,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
                 assertEqualTimestamps(expected, record, cursor);
 
-                if (expected.length() > 0) {
+                if (!expected.isEmpty()) {
                     cursor.toTop();
                     assertIndexRowsMatchSymbol(cursor, record, 0, expectedCount);
                     cursor.toTop();
@@ -738,8 +742,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             long increment,
             LongList intervals,
             int rowCount,
-            CharSequence expected1,
-            CharSequence expected2
+            CharSequence expected1
     ) throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken;
@@ -773,9 +776,12 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ),
                             timestampIndex,
                             metadata,
-                            ORDER_DESC
+                            ORDER_DESC,
+                            null,
+                            0,
+                            false
                     );
-                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_DESC)
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, new IntList(), ORDER_DESC)
             ) {
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -807,11 +813,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     writer.commit();
 
                     Assert.assertTrue(cursor.reload());
-                    if (expected2 != null) {
-                        assertEqualTimestamps(expected2, record, cursor);
-                    } else {
-                        assertEqualTimestamps(expected1, record, cursor);
-                    }
+                    assertEqualTimestamps(expected1, record, cursor);
 
                     Assert.assertFalse(cursor.reload());
                 }
@@ -825,7 +827,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 try {
-                    factory.getCursor(executionContext, ORDER_DESC);
+                    factory.getCursor(executionContext, new IntList(), ORDER_DESC);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }

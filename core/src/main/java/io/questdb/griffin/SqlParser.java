@@ -119,8 +119,6 @@ public class SqlParser {
     // Map of view definitions encountered during query compilation.
     // Using a map ensures consistent view definitions even if views are modified concurrently.
     private final LowerCaseCharSequenceObjHashMap<ViewDefinition> recordedViews = new LowerCaseCharSequenceObjHashMap<>();
-    // Track views currently being compiled to detect cycles during query parsing
-    private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
@@ -135,6 +133,8 @@ public class SqlParser {
     private final ObjectPool<GenericLexer> viewLexers;
     private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
     };
+    // Track views currently being compiled to detect cycles during query parsing
+    private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<WindowColumn> windowColumnPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private int digit;
@@ -501,7 +501,9 @@ public class SqlParser {
         viewLexer.of(viewDefinition.getViewSql());
 
         final QueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls, true);
-        viewModel.setViewNameExpr(literal(viewDefinition.getViewToken().getTableName(), viewPosition));
+        final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
+        viewModel.setOriginatingViewNameExpr(viewExpr);
+        viewModel.setViewNameExpr(viewExpr);
         return viewModel;
     }
 

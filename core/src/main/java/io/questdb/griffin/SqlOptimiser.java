@@ -6640,6 +6640,8 @@ public class SqlOptimiser implements Mutable {
             root.setUnionModel(model.getUnionModel());
             root.setSetOperationType(model.getSetOperationType());
             root.setModelPosition(model.getModelPosition());
+            root.setOriginatingViewNameExpr(model.getOriginatingViewNameExpr());
+            root.setViewNameExpr(model.getViewNameExpr());
             if (model.isUpdate()) {
                 root.setIsUpdate(true);
                 root.copyUpdateTableMetadata(model);
@@ -7423,7 +7425,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     @SuppressWarnings("unused")
-    protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
+    protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
     }
 
     @SuppressWarnings("unused")

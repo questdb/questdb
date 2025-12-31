@@ -203,6 +203,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int orderByPosition;
     private boolean orderDescendingByDesignatedTimestampOnly;
     private IntList orderedJoinModels = orderedJoinModels2;
+    private ExpressionNode originatingViewNameExpr;
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
@@ -354,8 +355,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinColumns.add(node);
     }
 
-    public void addJoinModel(QueryModel model) {
-        joinModels.add(model);
+    public void addJoinModel(QueryModel joinModel) {
+        joinModels.add(joinModel);
+        if (joinModel != null && viewNameExpr != null) {
+            joinModel.setViewNameExpr(viewNameExpr);
+        }
     }
 
     public void addLatestBy(ExpressionNode latestBy) {
@@ -438,6 +442,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         nestedModel = null;
         tableNameExpr = null;
         viewNameExpr = null;
+        originatingViewNameExpr = null;
         alias = null;
         latestByType = LATEST_BY_NONE;
         latestBy.clear();
@@ -724,6 +729,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(nestedModel, that.nestedModel)
                 && Objects.equals(tableNameExpr, that.tableNameExpr)
                 && Objects.equals(viewNameExpr, that.viewNameExpr)
+                && Objects.equals(originatingViewNameExpr, that.originatingViewNameExpr)
                 && Objects.equals(tableNameFunction, that.tableNameFunction)
                 && Objects.equals(alias, that.alias)
                 && Objects.equals(timestamp, that.timestamp)
@@ -971,6 +977,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderedJoinModels;
     }
 
+    public ExpressionNode getOriginatingViewNameExpr() {
+        return originatingViewNameExpr;
+    }
+
     public ExpressionNode getOuterJoinExpressionClause() {
         return outerJoinExpressionClause;
     }
@@ -1138,7 +1148,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, isCteModel, modelType, updateTableModel,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues,
-                decls, windowJoinContext, referencedViews
+                decls, windowJoinContext, referencedViews, originatingViewNameExpr
         );
     }
 
@@ -1479,6 +1489,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setNestedModel(QueryModel nestedModel) {
         this.nestedModel = nestedModel;
+        if (nestedModel != null && viewNameExpr != null) {
+            nestedModel.setViewNameExpr(viewNameExpr);
+        }
     }
 
     public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
@@ -1500,6 +1513,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void setOrderedJoinModels(IntList that) {
         assert that == orderedJoinModels1 || that == orderedJoinModels2;
         this.orderedJoinModels = that;
+    }
+
+    public void setOriginatingViewNameExpr(ExpressionNode originatingViewNameExpr) {
+        this.originatingViewNameExpr = originatingViewNameExpr;
     }
 
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
@@ -1570,6 +1587,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setUnionModel(QueryModel unionModel) {
         this.unionModel = unionModel;
+        if (unionModel != null && viewNameExpr != null) {
+            unionModel.setViewNameExpr(viewNameExpr);
+        }
     }
 
     public void setUpdateTableToken(TableToken tableName) {
@@ -1578,6 +1598,17 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setViewNameExpr(ExpressionNode viewNameExpr) {
         this.viewNameExpr = viewNameExpr;
+        if (viewNameExpr != null) {
+            if (nestedModel != null) {
+                nestedModel.setViewNameExpr(viewNameExpr);
+            }
+            if (unionModel != null) {
+                unionModel.setViewNameExpr(viewNameExpr);
+            }
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                joinModels.getQuick(i).setViewNameExpr(viewNameExpr);
+            }
+        }
     }
 
     public void setWhereClause(ExpressionNode whereClause) {
