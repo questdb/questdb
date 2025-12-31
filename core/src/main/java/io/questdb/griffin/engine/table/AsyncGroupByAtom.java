@@ -334,15 +334,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public DirectLongLongSortedList getLongTopKList(int slotId, int order, int limit) {
         if (slotId == -1) {
-            if (ownerLongTopKList == null) {
-                ownerLongTopKList = DirectLongLongSortedList.getInstance(order, limit, MemoryTag.NATIVE_DEFAULT);
-            } else if (ownerLongTopKList.getOrder() != order) {
+            if (ownerLongTopKList == null || ownerLongTopKList.getOrder() != order) {
                 Misc.free(ownerLongTopKList);
                 ownerLongTopKList = DirectLongLongSortedList.getInstance(order, limit, MemoryTag.NATIVE_DEFAULT);
             }
             ownerLongTopKList.reopen(limit);
             return ownerLongTopKList;
         }
+
         DirectLongLongSortedList workerList = perWorkerLongTopKLists.getQuick(slotId);
         if (workerList == null || workerList.getOrder() != order) {
             Misc.free(workerList);
