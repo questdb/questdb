@@ -42,16 +42,91 @@ namespace questdb::avx2 {
         }
     }
 
+    // Pre-scan instruction stream and broadcast constants into YMM registers before the loop.
+    // This hoists constant broadcasts out of the hot loop.
+    void preload_constants_ymm(Compiler &c,
+                               const instruction_t *istream,
+                               size_t size,
+                               ConstantCacheYmm &cache) {
+        const auto scope = ConstPool::kScopeLocal;
+        for (size_t i = 0; i < size; ++i) {
+            auto &instr = istream[i];
+            if (instr.opcode == opcodes::Imm) {
+                auto type = static_cast<data_type_t>(instr.options);
+                switch (type) {
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
+                    case data_type_t::i64: {
+                        int64_t value = instr.ipayload.lo;
+                        Ymm dummy;
+                        if (!cache.findInt(value, dummy)) {
+                            Ymm reg = c.newYmm("const_ymm_%lld", value);
+                            switch (type) {
+                                case data_type_t::i8: {
+                                    auto v = static_cast<int8_t>(value);
+                                    Mem mem = c.newConst(scope, &v, 1);
+                                    c.vpbroadcastb(reg, mem);
+                                    break;
+                                }
+                                case data_type_t::i16: {
+                                    auto v = static_cast<int16_t>(value);
+                                    Mem mem = c.newConst(scope, &v, 2);
+                                    c.vpbroadcastw(reg, mem);
+                                    break;
+                                }
+                                case data_type_t::i32: {
+                                    auto v = static_cast<int32_t>(value);
+                                    Mem mem = c.newConst(scope, &v, 4);
+                                    c.vpbroadcastd(reg, mem);
+                                    break;
+                                }
+                                case data_type_t::i64: {
+                                    Mem mem = c.newConst(scope, &value, 8);
+                                    c.vpbroadcastq(reg, mem);
+                                    break;
+                                }
+                                default:
+                                    break;
+                            }
+                            cache.addInt(value, reg);
+                        }
+                        break;
+                    }
+                    case data_type_t::f32:
+                    case data_type_t::f64: {
+                        double value = instr.dpayload;
+                        Ymm dummy;
+                        if (!cache.findFloat(value, dummy)) {
+                            Ymm reg = c.newYmm("const_ymm_f_%f", value);
+                            if (type == data_type_t::f32) {
+                                Mem mem = c.newFloatConst(scope, static_cast<float>(value));
+                                c.vbroadcastss(reg, mem);
+                            } else {
+                                Mem mem = c.newDoubleConst(scope, value);
+                                c.vbroadcastsd(reg, mem);
+                            }
+                            cache.addFloat(value, reg);
+                        }
+                        break;
+                    }
+                    default:
+                        // i128 constants are rare, skip caching
+                        break;
+                }
+            }
+        }
+    }
+
     inline static void unrolled_loop2(Compiler &c,
                                       const Gp &bits,
                                       const Gp &rows_ptr,
                                       const Gp &input,
                                       const Gp &output,
-                                      const Gp &rows_id_offset,
                                       int32_t step) {
         Gp offset = c.newInt64();
         for (int32_t i = 0; i < step; ++i) {
-            c.lea(offset, asmjit::x86::ptr(input, rows_id_offset, 0, i, 0));
+            c.lea(offset, asmjit::x86::ptr(input, i, 0));
             c.mov(qword_ptr(rows_ptr, output, 3), offset);
             c.mov(offset, bits);
             c.shr(offset, i);
@@ -240,7 +315,8 @@ namespace questdb::avx2 {
     }
 
     jit_value_t
-    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index) {
+    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index,
+             const ColumnAddressCache &cache) {
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
         }
@@ -261,9 +337,14 @@ namespace questdb::avx2 {
         }
 
         // Simple case: a fixed-width column
-
-        Gp column_address = c.newInt64("column_address");
-        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+        // Use cached column address if available
+        Gp column_address;
+        if (cache.has(column_idx)) {
+            column_address = cache.get(column_idx);
+        } else {
+            column_address = c.newInt64("column_address");
+            c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+        }
 
         Mem m;
         uint32_t shift = type_shift(type);
@@ -296,10 +377,28 @@ namespace questdb::avx2 {
         return {row_data, type, data_kind_t::kMemory};
     }
 
-    jit_value_t read_imm(Compiler &c, const instruction_t &instr) {
+    jit_value_t read_imm(Compiler &c, const instruction_t &instr, const ConstantCacheYmm &cache) {
+        auto type = static_cast<data_type_t>(instr.options);
+
+        // Check cache for integer constants
+        if (type == data_type_t::i8 || type == data_type_t::i16 ||
+            type == data_type_t::i32 || type == data_type_t::i64) {
+            Ymm cached;
+            if (cache.findInt(instr.ipayload.lo, cached)) {
+                return {cached, type, data_kind_t::kConst};
+            }
+        }
+        // Check cache for float constants
+        if (type == data_type_t::f32 || type == data_type_t::f64) {
+            Ymm cached;
+            if (cache.findFloat(instr.dpayload, cached)) {
+                return {cached, type, data_kind_t::kConst};
+            }
+        }
+
+        // Not in cache, broadcast from memory
         const auto scope = ConstPool::kScopeLocal;
         Ymm val = c.newYmm("imm_value");
-        auto type = static_cast<data_type_t>(instr.options);
         switch (type) {
             case data_type_t::i8: {
                 auto value = static_cast<int8_t>(instr.ipayload.lo);
@@ -488,8 +587,7 @@ namespace questdb::avx2 {
     }
 
     inline jit_value_t get_argument(ZoneStack<jit_value_t> &values) {
-        auto arg = values.pop();
-        return arg;
+        return values.pop();
     }
 
     inline std::pair<jit_value_t, jit_value_t>
@@ -547,7 +645,8 @@ namespace questdb::avx2 {
 
     void
     emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values, bool ncheck,
-              const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index) {
+              const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index,
+              const ColumnAddressCache &addr_cache, const ConstantCacheYmm &const_cache) {
         for (size_t i = 0; i < size; ++i) {
             auto instr = istream[i];
             switch (instr.opcode) {
@@ -564,11 +663,11 @@ namespace questdb::avx2 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index));
+                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache));
                 }
                     break;
                 case opcodes::Imm:
-                    values.append(read_imm(c, instr));
+                    values.append(read_imm(c, instr, const_cache));
                     break;
                 case opcodes::Neg:
                     values.append(neg(c, get_argument(values), ncheck));
@@ -576,12 +675,18 @@ namespace questdb::avx2 {
                 case opcodes::Not:
                     values.append(bin_not(c, get_argument(values)));
                     break;
+                case opcodes::And_Sc: // Short-circuit opcodes should never reach SIMD path
+                case opcodes::Or_Sc:
+                case opcodes::Begin_Sc:
+                case opcodes::End_Sc:
+                    return; // Compilation error: short-circuit opcodes in SIMD path
                 default:
                     emit_bin_op(c, instr, values, ncheck);
                     break;
             }
         }
     }
+
 }
 
 #endif //QUESTDB_JIT_AVX2_H

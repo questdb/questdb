@@ -956,7 +956,7 @@ public final class WhereClauseParser implements Mutable {
                     }
 
                     if (isNullKeyword(c.token)) {
-                        if (tempKeys.add(null)) {
+                        if (tempKeys.add((CharSequence) null)) {
                             tempPos.add(c.position);
                             tempType.add(c.type);
                         }
@@ -1313,7 +1313,7 @@ public final class WhereClauseParser implements Mutable {
                     }
 
                     if (isNullKeyword(c.token)) {
-                        if (tempKeys.add(null)) {
+                        if (tempKeys.add((CharSequence) null)) {
                             tempPos.add(c.position);
                             tempType.add(c.type);
                         }

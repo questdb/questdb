@@ -64,7 +64,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFuzz() throws Exception {
+    public void testWindowJoinFuzz() throws Exception {
         assertMemoryLeak(() -> {
             CharSequence[] symbols = new CharSequence[rnd.nextInt(20) + 4];
             for (int i = 0; i < symbols.length; i++) {
