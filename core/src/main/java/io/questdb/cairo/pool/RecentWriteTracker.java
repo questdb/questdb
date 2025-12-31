@@ -309,6 +309,34 @@ public class RecentWriteTracker {
     }
 
     /**
+     * Records a replica download batch, updating sequencerTxn, walTimestamp, and walRowCount.
+     * <p>
+     * This method is called by replicas when WAL data is downloaded from the object store.
+     * Unlike {@link #recordWalWrite}, this does NOT record to the transaction size histogram
+     * because replicas download data in batches that may contain multiple transactions.
+     * Instead, it records to a separate batch size histogram for replica-specific metrics.
+     * <p>
+     * The highest values win for sequencerTxn and walTimestamp, while batchRowCount is accumulated.
+     *
+     * @param tableToken    the table that was downloaded
+     * @param sequencerTxn  the sequencer transaction number (last txn in the batch)
+     * @param walTimestamp  the max timestamp from the downloaded WAL data
+     * @param batchRowCount the total number of rows in this download batch
+     */
+    public void recordReplicaDownload(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long batchRowCount) {
+        try {
+            getOrCreateStats(tableToken).updateReplicaDownload(sequencerTxn, walTimestamp, batchRowCount);
+
+            // Lazy eviction
+            if (writeStats.size() > maxCapacity * 2) {
+                evictOldest();
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not record replica download [table=").$(tableToken).$(", error=").$(th).I$();
+        }
+    }
+
+    /**
      * Records a WAL write, updating the sequencerTxn, walTimestamp, and walRowCount fields.
      * <p>
      * This method is called when a WalWriter is returned to the pool. Multiple WAL
@@ -536,6 +564,10 @@ public class RecentWriteTracker {
      * writers can update it concurrently, and the highest value must win.
      */
     public static class WriteStats {
+        // Replica batch size histogram - tracks distribution of download batch sizes (replica only)
+        private final Histogram batchSizeHistogram = new Histogram(2);
+        // Lock for batch size histogram access
+        private final SimpleReadWriteLock batchSizeHistogramLock = new SimpleReadWriteLock();
         // Dedup row count - accumulated count of rows removed by deduplication
         private final LongAdder dedupRowCount = new LongAdder();
         // Floor seqTxn - set on startup, WAL rows with seqTxn <= floor are not subtracted
@@ -566,6 +598,78 @@ public class RecentWriteTracker {
             this.writerTxn = writerTxn;
             this.sequencerTxn = new AtomicLong(sequencerTxn);
             this.walTimestamp = new AtomicLong(walTimestamp);
+        }
+
+        /**
+         * Returns the total number of replica download batches recorded.
+         * <p>
+         * This is only populated on replicas via {@link #recordReplicaDownload}.
+         *
+         * @return total batch count
+         */
+        public long getBatchCount() {
+            batchSizeHistogramLock.readLock().lock();
+            try {
+                return batchSizeHistogram.getTotalCount();
+            } finally {
+                batchSizeHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the maximum batch size recorded (replica only).
+         *
+         * @return maximum batch size in rows, or 0 if no batches recorded
+         */
+        public long getBatchSizeMax() {
+            batchSizeHistogramLock.readLock().lock();
+            try {
+                return batchSizeHistogram.getMaxValue();
+            } finally {
+                batchSizeHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 50th percentile (median) batch size (replica only).
+         *
+         * @return median batch size in rows, or 0 if no batches recorded
+         */
+        public long getBatchSizeP50() {
+            batchSizeHistogramLock.readLock().lock();
+            try {
+                return batchSizeHistogram.getValueAtPercentile(50);
+            } finally {
+                batchSizeHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 90th percentile batch size (replica only).
+         *
+         * @return 90th percentile batch size in rows, or 0 if no batches recorded
+         */
+        public long getBatchSizeP90() {
+            batchSizeHistogramLock.readLock().lock();
+            try {
+                return batchSizeHistogram.getValueAtPercentile(90);
+            } finally {
+                batchSizeHistogramLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the 99th percentile batch size (replica only).
+         *
+         * @return 99th percentile batch size in rows, or 0 if no batches recorded
+         */
+        public long getBatchSizeP99() {
+            batchSizeHistogramLock.readLock().lock();
+            try {
+                return batchSizeHistogram.getValueAtPercentile(99);
+            } finally {
+                batchSizeHistogramLock.readLock().unlock();
+            }
         }
 
         /**
@@ -656,28 +760,36 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Returns the 90th percentile merge throughput.
+         * Returns the throughput that 90% of merge jobs exceeded.
+         * <p>
+         * For throughput (where higher is better), this shows the slow tail:
+         * the throughput at which the slowest 10% of jobs performed.
          *
-         * @return 90th percentile throughput in rows/second, or 0 if no samples recorded
+         * @return throughput in rows/second that 90% of jobs exceeded, or 0 if no samples recorded
          */
         public long getMergeThroughputP90() {
             mergeStatsLock.readLock().lock();
             try {
-                return mergeThroughputHistogram.getValueAtPercentile(90);
+                // Inverted: P90 for throughput = value that 90% exceeded = 10th percentile
+                return mergeThroughputHistogram.getValueAtPercentile(10);
             } finally {
                 mergeStatsLock.readLock().unlock();
             }
         }
 
         /**
-         * Returns the 99th percentile merge throughput.
+         * Returns the throughput that 99% of merge jobs exceeded.
+         * <p>
+         * For throughput (where higher is better), this shows the slow tail:
+         * the throughput at which the slowest 1% of jobs performed.
          *
-         * @return 99th percentile throughput in rows/second, or 0 if no samples recorded
+         * @return throughput in rows/second that 99% of jobs exceeded, or 0 if no samples recorded
          */
         public long getMergeThroughputP99() {
             mergeStatsLock.readLock().lock();
             try {
-                return mergeThroughputHistogram.getValueAtPercentile(99);
+                // Inverted: P99 for throughput = value that 99% exceeded = 1st percentile
+                return mergeThroughputHistogram.getValueAtPercentile(1);
             } finally {
                 mergeStatsLock.readLock().unlock();
             }
@@ -880,6 +992,48 @@ public class RecentWriteTracker {
          */
         public long getWriterTxn() {
             return writerTxn;
+        }
+
+        /**
+         * Updates replica download fields. Unlike updateWal, this records to the batch
+         * histogram instead of the transaction histogram, since replicas download data
+         * in batches that may contain multiple transactions.
+         *
+         * @param newTxn          the new sequencer transaction number (last txn in batch)
+         * @param newWalTimestamp the WAL write timestamp in microseconds
+         * @param batchRowCount   the total number of rows in this download batch
+         */
+        private void updateReplicaDownload(long newTxn, long newWalTimestamp, long batchRowCount) {
+            // Always increment WAL row count - contention-free via LongAdder
+            walRowCount.add(batchRowCount);
+
+            // Record batch size in replica-specific histogram (NOT txnSizeHistogram)
+            if (batchRowCount > 0) {
+                batchSizeHistogramLock.writeLock().lock();
+                try {
+                    batchSizeHistogram.recordValue(batchRowCount);
+                } finally {
+                    batchSizeHistogramLock.writeLock().unlock();
+                }
+            }
+
+            // CAS update walTimestamp - highest wins
+            long currentTs;
+            do {
+                currentTs = walTimestamp.get();
+                if (newWalTimestamp <= currentTs) {
+                    break;
+                }
+            } while (!walTimestamp.compareAndSet(currentTs, newWalTimestamp));
+
+            // CAS update sequencerTxn - highest wins
+            long currentTxn;
+            do {
+                currentTxn = sequencerTxn.get();
+                if (newTxn <= currentTxn) {
+                    return;
+                }
+            } while (!sequencerTxn.compareAndSet(currentTxn, newTxn));
         }
 
         /**

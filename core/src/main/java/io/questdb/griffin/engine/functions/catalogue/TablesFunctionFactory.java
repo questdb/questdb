@@ -54,6 +54,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class TablesFunctionFactory implements FunctionFactory {
+    private static final int BATCH_COUNT_COLUMN = 34;
+    private static final int BATCH_SIZE_MAX_COLUMN = 38;
+    private static final int BATCH_SIZE_P50_COLUMN = 35;
+    private static final int BATCH_SIZE_P90_COLUMN = 36;
+    private static final int BATCH_SIZE_P99_COLUMN = 37;
     private static final int DEDUPE_ROW_COUNT_COLUMN = 12;
     private static final int DEDUP_NAME_COLUMN = 6;
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
@@ -62,7 +67,7 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int IS_MAT_VIEW_COLUMN = 9;
     private static final int LAST_WAL_TIMESTAMP_COLUMN = 16;
     private static final int LAST_WRITE_TIMESTAMP_COLUMN = 13;
-    private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 34;
+    private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 39;
     private static final int MEMORY_PRESSURE_LEVEL_COLUMN = 18;
     private static final int MERGE_THROUGHPUT_COUNT_COLUMN = 29;
     private static final int MERGE_THROUGHPUT_MAX_COLUMN = 33;
@@ -70,7 +75,7 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int MERGE_THROUGHPUT_P90_COLUMN = 31;
     private static final int MERGE_THROUGHPUT_P99_COLUMN = 32;
     private static final RecordMetadata METADATA;
-    private static final int O3_MAX_LAG_COLUMN = 35;
+    private static final int O3_MAX_LAG_COLUMN = 40;
     private static final int PARTITION_BY_COLUMN = 3;
     private static final int PENDING_ROW_COUNT_COLUMN = 11;
     private static final int ROW_COUNT_COLUMN = 10;
@@ -300,7 +305,10 @@ public class TablesFunctionFactory implements FunctionFactory {
                                 || col == TXN_SIZE_MAX_COLUMN || col == WRITE_AMPLIFICATION_COUNT_COLUMN
                                 || col == MERGE_THROUGHPUT_COUNT_COLUMN || col == MERGE_THROUGHPUT_P50_COLUMN
                                 || col == MERGE_THROUGHPUT_P90_COLUMN || col == MERGE_THROUGHPUT_P99_COLUMN
-                                || col == MERGE_THROUGHPUT_MAX_COLUMN ? 0 : Numbers.LONG_NULL;
+                                || col == MERGE_THROUGHPUT_MAX_COLUMN
+                                || col == BATCH_COUNT_COLUMN || col == BATCH_SIZE_P50_COLUMN
+                                || col == BATCH_SIZE_P90_COLUMN || col == BATCH_SIZE_P99_COLUMN
+                                || col == BATCH_SIZE_MAX_COLUMN ? 0 : Numbers.LONG_NULL;
                     }
                     return switch (col) {
                         case ROW_COUNT_COLUMN -> writeStats.getRowCount();
@@ -319,6 +327,11 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case MERGE_THROUGHPUT_P90_COLUMN -> writeStats.getMergeThroughputP90();
                         case MERGE_THROUGHPUT_P99_COLUMN -> writeStats.getMergeThroughputP99();
                         case MERGE_THROUGHPUT_MAX_COLUMN -> writeStats.getMergeThroughputMax();
+                        case BATCH_COUNT_COLUMN -> writeStats.getBatchCount();
+                        case BATCH_SIZE_P50_COLUMN -> writeStats.getBatchSizeP50();
+                        case BATCH_SIZE_P90_COLUMN -> writeStats.getBatchSizeP90();
+                        case BATCH_SIZE_P99_COLUMN -> writeStats.getBatchSizeP99();
+                        case BATCH_SIZE_MAX_COLUMN -> writeStats.getBatchSizeMax();
                         default -> Numbers.LONG_NULL;
                     };
                 }
@@ -412,8 +425,13 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("mergeThroughputP90", ColumnType.LONG));       // 31
         metadata.add(new TableColumnMetadata("mergeThroughputP99", ColumnType.LONG));       // 32
         metadata.add(new TableColumnMetadata("mergeThroughputMax", ColumnType.LONG));       // 33
-        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));        // 34
-        metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));                 // 35
+        metadata.add(new TableColumnMetadata("batchCount", ColumnType.LONG));               // 34
+        metadata.add(new TableColumnMetadata("batchSizeP50", ColumnType.LONG));             // 35
+        metadata.add(new TableColumnMetadata("batchSizeP90", ColumnType.LONG));             // 36
+        metadata.add(new TableColumnMetadata("batchSizeP99", ColumnType.LONG));             // 37
+        metadata.add(new TableColumnMetadata("batchSizeMax", ColumnType.LONG));             // 38
+        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));        // 39
+        metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));                 // 40
         METADATA = metadata;
     }
 }
