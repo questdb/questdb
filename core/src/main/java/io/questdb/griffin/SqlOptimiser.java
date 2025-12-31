@@ -25,14 +25,22 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -56,19 +64,25 @@ import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WindowJoinContext;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -78,6 +92,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
+import io.questdb.std.Uuid;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -91,6 +106,9 @@ import static io.questdb.griffin.SqlCodeGenerator.joinsRequiringTimestamp;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.std.GenericLexer.unquote;
+import static io.questdb.std.Long256Impl.isNull;
+import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_FORCE_INNER_MODEL = 64;
@@ -159,6 +177,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntSortedList orderingStack = new IntSortedList();
     private final Path path;
+    private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -168,6 +187,7 @@ public class SqlOptimiser implements Mutable {
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final BoolList tempBoolList = new BoolList();
+    private final CharSequenceHashSet tempCharSequenceSet = new CharSequenceHashSet();
     private final ObjList<QueryColumn> tempColumns = new ObjList<>();
     private final ObjList<QueryColumn> tempColumns2 = new ObjList<>();
     private final IntList tempCrossIndexes = new IntList();
@@ -261,6 +281,8 @@ public class SqlOptimiser implements Mutable {
         tempBoolList.clear();
         tempColumns.clear();
         tempColumns2.clear();
+        tempCharSequenceSet.clear();
+        pivotAliasMap.clear();
     }
 
     public void clearForUnionModelInJoin() {
@@ -379,6 +401,274 @@ public class SqlOptimiser implements Mutable {
 
     private static boolean modelIsFlex(QueryModel model) {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
+    }
+
+    private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink) {
+        final int columnType = metadata.getColumnType(0);
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.STRING:
+            case ColumnType.ARRAY_STRING: {
+                final CharSequence val = record.getStrA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.SYMBOL: {
+                final CharSequence val = record.getSymA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.VARCHAR: {
+                final var val = record.getVarcharA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.INT: {
+                final int val = record.getInt(0);
+                if (val == Numbers.INT_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.LONG: {
+                final long val = record.getLong(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.SHORT: {
+                // short and byte doesn't have null
+                final short val = record.getShort(0);
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.BYTE: {
+                final byte val = record.getByte(0);
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.DOUBLE: {
+                final double val = record.getDouble(0);
+                if (Numbers.isFinite(val)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.FLOAT: {
+                final float val = record.getFloat(0);
+                if (Numbers.isFinite(val)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.DATE: {
+                final long val = record.getDate(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.TIMESTAMP: {
+                final long val = record.getTimestamp(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.CHAR: {
+                final char val = record.getChar(0);
+                if (val == 0) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.BOOLEAN: {
+                sink.put(record.getBool(0));
+                return false;
+            }
+            case ColumnType.NULL: {
+                sink.put("NULL");
+                return true;
+            }
+            case ColumnType.GEOBYTE: {
+                final byte val = record.getGeoByte(0);
+                if (val == GeoHashes.BYTE_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.GEOSHORT: {
+                final short val = record.getGeoShort(0);
+                if (val == GeoHashes.SHORT_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.GEOINT: {
+                final int val = record.getGeoInt(0);
+                if (val == GeoHashes.INT_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.GEOLONG: {
+                final long val = record.getGeoLong(0);
+                if (val == GeoHashes.NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.INTERVAL: {
+                final Interval val = record.getInterval(0);
+                if (Interval.NULL.equals(val)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                val.toSink(sink, columnType);
+                return false;
+            }
+            case ColumnType.LONG256: {
+                final Long256 val = record.getLong256A(0);
+                if (isNull(val)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Numbers.appendLong256(val, sink);
+                return false;
+            }
+            case ColumnType.LONG128:
+                // fall through
+            case ColumnType.UUID: {
+                final long hi = record.getLong128Hi(0);
+                final long lo = record.getLong128Lo(0);
+                if (Uuid.isNull(lo, hi)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Uuid uuid = new Uuid(lo, hi);
+                uuid.toSink(sink);
+                return false;
+            }
+            case ColumnType.IPv4: {
+                final int val = record.getIPv4(0);
+                if (val == IPv4_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Numbers.intToIPv4Sink(sink, val);
+                return false;
+            }
+            case ColumnType.BINARY: {
+                final BinarySequence bin = record.getBin(0);
+                if (bin == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Chars.toSink(bin, sink);
+                return false;
+            }
+            case ColumnType.ARRAY: {
+                final ArrayView arr = record.getArray(0, columnType);
+                if (arr == null || arr.isNull()) {
+                    sink.put("NULL");
+                    return true;
+                }
+                ArrayTypeDriver.arrayToJson(arr, sink, NoopArrayWriteState.INSTANCE);
+                return false;
+            }
+            case ColumnType.DECIMAL8: {
+                final byte val = record.getDecimal8(0);
+                if (val == Decimals.DECIMAL8_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL16: {
+                final short val = record.getDecimal16(0);
+                if (val == Decimals.DECIMAL16_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL32: {
+                final int val = record.getDecimal32(0);
+                if (val == Decimals.DECIMAL32_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL64: {
+                final long val = record.getDecimal64(0);
+                if (val == Decimals.DECIMAL64_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL128: {
+                final var decimal = Misc.getThreadLocalDecimal128();
+                record.getDecimal128(0, decimal);
+                if (decimal.isNull()) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL256: {
+                final var decimal = Misc.getThreadLocalDecimal256();
+                record.getDecimal256(0, decimal);
+                if (decimal.isNull()) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            default:
+                return false;
+        }
     }
 
     private static void pushDownLimitAdvice(QueryModel model, QueryModel nestedModel, boolean useDistinctModel) {
@@ -3528,6 +3818,73 @@ public class SqlOptimiser implements Mutable {
         copyColumnsFromMetadata(model, model.getTableNameFunction().getMetadata());
     }
 
+    private void preparePivotForSelectSubquery(QueryModel model, QueryModel outerModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
+        CairoEngine engine = sqlExecutionContext.getCairoEngine();
+
+        for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
+            PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
+            if (!pivotForColumn.isValueList()) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    ExpressionNode subQueryNode = pivotForColumn.getSelectSubqueryExpr();
+                    assert subQueryNode != null;
+                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithRetries(subQueryNode.queryModel, null, sqlExecutionContext, false)) {
+                        final RecordMetadata inListMetadata = inListFactory.getMetadata();
+                        final int columnCount = inListMetadata.getColumnCount();
+                        if (columnCount != 1) {
+                            throw SqlException
+                                    .$(subQueryNode.position, "PIVOT IN subquery must return exactly one column, got ")
+                                    .put(columnCount);
+                        }
+                        final TableColumnMetadata columnMetadata = inListMetadata.getColumnMetadata(0);
+                        final boolean quote = ColumnType.isSymbolOrStringOrVarchar(columnMetadata.getColumnType());
+                        int valueCount = 0;
+                        tempCharSequenceSet.clear();
+                        pivotAliasMap.clear();
+
+                        try (RecordCursor cursor = inListFactory.getCursor(sqlExecutionContext)) {
+                            StringSink sink = Misc.getThreadLocalSink();
+                            while (cursor.hasNext()) {
+                                final Record record = cursor.getRecord();
+                                sink.clear();
+                                boolean isNull = printRecordColumnOrNull(record, inListMetadata, sink);
+                                if (!tempCharSequenceSet.add(sink)) {
+                                    continue;
+                                }
+                                CharacterStoreEntry quotedCse = characterStore.newEntry();
+                                if (quote && !isNull) {
+                                    quotedCse.put('\'');
+                                }
+                                quotedCse.put(sink);
+                                if (quote && !isNull) {
+                                    quotedCse.put('\'');
+                                }
+
+                                CharSequence token = quotedCse.toImmutable();
+                                CharSequence alias = SqlUtil.createExprColumnAlias(
+                                        characterStore,
+                                        unquote(token),
+                                        pivotAliasMap,
+                                        configuration.getColumnAliasGeneratedMaxSize(),
+                                        true
+                                );
+                                pivotAliasMap.add(alias);
+                                pivotForColumn.addValue(expressionNodePool.next().of(CONSTANT, token, 0, subQueryNode.position), null);
+                                valueCount++;
+                            }
+                        }
+                        if (valueCount == 0) {
+                            throw SqlException.$(subQueryNode.position, "PIVOT IN subquery returned empty result set");
+                        }
+                    }
+                    pivotForColumn.setSelectSubqueryExpr(null);
+                    pivotForColumn.setIsValueList(true);
+                    outerModel.setCacheable(false);
+                }
+            }
+        }
+    }
+
     private void processEmittedJoinClauses(QueryModel model) {
         // pick up join clauses emitted at initial analysis stage
         // as we merge contexts at this level no more clauses is to be emitted
@@ -5095,6 +5452,49 @@ public class SqlOptimiser implements Mutable {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             rewriteOrderByPositionForUnionModels(joinModels.getQuick(i));
+        }
+    }
+
+    private QueryModel rewritePivot(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (model == null) {
+            return null;
+        }
+        if (model.isPivot()) {
+            final QueryModel innerModel = queryModelPool.next();
+            QueryModel outerModel = queryModelPool.next();
+            innerModel.setNestedModel(model.getNestedModel());
+            outerModel.setNestedModel(innerModel);
+            preparePivotForSelectSubquery(model, outerModel, sqlExecutionContext);
+            //pushPovitFiltersToInnerModel(model, innerModel);
+            //rewritePivotGroupByColumns(model, innerModel, outerModel);
+            //addPivotAggregatesToInnerModel(model, innerModel);
+            //addPivotColumnsToOuterModel(model, outerModel);
+
+            rewritePivotGroupByColumns(model, innerModel, outerModel);
+
+
+            model = outerModel;
+        } else {
+            model.setNestedModel(rewritePivot(model.getNestedModel(), sqlExecutionContext));
+            for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+                model.getJoinModels().set(i, rewritePivot(model.getJoinModels().getQuick(i), sqlExecutionContext));
+            }
+
+            model.setUnionModel(rewritePivot(model.getUnionModel(), sqlExecutionContext));
+        }
+        return model;
+    }
+
+    private void rewritePivotGroupByColumns(QueryModel model, QueryModel innerModel, QueryModel outerModel) throws SqlException {
+        ObjList<ExpressionNode> nestedGroupBy = model.getGroupBy();
+        for (int i = 0, n = nestedGroupBy.size(); i < n; i++) {
+            ExpressionNode groupByExpr = nestedGroupBy.getQuick(i);
+            if (groupByExpr.type == CONSTANT) {
+                throw SqlException.$(groupByExpr.position, "cannot use positional group by inside `PIVOT`");
+            } else {
+                innerModel.addBottomUpColumn(queryColumnPool.next().of(groupByExpr.token, groupByExpr));
+                outerModel.addBottomUpColumn(queryColumnPool.next().of(groupByExpr.token, expressionNodePool.next().of(LITERAL, groupByExpr.token, 0, groupByExpr.position)));
+            }
         }
     }
 
@@ -7437,6 +7837,7 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
+            rewrittenModel = rewritePivot(rewrittenModel, sqlExecutionContext);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());

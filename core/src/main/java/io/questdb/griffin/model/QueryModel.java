@@ -166,6 +166,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
+    private boolean cacheable = true;
     // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
@@ -512,6 +513,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         windowJoinContext.clear();
         pivotGroupByColumns.clear();
         pivotForColumns.clear();
+        cacheable = true;
     }
 
     public void clearColumnMapStructs() {
@@ -677,6 +679,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && modelType == that.modelType
                 && artificialStar == that.artificialStar
                 && skipped == that.skipped
+                && cacheable == that.cacheable
                 && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice
                 && Objects.equals(bottomUpColumns, that.bottomUpColumns)
                 && Objects.equals(topDownNameSet, that.topDownNameSet)
@@ -967,6 +970,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return parsedWhere;
     }
 
+    public ObjList<PivotForColumn> getPivotForColumns() {
+        return pivotForColumns;
+    }
+
+    public ObjList<QueryColumn> getPivotGroupByColumns() {
+        return pivotGroupByColumns;
+    }
+
     public ExpressionNode getPostJoinWhereClause() {
         return postJoinWhereClause;
     }
@@ -1125,6 +1136,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return artificialStar;
     }
 
+    public boolean isCacheable() {
+        if (nestedModel != null) {
+            return cacheable && nestedModel.isCacheable();
+        }
+        return cacheable;
+    }
+
     public boolean isCteModel() {
         return isCteModel;
     }
@@ -1147,6 +1165,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return orderDescendingByDesignatedTimestampOnly;
+    }
+
+    public boolean isPivot() {
+        return pivotForColumns.size() > 0;
     }
 
     public boolean isSelectTranslation() {
@@ -1349,6 +1371,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setBackupWhereClause(ExpressionNode backupWhereClause) {
         this.backupWhereClause = backupWhereClause;
+    }
+
+    public void setCacheable(boolean b) {
+        cacheable = b;
     }
 
     public void setConstWhereClause(ExpressionNode constWhereClause) {
