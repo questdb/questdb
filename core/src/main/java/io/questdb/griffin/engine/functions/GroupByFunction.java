@@ -231,12 +231,12 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
-    // to be used when doing interpolation
+    // TODO(RaphDal): to be used when doing interpolation
     default void setDecimal128(MapValue mapValue, Decimal128 value) {
         throw new UnsupportedOperationException();
     }
 
-    // to be used when doing interpolation
+    // TODO(RaphDal): to be used when doing interpolation
     default void setDecimal256(MapValue mapValue, Decimal256 value) {
         throw new UnsupportedOperationException();
     }
