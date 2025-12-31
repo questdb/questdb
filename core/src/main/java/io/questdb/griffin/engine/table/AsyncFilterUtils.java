@@ -81,8 +81,7 @@ public class AsyncFilterUtils {
                 bindVarMemory.getAddress(),
                 bindVarFunctions.size(),
                 rows.getAddress(),
-                task.getFrameRowCount(),
-                0
+                task.getFrameRowCount()
         );
         rows.setPos(hi);
     }

@@ -5476,13 +5476,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Async JIT Filter workers: 1
                           filter: a_long=42
                             parquet page frame scan
-                        """);
+                              columns: a_long,a_str,a_ts
+                        """
+                );
 
                 assertPlanNoLeakCheck("select avg(a_long) from read_parquet('x.parquet');", """
                         GroupBy vectorized: true workers: 1
                           values: [avg(a_long)]
                             parquet page frame scan
-                        """);
+                              columns: a_long
+                        """
+                );
 
                 assertPlanNoLeakCheck("select a_str, max(a_long) from read_parquet('x.parquet');", """
                         Async Group By workers: 1
@@ -5490,7 +5494,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           values: [max(a_long)]
                           filter: null
                             parquet page frame scan
-                        """);
+                              columns: a_str,a_long
+                        """
+                );
             }
         });
     }
