@@ -31,8 +31,6 @@ import org.jetbrains.annotations.NonNls;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.ENTRY_SIZE;
-
 public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
     private final BiFunction<CharSequence, ScoreboardPoolTenant, ScoreboardPoolTenant> getOrCreateScoreboard;
     private final ConcurrentHashMap<ScoreboardPoolTenant> pool = new ConcurrentHashMap<>();
@@ -41,7 +39,7 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
         getOrCreateScoreboard = (key, value) -> {
             if (value == null || !value.incrementRefCount()) {
                 //noinspection resource
-                value = new ScoreboardPoolTenant(configuration.getReaderPoolMaxSegments() * ENTRY_SIZE);
+                value = new ScoreboardPoolTenant(configuration.getReaderPoolMaxSegments() * configuration.getPoolSegmentSize());
             }
             return value;
         };
