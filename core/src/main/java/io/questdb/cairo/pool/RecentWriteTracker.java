@@ -322,10 +322,11 @@ public class RecentWriteTracker {
      * @param sequencerTxn  the sequencer transaction number (last txn in the batch)
      * @param walTimestamp  the max timestamp from the downloaded WAL data
      * @param batchRowCount the total number of rows in this download batch
+     * @param morePending   true if the download batch was limited and more data is available
      */
-    public void recordReplicaDownload(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long batchRowCount) {
+    public void recordReplicaDownload(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long batchRowCount, boolean morePending) {
         try {
-            getOrCreateStats(tableToken).updateReplicaDownload(sequencerTxn, walTimestamp, batchRowCount);
+            getOrCreateStats(tableToken).updateReplicaDownload(sequencerTxn, walTimestamp, batchRowCount, morePending);
 
             // Lazy eviction
             if (writeStats.size() > maxCapacity * 2) {
@@ -576,6 +577,8 @@ public class RecentWriteTracker {
         private final SimpleReadWriteLock mergeStatsLock = new SimpleReadWriteLock();
         // Merge throughput histogram - tracks rows/second during WAL apply
         private final Histogram mergeThroughputHistogram = new Histogram(2);
+        // Replica more pending flag - true if download batch was limited and more data is available
+        private final AtomicBoolean replicaMorePending = new AtomicBoolean(false);
         // WAL fields - updated by WalWriters only, highest wins via CAS
         private final AtomicLong sequencerTxn;
         // Transaction size histogram - tracks distribution of WAL transaction sizes
@@ -692,6 +695,18 @@ public class RecentWriteTracker {
          */
         public long getFloorSeqTxn() {
             return floorSeqTxn.get();
+        }
+
+        /**
+         * Returns whether the last replica download batch was limited and more data is available.
+         * <p>
+         * This is only populated on replicas via {@link RecentWriteTracker#recordReplicaDownload}.
+         * On primaries, this will always return false.
+         *
+         * @return true if more data is available to download, false otherwise
+         */
+        public boolean isReplicaMorePending() {
+            return replicaMorePending.get();
         }
 
         /**
@@ -1002,10 +1017,14 @@ public class RecentWriteTracker {
          * @param newTxn          the new sequencer transaction number (last txn in batch)
          * @param newWalTimestamp the WAL write timestamp in microseconds
          * @param batchRowCount   the total number of rows in this download batch
+         * @param morePending     true if the download batch was limited and more data is available
          */
-        private void updateReplicaDownload(long newTxn, long newWalTimestamp, long batchRowCount) {
+        private void updateReplicaDownload(long newTxn, long newWalTimestamp, long batchRowCount, boolean morePending) {
             // Always increment WAL row count - contention-free via LongAdder
             walRowCount.add(batchRowCount);
+
+            // Update the more pending flag
+            replicaMorePending.set(morePending);
 
             // Record batch size in replica-specific histogram (NOT txnSizeHistogram)
             if (batchRowCount > 0) {
