@@ -42,7 +42,6 @@ import java.util.List;
 import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
     private static final String orderByAdviceDdl = """
