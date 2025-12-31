@@ -28,7 +28,8 @@
 // Altered source of asmjit_test_compiler.h
 // from AsmJit - Machine code generation for C++
 
-#include <asmjit/asmjit.h>
+#include <asmjit/core.h>
+#include <asmjit/x86.h>
 #include <memory>
 #include <vector>
 

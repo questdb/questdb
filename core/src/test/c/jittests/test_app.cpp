@@ -218,14 +218,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
 
         x86::Gp r = questdb::x86::int32_not(cc, a.as<x86::Gpd>());
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -273,17 +273,17 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt32("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int32("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int32_and(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>());
 
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -339,16 +339,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt32("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int32("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int32_or(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>());
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -405,14 +405,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int64_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int64_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
 
         x86::Gp r = questdb::x86::int32_to_int64(cc, a.as<x86::Gpd>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -448,14 +448,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<float, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<float, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
 
         x86::Xmm r = questdb::x86::int32_to_float(cc, a.as<x86::Gpd>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -491,14 +491,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<double, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<double, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
 
         x86::Xmm r = questdb::x86::int32_to_double(cc, a.as<x86::Gpd>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -534,14 +534,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<float, int64_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<float, int64_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt64("a");
-        cc.setArg(0, a);
+        x86::Gp a = cc.new_int64("a");
+        cc.set_arg(0, a);
 
         x86::Xmm r = questdb::x86::int64_to_float(cc, a.as<x86::Gpq>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -577,14 +577,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<double, int64_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<double, int64_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt64("a");
-        cc.setArg(0, a);
+        x86::Gp a = cc.new_int64("a");
+        cc.set_arg(0, a);
 
         x86::Xmm r = questdb::x86::int64_to_double(cc, a.as<x86::Gpq>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -620,14 +620,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<double, float>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<double, float>(CallConv::kIdHost));
 
         x86::Xmm a = cc.newXmmSs("a");
-        cc.setArg(0, a);
+        cc.set_arg(0, a);
 
         x86::Xmm r = questdb::x86::float_to_double(cc, a);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -661,14 +661,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int64_t, int64_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int64_t, int64_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt64("a");
-        cc.setArg(0, a);
+        x86::Gp a = cc.new_int64("a");
+        cc.set_arg(0, a);
 
         x86::Gp r = questdb::x86::int64_neg(cc, a.as<x86::Gpq>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -725,16 +725,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt64("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt64("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int64("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int64("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int64_add(cc, a.as<x86::Gpq>(), b.as<x86::Gpq>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -811,16 +811,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt64("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt64("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int64("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int64("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int64_sub(cc, a.as<x86::Gpq>(), b.as<x86::Gpq>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -896,16 +896,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt64("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt64("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int64("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int64("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int64_mul(cc, a.as<x86::Gpq>(), b.as<x86::Gpq>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -991,16 +991,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt64("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt64("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int64("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int64("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int64_div(cc, a.as<x86::Gpq>(), b.as<x86::Gpq>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1076,14 +1076,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
 
         x86::Gp r = questdb::x86::int32_neg(cc, a.as<x86::Gpd>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1140,16 +1140,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt32("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int32("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int32_add(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1225,16 +1225,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt32("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int32("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int32_sub(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1310,16 +1310,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt32("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int32("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int32_mul(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1405,16 +1405,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt32("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int32("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int32_div(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>(), true);
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1490,16 +1490,16 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
 
-        x86::Gp a = cc.newInt32("a");
-        cc.setArg(0, a);
-        x86::Gp b = cc.newInt32("b");
-        cc.setArg(1, b);
+        x86::Gp a = cc.new_int32("a");
+        cc.set_arg(0, a);
+        x86::Gp b = cc.new_int32("b");
+        cc.set_arg(1, b);
 
         x86::Gp r = questdb::x86::int32_eq(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>());
         cc.ret(r);
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1555,15 +1555,15 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<void, float *, float *, int32_t *>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<void, float *, float *, int32_t *>(CallConv::kIdHost));
 
-        x86::Gp a_ptr = cc.newInt64("a_ptr");
-        cc.setArg(0, a_ptr);
-        x86::Gp b_ptr = cc.newInt64("b_ptr");
-        cc.setArg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_int64("a_ptr");
+        cc.set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_int64("b_ptr");
+        cc.set_arg(1, b_ptr);
 
-        x86::Gp c_ptr = cc.newInt64("c_ptr");
-        cc.setArg(2, c_ptr);
+        x86::Gp c_ptr = cc.new_int64("c_ptr");
+        cc.set_arg(2, c_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
@@ -1579,7 +1579,7 @@ public:
         cc.vmovdqu(cm, r);
         cc.ret();
 
-        cc.endFunc();
+        cc.end_func();
 
     }
 
@@ -1617,15 +1617,15 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<void, double *, double *, int64_t *>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<void, double *, double *, int64_t *>(CallConv::kIdHost));
 
-        x86::Gp a_ptr = cc.newInt64("a_ptr");
-        cc.setArg(0, a_ptr);
-        x86::Gp b_ptr = cc.newInt64("b_ptr");
-        cc.setArg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_int64("a_ptr");
+        cc.set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_int64("b_ptr");
+        cc.set_arg(1, b_ptr);
 
-        x86::Gp c_ptr = cc.newInt64("c_ptr");
-        cc.setArg(2, c_ptr);
+        x86::Gp c_ptr = cc.new_int64("c_ptr");
+        cc.set_arg(2, c_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
@@ -1642,7 +1642,7 @@ public:
         cc.vmovdqu(cm, r);
         cc.ret();
 
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1678,14 +1678,14 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<void, double *, double *, double *>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<void, double *, double *, double *>(CallConv::kIdHost));
 
-        x86::Gp a_ptr = cc.newInt64("a_ptr");
-        cc.setArg(0, a_ptr);
-        x86::Gp b_ptr = cc.newInt64("b_ptr");
-        cc.setArg(1, b_ptr);
-        x86::Gp c_ptr = cc.newInt64("c_ptr");
-        cc.setArg(2, c_ptr);
+        x86::Gp a_ptr = cc.new_int64("a_ptr");
+        cc.set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_int64("b_ptr");
+        cc.set_arg(1, b_ptr);
+        x86::Gp c_ptr = cc.new_int64("c_ptr");
+        cc.set_arg(2, c_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
@@ -1701,7 +1701,7 @@ public:
         cc.vmovupd(cm, r);
 
         cc.ret();
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1738,12 +1738,12 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<void, int64_t *, double *>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<void, int64_t *, double *>(CallConv::kIdHost));
 
-        x86::Gp a_ptr = cc.newInt64("a_ptr");
-        cc.setArg(0, a_ptr);
-        x86::Gp b_ptr = cc.newInt64("b_ptr");
-        cc.setArg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_int64("a_ptr");
+        cc.set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_int64("b_ptr");
+        cc.set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
@@ -1755,7 +1755,7 @@ public:
         cc.vmovupd(bm, r);
 
         cc.ret();
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1789,12 +1789,12 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<void, int64_t *, int64_t *>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<void, int64_t *, int64_t *>(CallConv::kIdHost));
 
-        x86::Gp a_ptr = cc.newInt64("a_ptr");
-        cc.setArg(0, a_ptr);
-        x86::Gp b_ptr = cc.newInt64("b_ptr");
-        cc.setArg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_int64("a_ptr");
+        cc.set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_int64("b_ptr");
+        cc.set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
@@ -1808,7 +1808,7 @@ public:
         cc.vmovdqu(bm, r);
 
         cc.ret();
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1842,12 +1842,12 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<void, int64_t *, int64_t *>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<void, int64_t *, int64_t *>(CallConv::kIdHost));
 
-        x86::Gp a_ptr = cc.newInt64("a_ptr");
-        cc.setArg(0, a_ptr);
-        x86::Gp b_ptr = cc.newInt64("b_ptr");
-        cc.setArg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_int64("a_ptr");
+        cc.set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_int64("b_ptr");
+        cc.set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
@@ -1861,7 +1861,7 @@ public:
         cc.vmovdqu(bm, r);
 
         cc.ret();
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1895,12 +1895,12 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<void, int64_t *, int64_t *>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<void, int64_t *, int64_t *>(CallConv::kIdHost));
 
-        x86::Gp a_ptr = cc.newInt64("a_ptr");
-        cc.setArg(0, a_ptr);
-        x86::Gp b_ptr = cc.newInt64("b_ptr");
-        cc.setArg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_int64("a_ptr");
+        cc.set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_int64("b_ptr");
+        cc.set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
@@ -1914,7 +1914,7 @@ public:
         cc.vmovdqu(bm, r);
 
         cc.ret();
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -1948,12 +1948,12 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int64_t *, int64_t *>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int64_t *, int64_t *>(CallConv::kIdHost));
 
-        x86::Gp a_ptr = cc.newInt64("a_ptr");
-        cc.setArg(0, a_ptr);
-        x86::Gp b_ptr = cc.newInt64("b_ptr");
-        cc.setArg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_int64("a_ptr");
+        cc.set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_int64("b_ptr");
+        cc.set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
@@ -1970,7 +1970,7 @@ public:
         cc.vmovdqu(bm, adata);
         x86::Gp mask2 = questdb::avx2::to_bits4(cc, r);
         cc.ret(mask2.r32());
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {
@@ -2005,12 +2005,12 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t *, int32_t *>(CallConv::kIdHost));
+        cc.add_func(FuncSignatureT<int32_t, int32_t *, int32_t *>(CallConv::kIdHost));
 
-        x86::Gp a_ptr = cc.newInt64("a_ptr");
-        cc.setArg(0, a_ptr);
-        x86::Gp b_ptr = cc.newInt64("b_ptr");
-        cc.setArg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_int64("a_ptr");
+        cc.set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_int64("b_ptr");
+        cc.set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
@@ -2027,7 +2027,7 @@ public:
 
         cc.vmovdqu(bm, res);
         cc.ret(bits.r32());
-        cc.endFunc();
+        cc.end_func();
     }
 
     bool run(void *_func, String &result, String &expect) override {

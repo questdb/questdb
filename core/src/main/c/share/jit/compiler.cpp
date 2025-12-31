@@ -30,9 +30,9 @@ using namespace asmjit;
 
 struct JitErrorHandler : public ErrorHandler {
     JitErrorHandler()
-            : error(ErrorCode::kErrorOk) {}
+            : error(kErrorOk) {}
 
-    void handleError(Error err, const char *msg, BaseEmitter * /*origin*/) override {
+    void handle_error(Error err, const char *msg, BaseEmitter * /*origin*/) {
         error = err;
         message.assign(msg);
     }
@@ -57,8 +57,7 @@ using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count,
 
 struct Function {
     explicit Function(x86::Compiler &cc)
-            : c(cc), zone(4094 - Zone::kBlockOverhead), allocator(&zone) {
-        values.init(&allocator);
+            : c(cc), arena(4094) {
     };
 
     // Preload column addresses and constants before entering the loop
@@ -68,7 +67,7 @@ struct Function {
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options) {
-        auto features = CpuInfo::host().features().as<x86::Features>();
+        auto& features = CpuInfo::host().features().x86();
         enum type_size : uint32_t {
             scalar = 0,
             single_size = 1,
@@ -79,9 +78,9 @@ struct Function {
         uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
         bool null_check = (options >> 6) & 1; // 1 - with null check
         int unroll_factor = 1;
-        if (exec_hint == single_size && features.hasAVX2()) {
+        if (exec_hint == single_size && features.has_avx2()) {
             auto step = 256 / ((1 << type_size) * 8);
-            c.func()->frame().setAvxEnabled();
+            c.func()->frame().set_avx_enabled();
             avx2_loop(istream, size, step, null_check, unroll_factor);
         } else {
             scalar_loop(istream, size, null_check, unroll_factor);
@@ -89,10 +88,10 @@ struct Function {
     };
 
     void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
-        Label l_loop = c.newLabel();
-        Label l_exit = c.newLabel();
-        Label l_next_row = c.newLabel();   // Label 0: skip row (AND failure)
-        Label l_store_row = c.newLabel();  // Label 1: store row (OR success)
+        Label l_loop = c.new_label();
+        Label l_exit = c.new_label();
+        Label l_next_row = c.new_label();   // Label 0: skip row (AND failure)
+        Label l_store_row = c.new_label();  // Label 1: store row (OR success)
 
         // Initialize label array:
         // - Index 0: l_next_row (skip row storage - used by AND_SC on false)
@@ -110,12 +109,12 @@ struct Function {
             // Clear value cache at the start of each row iteration
             value_cache.clear();
             // Pass the label array and caches to emit_code
-            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
+            questdb::x86::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
                                     input_index, labels, addr_cache, const_cache, value_cache);
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
             // No final test needed.
-            if (!values.empty()) {
+            if (!values.is_empty()) {
                 auto mask = values.pop();
 
                 // Skip row storage if the last predicate failed
@@ -144,7 +143,7 @@ struct Function {
         preload_columns_and_constants(istream, size);
 
         if (unroll_factor > 1) {
-            x86::Gp stop = c.newInt64("stop");
+            x86::Gp stop = c.new_gp64("stop");
             c.mov(stop, rows_size);
             c.sub(stop, unroll_factor - 1);
             scalar_tail(istream, size, null_check, stop, unroll_factor);
@@ -164,53 +163,53 @@ struct Function {
         // Preload constants into YMM registers for the SIMD loop
         questdb::avx2::preload_constants_ymm(c, istream, size, const_cache_ymm);
 
-        Label l_loop = c.newLabel();
-        Label l_exit = c.newLabel();
+        Label l_loop = c.new_label();
+        Label l_exit = c.new_label();
 
         c.xor_(input_index, input_index); // input_index = 0
 
-        Gp stop = c.newGpq();
+        Gp stop = c.new_gp64();
         c.mov(stop, rows_size);
         c.sub(stop, unroll_factor * step - 1); // stop = rows_size - unroll_factor * step + 1
 
         c.cmp(input_index, stop);
         c.jge(l_exit);
 
-        bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
-        Ymm row_ids_reg = c.newYmm("rows_ids");
-        Ymm row_ids_step = c.newYmm("rows_ids_step");
+        bool is_slow_zen = CpuInfo::host().family_id() == 23; // AMD Zen1, Zen1+ and Zen2
+        Vec row_ids_reg = c.new_ymm("rows_ids");
+        Vec row_ids_step = c.new_ymm("rows_ids_step");
 
         // mask compress optimization for longs
         // init row_ids_reg out of loop
         if (step == 4 && !is_slow_zen) {
             int64_t rows_id_mem[4] = {0, 1, 2, 3};
-            Mem mem = c.newConst(ConstPool::kScopeLocal, &rows_id_mem, 32);
+            Mem mem = c.new_const(ConstPoolScope::kLocal, &rows_id_mem, 32);
 
             c.vmovdqu(row_ids_reg, mem);
 
             int64_t step_data[4] = {step, step, step, step};
-            Mem stem_mem = c.newConst(ConstPool::kScopeLocal, &step_data, 32);
+            Mem stem_mem = c.new_const(ConstPoolScope::kLocal, &step_data, 32);
             c.vmovdqu(row_ids_step, stem_mem);
         }
 
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm);
 
             auto mask = values.pop();
 
             if (step == 4 && !is_slow_zen) {
                 // mask compress optimization for longs
-                Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
+                Gp bits = questdb::avx2::to_bits4(c, mask.vec());
 
                 // short-circuit: skip scatter if no matches
-                Label l_scatter_done = c.newLabel();
+                Label l_scatter_done = c.new_label();
                 c.test(bits, bits);
                 c.jz(l_scatter_done);
 
-                Ymm compacted = questdb::avx2::compress_register(c, row_ids_reg, mask.ymm());
+                Vec compacted = questdb::avx2::compress_register(c, row_ids_reg, mask.vec());
                 c.vmovdqu(ymmword_ptr(rows_ptr, output_index, 3), compacted);
                 c.popcnt(bits, bits);
                 c.add(output_index, bits.r64());
@@ -218,9 +217,9 @@ struct Function {
                 c.bind(l_scatter_done);
                 c.vpaddq(row_ids_reg, row_ids_reg, row_ids_step);
             } else {
-                Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
+                Gp bits = questdb::avx2::to_bits(c, mask.vec(), step);
                 // short-circuit: skip scatter if no matches
-                Label l_scatter_done = c.newLabel();
+                Label l_scatter_done = c.new_label();
                 c.test(bits, bits);
                 c.jz(l_scatter_done);
                 questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, step);
@@ -238,46 +237,45 @@ struct Function {
     }
 
     void begin_fn() {
-        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
-            CallConv::kIdHost));
-        data_ptr = c.newIntPtr("data_ptr");
-        data_size = c.newInt64("data_size");
+        auto* fn = c.add_func(FuncSignature::build<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
+            CallConvId::kCDecl));
+        data_ptr = c.new_gp_ptr("data_ptr");
+        data_size = c.new_gp64("data_size");
 
-        c.setArg(0, data_ptr);
-        c.setArg(1, data_size);
+        fn->set_arg(0, data_ptr);
+        fn->set_arg(1, data_size);
 
-        varsize_aux_ptr = c.newIntPtr("varsize_aux_ptr");
+        varsize_aux_ptr = c.new_gp_ptr("varsize_aux_ptr");
 
-        c.setArg(2, varsize_aux_ptr);
+        fn->set_arg(2, varsize_aux_ptr);
 
-        vars_ptr = c.newIntPtr("vars_ptr");
-        vars_size = c.newInt64("vars_size");
+        vars_ptr = c.new_gp_ptr("vars_ptr");
+        vars_size = c.new_gp64("vars_size");
 
-        c.setArg(3, vars_ptr);
-        c.setArg(4, vars_size);
+        fn->set_arg(3, vars_ptr);
+        fn->set_arg(4, vars_size);
 
-        rows_ptr = c.newIntPtr("rows_ptr");
-        rows_size = c.newInt64("rows_size");
+        rows_ptr = c.new_gp_ptr("rows_ptr");
+        rows_size = c.new_gp64("rows_size");
 
-        c.setArg(5, rows_ptr);
-        c.setArg(6, rows_size);
+        fn->set_arg(5, rows_ptr);
+        fn->set_arg(6, rows_size);
 
-        input_index = c.newInt64("input_index");
+        input_index = c.new_gp64("input_index");
         c.mov(input_index, 0);
 
-        output_index = c.newInt64("output_index");
+        output_index = c.new_gp64("output_index");
         c.mov(output_index, 0);
     }
 
     void end_fn() {
-        c.endFunc();
+        c.end_func();
     }
 
     x86::Compiler &c;
 
-    Zone zone;
-    ZoneAllocator allocator;
-    ZoneStack<jit_value_t> values;
+    Arena arena;
+    ArenaVector<jit_value_t> values;
 
     x86::Gp data_ptr;
     x86::Gp data_size;
@@ -302,8 +300,7 @@ using CompiledCountOnlyFn = int64_t (*)(int64_t *cols, int64_t cols_count,
 
 struct CountOnlyFunction {
     explicit CountOnlyFunction(x86::Compiler &cc)
-            : c(cc), zone(4094 - Zone::kBlockOverhead), allocator(&zone) {
-        values.init(&allocator);
+            : c(cc), arena(4094) {
     };
 
     // Preload column addresses and constants before entering the loop
@@ -313,7 +310,7 @@ struct CountOnlyFunction {
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options) {
-        auto features = CpuInfo::host().features().as<x86::Features>();
+        auto& features = CpuInfo::host().features().x86();
         enum type_size : uint32_t {
             scalar = 0,
             single_size = 1,
@@ -324,9 +321,9 @@ struct CountOnlyFunction {
         uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
         bool null_check = (options >> 6) & 1; // 1 - with null check
         int unroll_factor = 1;
-        if (exec_hint == single_size && features.hasAVX2()) {
+        if (exec_hint == single_size && features.has_avx2()) {
             auto step = 256 / ((1 << type_size) * 8);
-            c.func()->frame().setAvxEnabled();
+            c.func()->frame().set_avx_enabled();
             avx2_loop(istream, size, step, null_check, unroll_factor);
         } else {
             scalar_loop(istream, size, null_check, unroll_factor);
@@ -334,10 +331,10 @@ struct CountOnlyFunction {
     };
 
     void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
-        Label l_loop = c.newLabel();
-        Label l_exit = c.newLabel();
-        Label l_next_row = c.newLabel();   // Label 0: skip row (AND failure)
-        Label l_inc_count = c.newLabel();  // Label 1: store row / increment counter (OR success)
+        Label l_loop = c.new_label();
+        Label l_exit = c.new_label();
+        Label l_next_row = c.new_label();   // Label 0: skip row (AND failure)
+        Label l_inc_count = c.new_label();  // Label 1: store row / increment counter (OR success)
 
         // Initialize label array:
         // - Index 0: l_next_row (skip row storage - used by AND_SC on false)
@@ -355,12 +352,12 @@ struct CountOnlyFunction {
             // Clear value cache at the start of each row iteration
             value_cache.clear();
             // Pass the label array and caches to emit_code
-            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
+            questdb::x86::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
                                     input_index, labels, addr_cache, const_cache, value_cache);
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
             // No final test needed.
-            if (!values.empty()) {
+            if (!values.is_empty()) {
                 auto mask = values.pop();
 
                 // Skip row storage if the last predicate failed
@@ -388,7 +385,7 @@ struct CountOnlyFunction {
         preload_columns_and_constants(istream, size);
 
         if (unroll_factor > 1) {
-            x86::Gp stop = c.newInt64("stop");
+            x86::Gp stop = c.new_gp64("stop");
             c.mov(stop, rows_size);
             c.sub(stop, unroll_factor - 1);
             scalar_tail(istream, size, null_check, stop, unroll_factor);
@@ -408,12 +405,12 @@ struct CountOnlyFunction {
         // Preload constants into YMM registers for the SIMD loop
         questdb::avx2::preload_constants_ymm(c, istream, size, const_cache_ymm);
 
-        Label l_loop = c.newLabel();
-        Label l_tail = c.newLabel();
+        Label l_loop = c.new_label();
+        Label l_tail = c.new_label();
 
         c.xor_(input_index, input_index); // input_index = 0
 
-        Gp stop = c.newGpq();
+        Gp stop = c.new_gp64();
         c.mov(stop, rows_size);
         c.sub(stop, unroll_factor * step - 1); // stop = rows_size - unroll_factor * step + 1
 
@@ -425,14 +422,14 @@ struct CountOnlyFunction {
         // vpcmpeqq/vpcmpeqd/vpcmpeqw produces -1 for matches, 0 for non-matches.
         // vpsubq/vpsubd acc, acc, mask subtracts -1 (adds 1) for matches, subtracts 0 (no-op) otherwise.
         // This avoids vector-to-scalar domain crossing (vmovmskpd/vmovmskps) on each iteration.
-        Ymm acc;
-        Ymm ones;  // for step == 16: 16 x i16 all-ones to use with vpmaddwd
+        Vec acc;
+        Vec ones;  // for step == 16: 16 x i16 all-ones to use with vpmaddwd
         if (step == 4 || step == 8 || step == 16) {
-            acc = c.newYmm("acc");
+            acc = c.new_ymm("acc");
             c.vpxor(acc, acc, acc); // acc = 0
             if (step == 16) {
                 // Create constant with 16 x i16 value of 1 for vpmaddwd
-                ones = c.newYmm("ones");
+                ones = c.new_ymm("ones");
                 c.vpcmpeqd(ones, ones, ones);     // all bits set (-1)
                 c.vpsrlw(ones, ones, 15);         // shift right 15 bits: -1 -> 1 for each i16
             }
@@ -441,23 +438,23 @@ struct CountOnlyFunction {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm);
 
             auto mask = values.pop();
 
             if (step == 4) {
-                c.vpsubq(acc, acc, mask.ymm()); // acc -= mask (subtracting -1 adds 1)
+                c.vpsubq(acc, acc, mask.vec()); // acc -= mask (subtracting -1 adds 1)
             } else if (step == 8) {
-                c.vpsubd(acc, acc, mask.ymm()); // acc -= mask (32-bit version)
+                c.vpsubd(acc, acc, mask.vec()); // acc -= mask (32-bit version)
             } else if (step == 16) {
                 // 16 x i16 mask -> 8 x i32 using vpmaddwd (pairs of i16 multiplied by 1 and summed)
                 // mask[i16] is -1 or 0, so pairs sum to -2, -1, or 0
-                Ymm pairs = c.newYmm("pairs");
-                c.vpmaddwd(pairs, mask.ymm(), ones);  // 16 x i16 -> 8 x i32
+                Vec pairs = c.new_ymm("pairs");
+                c.vpmaddwd(pairs, mask.vec(), ones);  // 16 x i16 -> 8 x i32
                 c.vpsubd(acc, acc, pairs);            // acc -= pairs
             } else {
-                Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
+                Gp bits = questdb::avx2::to_bits(c, mask.vec(), step);
                 c.popcnt(bits, bits);
                 c.add(output_index, bits.r64());
             }
@@ -474,8 +471,8 @@ struct CountOnlyFunction {
         // This also avoids unnecessary register spilling across the label boundary.
         if (step == 4) {
             // 4 x i64 -> i64
-            Xmm xmm_acc = acc.xmm();
-            Xmm xmm_tmp = c.newXmm("hsum_tmp");
+            Vec xmm_acc = acc.xmm();
+            Vec xmm_tmp = c.new_xmm("hsum_tmp");
             c.vextracti128(xmm_tmp, acc, 1);      // extract high 128 bits
             c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // add high to low (2 x i64)
             c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // swap the two i64 halves
@@ -483,15 +480,15 @@ struct CountOnlyFunction {
             c.vmovq(output_index, xmm_acc);       // move to output_index
         } else if (step == 8 || step == 16) {
             // 8 x i32 -> i32 -> i64 (row count is guaranteed < 2^31)
-            Xmm xmm_acc = acc.xmm();
-            Xmm xmm_tmp = c.newXmm("hsum_tmp");
+            Vec xmm_acc = acc.xmm();
+            Vec xmm_tmp = c.new_xmm("hsum_tmp");
             c.vextracti128(xmm_tmp, acc, 1);      // extract high 4 x i32
             c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);  // add high to low (4 x i32)
             c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // rotate by 2 i32s
             c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);  // 2 x i32 partial sums
             c.vpshufd(xmm_tmp, xmm_acc, 0xB1);    // rotate by 1 i32
             c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);  // final sum in low 32 bits
-            Gp hsum = c.newGpd("hsum");
+            Gp hsum = c.new_gp32("hsum");
             c.vmovd(hsum, xmm_acc);               // move to 32-bit reg (zero-extends)
             c.mov(output_index, hsum.r64());      // move to output_index
         }
@@ -503,44 +500,43 @@ struct CountOnlyFunction {
     }
 
     void begin_fn() {
-        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
-            CallConv::kIdHost));
-        data_ptr = c.newIntPtr("data_ptr");
-        data_size = c.newInt64("data_size");
+        auto* fn = c.add_func(FuncSignature::build<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
+            CallConvId::kCDecl));
+        data_ptr = c.new_gp_ptr("data_ptr");
+        data_size = c.new_gp64("data_size");
 
-        c.setArg(0, data_ptr);
-        c.setArg(1, data_size);
+        fn->set_arg(0, data_ptr);
+        fn->set_arg(1, data_size);
 
-        varsize_aux_ptr = c.newIntPtr("varsize_aux_ptr");
+        varsize_aux_ptr = c.new_gp_ptr("varsize_aux_ptr");
 
-        c.setArg(2, varsize_aux_ptr);
+        fn->set_arg(2, varsize_aux_ptr);
 
-        vars_ptr = c.newIntPtr("vars_ptr");
-        vars_size = c.newInt64("vars_size");
+        vars_ptr = c.new_gp_ptr("vars_ptr");
+        vars_size = c.new_gp64("vars_size");
 
-        c.setArg(3, vars_ptr);
-        c.setArg(4, vars_size);
+        fn->set_arg(3, vars_ptr);
+        fn->set_arg(4, vars_size);
 
-        rows_size = c.newInt64("rows_size");
+        rows_size = c.new_gp64("rows_size");
 
-        c.setArg(5, rows_size);
+        fn->set_arg(5, rows_size);
 
-        input_index = c.newInt64("input_index");
+        input_index = c.new_gp64("input_index");
         c.mov(input_index, 0);
 
-        output_index = c.newInt64("output_index");
+        output_index = c.new_gp64("output_index");
         c.mov(output_index, 0);
     }
 
     void end_fn() {
-        c.endFunc();
+        c.end_func();
     }
 
     x86::Compiler &c;
 
-    Zone zone;
-    ZoneAllocator allocator;
-    ZoneStack<jit_value_t> values;
+    Arena arena;
+    ArenaVector<jit_value_t> values;
 
     x86::Gp data_ptr;
     x86::Gp data_size;
