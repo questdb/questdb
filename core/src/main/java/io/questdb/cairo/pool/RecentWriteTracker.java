@@ -287,21 +287,20 @@ public class RecentWriteTracker {
      * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
      * Called after successful WAL transaction application.
      *
-     * @param tableToken        the table whose WAL was processed
-     * @param seqTxn            the sequencer transaction number being processed
-     * @param walRowCount       the number of WAL rows that were processed (before dedup)
-     * @param committedRowCount the number of rows actually committed (after dedup)
+     * @param tableToken       the table whose WAL was processed
+     * @param seqTxn           the sequencer transaction number being processed
+     * @param walRowCount      the number of WAL rows that were processed (before dedup)
+     * @param dedupRowsRemoved the number of duplicate rows removed during dedup
      */
-    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long committedRowCount) {
+    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long dedupRowsRemoved) {
         try {
             WriteStats stats = getOrCreateStats(tableToken);
             // Only subtract if seqTxn is above the floor (rows added after tracking started)
             if (seqTxn > stats.getFloorSeqTxn()) {
                 stats.walRowCount.add(-walRowCount);
             }
-            long dedupCount = walRowCount - committedRowCount;
-            if (dedupCount > 0) {
-                stats.dedupRowCount.add(dedupCount);
+            if (dedupRowsRemoved > 0) {
+                stats.dedupRowCount.add(dedupRowsRemoved);
             }
         } catch (Throwable th) {
             LOG.error().$("could not record WAL processed [table=").$(tableToken).$(", error=").$(th).I$();
