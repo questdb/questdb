@@ -128,6 +128,28 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeNanoIntervalSampleBy() throws Exception {
+        assertQuery(
+                """
+                        ts\tcnt
+                        1970-01-01T00:00:00.000000000Z\t1
+                        1970-01-01T00:00:01.000000000Z\t1
+                        1970-01-01T00:00:02.000000000Z\t1
+                        1970-01-01T00:00:03.000000000Z\t1
+                        1970-01-01T00:00:04.000000000Z\t1
+                        """,
+                "select ts, count() cnt from large_ns sample by 3000000000n",
+                "create table large_ns as (" +
+                        "select timestamp_sequence_ns(0, 1000000000L) ts " +
+                        "from long_sequence(5)" +
+                        ") timestamp(ts) partition by NONE",
+                "ts",
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testBindVarsInPeriodSyntax() throws Exception {
         testSampleByPeriodFails(
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by $1 T align to calendar",

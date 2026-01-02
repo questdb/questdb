@@ -443,7 +443,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         final CharSequence interval = GenericLexer.unquote(intervalExpr);
         final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(interval, intervalPos, "sample");
         assert samplingIntervalEnd < interval.length();
-        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
+        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.LONG_NULL, ' ');
         assert samplingInterval > 0;
         samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
 
