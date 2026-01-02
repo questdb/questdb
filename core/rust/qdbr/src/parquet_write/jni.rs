@@ -870,7 +870,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     let mut write_chunk = || -> ParquetResult<*const u8> {
         let row_count = (row_group_hi - row_group_lo) as usize;
         if row_count > 0 {
-            use crate::parquet_read::{ParquetDecoder, RowGroupBuffers};
+            use crate::parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers};
             use std::io::Cursor;
             let source_data = unsafe {
                 slice::from_raw_parts(
@@ -878,11 +878,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                     source_parquet_size as usize,
                 )
             };
-            let reader = Cursor::new(source_data);
+            let mut reader = Cursor::new(source_data);
             let allocator = unsafe { &*allocator_ptr }.clone();
-            let mut decoder =
-                ParquetDecoder::read(allocator.clone(), reader, source_parquet_size as u64)?;
+            let decoder =
+                ParquetDecoder::read(allocator.clone(), &mut reader, source_parquet_size as u64)?;
             let mut row_group_bufs = RowGroupBuffers::new(allocator);
+            let mut ctx = DecodeContext::new(source_parquet_addr as *const u8, source_parquet_size as u64);
             let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = encoder
                 .partition
                 .columns
@@ -892,6 +893,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 .collect();
 
             decoder.decode_row_group(
+                &mut ctx,
                 &mut row_group_bufs,
                 &columns,
                 row_group_index as u32,

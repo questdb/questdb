@@ -459,8 +459,8 @@ public class CopyExportRequestTask implements Mutable {
                         streamWriter,
                         allocator,
                         columnData.getAddress(),
-                        frame.getParquetAddr(),
-                        frame.getParquetFileSize(),
+                        frame.getParquetPartitionDecoder().getFileAddr(),
+                        frame.getParquetPartitionDecoder().getFileSize(),
                         frame.getParquetRowGroup(),
                         frame.getParquetRowGroupLo(),
                         frame.getParquetRowGroupHi()
