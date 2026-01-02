@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2026 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.log.Log;
@@ -34,25 +36,26 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
-import io.questdb.tasks.GroupByMergeShardTask;
+import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.tasks.GroupByLongTopKTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Handles parallel merge map shard tasks.
+ * Handles parallel ORDER BY long_column LIMIT N tasks on shards from a sharded map.
  *
  * @see AsyncGroupByRecordCursorFactory
  */
-public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeShardTask> {
-    private static final Log LOG = LogFactory.getLog(GroupByMergeShardJob.class);
+public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopKTask> {
+    private static final Log LOG = LogFactory.getLog(GroupByLongTopKJob.class);
 
-    public GroupByMergeShardJob(MessageBus messageBus) {
-        super(messageBus.getGroupByMergeShardQueue(), messageBus.getGroupByMergeShardSubSeq());
+    public GroupByLongTopKJob(MessageBus messageBus) {
+        super(messageBus.getGroupByLongTopKQueue(), messageBus.getGroupByLongTopKSubSeq());
     }
 
     public static void run(
             int workerId,
-            GroupByMergeShardTask task,
+            GroupByLongTopKTask task,
             Sequence subSeq,
             long cursor,
             AsyncGroupByAtom stealingAtom
@@ -61,7 +64,10 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final AsyncGroupByAtom atom = task.getAtom();
+        final Function longFunc = task.getFunction();
         final int shardIndex = task.getShardIndex();
+        final int order = task.getOrder();
+        final int limit = task.getLimit();
 
         task.clear();
         subSeq.done(cursor);
@@ -75,12 +81,14 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                 if (circuitBreaker.checkIfTripped()) {
                     return;
                 }
-                atom.mergeShard(slotId, shardIndex);
+                final Map shard = atom.getDestShards().getQuick(shardIndex);
+                final DirectLongLongSortedList list = atom.getLongTopKList(slotId, order, limit);
+                shard.getCursor().longTopK(list, longFunc);
             } finally {
                 atom.release(slotId);
             }
         } catch (Throwable th) {
-            LOG.error().$("merge shard failed [error=").$(th).I$();
+            LOG.error().$("long top K on shard failed [error=").$(th).I$();
             circuitBreaker.cancel();
         } finally {
             doneLatch.countDown();
@@ -89,7 +97,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
 
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        final GroupByMergeShardTask task = queue.get(cursor);
+        final GroupByLongTopKTask task = queue.get(cursor);
         run(workerId, task, subSeq, cursor, null);
         return true;
     }

@@ -259,6 +259,8 @@ public interface CairoConfiguration {
 
     int getGroupByMergeShardQueueCapacity();
 
+    long getGroupByParallelTopKThreshold();
+
     int getGroupByPoolCapacity();
 
     long getGroupByPresizeMaxCapacity();
@@ -266,6 +268,8 @@ public interface CairoConfiguration {
     long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
+
+    int getGroupByTopKQueueCapacity();
 
     @NotNull
     default IOURingFacade getIOURingFacade() {
@@ -440,8 +444,6 @@ public interface CairoConfiguration {
     long getPartitionO3SplitMinSize();
 
     int getPartitionPurgeListCapacity();
-
-    int getPoolSegmentSize();
 
     int getPreferencesStringPoolCapacity();
 

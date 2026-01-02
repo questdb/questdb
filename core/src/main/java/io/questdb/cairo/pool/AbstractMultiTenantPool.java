@@ -42,9 +42,8 @@ import java.util.Arrays;
 import java.util.Map;
 
 public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends AbstractPool implements ResourcePool<T> {
-    public final static String LOCKED = "pool is locked";
+    public static final int ENTRY_SIZE = 32;
     public final static String NO_LOCK_REASON = "unknown";
-    public final static String POOL_SIZE = "pool size exceeded";
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
@@ -56,13 +55,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final int maxEntries;
     private final int maxSegments;
     private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor;
-    private final int segmentSize;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
         this.maxSegments = maxSegments;
-        this.segmentSize = configuration.getPoolSegmentSize();
-        this.maxEntries = maxSegments * configuration.getPoolSegmentSize();
+        this.maxEntries = maxSegments * ENTRY_SIZE;
         if (configuration.cairoResourcePoolTracingEnabled()) {
             threadLocalPoolSupervisor = new io.questdb.std.ThreadLocal<>(TracingResourcePoolSupervisor::new);
         } else {
@@ -88,7 +85,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         for (Map.Entry<CharSequence, Entry<T>> me : entries.entrySet()) {
             Entry<T> e = me.getValue();
             do {
-                for (int i = 0; i < segmentSize; i++) {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED && e.getTenant(i) != null) {
                         count++;
                     }
@@ -103,10 +100,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         return maxEntries;
     }
 
-    public int getSegmentSize() {
-        return segmentSize;
-    }
-
     public boolean isCopyOfSupported() {
         return false;
     }
@@ -116,14 +109,14 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         final long thread = Thread.currentThread().getId();
         if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || e.lockOwner == thread) {
             do {
-                for (int i = 0; i < segmentSize; i++) {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                         closeTenant(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                     } else if (Unsafe.arrayGetVolatile(e.allocations, i) == thread) {
                         // same thread, don't need to order reads
                         if (e.getTenant(i) != null) {
                             // this thread has busy reader, it should close first
-                            e.lockOwner = UNLOCKED;
+                            e.lockOwner = -1L;
                             return false;
                         }
                     } else {
@@ -132,7 +125,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                                 .$(", owner=").$(e.allocations[i])
                                 .$(", thread=").$(thread)
                                 .I$();
-                        e.lockOwner = UNLOCKED;
+                        e.lockOwner = -1L;
                         return false;
                     }
                 }
@@ -164,46 +157,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                 .$(", thread=").$(thread)
                 .I$();
         return true;
-    }
-
-    public void notifyDropped(TableToken token, boolean fullDropped) {
-        Entry<T> firstEntry = entries.get(token.getDirName());
-        long thread = Thread.currentThread().getId();
-
-        if (firstEntry != null) {
-            // Mark the entry as dropped. Any attempt to return to pool after this point
-            // will simply close the tenant. The get0() method also checks this flag after
-            // CAS to catch concurrent drops.
-            firstEntry.dropped = true;
-            if (fullDropped) {
-                entries.remove(token.getDirName());
-            }
-
-            Entry<T> e = firstEntry;
-            while (e != null) {
-                for (int i = 0; i < segmentSize; i++) {
-                    if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                        try {
-                            closeTenant(thread, e, i, PoolListener.EV_DROPPED, PoolConstants.CR_DROPPED);
-                        } catch (Throwable th) {
-                            LOG.critical().$("error on closing pool item [table=").$(token)
-                                    .$(", error=").$(th).I$();
-                        }
-                        Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
-                    }
-                }
-
-                if (e.next == null && e.nextStatus == NEXT_ALLOCATED) {
-                    // now we must wait until another thread that executes a get() call
-                    // assigns the newly created next entry
-                    while (e.next == null) {
-                        Os.pause();
-                    }
-                }
-
-                e = e.next;
-            }
-        }
     }
 
     public void removeThreadLocalPoolSupervisor() {
@@ -255,8 +208,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     }
 
     private T get0(TableToken tableToken, @Nullable T copyOfTenant) {
-        Entry<T> rootEntry = getEntry(tableToken);
-        Entry<T> e = rootEntry;
+        Entry<T> e = getEntry(tableToken);
 
         long lockOwner = e.lockOwner;
         long thread = Thread.currentThread().getId();
@@ -269,18 +221,8 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
 
         do {
-            for (int i = 0; i < segmentSize; i++) {
+            for (int i = 0; i < ENTRY_SIZE; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                    // Check if table was fully dropped concurrently. This narrows the race window
-                    // between verifyTableToken and pool allocation. Even if this check passes,
-                    // the sequencer WRITE lock provides the ultimate correctness guarantee.
-                    // Note: For TRUNCATE (fullDropped=false), dropped is set but entry stays in map.
-                    // We only throw for full drops where the entry was removed from the map.
-                    if (rootEntry.dropped && entries.get(tableToken.getDirName()) != rootEntry) {
-                        Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
-                        throw CairoException.tableDropped(tableToken);
-                    }
-
                     Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
                     // got lock, allocate if needed
                     T tenant = e.getTenant(i);
@@ -292,8 +234,8 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                                     .$(", at=").$(e.index).$(':').$(i)
                                     .I$();
                             tenant = copyOfTenant != null
-                                    ? newCopyOfTenant(copyOfTenant, rootEntry, e, i, supervisor)
-                                    : newTenant(tableToken, rootEntry, e, i, supervisor);
+                                    ? newCopyOfTenant(copyOfTenant, e, i, supervisor)
+                                    : newTenant(tableToken, e, i, supervisor);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -347,17 +289,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             // all allocated, create next entry if possible
             if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                e.next = new Entry<>(e.index + 1, clock.getTicks(), segmentSize);
+                e.next = new Entry<>(e.index + 1, clock.getTicks());
             } else {
                 // if the race is lost we need to wait until e.next is set by the winning thread
                 while (e.next == null && e.nextStatus == NEXT_ALLOCATED) {
                     Os.pause();
-                }
-                if (e.nextStatus == NEXT_LOCKED) {
-                    LOG.info().$("table is locked [table=").$(tableToken)
-                            .$(", owner=").$(lockOwner)
-                            .I$();
-                    throw EntryLockedException.instance(LOCKED);
                 }
             }
             e = e.next;
@@ -369,7 +305,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                 .$(", thread=").$(thread)
                 .$(", retries=").$(this.maxSegments)
                 .I$();
-        throw EntryUnavailableException.instance(POOL_SIZE);
+        throw EntryUnavailableException.instance(NO_LOCK_REASON);
     }
 
     private Entry<T> getEntry(TableToken token) {
@@ -377,7 +313,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
         Entry<T> e = entries.get(token.getDirName());
         if (e == null) {
-            e = new Entry<>(0, clock.getTicks(), segmentSize);
+            e = new Entry<>(0, clock.getTicks());
             Entry<T> other = entries.putIfAbsent(token.getDirName(), e);
             if (other != null) {
                 e = other;
@@ -432,7 +368,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     protected T newCopyOfTenant(
             T srcTenant,
-            Entry<T> rootEntry,
             Entry<T> entry,
             int index,
             @Nullable ResourcePoolSupervisor<T> supervisor
@@ -442,7 +377,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     protected abstract T newTenant(
             TableToken tableToken,
-            Entry<T> rootEntry,
             Entry<T> entry,
             int index,
             @Nullable ResourcePoolSupervisor<T> supervisor
@@ -458,7 +392,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         TableToken leftBehind = null;
         for (Entry<T> e : entries.values()) {
             do {
-                for (int i = 0; i < segmentSize; i++) {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
                     T r;
                     if (deadline > Unsafe.arrayGetVolatile(e.releaseOrAcquireTimes, i) && (r = e.getTenant(i)) != null) {
                         if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
@@ -520,7 +454,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
 
         if (owner != UNALLOCATED) {
-            // Check if entry is being locked or dropped by checking the first entry's lockOwner
             LOG.debug().$("table is back [table=").$(tableToken)
                     .$(", at=").$(e.index).$(':').$(index)
                     .$(", thread=").$(thread)
@@ -530,29 +463,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             // release the entry for anyone to pick up
             e.releaseOrAcquireTimes[index] = clock.getTicks();
             Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
-            if (tenant.getRootEntry().dropped) {
-                // Table is dropped (entry removed or replaced) - dispose instead of returning
-                // Make sure no one else has taken it in the meantime
-                if (Unsafe.cas(e.allocations, index, UNALLOCATED, owner)) {
-                    // Check if our tenant is still in the entry slot.
-                    // If notifyDropped() already closed it, the slot will be null.
-                    // This prevents double-close when notifyDropped() races with returnToPool().
-                    if (e.getTenant(index) != tenant) {
-                        // Tenant was already closed by notifyDropped(), just release the slot
-                        Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
-                        return true; // Tell caller not to close (already closed)
-                    }
-                    LOG.info().$("close on return, table is dropped [table=").$(tableToken)
-                            .$(", at=").$(e.index).$(':').$(index)
-                            .I$();
-
-                    tenant.goodbye();
-                    e.assignTenant(index, null);
-                    Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
-
-                    return false;
-                }
-            }
             final boolean closed = isClosed();
 
             // When pool is closed we will race against release thread
@@ -573,23 +483,16 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     }
 
     public static final class Entry<T> {
-        private final long[] allocations;
+        private final long[] allocations = new long[ENTRY_SIZE];
         private final int index;
-        private final long[] releaseOrAcquireTimes;
-        private final T[] tenants;
-        public volatile boolean dropped;
+        private final long[] releaseOrAcquireTimes = new long[ENTRY_SIZE];
+        @SuppressWarnings("unchecked")
+        private final T[] tenants = (T[]) new Object[ENTRY_SIZE];
+        int nextStatus = NEXT_OPEN;
         private volatile long lockOwner = -1L;
         private volatile Entry<T> next;
-        // This is modified using CAS operations, it cannot be final.
-        // Must be volatile for visibility of plain reads after CAS races.
-        @SuppressWarnings("FieldMayBeFinal")
-        private volatile int nextStatus = NEXT_OPEN;
 
-        @SuppressWarnings("unchecked")
-        public Entry(int index, long currentMicros, int entrySize) {
-            allocations = new long[entrySize];
-            releaseOrAcquireTimes = new long[entrySize];
-            tenants = (T[]) new Object[entrySize];
+        public Entry(int index, long currentMicros) {
             this.index = index;
             Arrays.fill(allocations, UNALLOCATED);
             Arrays.fill(releaseOrAcquireTimes, currentMicros);

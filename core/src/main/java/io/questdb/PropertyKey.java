@@ -107,6 +107,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED("cairo.sql.parallel.groupby.presize.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY("cairo.sql.parallel.groupby.presize.max.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE("cairo.sql.parallel.groupby.presize.max.heap.size"),
+    CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD("cairo.sql.parallel.groupby.topk.threshold"),
+    CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY("cairo.sql.parallel.groupby.topk.queue.capacity"),
     CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD("cairo.sql.parallel.work.stealing.threshold"),
     CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED("cairo.sql.parallel.read.parquet.enabled"),
     CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY("cairo.sql.parquet.frame.cache.capacity"),
@@ -615,8 +617,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_FILE_ASYNC_MUNMAP_ENABLED("cairo.file.async.munmap.enabled"),
     CAIRO_RMDIR_MAX_DEPTH("cairo.rmdir.max.depth"),
     CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled"),
-    CAIRO_TTL_USE_WALL_CLOCK("cairo.ttl.use.wall.clock"),
-    DEBUG_CAIRO_POOL_SEGMENT_SIZE("debug.cairo.pool.segment.size", false, true);
+    CAIRO_TTL_USE_WALL_CLOCK("cairo.ttl.use.wall.clock");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

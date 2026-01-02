@@ -30,7 +30,6 @@ import io.questdb.cairo.TableToken;
 public interface PoolListener {
     short EV_CREATE = 10;
     short EV_CREATE_EX = 14;
-    short EV_DROPPED = 27;
     short EV_EXPIRE = 17;
     short EV_EX_RESEND = 21;
     short EV_FULL = 25;

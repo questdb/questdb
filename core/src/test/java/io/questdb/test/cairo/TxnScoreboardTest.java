@@ -33,6 +33,7 @@ import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardPool;
 import io.questdb.cairo.TxnScoreboardPoolV2;
 import io.questdb.cairo.TxnScoreboardV2;
+import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -146,13 +147,13 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     scoreboard.acquireTxn(0, i);
                     scoreboard.releaseTxn(0, i);
                 }
-                assertScoreboardMinOrNoLocks(scoreboard);
+                assertScoreboardMinOrNoLocks(scoreboard, 1499);
             }
             engine.getTxnScoreboardPool().clear();
 
             // second open is exclusive, file should be truncated
             try (TxnScoreboard scoreboard2 = newTxnScoreboard()) {
-                assertScoreboardMinOrNoLocks(scoreboard2);
+                assertScoreboardMinOrNoLocks(scoreboard2, 0);
             }
             scoreboardPoolFactory.clear();
         });
@@ -166,7 +167,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     scoreboard.acquireTxn(0, i);
                     scoreboard.releaseTxn(0, i);
                 }
-                assertScoreboardMinOrNoLocks(scoreboard);
+                assertScoreboardMinOrNoLocks(scoreboard, 1499);
             }
 
             // second open is exclusive, file should be truncated
@@ -179,8 +180,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                 // This should not obtain exclusive lock even though file was empty when scoreboard2 put shared lock
                 try (TxnScoreboard scoreboard3 = newTxnScoreboard()) {
-                    assertScoreboardMinOrNoLocks(scoreboard2);
-                    assertScoreboardMinOrNoLocks(scoreboard3);
+                    assertScoreboardMinOrNoLocks(scoreboard2, 9);
+                    assertScoreboardMinOrNoLocks(scoreboard3, 9);
                 }
 
             }
@@ -200,18 +201,18 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     Assert.assertTrue(scoreboard.acquireTxn(0, i));
                     scoreboard.releaseTxn(0, i);
                 }
-                assertScoreboardMinOrNoLocks(scoreboard);
+                assertScoreboardMinOrNoLocks(scoreboard, 1499);
 
                 // increase scoreboard size
                 try (TxnScoreboard scoreboard2 = newTxnScoreboard()) {
-                    assertScoreboardMinOrNoLocks(scoreboard2);
+                    assertScoreboardMinOrNoLocks(scoreboard2, 1499);
                     for (int i = 1500; i < 3000; i++) {
                         scoreboard2.acquireTxn(0, i);
                         scoreboard2.releaseTxn(0, i);
                     }
 
-                    assertScoreboardMinOrNoLocks(scoreboard2);
-                    assertScoreboardMinOrNoLocks(scoreboard);
+                    assertScoreboardMinOrNoLocks(scoreboard2, 2999);
+                    assertScoreboardMinOrNoLocks(scoreboard, 2999);
                 }
                 scoreboardPoolFactory.clear();
             }
@@ -227,20 +228,20 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         scoreboard.acquireTxn(0, i);
                         scoreboard.releaseTxn(0, i);
                     }
-                    assertScoreboardMinOrNoLocks(scoreboard);
+                    assertScoreboardMinOrNoLocks(scoreboard, 1499);
                 }
                 engine.getTxnScoreboardPool().clear();
 
                 try (final TxnScoreboard scoreboard2 = newTxnScoreboard()) {
-                    assertScoreboardMinOrNoLocks(scoreboard2);
+                    assertScoreboardMinOrNoLocks(scoreboard2, 1499);
                     for (int i = 1500; i < 3000; i++) {
                         scoreboard2.acquireTxn(0, i);
                         scoreboard2.releaseTxn(0, i);
                     }
-                    assertScoreboardMinOrNoLocks(scoreboard2);
+                    assertScoreboardMinOrNoLocks(scoreboard2, 2999);
                 }
 
-                assertScoreboardMinOrNoLocks(rootBoard);
+                assertScoreboardMinOrNoLocks(rootBoard, 2999);
             }
             scoreboardPoolFactory.clear();
         });
@@ -252,15 +253,15 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try (
                     final TxnScoreboard scoreboard = newTxnScoreboard()
             ) {
-                assertScoreboardMinOrNoLocks(scoreboard);
+                assertScoreboardMinOrNoLocks(scoreboard, 0);
                 Assert.assertTrue(scoreboard.acquireTxn(0, 2048));
                 Assert.assertEquals(2048, getMin(scoreboard));
                 scoreboard.releaseTxn(0, 2048);
-                assertScoreboardMinOrNoLocks(scoreboard);
+                assertScoreboardMinOrNoLocks(scoreboard, 2048);
 
                 Assert.assertTrue(scoreboard.acquireTxn(0, 10000L));
                 scoreboard.releaseTxn(0, 10000L);
-                assertScoreboardMinOrNoLocks(scoreboard);
+                assertScoreboardMinOrNoLocks(scoreboard, 10000L);
 
 
                 Assert.assertFalse(scoreboard.acquireTxn(0, 4095));
@@ -279,7 +280,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     public void testIncrementTxn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
-                assertScoreboardMinOrNoLocks(scoreboard);
+                assertScoreboardMinOrNoLocks(scoreboard, 0);
                 Assert.assertTrue(scoreboard.acquireTxn(0, 1));
                 Assert.assertEquals(1, getMin(scoreboard));
 
@@ -295,7 +296,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                 // Now we can release the older txn.
                 scoreboard.releaseTxn(0, 1);
-                assertScoreboardMinOrNoLocks(scoreboard);
+                assertScoreboardMinOrNoLocks(scoreboard, 2);
             }
             scoreboardPoolFactory.clear();
         });
@@ -456,7 +457,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     Assert.assertEquals(70, getMin(scoreboard1));
                     scoreboard1.releaseTxn(4, 70);
 
-                    assertScoreboardMinOrNoLocks(scoreboard1);
+                    assertScoreboardMinOrNoLocks(scoreboard1, 71);
                     scoreboard1.acquireTxn(0, 72);
                 }
                 scoreboard2.acquireTxn(0, 72);
@@ -495,7 +496,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         return ((TxnScoreboardV2) scoreboard).getMin();
     }
 
-    private void assertScoreboardMinOrNoLocks(TxnScoreboard scoreboard) {
+    private void assertScoreboardMinOrNoLocks(TxnScoreboard scoreboard, long txn) {
         Assert.assertEquals(-1, getMin(scoreboard));
     }
 
@@ -503,7 +504,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     private void testHammerScoreboard(int readers, int iterations) throws Exception {
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
         setProperty(PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, entryCount);
-        setProperty(PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, (int) Math.ceil((double) readers / configuration.getPoolSegmentSize()));
+        setProperty(PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, (int) Math.ceil((double) readers / ReaderPool.ENTRY_SIZE));
         try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
             final CyclicBarrier barrier = new CyclicBarrier(readers + 1);
             final CountDownLatch latch = new CountDownLatch(readers + 1);
