@@ -424,73 +424,63 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     }
 
     /**
-     * Tests WAL pending row count and dedup tracking via the tables() SQL function.
+     * Tests that unique rows are NOT incorrectly counted as duplicates.
      * <p>
-     * This test verifies that:
-     * - pendingRowCount reflects uncommitted WAL rows before draining
-     * - After draining, pendingRowCount becomes 0 and rowCount is updated
-     * - Duplicate rows are tracked via dedupeRowCount
+     * This test verifies the fix for a bug where rows going to LAG (out-of-order buffer)
+     * were incorrectly counted as duplicates because the old calculation used:
+     * dedupCount = walRowCount - committedRowCount
+     * <p>
+     * When rows go to LAG, committedRowCount is 0 (LAG rows aren't in txWriter.getRowCount()),
+     * so all rows would be incorrectly counted as "deduped".
+     * <p>
+     * The fix tracks actual dedup from the native Vect.dedupSortedTimestampIndexIntKeysChecked() call.
      */
     @Test
-    public void testWalPendingAndDedupTracking() throws Exception {
+    public void testUniqueRowsNotCountedAsDedup() throws Exception {
         assertMemoryLeak(() -> {
-            // Create a WAL table with dedup enabled on timestamp
-            execute("CREATE TABLE dedup_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            // Create a WAL table with dedup enabled
+            execute("CREATE TABLE unique_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
 
-            engine.getRecentWriteTracker().clear();
+            RecentWriteTracker tracker = engine.getRecentWriteTracker();
+            tracker.clear();
 
-            // Insert 500 unique rows from "thread 1" - use seconds to ensure unique timestamps
-            // Timestamps: 1970-01-01T00:00:01 through 1970-01-01T00:08:20 (1-500 seconds)
-            execute("INSERT INTO dedup_test SELECT (x * 1000000)::timestamp, x::int FROM long_sequence(500)");
+            TableToken tableToken = engine.verifyTableName("unique_test");
 
-            // Drain after first insert to apply it
+            // Insert unique rows in multiple small batches
+            // Small batches may go to LAG before being committed
+            for (int batch = 0; batch < 10; batch++) {
+                int offset = batch * 100;
+                execute("INSERT INTO unique_test SELECT ((x + " + offset + ") * 1000000)::timestamp, (x + " + offset + ")::int FROM long_sequence(100)");
+            }
+
+            // Drain WAL to apply all changes
             drainWalQueue();
 
-            // Insert 500 more unique rows from "thread 2"
-            // Timestamps: 1970-01-01T00:08:21 through 1970-01-01T00:16:40 (501-1000 seconds)
-            execute("INSERT INTO dedup_test SELECT ((500 + x) * 1000000)::timestamp, (500 + x)::int FROM long_sequence(500)");
+            // Verify: 1000 unique rows inserted, dedup_row_count should be 0
+            RecentWriteTracker.WriteStats stats = tracker.getWriteStats(tableToken);
+            Assert.assertNotNull("Stats should be available", stats);
+            Assert.assertEquals("Should have 1000 rows", 1000L, stats.getRowCount());
+            Assert.assertEquals("Dedup count should be 0 for unique rows", 0L, stats.getDedupRowCount());
 
-            // Before draining second batch - pendingRowCount should be 500 (second batch pending)
+            // Also verify via SQL
             assertSql(
-                    "pendingRowCount\n500\n",
-                    "SELECT pendingRowCount FROM tables() WHERE table_name = 'dedup_test'"
+                    "table_row_count\tdedup_row_count_since_start\n1000\t0\n",
+                    "SELECT table_row_count, dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'"
             );
 
-            // Row count should be 500 (first batch applied)
-            assertSql(
-                    "rowCount\n500\n",
-                    "SELECT rowCount FROM tables() WHERE table_name = 'dedup_test'"
-            );
-
-            // Drain the WAL queue to apply second batch
+            // Now insert actual duplicates - same timestamps as first 200 rows
+            execute("INSERT INTO unique_test SELECT (x * 1000000)::timestamp, (x + 2000)::int FROM long_sequence(200)");
             drainWalQueue();
 
-            // After draining - rowCount should be 1000, pendingRowCount should be 0, no dedup yet
+            // Verify duplicates are now tracked
+            stats = tracker.getWriteStats(tableToken);
+            Assert.assertEquals("Row count should still be 1000", 1000L, stats.getRowCount());
+            Assert.assertEquals("Dedup count should be 200", 200L, stats.getDedupRowCount());
+
+            // Verify via SQL
             assertSql(
-                    "rowCount\tpendingRowCount\tdedupeRowCount\n1000\t0\t0\n",
-                    "SELECT rowCount, pendingRowCount, dedupeRowCount FROM tables() WHERE table_name = 'dedup_test'"
-            );
-
-            // Now insert duplicate data - same timestamps as first 300 rows (1-300 seconds)
-            execute("INSERT INTO dedup_test SELECT (x * 1000000)::timestamp, (x + 1000)::int FROM long_sequence(300)");
-
-            // Drain the queue again
-            drainWalQueue();
-
-            // After draining duplicates:
-            // - rowCount should still be 1000 (300 duplicates replaced existing rows)
-            // - pendingRowCount should be 0
-            // - dedupeRowCount should be 300 (cumulative - the 300 duplicates just added)
-            assertSql(
-                    "rowCount\tpendingRowCount\tdedupeRowCount\n1000\t0\t300\n",
-                    "SELECT rowCount, pendingRowCount, dedupeRowCount FROM tables() WHERE table_name = 'dedup_test'"
-            );
-
-            // Verify the values were actually updated (not just row count unchanged)
-            // The first 300 rows should now have v = x + 1000
-            assertSql(
-                    "count\n300\n",
-                    "SELECT count() FROM dedup_test WHERE v > 1000"
+                    "table_row_count\tdedup_row_count_since_start\n1000\t200\n",
+                    "SELECT table_row_count, dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'"
             );
         });
     }
@@ -539,63 +529,73 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     }
 
     /**
-     * Tests that unique rows are NOT incorrectly counted as duplicates.
+     * Tests WAL pending row count and dedup tracking via the tables() SQL function.
      * <p>
-     * This test verifies the fix for a bug where rows going to LAG (out-of-order buffer)
-     * were incorrectly counted as duplicates because the old calculation used:
-     * dedupCount = walRowCount - committedRowCount
-     * <p>
-     * When rows go to LAG, committedRowCount is 0 (LAG rows aren't in txWriter.getRowCount()),
-     * so all rows would be incorrectly counted as "deduped".
-     * <p>
-     * The fix tracks actual dedup from the native Vect.dedupSortedTimestampIndexIntKeysChecked() call.
+     * This test verifies that:
+     * - wal_pending_row_count reflects uncommitted WAL rows before draining
+     * - After draining, wal_pending_row_count becomes 0 and table_row_count is updated
+     * - Duplicate rows are tracked via dedup_row_count_since_start
      */
     @Test
-    public void testUniqueRowsNotCountedAsDedup() throws Exception {
+    public void testWalPendingAndDedupTracking() throws Exception {
         assertMemoryLeak(() -> {
-            // Create a WAL table with dedup enabled
-            execute("CREATE TABLE unique_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            // Create a WAL table with dedup enabled on timestamp
+            execute("CREATE TABLE dedup_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
 
-            RecentWriteTracker tracker = engine.getRecentWriteTracker();
-            tracker.clear();
+            engine.getRecentWriteTracker().clear();
 
-            TableToken tableToken = engine.verifyTableName("unique_test");
+            // Insert 500 unique rows from "thread 1" - use seconds to ensure unique timestamps
+            // Timestamps: 1970-01-01T00:00:01 through 1970-01-01T00:08:20 (1-500 seconds)
+            execute("INSERT INTO dedup_test SELECT (x * 1000000)::timestamp, x::int FROM long_sequence(500)");
 
-            // Insert unique rows in multiple small batches
-            // Small batches may go to LAG before being committed
-            for (int batch = 0; batch < 10; batch++) {
-                int offset = batch * 100;
-                execute("INSERT INTO unique_test SELECT ((x + " + offset + ") * 1000000)::timestamp, (x + " + offset + ")::int FROM long_sequence(100)");
-            }
-
-            // Drain WAL to apply all changes
+            // Drain after first insert to apply it
             drainWalQueue();
 
-            // Verify: 1000 unique rows inserted, dedupeRowCount should be 0
-            RecentWriteTracker.WriteStats stats = tracker.getWriteStats(tableToken);
-            Assert.assertNotNull("Stats should be available", stats);
-            Assert.assertEquals("Should have 1000 rows", 1000L, stats.getRowCount());
-            Assert.assertEquals("Dedup count should be 0 for unique rows", 0L, stats.getDedupRowCount());
+            // Insert 500 more unique rows from "thread 2"
+            // Timestamps: 1970-01-01T00:08:21 through 1970-01-01T00:16:40 (501-1000 seconds)
+            execute("INSERT INTO dedup_test SELECT ((500 + x) * 1000000)::timestamp, (500 + x)::int FROM long_sequence(500)");
 
-            // Also verify via SQL
+            // Before draining second batch - wal_pending_row_count should be 500 (second batch pending)
             assertSql(
-                    "rowCount\tdedupeRowCount\n1000\t0\n",
-                    "SELECT rowCount, dedupeRowCount FROM tables() WHERE table_name = 'unique_test'"
+                    "wal_pending_row_count\n500\n",
+                    "SELECT wal_pending_row_count FROM tables() WHERE table_name = 'dedup_test'"
             );
 
-            // Now insert actual duplicates - same timestamps as first 200 rows
-            execute("INSERT INTO unique_test SELECT (x * 1000000)::timestamp, (x + 2000)::int FROM long_sequence(200)");
+            // Row count should be 500 (first batch applied)
+            assertSql(
+                    "table_row_count\n500\n",
+                    "SELECT table_row_count FROM tables() WHERE table_name = 'dedup_test'"
+            );
+
+            // Drain the WAL queue to apply second batch
             drainWalQueue();
 
-            // Verify duplicates are now tracked
-            stats = tracker.getWriteStats(tableToken);
-            Assert.assertEquals("Row count should still be 1000", 1000L, stats.getRowCount());
-            Assert.assertEquals("Dedup count should be 200", 200L, stats.getDedupRowCount());
-
-            // Verify via SQL
+            // After draining - table_row_count should be 1000, wal_pending_row_count should be 0, no dedup yet
             assertSql(
-                    "rowCount\tdedupeRowCount\n1000\t200\n",
-                    "SELECT rowCount, dedupeRowCount FROM tables() WHERE table_name = 'unique_test'"
+                    "table_row_count\twal_pending_row_count\tdedup_row_count_since_start\n1000\t0\t0\n",
+                    "SELECT table_row_count, wal_pending_row_count, dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'"
+            );
+
+            // Now insert duplicate data - same timestamps as first 300 rows (1-300 seconds)
+            execute("INSERT INTO dedup_test SELECT (x * 1000000)::timestamp, (x + 1000)::int FROM long_sequence(300)");
+
+            // Drain the queue again
+            drainWalQueue();
+
+            // After draining duplicates:
+            // - table_row_count should still be 1000 (300 duplicates replaced existing rows)
+            // - wal_pending_row_count should be 0
+            // - dedup_row_count_since_start should be 300 (cumulative - the 300 duplicates just added)
+            assertSql(
+                    "table_row_count\twal_pending_row_count\tdedup_row_count_since_start\n1000\t0\t300\n",
+                    "SELECT table_row_count, wal_pending_row_count, dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'"
+            );
+
+            // Verify the values were actually updated (not just row count unchanged)
+            // The first 300 rows should now have v = x + 1000
+            assertSql(
+                    "count\n300\n",
+                    "SELECT count() FROM dedup_test WHERE v > 1000"
             );
         });
     }

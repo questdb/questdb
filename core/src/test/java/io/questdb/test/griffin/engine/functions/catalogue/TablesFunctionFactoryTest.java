@@ -52,13 +52,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             execute("INSERT INTO test_mem_pressure VALUES ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
 
-            // Initially, memoryPressureLevel should be 0 (no pressure)
+            // Initially, table_memory_pressure_level should be 0 (no pressure)
             assertSql(
                     """
-                            table_name\tmemoryPressureLevel
+                            table_name\ttable_memory_pressure_level
                             test_mem_pressure\t0
                             """,
-                    "select table_name, memoryPressureLevel from tables() where table_name = 'test_mem_pressure'"
+                    "select table_name, table_memory_pressure_level from tables() where table_name = 'test_mem_pressure'"
             );
         });
     }
@@ -69,13 +69,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // Create a non-WAL table
             execute("CREATE TABLE test_non_wal_mem (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
 
-            // Non-WAL tables should show null for memoryPressureLevel
+            // Non-WAL tables should show null for table_memory_pressure_level
             assertSql(
                     """
-                            table_name\tmemoryPressureLevel
+                            table_name\ttable_memory_pressure_level
                             test_non_wal_mem\tnull
                             """,
-                    "select table_name, memoryPressureLevel from tables() where table_name = 'test_non_wal_mem'"
+                    "select table_name, table_memory_pressure_level from tables() where table_name = 'test_non_wal_mem'"
             );
         });
     }
@@ -209,19 +209,19 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("test_non_wal");
             long writerTxn = tracker.getWriterTxn(tableToken);
 
-            // Non-WAL tables should have writerTxn but no sequencerTxn or walTimestamp
-            Assert.assertTrue("writerTxn should be positive for non-WAL table", writerTxn >= 0);
-            Assert.assertEquals("sequencerTxn should be null for non-WAL table", Numbers.LONG_NULL, tracker.getSequencerTxn(tableToken));
-            Assert.assertEquals("walTimestamp should be null for non-WAL table", Numbers.LONG_NULL, tracker.getLastWalTimestamp(tableToken));
+            // Non-WAL tables should have table_txn but no wal_txn or wal_max_timestamp
+            Assert.assertTrue("table_txn should be positive for non-WAL table", writerTxn >= 0);
+            Assert.assertEquals("wal_txn should be null for non-WAL table", Numbers.LONG_NULL, tracker.getSequencerTxn(tableToken));
+            Assert.assertEquals("wal_max_timestamp should be null for non-WAL table", Numbers.LONG_NULL, tracker.getLastWalTimestamp(tableToken));
 
             // Query via tables() function
             assertSql(
                     """
-                            table_name\twriterTxn\tsequencerTxn\tlastWalTimestamp
+                            table_name\ttable_txn\twal_txn\twal_max_timestamp
                             test_non_wal\t""" + writerTxn + """
                             \tnull\t
                             """,
-                    "select table_name, writerTxn, sequencerTxn, lastWalTimestamp from tables() where table_name = 'test_non_wal'"
+                    "select table_name, table_txn, wal_txn, wal_max_timestamp from tables() where table_name = 'test_non_wal'"
             );
         });
     }
@@ -235,13 +235,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
 
-            // Before any writes, rowCount and lastWriteTimestamp should be null
+            // Before any writes, table_row_count and table_max_timestamp should be null
             assertSql(
                     """
-                            table_name\trowCount\tlastWriteTimestamp
+                            table_name\ttable_row_count\ttable_max_timestamp
                             test_writes\tnull\t
                             """,
-                    "select table_name, rowCount, lastWriteTimestamp from tables() where table_name = 'test_writes'"
+                    "select table_name, table_row_count, table_max_timestamp from tables() where table_name = 'test_writes'"
             );
 
             // Insert rows and drain WAL
@@ -259,13 +259,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // Query via tables() function
             assertSql(
                     """
-                            table_name\trowCount
+                            table_name\ttable_row_count
                             test_writes\t3
                             """,
-                    "select table_name, rowCount from tables() where table_name = 'test_writes'"
+                    "select table_name, table_row_count from tables() where table_name = 'test_writes'"
             );
 
-            // Verify lastWriteTimestamp is within expected range
+            // Verify table_max_timestamp is within expected range
             long lastWriteTimestamp = tracker.getWriteTimestamp(tableToken);
             Assert.assertTrue("Timestamp should be >= beforeWrite", lastWriteTimestamp >= beforeWrite);
             Assert.assertTrue("Timestamp should be <= afterWrite", lastWriteTimestamp <= afterWrite);
@@ -288,10 +288,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // Initially, the table should not be suspended
             assertSql(
                     """
-                            table_name\tsuspended
+                            table_name\ttable_suspended
                             test_suspended\tfalse
                             """,
-                    "select table_name, suspended from tables() where table_name = 'test_suspended'"
+                    "select table_name, table_suspended from tables() where table_name = 'test_suspended'"
             );
 
             // Suspend the table
@@ -300,10 +300,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // Now the table should be suspended
             assertSql(
                     """
-                            table_name\tsuspended
+                            table_name\ttable_suspended
                             test_suspended\ttrue
                             """,
-                    "select table_name, suspended from tables() where table_name = 'test_suspended'"
+                    "select table_name, table_suspended from tables() where table_name = 'test_suspended'"
             );
 
             // Resume the table
@@ -312,10 +312,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // Table should no longer be suspended
             assertSql(
                     """
-                            table_name\tsuspended
+                            table_name\ttable_suspended
                             test_suspended\tfalse
                             """,
-                    "select table_name, suspended from tables() where table_name = 'test_suspended'"
+                    "select table_name, table_suspended from tables() where table_name = 'test_suspended'"
             );
         });
     }
@@ -326,13 +326,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // Create a non-WAL table
             execute("CREATE TABLE test_non_wal_suspended (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
 
-            // Non-WAL tables should always show suspended=false
+            // Non-WAL tables should always show table_suspended=false
             assertSql(
                     """
-                            table_name\tsuspended
+                            table_name\ttable_suspended
                             test_non_wal_suspended\tfalse
                             """,
-                    "select table_name, suspended from tables() where table_name = 'test_non_wal_suspended'"
+                    "select table_name, table_suspended from tables() where table_name = 'test_non_wal_suspended'"
             );
         });
     }
@@ -349,10 +349,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // Before any writes, all txn columns should be null
             assertSql(
                     """
-                            table_name\twriterTxn\tsequencerTxn\tlastWalTimestamp
+                            table_name\ttable_txn\twal_txn\twal_max_timestamp
                             test_txn\tnull\tnull\t
                             """,
-                    "select table_name, writerTxn, sequencerTxn, lastWalTimestamp from tables() where table_name = 'test_txn'"
+                    "select table_name, table_txn, wal_txn, wal_max_timestamp from tables() where table_name = 'test_txn'"
             );
 
             // Insert rows and drain WAL
@@ -366,18 +366,18 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             long sequencerTxn = tracker.getSequencerTxn(tableToken);
             long walTimestamp = tracker.getLastWalTimestamp(tableToken);
 
-            Assert.assertTrue("writerTxn should be positive", writerTxn > 0);
-            Assert.assertTrue("sequencerTxn should be positive", sequencerTxn > 0);
-            Assert.assertTrue("walTimestamp should be positive", walTimestamp > 0);
+            Assert.assertTrue("table_txn should be positive", writerTxn > 0);
+            Assert.assertTrue("wal_txn should be positive", sequencerTxn > 0);
+            Assert.assertTrue("wal_max_timestamp should be positive", walTimestamp > 0);
 
             // Query via tables() function - verify columns are present and have values
             assertSql(
                     """
-                            table_name\twriterTxn\tsequencerTxn
+                            table_name\ttable_txn\twal_txn
                             test_txn\t""" + writerTxn + "\t" + sequencerTxn + """
-                            
+
                             """,
-                    "select table_name, writerTxn, sequencerTxn from tables() where table_name = 'test_txn'"
+                    "select table_name, table_txn, wal_txn from tables() where table_name = 'test_txn'"
             );
         });
     }

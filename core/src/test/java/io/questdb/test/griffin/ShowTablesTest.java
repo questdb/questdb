@@ -57,8 +57,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
                         assertCursor(
                                 """
-                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	suspended	dedup	ttlValue	ttlUnit	matView	rowCount	pendingRowCount	dedupeRowCount	lastWriteTimestamp	writerTxn	sequencerTxn	lastWalTimestamp	directoryName	memoryPressureLevel	txnCount	txnSizeP50	txnSizeP90	txnSizeP99	txnSizeMax	writeAmplificationCount	writeAmplificationP50	writeAmplificationP90	writeAmplificationP99	writeAmplificationMax	mergeThroughputCount	mergeThroughputP50	mergeThroughputP90	mergeThroughputP99	mergeThroughputMax	replicaBatchCount	replicaBatchSizeP50	replicaBatchSizeP90	replicaBatchSizeP99	replicaBatchSizeMax	replicaMorePending	maxUncommittedRows	o3MaxLag
-                                        1	x	ts	DAY	false	false	false	0	HOUR	false	null	0	0		null	null		x~	null	0	0	0	0	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	0	0	0	false	1000	300000000
+                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_row_count	table_max_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
+                                        1	x	ts	DAY	false	false	0	HOUR	false	x~	1000	300000000	false	null		null	null	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                                         """,
                                 false,
                                 true,
@@ -78,8 +78,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                         // note the ID is 2 now!
                         assertCursor(
                                 """
-                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	suspended	dedup	ttlValue	ttlUnit	matView	rowCount	pendingRowCount	dedupeRowCount	lastWriteTimestamp	writerTxn	sequencerTxn	lastWalTimestamp	directoryName	memoryPressureLevel	txnCount	txnSizeP50	txnSizeP90	txnSizeP99	txnSizeMax	writeAmplificationCount	writeAmplificationP50	writeAmplificationP90	writeAmplificationP99	writeAmplificationMax	mergeThroughputCount	mergeThroughputP50	mergeThroughputP90	mergeThroughputP99	mergeThroughputMax	replicaBatchCount	replicaBatchSizeP50	replicaBatchSizeP90	replicaBatchSizeP99	replicaBatchSizeMax	replicaMorePending	maxUncommittedRows	o3MaxLag
-                                        2	x	ts	DAY	false	false	false	0	HOUR	false	null	0	0		null	null		x~	null	0	0	0	0	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	0	0	0	false	1000	300000000
+                                        id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_row_count	table_max_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
+                                        2	x	ts	DAY	false	false	0	HOUR	false	x~	1000	300000000	false	null		null	null	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                                         """,
                                 false,
                                 true,
@@ -268,9 +268,9 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
             assertSql(
                     """
-                            id	table_name	designatedTimestamp	partitionBy	walEnabled	suspended	dedup	ttlValue	ttlUnit	matView	rowCount	pendingRowCount	dedupeRowCount	lastWriteTimestamp	writerTxn	sequencerTxn	lastWalTimestamp	directoryName	memoryPressureLevel	txnCount	txnSizeP50	txnSizeP90	txnSizeP99	txnSizeMax	writeAmplificationCount	writeAmplificationP50	writeAmplificationP90	writeAmplificationP99	writeAmplificationMax	mergeThroughputCount	mergeThroughputP50	mergeThroughputP90	mergeThroughputP99	mergeThroughputMax	replicaBatchCount	replicaBatchSizeP50	replicaBatchSizeP90	replicaBatchSizeP99	replicaBatchSizeMax	replicaMorePending	maxUncommittedRows	o3MaxLag
-                            1	balances	ts	DAY	true	false	false	0	HOUR	false	null	0	0		null	null		balances~1	0	0	0	0	0	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	0	0	0	false	1000	300000000
-                            2	balances_1h	ts	WEEK	true	false	false	0	HOUR	true	null	0	0		null	null		balances_1h~2	0	0	0	0	0	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	0	0	0	false	1000	-1
+                            id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_row_count	table_max_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
+                            1	balances	ts	DAY	true	false	0	HOUR	false	balances~1	1000	300000000	false	null		null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
+                            2	balances_1h	ts	WEEK	true	false	0	HOUR	true	balances_1h~2	1000	-1	false	null		null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                             """,
                     "tables() order by table_name"
             );
