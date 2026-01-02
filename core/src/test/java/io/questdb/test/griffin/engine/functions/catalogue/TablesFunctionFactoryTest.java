@@ -375,7 +375,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                     """
                             table_name\ttable_txn\twal_txn
                             test_txn\t""" + writerTxn + "\t" + sequencerTxn + """
-
+                            
                             """,
                     "select table_name, table_txn, wal_txn from tables() where table_name = 'test_txn'"
             );
