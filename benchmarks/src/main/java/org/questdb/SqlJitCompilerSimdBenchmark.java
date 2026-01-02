@@ -36,7 +36,16 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -45,19 +54,21 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Benchmark)
-@BenchmarkMode(Mode.AverageTime)
+@BenchmarkMode(Mode.SingleShotTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
-public class SqlJitCompilerBenchmark {
-
-    private static final int PARTITION_SIZE_MB = 512;
-    private static final int NUM_ROWS = (PARTITION_SIZE_MB * 1024 * 1024) / Long.BYTES;
+public class SqlJitCompilerSimdBenchmark {
+    private static final int LONG_COLUMN_SIZE_MB = 512;
+    private static final int NUM_ROWS = (LONG_COLUMN_SIZE_MB * 1024 * 1024) / Long.BYTES;
 
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
-    @Param({"i64", "i32"})
+    @Param({"i64", "i32", "i16"})
     public String column;
     @Param({"SIMD", "SCALAR", "DISABLED"})
     public JitMode jitMode;
+    @Param({"EQ", "NEQ"})
+    public Predicate predicate;
     private SqlCompilerImpl compiler;
+    private RecordCursorFactory countFactory;
     private SqlExecutionContextImpl ctx;
     private CairoEngine engine;
     private RecordCursorFactory factory;
@@ -72,24 +83,27 @@ public class SqlJitCompilerBenchmark {
                             -1,
                             null
                     );
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                compiler.compile("create table if not exists x as (select" +
-                        " rnd_long() i64," +
-                        " rnd_int() i32," +
-                        " timestamp_sequence(400000000000, 500000000) ts" +
-                        " from long_sequence(" + NUM_ROWS + ")) timestamp(ts)", sqlExecutionContext);
+            try {
+                engine.execute(
+                        "create table if not exists x as (select" +
+                                " rnd_long() i64," +
+                                " rnd_int() i32," +
+                                " rnd_short() i16," +
+                                " timestamp_sequence(400000000000, 500000000) ts" +
+                                " from long_sequence(" + NUM_ROWS + ")) timestamp(ts)",
+                        sqlExecutionContext
+                );
             } catch (SqlException e) {
                 e.printStackTrace();
             }
         }
 
         Options opt = new OptionsBuilder()
-                .include(SqlJitCompilerBenchmark.class.getSimpleName())
-                .warmupIterations(2)
-                .measurementIterations(5)
+                .include(SqlJitCompilerSimdBenchmark.class.getSimpleName())
+                .warmupIterations(3)
+                .measurementIterations(10)
                 .forks(1)
                 .build();
-
         new Runner(opt).run();
 
         LogFactory.haltInstance();
@@ -116,11 +130,19 @@ public class SqlJitCompilerBenchmark {
                 break;
         }
         compiler = new SqlCompilerImpl(engine);
-        factory = compiler.compile("select * from x where " + column + " = 0", ctx).getRecordCursorFactory();
+        final String query = "x where " + column + (predicate == Predicate.EQ ? " = " : " != ") + "0;";
+        factory = compiler.compile(query, ctx).getRecordCursorFactory();
         if (factory.usesCompiledFilter() != jitShouldBeEnabled) {
             throw new IllegalStateException("Unexpected JIT usage reported by factory: " +
                     "expected=" + jitShouldBeEnabled +
                     ", actual=" + factory.usesCompiledFilter());
+        }
+        final String countQuery = "select count(*) from " + query;
+        countFactory = compiler.compile(countQuery, ctx).getRecordCursorFactory();
+        if (countFactory.usesCompiledFilter() != jitShouldBeEnabled) {
+            throw new IllegalStateException("Unexpected JIT usage reported by count factory: " +
+                    "expected=" + jitShouldBeEnabled +
+                    ", actual=" + countFactory.usesCompiledFilter());
         }
     }
 
@@ -129,20 +151,37 @@ public class SqlJitCompilerBenchmark {
         compiler.close();
         engine.close();
         factory.close();
+        countFactory.close();
     }
 
     @Benchmark
-    public void testSingleColumnFilter() throws SqlException {
-        try (RecordCursor cursor = factory.getCursor(ctx)) {
-            final Record ignored = cursor.getRecord();
-            // noinspection StatementWithEmptyBody
-            while (cursor.hasNext()) {
-                // access 'record' instance for field values
+    public long testCountOnlyFilter() throws SqlException {
+        long count = 0;
+        try (RecordCursor cursor = countFactory.getCursor(ctx)) {
+            if (cursor.hasNext()) {
+                count = cursor.getRecord().getLong(0);
             }
         }
+        return count;
+    }
+
+    @Benchmark
+    public long testFilter() throws SqlException {
+        long count = 0;
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            final Record ignored = cursor.getRecord();
+            while (cursor.hasNext()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public enum JitMode {
         SIMD, SCALAR, DISABLED
+    }
+
+    public enum Predicate {
+        EQ, NEQ
     }
 }

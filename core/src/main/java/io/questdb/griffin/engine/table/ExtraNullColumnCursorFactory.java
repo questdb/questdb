@@ -32,7 +32,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -45,6 +44,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -238,15 +238,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public long getParquetAddr() {
-            return baseFrame.getParquetAddr();
-        }
-
-        @Override
-        public long getParquetFileSize() {
-            final long fileSize = baseFrame.getParquetFileSize();
-            assert fileSize > 0 || baseFrame.getFormat() != PartitionFormat.PARQUET;
-            return fileSize;
+        public PartitionDecoder getParquetPartitionDecoder() {
+            return baseFrame.getParquetPartitionDecoder();
         }
 
         @Override

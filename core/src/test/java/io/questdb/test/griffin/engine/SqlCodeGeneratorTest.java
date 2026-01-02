@@ -9461,8 +9461,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     ")");
             execute("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src");
             // =
+            bindVariableService.clear();
             try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName in $1")) {
-                bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
                     println(lookupFactory, cursor);
@@ -9476,8 +9476,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 }
             }
             // !=
+            bindVariableService.clear();
             try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName != $1 and time < '1970-01-01T00:00:00.300000Z'")) {
-                bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
                     println(lookupFactory, cursor);

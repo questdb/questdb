@@ -60,12 +60,16 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
      * @param alloc     if true, allocates memory immediately; if false, defers allocation until reopen()
      */
     public DirectLongList(long capacity, int memoryTag, boolean alloc) {
+        this(capacity, true, memoryTag);
+    }
+
+    public DirectLongList(long capacity, boolean alloc, int memoryTag) {
         this.memoryTag = memoryTag;
         if (alloc) {
             this.capacity = (capacity * Long.BYTES);
-            this.address = Unsafe.malloc(this.capacity, memoryTag);
+            if (alloc) {this.address = Unsafe.malloc(this.capacity, memoryTag);
             this.pos = address;
-            this.limit = pos + this.capacity;
+            this.limit = pos + this.capacity;}
         }
         this.initialCapacity = capacity * Long.BYTES;
     }

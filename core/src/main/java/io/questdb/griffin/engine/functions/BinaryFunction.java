@@ -107,9 +107,9 @@ public interface BinaryFunction extends Function {
 
     @Override
     default void offerStateTo(Function that) {
-        if (that instanceof BinaryFunction) {
-            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
-            getRight().offerStateTo(((BinaryFunction) that).getRight());
+        if (that instanceof BinaryFunction other) {
+            getLeft().offerStateTo(other.getLeft());
+            getRight().offerStateTo(other.getRight());
         }
     }
 

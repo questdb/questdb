@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.WithinGeohashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.GlobFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
 import io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
@@ -144,7 +145,6 @@ import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.GlobFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -1539,6 +1539,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Interval forward scan on: a
                                   intervals: [("1970-01-02T00:00:00.000001Z","MAX")]
                 """);
+    }
+
+    @Test
+    public void testExplainUpdateWalTable() throws Exception {
+        // Reproducer for https://github.com/questdb/questdb/issues/6194
+        assertPlan(
+                "create table trades (" +
+                        "symbol symbol, " +
+                        "price double, " +
+                        "amount int, " +
+                        "ts timestamp" +
+                        ") timestamp(ts) partition by day WAL",
+                "update trades set amount = 0 where ts in '2022-11-11'",
+                """
+                        Update table: trades
+                            VirtualRecord
+                              functions: [0]
+                                Filter filter: ts in [1668124800000000,1668211199999999]
+                                    on: trades
+                        """
+        );
     }
 
     @Test
@@ -5476,13 +5497,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Async JIT Filter workers: 1
                           filter: a_long=42
                             parquet page frame scan
-                        """);
+                              columns: a_long,a_str,a_ts
+                        """
+                );
 
                 assertPlanNoLeakCheck("select avg(a_long) from read_parquet('x.parquet');", """
                         GroupBy vectorized: true workers: 1
                           values: [avg(a_long)]
                             parquet page frame scan
-                        """);
+                              columns: a_long
+                        """
+                );
 
                 assertPlanNoLeakCheck("select a_str, max(a_long) from read_parquet('x.parquet');", """
                         Async Group By workers: 1
@@ -5490,7 +5515,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           values: [max(a_long)]
                           filter: null
                             parquet page frame scan
-                        """);
+                              columns: a_str,a_long
+                        """
+                );
             }
         });
     }
