@@ -628,8 +628,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case MAT_VIEW_DATA:
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                 long skipTxnCount = calculateSkipTransactionCount(seqTxn, txnDetails);
-                long rowsCommitted = 0;
-
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
                 if (skipTxnCount > 0) {
@@ -638,7 +636,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 // Cannot skip, possibly there are rows in LAG that need to be committed
                 if (!skipped) {
-                    rowsCommitted = writer.commitWalInsertTransactions(
+                    writer.commitWalInsertTransactions(
                             walPath,
                             seqTxn,
                             pressureControl

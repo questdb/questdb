@@ -537,4 +537,66 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             Assert.assertTrue("Should have at least 2 tables", recent.size() >= 2);
         });
     }
+
+    /**
+     * Tests that unique rows are NOT incorrectly counted as duplicates.
+     * <p>
+     * This test verifies the fix for a bug where rows going to LAG (out-of-order buffer)
+     * were incorrectly counted as duplicates because the old calculation used:
+     * dedupCount = walRowCount - committedRowCount
+     * <p>
+     * When rows go to LAG, committedRowCount is 0 (LAG rows aren't in txWriter.getRowCount()),
+     * so all rows would be incorrectly counted as "deduped".
+     * <p>
+     * The fix tracks actual dedup from the native Vect.dedupSortedTimestampIndexIntKeysChecked() call.
+     */
+    @Test
+    public void testUniqueRowsNotCountedAsDedup() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a WAL table with dedup enabled
+            execute("CREATE TABLE unique_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+
+            RecentWriteTracker tracker = engine.getRecentWriteTracker();
+            tracker.clear();
+
+            TableToken tableToken = engine.verifyTableName("unique_test");
+
+            // Insert unique rows in multiple small batches
+            // Small batches may go to LAG before being committed
+            for (int batch = 0; batch < 10; batch++) {
+                int offset = batch * 100;
+                execute("INSERT INTO unique_test SELECT ((x + " + offset + ") * 1000000)::timestamp, (x + " + offset + ")::int FROM long_sequence(100)");
+            }
+
+            // Drain WAL to apply all changes
+            drainWalQueue();
+
+            // Verify: 1000 unique rows inserted, dedupeRowCount should be 0
+            RecentWriteTracker.WriteStats stats = tracker.getWriteStats(tableToken);
+            Assert.assertNotNull("Stats should be available", stats);
+            Assert.assertEquals("Should have 1000 rows", 1000L, stats.getRowCount());
+            Assert.assertEquals("Dedup count should be 0 for unique rows", 0L, stats.getDedupRowCount());
+
+            // Also verify via SQL
+            assertSql(
+                    "rowCount\tdedupeRowCount\n1000\t0\n",
+                    "SELECT rowCount, dedupeRowCount FROM tables() WHERE table_name = 'unique_test'"
+            );
+
+            // Now insert actual duplicates - same timestamps as first 200 rows
+            execute("INSERT INTO unique_test SELECT (x * 1000000)::timestamp, (x + 2000)::int FROM long_sequence(200)");
+            drainWalQueue();
+
+            // Verify duplicates are now tracked
+            stats = tracker.getWriteStats(tableToken);
+            Assert.assertEquals("Row count should still be 1000", 1000L, stats.getRowCount());
+            Assert.assertEquals("Dedup count should be 200", 200L, stats.getDedupRowCount());
+
+            // Verify via SQL
+            assertSql(
+                    "rowCount\tdedupeRowCount\n1000\t200\n",
+                    "SELECT rowCount, dedupeRowCount FROM tables() WHERE table_name = 'unique_test'"
+            );
+        });
+    }
 }

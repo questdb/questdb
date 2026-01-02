@@ -139,6 +139,7 @@ import java.io.Closeable;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
@@ -244,8 +245,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int pathRootSize;
     private final int pathSize;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
-    private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
-    private final AtomicLong dedupRowsRemovedSinceLastCommit = new AtomicLong();
+    private final LongAdder dedupRowsRemovedSinceLastCommit = new LongAdder();
+    private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
@@ -775,9 +776,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$("]' to ").$substr(pathRootSize, path).$();
     }
 
-    public void addPhysicallyWrittenRows(long rows) {
-        physicallyWrittenRowsSinceLastCommit.addAndGet(rows);
-        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
+    public void addDedupRowsRemoved(long count) {
+        dedupRowsRemovedSinceLastCommit.add(count);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -1284,8 +1284,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.commit(denseSymbolMapWriters);
     }
 
-    public void addDedupRowsRemoved(long count) {
-        dedupRowsRemovedSinceLastCommit.addAndGet(count);
+    public void addPhysicallyWrittenRows(long rows) {
+        physicallyWrittenRowsSinceLastCommit.add(rows);
+        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
     }
 
     @Override
@@ -2248,11 +2249,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionTimestampByIndex(partitionIndex);
     }
 
-    public long getPhysicallyWrittenRowsSinceLastCommit() {
-        return physicallyWrittenRowsSinceLastCommit.get();
-    }
-
-    public long commitWalInsertTransactions(
+    public void commitWalInsertTransactions(
             @Transient Path walPath,
             long seqTxn,
             TableWriterPressureControl pressureControl
@@ -2264,8 +2261,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.critical(0).put("cannot process WAL while in transaction");
         }
 
-        physicallyWrittenRowsSinceLastCommit.set(0);
-        dedupRowsRemovedSinceLastCommit.set(0);
+        physicallyWrittenRowsSinceLastCommit.reset();
+        dedupRowsRemovedSinceLastCommit.reset();
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
@@ -2345,11 +2342,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
         long rowsCommitted = txWriter.getRowCount() - initialCommittedRowCount;
         metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
-        return rowsCommitted;
     }
 
     public long getDedupRowsRemovedSinceLastCommit() {
-        return dedupRowsRemovedSinceLastCommit.get();
+        return dedupRowsRemovedSinceLastCommit.sum();
+    }
+
+    public long getPhysicallyWrittenRowsSinceLastCommit() {
+        return physicallyWrittenRowsSinceLastCommit.sum();
     }
 
     public long getRowCount() {
@@ -4025,7 +4025,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void commit(long o3MaxLag) {
         checkDistressed();
-        physicallyWrittenRowsSinceLastCommit.set(0);
+        physicallyWrittenRowsSinceLastCommit.reset();
 
         if (o3InError) {
             rollback();
@@ -5120,7 +5120,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 assert dedupKeyIndex <= dedupColumnCommitAddresses.getColumnCount();
             }
-            long deduplicatedRowCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+            long dedupRowCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
                     indexSrcAddr,
                     longIndexLength,
                     indexDstAddr,
@@ -5129,16 +5129,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
             );
 
+            long dedupRowsRemoved = dedupRowCount > 0 ? longIndexLength - dedupRowCount : 0;
             LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
                     .$(", totalRows=").$(longIndexLength)
                     .$(", lagRows=").$(lagRows)
-                    .$(", dups=")
-                    .$(deduplicatedRowCount > 0 ? longIndexLength - deduplicatedRowCount : 0)
+                    .$(", dups=").$(dedupRowsRemoved)
                     .I$();
-            if (deduplicatedRowCount > 0 && deduplicatedRowCount < longIndexLength) {
-                dedupRowsRemovedSinceLastCommit.addAndGet(longIndexLength - deduplicatedRowCount);
+            if (dedupRowsRemoved > 0) {
+                dedupRowsRemovedSinceLastCommit.add(dedupRowsRemoved);
             }
-            return deduplicatedRowCount;
+            return dedupRowCount;
         } finally {
             if (dedupColumnCommitAddresses.getColumnCount() > 0 && lagRows > 0) {
                 // Release mapped column buffers for lag rows
@@ -8191,7 +8191,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", dups=").$(totalRows - dedupedRowCount)
                         .I$();
                 if (dedupedRowCount < totalRows) {
-                    dedupRowsRemovedSinceLastCommit.addAndGet(totalRows - dedupedRowCount);
+                    dedupRowsRemovedSinceLastCommit.add(totalRows - dedupedRowCount);
                 }
 
                 // Swap tsMemory and tsMemoryCopy, result of index dedup is in o3TimestampMemCpy

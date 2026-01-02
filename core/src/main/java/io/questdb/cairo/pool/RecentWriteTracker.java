@@ -323,6 +323,7 @@ public class RecentWriteTracker {
      * @param batchRowCount the total number of rows in this download batch
      * @param morePending   true if the download batch was limited and more data is available
      */
+    @SuppressWarnings("unused")
     public void recordReplicaDownload(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long batchRowCount, boolean morePending) {
         try {
             getOrCreateStats(tableToken).updateReplicaDownload(sequencerTxn, walTimestamp, batchRowCount, morePending);
