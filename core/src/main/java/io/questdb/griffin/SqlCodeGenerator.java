@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
@@ -6826,17 +6825,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (reader == null) {
             // This is WAL serialisation compilation. We don't need to read data from table
             // and don't need optimisation for query validation.
-            return new AbstractRecordCursorFactory(queryMeta) {
-                @Override
-                public boolean recordCursorSupportsRandomAccess() {
-                    return false;
-                }
-
-                @Override
-                public boolean supportsUpdateRowId(TableToken tableToken) {
-                    return metadata.getTableToken() == tableToken;
-                }
-            };
+            return new EmptyTableRecordCursorFactory(queryMeta, metadata.getTableToken());
         }
 
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
