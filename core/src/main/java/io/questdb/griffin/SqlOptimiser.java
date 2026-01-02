@@ -1630,9 +1630,11 @@ public class SqlOptimiser implements Mutable {
             }
 
             // expose the column in the outer models
-            outerVirtualModel.addBottomUpColumn(translatedColumn);
-            if (distinctModel != null) {
-                distinctModel.addBottomUpColumn(translatedColumn);
+            if (outerVirtualModel.getAliasToColumnMap().get(translatedColumn.getName()) == null) {
+                outerVirtualModel.addBottomUpColumn(translatedColumn);
+                if (distinctModel != null) {
+                    distinctModel.addBottomUpColumn(translatedColumn);
+                }
             }
         } else {
             // the column is not referenced by the translating model
