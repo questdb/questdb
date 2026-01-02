@@ -582,7 +582,7 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
 #ifndef __aarch64__
     auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
     if (filterAddress <= 0 || size <= 0) {
-        fillJitErrorObject(e, error, ErrorCode::kErrorInvalidArgument, "Invalid argument passed");
+        fillJitErrorObject(e, error, Error::kInvalidArgument, "Invalid argument passed");
         return 0;
     }
 
@@ -611,17 +611,17 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
 
     Error err = errorHandler.error;
 
-    if (err == ErrorCode::kErrorOk) {
+    if (err == Error::kOk) {
         err = c.finalize();
     }
 
-    if (err == ErrorCode::kErrorOk) {
+    if (err == Error::kOk) {
         err = gGlobalContext.rt.add(&fn, &code);
     }
 
     fflush(logger.file());
 
-    if(err != ErrorCode::kErrorOk) {
+    if(err != Error::kOk) {
         fillJitErrorObject(e, error, err, errorHandler.message.data());
         return 0;
     }
@@ -642,7 +642,7 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
 #ifndef __aarch64__
     auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
     if (filterAddress <= 0 || size <= 0) {
-        fillJitErrorObject(e, error, ErrorCode::kErrorInvalidArgument, "Invalid argument passed");
+        fillJitErrorObject(e, error, Error::kInvalidArgument, "Invalid argument passed");
         return 0;
     }
 
@@ -671,17 +671,17 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
 
     Error err = errorHandler.error;
 
-    if (err == ErrorCode::kErrorOk) {
+    if (err == Error::kOk) {
         err = c.finalize();
     }
 
-    if (err == ErrorCode::kErrorOk) {
+    if (err == Error::kOk) {
         err = gGlobalContext.rt.add(&fn, &code);
     }
 
     fflush(logger.file());
 
-    if(err != ErrorCode::kErrorOk) {
+    if(err != Error::kOk) {
         fillJitErrorObject(e, error, err, errorHandler.message.data());
         return 0;
     }
