@@ -28,11 +28,13 @@
 
 using namespace asmjit;
 
-struct JitErrorHandler : public ErrorHandler {
+struct JitErrorHandler : public ErrorHandler
+{
     JitErrorHandler()
-            : error(kErrorOk) {}
+        : error(kErrorOk) {}
 
-    void handle_error(Error err, const char *msg, BaseEmitter * /*origin*/) {
+    void handle_error(Error err, const char *msg, BaseEmitter * /*origin*/)
+    {
         error = err;
         message.assign(msg);
     }
@@ -41,7 +43,8 @@ struct JitErrorHandler : public ErrorHandler {
     asmjit::String message;
 };
 
-struct JitGlobalContext {
+struct JitGlobalContext
+{
     // rt allocator is thread-safe
     JitRuntime rt;
 };
@@ -55,20 +58,24 @@ using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count,
                                int64_t *vars, int64_t vars_count,
                                int64_t *filtered_rows, int64_t rows_count);
 
-struct Function {
+struct Function
+{
     explicit Function(x86::Compiler &cc)
-            : c(cc), arena(4094) {
-    };
+        : c(cc), arena(4094) {
+          };
 
     // Preload column addresses and constants before entering the loop
-    void preload_columns_and_constants(const instruction_t *istream, size_t size) {
+    void preload_columns_and_constants(const instruction_t *istream, size_t size)
+    {
         questdb::x86::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::x86::preload_constants(c, istream, size, const_cache);
     }
 
-    void compile(const instruction_t *istream, size_t size, uint32_t options) {
-        auto& features = CpuInfo::host().features().x86();
-        enum type_size : uint32_t {
+    void compile(const instruction_t *istream, size_t size, uint32_t options)
+    {
+        auto &features = CpuInfo::host().features().x86();
+        enum type_size : uint32_t
+        {
             scalar = 0,
             single_size = 1,
             mixed_size = 3,
@@ -76,22 +83,26 @@ struct Function {
 
         uint32_t type_size = (options >> 1) & 7; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B
         uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
-        bool null_check = (options >> 6) & 1; // 1 - with null check
+        bool null_check = (options >> 6) & 1;    // 1 - with null check
         int unroll_factor = 1;
-        if (exec_hint == single_size && features.has_avx2()) {
+        if (exec_hint == single_size && features.has_avx2())
+        {
             auto step = 256 / ((1 << type_size) * 8);
             c.func()->frame().set_avx_enabled();
             avx2_loop(istream, size, step, null_check, unroll_factor);
-        } else {
+        }
+        else
+        {
             scalar_loop(istream, size, null_check, unroll_factor);
         }
     };
 
-    void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
+    void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1)
+    {
         Label l_loop = c.new_label();
         Label l_exit = c.new_label();
-        Label l_next_row = c.new_label();   // Label 0: skip row (AND failure)
-        Label l_store_row = c.new_label();  // Label 1: store row (OR success)
+        Label l_next_row = c.new_label();  // Label 0: skip row (AND failure)
+        Label l_store_row = c.new_label(); // Label 1: store row (OR success)
 
         // Initialize label array:
         // - Index 0: l_next_row (skip row storage - used by AND_SC on false)
@@ -105,7 +116,8 @@ struct Function {
 
         c.bind(l_loop);
 
-        for (int i = 0; i < unroll_factor; ++i) {
+        for (int i = 0; i < unroll_factor; ++i)
+        {
             // Clear value cache at the start of each row iteration
             value_cache.clear();
             // Pass the label array and caches to emit_code
@@ -114,7 +126,8 @@ struct Function {
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
             // No final test needed.
-            if (!values.is_empty()) {
+            if (!values.is_empty())
+            {
                 auto mask = values.pop();
 
                 // Skip row storage if the last predicate failed
@@ -138,23 +151,28 @@ struct Function {
         c.bind(l_exit);
     }
 
-    void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1) {
+    void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1)
+    {
         // Preload column addresses and constants before the loop
         preload_columns_and_constants(istream, size);
 
-        if (unroll_factor > 1) {
+        if (unroll_factor > 1)
+        {
             x86::Gp stop = c.new_gp64("stop");
             c.mov(stop, rows_size);
             c.sub(stop, unroll_factor - 1);
             scalar_tail(istream, size, null_check, stop, unroll_factor);
             scalar_tail(istream, size, null_check, rows_size, 1);
-        } else {
+        }
+        else
+        {
             scalar_tail(istream, size, null_check, rows_size, 1);
         }
         c.ret(output_index);
     }
 
-    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1) {
+    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1)
+    {
         using namespace asmjit::x86;
 
         // Preload column addresses and constants before the loop (for scalar tail)
@@ -181,7 +199,8 @@ struct Function {
 
         // mask compress optimization for longs
         // init row_ids_reg out of loop
-        if (step == 4 && !is_slow_zen) {
+        if (step == 4 && !is_slow_zen)
+        {
             int64_t rows_id_mem[4] = {0, 1, 2, 3};
             Mem mem = c.new_const(ConstPoolScope::kLocal, &rows_id_mem, 32);
 
@@ -194,13 +213,15 @@ struct Function {
 
         c.bind(l_loop);
 
-        for (int i = 0; i < unroll_factor; ++i) {
+        for (int i = 0; i < unroll_factor; ++i)
+        {
             questdb::avx2::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm);
 
             auto mask = values.pop();
 
-            if (step == 4 && !is_slow_zen) {
+            if (step == 4 && !is_slow_zen)
+            {
                 // mask compress optimization for longs
                 Gp bits = questdb::avx2::to_bits4(c, mask.vec());
 
@@ -216,7 +237,9 @@ struct Function {
 
                 c.bind(l_scatter_done);
                 c.vpaddq(row_ids_reg, row_ids_reg, row_ids_step);
-            } else {
+            }
+            else
+            {
                 Gp bits = questdb::avx2::to_bits(c, mask.vec(), step);
                 // short-circuit: skip scatter if no matches
                 Label l_scatter_done = c.new_label();
@@ -236,8 +259,9 @@ struct Function {
         c.ret(output_index);
     }
 
-    void begin_fn() {
-        auto* fn = c.add_func(FuncSignature::build<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
+    void begin_fn()
+    {
+        auto *fn = c.add_func(FuncSignature::build<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
             CallConvId::kCDecl));
         data_ptr = c.new_gp_ptr("data_ptr");
         data_size = c.new_gp64("data_size");
@@ -268,7 +292,8 @@ struct Function {
         c.mov(output_index, 0);
     }
 
-    void end_fn() {
+    void end_fn()
+    {
         c.end_func();
     }
 
@@ -298,20 +323,24 @@ using CompiledCountOnlyFn = int64_t (*)(int64_t *cols, int64_t cols_count,
                                         int64_t *vars, int64_t vars_count,
                                         int64_t rows_count);
 
-struct CountOnlyFunction {
+struct CountOnlyFunction
+{
     explicit CountOnlyFunction(x86::Compiler &cc)
-            : c(cc), arena(4094) {
-    };
+        : c(cc), arena(4094) {
+          };
 
     // Preload column addresses and constants before entering the loop
-    void preload_columns_and_constants(const instruction_t *istream, size_t size) {
+    void preload_columns_and_constants(const instruction_t *istream, size_t size)
+    {
         questdb::x86::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::x86::preload_constants(c, istream, size, const_cache);
     }
 
-    void compile(const instruction_t *istream, size_t size, uint32_t options) {
-        auto& features = CpuInfo::host().features().x86();
-        enum type_size : uint32_t {
+    void compile(const instruction_t *istream, size_t size, uint32_t options)
+    {
+        auto &features = CpuInfo::host().features().x86();
+        enum type_size : uint32_t
+        {
             scalar = 0,
             single_size = 1,
             mixed_size = 3,
@@ -319,22 +348,26 @@ struct CountOnlyFunction {
 
         uint32_t type_size = (options >> 1) & 7; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B
         uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
-        bool null_check = (options >> 6) & 1; // 1 - with null check
+        bool null_check = (options >> 6) & 1;    // 1 - with null check
         int unroll_factor = 1;
-        if (exec_hint == single_size && features.has_avx2()) {
+        if (exec_hint == single_size && features.has_avx2())
+        {
             auto step = 256 / ((1 << type_size) * 8);
             c.func()->frame().set_avx_enabled();
             avx2_loop(istream, size, step, null_check, unroll_factor);
-        } else {
+        }
+        else
+        {
             scalar_loop(istream, size, null_check, unroll_factor);
         }
     };
 
-    void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
+    void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1)
+    {
         Label l_loop = c.new_label();
         Label l_exit = c.new_label();
-        Label l_next_row = c.new_label();   // Label 0: skip row (AND failure)
-        Label l_inc_count = c.new_label();  // Label 1: store row / increment counter (OR success)
+        Label l_next_row = c.new_label();  // Label 0: skip row (AND failure)
+        Label l_inc_count = c.new_label(); // Label 1: store row / increment counter (OR success)
 
         // Initialize label array:
         // - Index 0: l_next_row (skip row storage - used by AND_SC on false)
@@ -348,7 +381,8 @@ struct CountOnlyFunction {
 
         c.bind(l_loop);
 
-        for (int i = 0; i < unroll_factor; ++i) {
+        for (int i = 0; i < unroll_factor; ++i)
+        {
             // Clear value cache at the start of each row iteration
             value_cache.clear();
             // Pass the label array and caches to emit_code
@@ -357,7 +391,8 @@ struct CountOnlyFunction {
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
             // No final test needed.
-            if (!values.is_empty()) {
+            if (!values.is_empty())
+            {
                 auto mask = values.pop();
 
                 // Skip row storage if the last predicate failed
@@ -380,23 +415,28 @@ struct CountOnlyFunction {
         c.bind(l_exit);
     }
 
-    void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1) {
+    void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1)
+    {
         // Preload column addresses and constants before the loop
         preload_columns_and_constants(istream, size);
 
-        if (unroll_factor > 1) {
+        if (unroll_factor > 1)
+        {
             x86::Gp stop = c.new_gp64("stop");
             c.mov(stop, rows_size);
             c.sub(stop, unroll_factor - 1);
             scalar_tail(istream, size, null_check, stop, unroll_factor);
             scalar_tail(istream, size, null_check, rows_size, 1);
-        } else {
+        }
+        else
+        {
             scalar_tail(istream, size, null_check, rows_size, 1);
         }
         c.ret(output_index);
     }
 
-    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1) {
+    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1)
+    {
         using namespace asmjit::x86;
 
         // Preload column addresses and constants before the loop (for scalar tail)
@@ -423,37 +463,47 @@ struct CountOnlyFunction {
         // vpsubq/vpsubd acc, acc, mask subtracts -1 (adds 1) for matches, subtracts 0 (no-op) otherwise.
         // This avoids vector-to-scalar domain crossing (vmovmskpd/vmovmskps) on each iteration.
         Vec acc;
-        Vec ones;  // for step == 16: 16 x i16 all-ones to use with vpmaddwd
-        if (step == 4 || step == 8 || step == 16) {
+        Vec ones; // for step == 16: 16 x i16 all-ones to use with vpmaddwd
+        if (step == 4 || step == 8 || step == 16)
+        {
             acc = c.new_ymm("acc");
             c.vpxor(acc, acc, acc); // acc = 0
-            if (step == 16) {
+            if (step == 16)
+            {
                 // Create constant with 16 x i16 value of 1 for vpmaddwd
                 ones = c.new_ymm("ones");
-                c.vpcmpeqd(ones, ones, ones);     // all bits set (-1)
-                c.vpsrlw(ones, ones, 15);         // shift right 15 bits: -1 -> 1 for each i16
+                c.vpcmpeqd(ones, ones, ones); // all bits set (-1)
+                c.vpsrlw(ones, ones, 15);     // shift right 15 bits: -1 -> 1 for each i16
             }
         }
 
         c.bind(l_loop);
 
-        for (int i = 0; i < unroll_factor; ++i) {
+        for (int i = 0; i < unroll_factor; ++i)
+        {
             questdb::avx2::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm);
 
             auto mask = values.pop();
 
-            if (step == 4) {
+            if (step == 4)
+            {
                 c.vpsubq(acc, acc, mask.vec()); // acc -= mask (subtracting -1 adds 1)
-            } else if (step == 8) {
+            }
+            else if (step == 8)
+            {
                 c.vpsubd(acc, acc, mask.vec()); // acc -= mask (32-bit version)
-            } else if (step == 16) {
+            }
+            else if (step == 16)
+            {
                 // 16 x i16 mask -> 8 x i32 using vpmaddwd (pairs of i16 multiplied by 1 and summed)
                 // mask[i16] is -1 or 0, so pairs sum to -2, -1, or 0
                 Vec pairs = c.new_ymm("pairs");
-                c.vpmaddwd(pairs, mask.vec(), ones);  // 16 x i16 -> 8 x i32
-                c.vpsubd(acc, acc, pairs);            // acc -= pairs
-            } else {
+                c.vpmaddwd(pairs, mask.vec(), ones); // 16 x i16 -> 8 x i32
+                c.vpsubd(acc, acc, pairs);           // acc -= pairs
+            }
+            else
+            {
                 Gp bits = questdb::avx2::to_bits(c, mask.vec(), step);
                 c.popcnt(bits, bits);
                 c.add(output_index, bits.r64());
@@ -469,28 +519,31 @@ struct CountOnlyFunction {
         // This is placed before l_tail so that when we skip the SIMD loop entirely
         // (rows_size < step), we jump directly to l_tail without executing this code.
         // This also avoids unnecessary register spilling across the label boundary.
-        if (step == 4) {
+        if (step == 4)
+        {
             // 4 x i64 -> i64
             Vec xmm_acc = acc.xmm();
             Vec xmm_tmp = c.new_xmm("hsum_tmp");
-            c.vextracti128(xmm_tmp, acc, 1);      // extract high 128 bits
-            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // add high to low (2 x i64)
-            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // swap the two i64 halves
-            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);  // final sum in low 64 bits
-            c.vmovq(output_index, xmm_acc);       // move to output_index
-        } else if (step == 8 || step == 16) {
+            c.vextracti128(xmm_tmp, acc, 1);     // extract high 128 bits
+            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp); // add high to low (2 x i64)
+            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);   // swap the two i64 halves
+            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp); // final sum in low 64 bits
+            c.vmovq(output_index, xmm_acc);      // move to output_index
+        }
+        else if (step == 8 || step == 16)
+        {
             // 8 x i32 -> i32 -> i64 (row count is guaranteed < 2^31)
             Vec xmm_acc = acc.xmm();
             Vec xmm_tmp = c.new_xmm("hsum_tmp");
-            c.vextracti128(xmm_tmp, acc, 1);      // extract high 4 x i32
-            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);  // add high to low (4 x i32)
-            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);    // rotate by 2 i32s
-            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);  // 2 x i32 partial sums
-            c.vpshufd(xmm_tmp, xmm_acc, 0xB1);    // rotate by 1 i32
-            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);  // final sum in low 32 bits
+            c.vextracti128(xmm_tmp, acc, 1);     // extract high 4 x i32
+            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp); // add high to low (4 x i32)
+            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);   // rotate by 2 i32s
+            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp); // 2 x i32 partial sums
+            c.vpshufd(xmm_tmp, xmm_acc, 0xB1);   // rotate by 1 i32
+            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp); // final sum in low 32 bits
             Gp hsum = c.new_gp32("hsum");
-            c.vmovd(hsum, xmm_acc);               // move to 32-bit reg (zero-extends)
-            c.mov(output_index, hsum.r64());      // move to output_index
+            c.vmovd(hsum, xmm_acc);          // move to 32-bit reg (zero-extends)
+            c.mov(output_index, hsum.r64()); // move to output_index
         }
 
         c.bind(l_tail);
@@ -499,8 +552,9 @@ struct CountOnlyFunction {
         c.ret(output_index);
     }
 
-    void begin_fn() {
-        auto* fn = c.add_func(FuncSignature::build<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
+    void begin_fn()
+    {
+        auto *fn = c.add_func(FuncSignature::build<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
             CallConvId::kCDecl));
         data_ptr = c.new_gp_ptr("data_ptr");
         data_size = c.new_gp64("data_size");
@@ -529,7 +583,8 @@ struct CountOnlyFunction {
         c.mov(output_index, 0);
     }
 
-    void end_fn() {
+    void end_fn()
+    {
         c.end_func();
     }
 
@@ -552,20 +607,26 @@ struct CountOnlyFunction {
     ColumnValueCache value_cache;
 };
 
-void fillJitErrorObject(JNIEnv *e, jobject error, uint32_t code, const char *msg) {
-    if (!msg) {
+void fillJitErrorObject(JNIEnv *e, jobject error, Error code, const char *msg)
+{
+    if (!msg)
+    {
         return;
     }
 
     jclass errorClass = e->GetObjectClass(error);
-    if (errorClass) {
+    if (errorClass)
+    {
         jfieldID fieldError = e->GetFieldID(errorClass, "errorCode", "I");
-        if (fieldError) {
+        if (fieldError)
+        {
             e->SetIntField(error, fieldError, static_cast<jint>(code));
         }
         jmethodID methodPut = e->GetMethodID(errorClass, "put", "(B)V");
-        if (methodPut) {
-            for (const char *c = msg; *c; ++c) {
+        if (methodPut)
+        {
+            for (const char *c = msg; *c; ++c)
+            {
                 e->CallVoidMethod(error, methodPut, *c);
             }
         }
@@ -578,10 +639,12 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                     jlong filterAddress,
                                                     jlong filterSize,
                                                     jint options,
-                                                    jobject error) {
+                                                    jobject error)
+{
 #ifndef __aarch64__
     auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
-    if (filterAddress <= 0 || size <= 0) {
+    if (filterAddress <= 0 || size <= 0)
+    {
         fillJitErrorObject(e, error, Error::kInvalidArgument, "Invalid argument passed");
         return 0;
     }
@@ -590,15 +653,15 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
     code.init(gGlobalContext.rt.environment());
     FileLogger logger(stdout);
     bool debug = options & 1;
-    if (debug) {
-        logger.addFlags(FormatOptions::kFlagRegCasts |
-                        FormatOptions::kFlagExplainImms |
-                        FormatOptions::kFlagAnnotations);
-        code.setLogger(&logger);
+    if (debug)
+    {
+        logger.add_flags(FormatFlags::kRegCasts |
+                         FormatFlags::kExplainImms);
+        code.set_logger(&logger);
     }
 
     JitErrorHandler errorHandler;
-    code.setErrorHandler(&errorHandler);
+    code.set_error_handler(&errorHandler);
 
     x86::Compiler c(&code);
     Function function(c);
@@ -611,17 +674,20 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
 
     Error err = errorHandler.error;
 
-    if (err == Error::kOk) {
+    if (err == Error::kOk)
+    {
         err = c.finalize();
     }
 
-    if (err == Error::kOk) {
+    if (err == Error::kOk)
+    {
         err = gGlobalContext.rt.add(&fn, &code);
     }
 
     fflush(logger.file());
 
-    if(err != Error::kOk) {
+    if (err != Error::kOk)
+    {
         fillJitErrorObject(e, error, err, errorHandler.message.data());
         return 0;
     }
@@ -638,10 +704,12 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
                                                              jlong filterAddress,
                                                              jlong filterSize,
                                                              jint options,
-                                                             jobject error) {
+                                                             jobject error)
+{
 #ifndef __aarch64__
     auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
-    if (filterAddress <= 0 || size <= 0) {
+    if (filterAddress <= 0 || size <= 0)
+    {
         fillJitErrorObject(e, error, Error::kInvalidArgument, "Invalid argument passed");
         return 0;
     }
@@ -650,15 +718,15 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
     code.init(gGlobalContext.rt.environment());
     FileLogger logger(stdout);
     bool debug = options & 1;
-    if (debug) {
-        logger.addFlags(FormatOptions::kFlagRegCasts |
-                        FormatOptions::kFlagExplainImms |
-                        FormatOptions::kFlagAnnotations);
-        code.setLogger(&logger);
+    if (debug)
+    {
+        logger.add_flags(FormatFlags::kRegCasts |
+                         FormatFlags::kExplainImms);
+        code.set_logger(&logger);
     }
 
     JitErrorHandler errorHandler;
-    code.setErrorHandler(&errorHandler);
+    code.set_error_handler(&errorHandler);
 
     x86::Compiler c(&code);
     CountOnlyFunction function(c);
@@ -671,17 +739,20 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
 
     Error err = errorHandler.error;
 
-    if (err == Error::kOk) {
+    if (err == Error::kOk)
+    {
         err = c.finalize();
     }
 
-    if (err == Error::kOk) {
+    if (err == Error::kOk)
+    {
         err = gGlobalContext.rt.add(&fn, &code);
     }
 
     fflush(logger.file());
 
-    if(err != Error::kOk) {
+    if (err != Error::kOk)
+    {
         fillJitErrorObject(e, error, err, errorHandler.message.data());
         return 0;
     }
@@ -693,7 +764,8 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnAddress) {
+Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnAddress)
+{
 #ifndef __aarch64__
     auto fn = reinterpret_cast<void *>(fnAddress);
     gGlobalContext.rt.release(fn);
@@ -709,7 +781,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong varsAddress,
                                                                          jlong varsSize,
                                                                          jlong filteredRowsAddress,
-                                                                         jlong rowsCount) {
+                                                                         jlong rowsCount)
+{
 #ifndef __aarch64__
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
@@ -732,7 +805,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callCountOnlyFunctio
                                                                                   jlong varSizeIndexesAddress,
                                                                                   jlong varsAddress,
                                                                                   jlong varsSize,
-                                                                                  jlong rowsCount) {
+                                                                                  jlong rowsCount)
+{
 #ifndef __aarch64__
     auto fn = reinterpret_cast<CompiledCountOnlyFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
