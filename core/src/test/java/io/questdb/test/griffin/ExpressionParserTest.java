@@ -1526,6 +1526,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftParenthesisUnexpectedDot() {
+        assertFail("SELECT - sym AS a2 FROM t1 a4 WHERE (.a4.col4 = 0);", 37, "unexpected dot");
+    }
+
+    @Test
     public void testUnquotedRegexFail() {
         assertFail(
                 "s ~ '.*TDF",

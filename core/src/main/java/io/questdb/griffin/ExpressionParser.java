@@ -1637,10 +1637,12 @@ public class ExpressionParser {
                                 cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
-                            } else {
+                            } else if (en.token instanceof GenericLexer.FloatingSequence) {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
                                 // vanilla 'a.b', just concat tokens efficiently
                                 fsA.setHi(lexer.getTokenHi());
+                            } else {
+                                throw SqlException.$(lastPos - 1, "unexpected dot");
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                             argStackDepth++;
