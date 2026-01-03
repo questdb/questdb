@@ -74,7 +74,9 @@ impl ParquetDecoder {
                 Self::descriptor_to_column_type(column, index, qdb_meta.as_ref())
             {
                 if column_type.is_designated() {
-                    timestamp_index = NonMaxU32::new(index as u32);
+                    if column_type.is_designated_timestamp_ascending() {
+                        timestamp_index = NonMaxU32::new(index as u32);
+                    }
                     // Clear the bit as designated timestamp is reported in timestamp_index.
                     column_type = column_type.into_non_designated()?;
                 }
@@ -435,6 +437,7 @@ mod tests {
                 0,
                 null(),
                 0,
+                false,
                 false,
             )
             .unwrap(),

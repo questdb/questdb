@@ -218,7 +218,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public PageFrameSequence<AsyncWindowJoinFastAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
+        CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
+        executionContext.changePageFrameSizes(config.getSqlSmallPageFrameMinRows(), config.getSqlSmallPageFrameMaxRows());
+        try {
+            return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
+        } finally {
+            executionContext.restoreToDefaultPageFrameSizes();
+        }
     }
 
     @Override

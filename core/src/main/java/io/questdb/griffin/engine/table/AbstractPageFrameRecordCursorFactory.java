@@ -46,8 +46,6 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     protected final IntList columnSizeShifts;
     protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
     protected TablePageFrameCursor pageFrameCursor;
-    protected int pageFrameMaxRows;
-    protected int pageFrameMinRows;
 
     public AbstractPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -60,14 +58,6 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         this.partitionFrameCursorFactory = partitionFrameCursorFactory;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
-        pageFrameMinRows = configuration.getSqlPageFrameMinRows();
-        pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
-    }
-
-    @Override
-    public void changePageFrameSizes(int minRows, int maxRows) {
-        this.pageFrameMinRows = minRows;
-        this.pageFrameMaxRows = maxRows;
     }
 
     @Override
@@ -110,21 +100,17 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        1, // used for single-threaded exec plans
-                        pageFrameMinRows,
-                        pageFrameMaxRows
+                        1 // used for single-threaded exec plans
                 );
             } else {
                 pageFrameCursor = new BwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        1, // used for single-threaded exec plans
-                        pageFrameMinRows,
-                        pageFrameMaxRows
+                        1 // used for single-threaded exec plans
                 );
             }
         }
-        return pageFrameCursor.of(partitionFrameCursor);
+        return pageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     protected abstract RecordCursor initRecordCursor(
