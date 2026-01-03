@@ -48,7 +48,6 @@ import java.io.Closeable;
 public class ExportQueryProcessorState implements Mutable, Closeable {
     final StringSink fileName = new StringSink();
     final StringSink sqlText = new StringSink();
-    final CopyExportRequestTask task = new CopyExportRequestTask();
     private final CopyExportContext copyExportContext;
     private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
@@ -76,6 +75,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean serialExporterInit = false;
     long skip;
     long stop;
+    CopyExportRequestTask task = new CopyExportRequestTask();
     private CreateTableOperation createParquetOp;
     private int errorPosition;
     private String parquetExportTableName;
@@ -133,6 +133,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
         pageFrameCursor = Misc.free(pageFrameCursor);
+        task = Misc.free(task);
     }
 
     public ExportModel getExportModel() {

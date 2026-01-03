@@ -44,10 +44,10 @@ import java.util.concurrent.Callable;
 public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportRequestTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
     private final CopyExportContext copyContext;
-    private final CopyExportRequestTask localTaskCopy;
     private final @NotNull MicrosecondClock microsecondClock;
     @TestOnly
     private @Nullable Callable<Exception> callback;
+    private CopyExportRequestTask localTaskCopy;
     private SQLSerialParquetExporter serialExporter;
 
     public CopyExportRequestJob(final CairoEngine engine) {
@@ -72,6 +72,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     @Override
     public void close() {
         this.serialExporter = Misc.free(serialExporter);
+        this.localTaskCopy = Misc.free(localTaskCopy);
     }
 
     @Override

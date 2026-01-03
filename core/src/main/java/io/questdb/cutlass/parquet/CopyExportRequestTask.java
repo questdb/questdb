@@ -42,6 +42,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.Nullable;
@@ -49,7 +50,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 
-public class CopyExportRequestTask implements Mutable {
+public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private final StreamPartitionParquetExporter streamPartitionParquetExporter = new StreamPartitionParquetExporter();
     private int compressionCodec;
     private int compressionLevel;
@@ -95,6 +96,11 @@ public class CopyExportRequestTask implements Mutable {
             factory = Misc.free(factory);
             pageFrameCursor = Misc.free(pageFrameCursor);
         }
+    }
+
+    @Override
+    public void close() {
+        Misc.free(streamPartitionParquetExporter);
     }
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -278,10 +284,10 @@ public class CopyExportRequestTask implements Mutable {
         void onWrite(long dataPtr, long dataLen) throws Exception;
     }
 
-    public class StreamPartitionParquetExporter implements Mutable {
-        private final DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
-        private final DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
-        private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
+    public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
+        private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
+        private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
+        private DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
         private long currentFrameRowCount = 0;
         private long currentPartitionIndex = -1;
         private boolean exportFinished = false;
@@ -292,15 +298,24 @@ public class CopyExportRequestTask implements Mutable {
 
         @Override
         public void clear() {
-            columnNames.close();
-            columnData.close();
-            columnMetadata.close();
+            columnNames.clear();
+            columnData.clear();
+            columnMetadata.clear();
             closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
             totalRows = 0;
             freeOwnedPageFrameCursor();
             exportFinished = false;
+        }
+
+        @Override
+        public void close() {
+            closeWriter();
+            freeOwnedPageFrameCursor();
+            columnNames = Misc.free(columnNames);
+            columnData = Misc.free(columnData);
+            columnMetadata = Misc.free(columnMetadata);
         }
 
         public void finishExport() throws Exception {
