@@ -47,7 +47,7 @@ public class SumShortVectorAggregateFunction extends LongFunction implements Vec
     private int valueOffset;
 
     @SuppressWarnings("unused")
-    public SumShortVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public SumShortVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;

@@ -40,7 +40,6 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class MinTimestampVectorAggregateFunction extends TimestampFunction implements VectorAggregateFunction {
-
     public static final LongBinaryOperator MIN = (long l1, long l2) -> {
         if (l1 == Numbers.LONG_NULL) {
             return l2;
@@ -55,12 +54,14 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
+    private final boolean isDesignated;
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MinTimestampVectorAggregateFunction(int keyKind, int columnIndex, int workerCount, int timestampType) {
+    public MinTimestampVectorAggregateFunction(int keyKind, int columnIndex, int timestampType, int timestampIndex) {
         super(timestampType);
         this.columnIndex = columnIndex;
+        this.isDesignated = columnIndex == timestampIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             this.distinctFunc = Rosti::keyedMicroHourDistinct;
             this.keyValueFunc = Rosti::keyedMicroHourMinLong;
@@ -76,9 +77,14 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final long value = Vect.minLong(address, frameRowCount);
-            if (value != Numbers.LONG_NULL) {
+            if (isDesignated) {
+                final long value = Unsafe.getUnsafe().getLong(address);
                 accumulator.accumulate(value);
+            } else {
+                final long value = Vect.minLong(address, frameRowCount);
+                if (value != Numbers.LONG_NULL) {
+                    accumulator.accumulate(value);
+                }
             }
         }
     }
