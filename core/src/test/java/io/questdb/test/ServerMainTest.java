@@ -106,6 +106,51 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAwaitStartupBeforeDropTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // First server: create tables
+            try (
+                    final ServerMain serverMain = new ServerMain(new Bootstrap(new PropBootstrapConfiguration() {
+                        @Override
+                        public boolean useSite() {
+                            return false;
+                        }
+                    }, getServerMainArgs()));
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                serverMain.start();
+
+                // Create a non-WAL table (like data_temp in ReplicationFuzzTest)
+                serverMain.getEngine().execute("CREATE TABLE test_temp (x INT, ts TIMESTAMP) TIMESTAMP(ts)", sqlExecutionContext);
+                serverMain.getEngine().execute("INSERT INTO test_temp VALUES (1, '2024-01-01T00:00:00.000000Z')", sqlExecutionContext);
+            }
+
+            // Second server: restart and immediately drop table after awaitStartup()
+            try (
+                    final ServerMain serverMain = new ServerMain(getServerMainArgs());
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                serverMain.start();
+                // awaitStartup() ensures background hydration thread completes before we attempt DDL
+                // Without this, DROP TABLE can fail with "busyTableReaderMetaPool" if the hydration
+                // thread is still holding a TableMetadataPool lock on the table
+                serverMain.awaitStartup();
+
+                // This should succeed without "could not lock" error
+                serverMain.getEngine().execute("DROP TABLE test_temp", sqlExecutionContext);
+
+                // Verify table is dropped
+                try {
+                    serverMain.getEngine().verifyTableName("test_temp");
+                    Assert.fail("Table should have been dropped");
+                } catch (CairoException e) {
+                    assertContains(e.getFlyweightMessage(), "does not exist");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPgWirePort() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
