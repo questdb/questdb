@@ -6645,6 +6645,105 @@ public class SqlOptimiser implements Mutable {
         return root;
     }
 
+    private void replaceNestedWithMinMaxUnion(
+            QueryModel model,
+            QueryModel baseNested,
+            CharSequence timestampColumn
+    ) {
+        QueryModel firstRowModel = createSelectModelWithLimit(baseNested, timestampColumn, "1");
+        QueryModel lastRowModel = createSelectModelWithLimit(baseNested, timestampColumn, "-1");
+
+        firstRowModel.setUnionModel(lastRowModel);
+        firstRowModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
+
+        model.setNestedModel(firstRowModel);
+    }
+
+    private boolean canOptimizeMultipleMinMax(
+            ObjList<QueryColumn> queryColumns,
+            CharSequence timestampColumn
+    ) {
+        boolean hasMin = false;
+        boolean hasMax = false;
+
+        for (int i = 0, n = queryColumns.size(); i < n; i++) {
+            QueryColumn column = queryColumns.get(i);
+            ExpressionNode ast = column.getAst();
+            if (ast == null || ast.type != FUNCTION || ast.rhs == null) {
+                return false;
+            }
+            CharSequence token = ast.token;
+            CharSequence rhs = ast.rhs.token;
+            if (!Chars.equals(timestampColumn, rhs)) {
+                return false;
+            }
+            if (Chars.equalsIgnoreCase("min", token)) {
+                hasMin = true;
+            } else if (Chars.equalsIgnoreCase("max", token)) {
+                hasMax = true;
+            } else {
+                return false;
+            }
+        }
+
+        return hasMin && hasMax;
+    }
+
+    private QueryModel createSelectModelWithLimit(QueryModel baseNested, CharSequence timestampColumn, String limitValue) {
+        QueryModel nested = queryModelPool.next();
+        nested.setTableNameExpr(baseNested.getTableNameExpr());
+        nested.setModelType(baseNested.getModelType());
+        nested.setTimestamp(baseNested.getTimestamp());
+        nested.setWhereClause(baseNested.getWhereClause());
+        nested.copyColumnsFrom(baseNested, queryColumnPool, expressionNodePool);
+
+        QueryModel selectModel = queryModelPool.next();
+        selectModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        selectModel.setNestedModel(nested);
+
+        ExpressionNode tsNode = expressionNodePool.next().of(LITERAL, timestampColumn, 0, 0);
+        QueryColumn tsCol = queryColumnPool.next().of(timestampColumn, tsNode);
+        selectModel.addBottomUpColumnIfNotExists(tsCol);
+
+        ExpressionNode limitNode = expressionNodePool.next().of(CONSTANT, limitValue, 0, 0);
+        selectModel.setLimit(limitNode, null);
+
+        return selectModel;
+    }
+
+    private void rewriteMultipleMinMaxGroupBy(QueryModel model) {
+        if (model.getSelectModelType() != QueryModel.SELECT_MODEL_GROUP_BY) {
+            QueryModel nested = model.getNestedModel();
+            if (nested != null) {
+                rewriteMultipleMinMaxGroupBy(nested);
+            }
+            QueryModel union = model.getUnionModel();
+            if (union != null) {
+                rewriteMultipleMinMaxGroupBy(union);
+            }
+            ObjList<QueryModel> joinModels = model.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                rewriteMultipleMinMaxGroupBy(joinModels.getQuick(i));
+            }
+            return;
+        }
+
+        QueryModel nested = model.getNestedModel();
+        if (nested == null || nested.getTimestamp() == null) {
+            return;
+        }
+
+        ObjList<QueryColumn> queryColumns = model.getBottomUpColumns();
+        if (queryColumns.size() <= 1) {
+            return;
+        }
+
+        CharSequence timestampColumn = nested.getTimestamp().token;
+        if (canOptimizeMultipleMinMax(queryColumns, timestampColumn)) {
+            replaceNestedWithMinMaxUnion(model, nested, timestampColumn);
+        }
+    }
+
     /**
      * Rewrites queries like
      * <p>
@@ -7448,6 +7547,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            rewriteMultipleMinMaxGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);

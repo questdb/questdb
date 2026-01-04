@@ -41,6 +41,7 @@ import java.util.List;
 
 import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
     private static final String orderByAdviceDdl = """
@@ -753,6 +754,30 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Row forward scan
                                     Frame forward scan on: y
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleFirstLastOptimization() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, ts timestamp) timestamp(ts);");
+            execute("insert into trades select 100.0, 50.0, timestamp_sequence('2023-01-01', 1000000L) from long_sequence(100);");
+
+            final String query = "select min(ts), max(ts) from trades";
+            final QueryModel model = compileModel(query);
+
+            QueryModel nested = model.getNestedModel();
+            assertNotNull(nested);
+            assertNotNull(nested.getUnionModel());
+            assertEquals(QueryModel.SET_OPERATION_UNION, nested.getSetOperationType());
+
+            assertQuery(
+                    "min\tmax\n2023-01-01T00:00:00.000000Z\t2023-01-01T00:01:39.000000Z\n",
+                    query,
+                    null,
+                    false,
+                    true
             );
         });
     }
