@@ -123,6 +123,7 @@ public class SqlParser {
     private int digit;
     private boolean overClauseMode = false;
     private boolean subQueryMode = false;
+    private boolean createTableMode = false;
 
     SqlParser(
             CairoConfiguration configuration,
@@ -775,7 +776,7 @@ public class SqlParser {
 
     private CharSequence optTok(GenericLexer lexer) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
+        if (tok == null || ((subQueryMode || createTableMode) && Chars.equals(tok, ')') && !overClauseMode)) {
             return null;
         }
         return tok;
@@ -1606,7 +1607,13 @@ public class SqlParser {
         final int startOfSelect = lexer.getPosition();
         // Parse SELECT for the sake of basic SQL validation.
         // It'll be compiled and optimized later, at the execution phase.
-        final QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
+        QueryModel selectModel;
+        createTableMode = true;
+        try {
+            selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
+        } finally {
+            createTableMode = false;
+        }
         final int endOfSelect = lexer.getPosition() - 1;
         final String selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
         createTableOperationBuilder.setSelectText(selectText, startOfSelect);
@@ -2516,7 +2523,7 @@ public class SqlParser {
                 }
 
                 if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token))
-                        || (n.type == ExpressionNode.LITERAL && n.token.isEmpty())) {
+                        || (n.type == ExpressionNode.LITERAL && (n.token == null || n.token.isEmpty()))) {
                     throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
                 }
 
@@ -3106,7 +3113,7 @@ public class SqlParser {
     private void parseSelectClause(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         int pos = lexer.getPosition();
         CharSequence tok = SqlUtil.fetchNext(lexer, true);
-        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
+        if (tok == null || ((subQueryMode || createTableMode) && Chars.equals(tok, ')') && !overClauseMode)) {
             throw SqlException.position(pos).put("[distinct] column expected");
         }
 
@@ -3502,10 +3509,20 @@ public class SqlParser {
                 accumulatedColumns.add(col);
                 accumulatedColumnPositions.add(colPosition);
 
-                if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {
-                    //accept ending ')' in create table as
+                if (tok == null || Chars.equals(tok, ';')) {
                     lexer.unparseLast();
                     break;
+                }
+
+                if (Chars.equals(tok, ')')) {
+                    if (subQueryMode || overClauseMode || createTableMode) {
+                        // it's a balanced: ')'
+                        lexer.unparseLast();
+                        break;
+                    } else {
+                        // it's an unbalanced ')' in top-level SELECT
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
+                    }
                 }
 
                 if (isFromKeyword(tok)) {
@@ -4393,6 +4410,7 @@ public class SqlParser {
         renameTableModelPool.clear();
         withClauseModelPool.clear();
         subQueryMode = false;
+        createTableMode = false;
         characterStore.clear();
         insertModelPool.clear();
         expressionTreeBuilder.reset();
