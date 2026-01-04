@@ -444,8 +444,11 @@ public class ServerMain implements Closeable {
             ));
         }
 
-        // metadata hydration
-        hydrateMetadataThread = new Thread(engine.getMetadataCache()::onStartupAsyncHydrator);
+        // metadata and write tracker hydration
+        hydrateMetadataThread = new Thread(() -> {
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.hydrateRecentWriteTracker();
+        });
         hydrateMetadataThread.start();
 
         System.gc(); // GC 1
