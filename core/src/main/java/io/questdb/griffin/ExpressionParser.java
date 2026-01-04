@@ -1617,6 +1617,9 @@ public class ExpressionParser {
                             if (en == null) {
                                 throw SqlException.$(lastPos, "qualifier expected");
                             }
+                            if (en.type != ExpressionNode.LITERAL) {
+                                throw SqlException.$(lexer.getContent().toString().lastIndexOf('.', lastPos), "unexpected dot");
+                            }
                             // two possibilities here:
                             // 1. 'a.b'
                             // 2. 'a. b'
@@ -1641,8 +1644,6 @@ public class ExpressionParser {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
                                 // vanilla 'a.b', just concat tokens efficiently
                                 fsA.setHi(lexer.getTokenHi());
-                            } else {
-                                throw SqlException.$(lastPos - 1, "unexpected dot");
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                             argStackDepth++;
