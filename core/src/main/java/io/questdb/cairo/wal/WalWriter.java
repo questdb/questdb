@@ -49,6 +49,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -126,6 +127,7 @@ public class WalWriter implements TableWriterAPI {
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
+    private final RecentWriteTracker recentWriteTracker;
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableSequencerAPI sequencer;
@@ -156,6 +158,7 @@ public class WalWriter implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
+    private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
@@ -176,10 +179,12 @@ public class WalWriter implements TableWriterAPI {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
-            WalDirectoryPolicy walDirectoryPolicy
+            WalDirectoryPolicy walDirectoryPolicy,
+            RecentWriteTracker recentWriteTracker
     ) {
         LOG.info().$("open [table=").$(tableToken).I$();
         this.sequencer = tableSequencerAPI;
+        this.recentWriteTracker = recentWriteTracker;
         this.configuration = configuration;
         this.ddlListener = ddlListener;
         this.mkDirMode = configuration.getMkDirMode();
@@ -1031,7 +1036,7 @@ public class WalWriter implements TableWriterAPI {
         checkDistressed();
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
-                final long rowsToCommit = getUncommittedRowCount();
+                final long txnRowCount = getUncommittedRowCount();
 
                 this.isCommittingData = true;
                 this.lastTxnType = txnType;
@@ -1041,7 +1046,7 @@ public class WalWriter implements TableWriterAPI {
                 this.lastMatViewRefreshBaseTxn = lastRefreshBaseTxn;
                 this.lastMatViewRefreshTimestamp = lastRefreshTimestamp;
                 this.lastMatViewPeriodHi = lastPeriodHi;
-                if (rowsToCommit == 0) {
+                if (txnRowCount == 0) {
                     // Sometimes symbols are added but rows are cancelled.
                     // This can only theoretically happen for replace range commits
                     // but at the moment it can only happen in fuzz tests because
@@ -1082,7 +1087,16 @@ public class WalWriter implements TableWriterAPI {
                 }
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.walMetrics().addRowsWritten(rowsToCommit);
+                metrics.walMetrics().addRowsWritten(txnRowCount);
+                // Track WAL commit for tables() function
+                if (recentWriteTracker != null) {
+                    recentWriteTracker.recordWalWrite(
+                            tableToken,
+                            seqTxn,
+                            lastTxnMaxTimestamp == -1 ? Numbers.LONG_NULL : lastTxnMaxTimestamp,
+                            txnRowCount
+                    );
+                }
             }
         } catch (CairoException ex) {
             distressed = true;
@@ -1382,7 +1396,16 @@ public class WalWriter implements TableWriterAPI {
     private long getSequencerTxn() {
         long seqTxn;
         do {
-            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
+            seqTxn = sequencer.nextTxn(
+                    tableToken,
+                    walId,
+                    getColumnStructureVersion(),
+                    segmentId,
+                    lastSegmentTxn,
+                    txnMinTimestamp,
+                    txnMaxTimestamp,
+                    segmentRowCount - currentTxnStartRowNum
+            );
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
@@ -1639,6 +1662,8 @@ public class WalWriter implements TableWriterAPI {
     private void resetDataTxnProperties() {
         currentTxnStartRowNum = segmentRowCount;
         txnMinTimestamp = Long.MAX_VALUE;
+        // Store the max timestamp before resetting for tracking purposes
+        lastTxnMaxTimestamp = txnMaxTimestamp;
         txnMaxTimestamp = -1;
         txnOutOfOrder = false;
         resetSymbolMaps();

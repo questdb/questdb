@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DecimalFunction;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 
@@ -73,7 +71,8 @@ public abstract class ToDecimal64Function extends Decimal64Function {
      * The implementation must fill the decimal with the store value following the target scale and precision.
      * If the value to store is null, it must return false without doing additional work.
      *
-     * @return whether the result is not null.
+     * @param rec the record to read from
+     * @return whether the result is not null
      */
     protected abstract boolean store(Record rec);
 }

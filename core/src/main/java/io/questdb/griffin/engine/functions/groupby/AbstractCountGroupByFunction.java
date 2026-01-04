@@ -35,10 +35,24 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 
+/**
+ * Abstract base class for count group by functions.
+ */
 public abstract class AbstractCountGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
+    /**
+     * The function argument.
+     */
     protected final Function arg;
+    /**
+     * The value index in the map.
+     */
     protected int valueIndex;
 
+    /**
+     * Constructs a new count group by function.
+     *
+     * @param arg the function argument
+     */
     protected AbstractCountGroupByFunction(Function arg) {
         this.arg = arg;
     }

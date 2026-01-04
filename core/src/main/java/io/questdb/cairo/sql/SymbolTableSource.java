@@ -24,9 +24,24 @@
 
 package io.questdb.cairo.sql;
 
+/**
+ * Interface for sources that provide symbol tables.
+ */
 public interface SymbolTableSource {
 
+    /**
+     * Returns the symbol table for the specified column.
+     *
+     * @param columnIndex the column index
+     * @return the symbol table
+     */
     SymbolTable getSymbolTable(int columnIndex);
 
+    /**
+     * Creates a new symbol table for the specified column.
+     *
+     * @param columnIndex the column index
+     * @return a new symbol table
+     */
     SymbolTable newSymbolTable(int columnIndex);
 }

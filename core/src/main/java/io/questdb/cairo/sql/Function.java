@@ -104,13 +104,27 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void close() {
     }
 
+    /**
+     * Called when the cursor is closed.
+     */
     default void cursorClosed() {
     }
 
+    /**
+     * Returns the extended operations for this function, if any.
+     *
+     * @return the function extension, or null if none
+     */
     default FunctionExtension extendedOps() {
         return null;
     }
 
+    /**
+     * Returns the array value from the record.
+     *
+     * @param rec the record to read from
+     * @return the array view
+     */
     ArrayView getArray(Record rec);
 
     BinarySequence getBin(Record rec);
@@ -126,14 +140,20 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     long getDate(Record rec);
 
     /**
-     * Sets the raw value of sink (the scale is caller saved)
+     * Sets the raw value of sink (the scale is caller saved).
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write the decimal value to
      */
     void getDecimal128(Record rec, Decimal128 sink);
 
     short getDecimal16(Record rec);
 
     /**
-     * Sets the raw value of sink (the scale is caller saved)
+     * Sets the raw value of sink (the scale is caller saved).
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write the decimal value to
      */
     void getDecimal256(Record rec, Decimal256 sink);
 
@@ -147,27 +167,69 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     float getFloat(Record rec);
 
+    /**
+     * Returns the geohash byte value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash byte value
+     */
     byte getGeoByte(Record rec);
 
+    /**
+     * Returns the geohash int value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash int value
+     */
     int getGeoInt(Record rec);
 
+    /**
+     * Returns the geohash long value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash long value
+     */
     long getGeoLong(Record rec);
 
+    /**
+     * Returns the geohash short value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash short value
+     */
     short getGeoShort(Record rec);
 
     int getIPv4(Record rec);
 
     int getInt(Record rec);
 
+    /**
+     * Returns the interval value from the record.
+     *
+     * @param rec the record to read from
+     * @return the interval value
+     */
     @NotNull
     Interval getInterval(Record rec);
 
+    /**
+     * Returns the long value from the record.
+     *
+     * @param rec the record to read from
+     * @return the long value
+     */
     long getLong(Record rec);
 
     long getLong128Hi(Record rec);
 
     long getLong128Lo(Record rec);
 
+    /**
+     * Writes the Long256 value to the given sink.
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write to
+     */
     void getLong256(Record rec, CharSink<?> sink);
 
     Long256 getLong256A(Record rec);
@@ -200,6 +262,12 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     CharSequence getSymbol(Record rec);
 
+    /**
+     * Returns the symbol value from the record (alternate buffer).
+     *
+     * @param rec the record to read from
+     * @return the symbol value
+     */
     CharSequence getSymbolB(Record rec);
 
     long getTimestamp(Record rec);
@@ -213,6 +281,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     Utf8Sequence getVarcharB(Record rec);
 
     /**
+     * Returns the size of the varchar value.
+     *
+     * @param rec the record to read from
      * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
      */
     int getVarcharSize(Record rec);
@@ -247,6 +318,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return this == obj;
     }
 
+    /**
+     * Returns true if this function is non-deterministic.
+     *
+     * @return true if non-deterministic
+     */
     default boolean isNonDeterministic() {
         return false;
     }

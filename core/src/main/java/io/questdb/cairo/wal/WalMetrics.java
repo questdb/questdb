@@ -59,8 +59,8 @@ public class WalMetrics implements Mutable {
         applyRowsWriteRateGauge.setValue(rowsAppendRate);
     }
 
-    public void addRowsWritten(long rows) {
-        rowsWrittenCounter.add(rows);
+    public void addRowsWritten(long txnRowCount) {
+        rowsWrittenCounter.add(txnRowCount);
     }
 
     public void addSeqTxn(long txnDelta) {

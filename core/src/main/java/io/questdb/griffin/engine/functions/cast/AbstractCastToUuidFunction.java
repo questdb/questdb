@@ -29,9 +29,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 
+/**
+ * Abstract base class for functions that cast values to UUID.
+ */
 public abstract class AbstractCastToUuidFunction extends UuidFunction implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to UUID function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToUuidFunction(Function arg) {
         this.arg = arg;
     }

@@ -508,7 +508,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         StringSink resultSink = new StringSink();
         try (
                 Connection conn = DriverManager.getConnection(getPgConnectionUri(pgPort), PG_CONNECTION_PROPERTIES);
-                PreparedStatement stmt = conn.prepareStatement("tables()");
+                PreparedStatement stmt = conn.prepareStatement("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()");
                 ResultSet result = stmt.executeQuery()
         ) {
             ResultSetMetaData meta = result.getMetaData();
@@ -552,7 +552,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             boolean inVolume
     ) throws Exception {
         StringSink resultSink = new StringSink();
-        CompiledQuery cc = compiler.compile("tables()", context);
+        CompiledQuery cc = compiler.compile("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()", context);
         try (
                 RecordCursorFactory factory = cc.getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(context)

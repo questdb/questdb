@@ -547,6 +547,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getRecentWriteTrackerCapacity() {
+        return getDelegate().getRecentWriteTrackerCapacity();
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return getDelegate().getMetadataPoolCapacity();
     }

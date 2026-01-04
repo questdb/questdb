@@ -34,6 +34,9 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+/**
+ * Factory for the abs() function on double type.
+ */
 public class AbsDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {

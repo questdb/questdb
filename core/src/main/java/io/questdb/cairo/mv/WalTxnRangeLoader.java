@@ -34,7 +34,6 @@ import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;

@@ -29,9 +29,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
+/**
+ * Abstract base class for functions that cast values to char.
+ */
 public abstract class AbstractCastToCharFunction extends CharFunction implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to char function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToCharFunction(Function arg) {
         this.arg = arg;
     }

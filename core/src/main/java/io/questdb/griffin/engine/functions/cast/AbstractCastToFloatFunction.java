@@ -29,9 +29,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
+/**
+ * Abstract base class for functions that cast values to float.
+ */
 public abstract class AbstractCastToFloatFunction extends FloatFunction implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to float function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToFloatFunction(Function arg) {
         this.arg = arg;
     }

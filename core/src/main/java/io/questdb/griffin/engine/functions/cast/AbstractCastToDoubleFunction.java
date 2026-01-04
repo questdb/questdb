@@ -29,9 +29,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
+/**
+ * Abstract base class for functions that cast values to double.
+ */
 public abstract class AbstractCastToDoubleFunction extends DoubleFunction implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to double function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToDoubleFunction(Function arg) {
         this.arg = arg;
     }

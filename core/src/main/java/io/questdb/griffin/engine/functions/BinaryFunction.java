@@ -32,6 +32,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
+/**
+ * Interface for functions that take two arguments.
+ */
 public interface BinaryFunction extends Function {
 
     @Override
@@ -46,8 +49,18 @@ public interface BinaryFunction extends Function {
         getRight().cursorClosed();
     }
 
+    /**
+     * Returns the left (first) argument of this binary function.
+     *
+     * @return the left function argument
+     */
     Function getLeft();
 
+    /**
+     * Returns the right (second) argument of this binary function.
+     *
+     * @return the right function argument
+     */
     Function getRight();
 
     @Override

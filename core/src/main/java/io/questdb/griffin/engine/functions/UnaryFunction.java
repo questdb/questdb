@@ -43,6 +43,11 @@ public interface UnaryFunction extends Function {
         getArg().cursorClosed();
     }
 
+    /**
+     * Returns the single argument of this unary function.
+     *
+     * @return the function argument
+     */
     Function getArg();
 
     @Override

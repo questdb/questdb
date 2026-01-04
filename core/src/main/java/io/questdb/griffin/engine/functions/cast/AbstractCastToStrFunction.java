@@ -29,9 +29,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
+/**
+ * Abstract base class for functions that cast values to string.
+ */
 public abstract class AbstractCastToStrFunction extends StrFunction implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to string function.
+     *
+     * @param arg the function argument to cast
+     */
     protected AbstractCastToStrFunction(Function arg) {
         this.arg = arg;
     }

@@ -24,8 +24,22 @@
 
 package io.questdb.cutlass.http.client;
 
+/**
+ * Interface for receiving HTTP response data.
+ */
 public interface Response {
+    /**
+     * Receives the next fragment of response data using the default timeout.
+     *
+     * @return the received fragment
+     */
     Fragment recv();
 
+    /**
+     * Receives the next fragment of response data with the specified timeout.
+     *
+     * @param timeout the timeout in milliseconds
+     * @return the received fragment
+     */
     Fragment recv(int timeout);
 }

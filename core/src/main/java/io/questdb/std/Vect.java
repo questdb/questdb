@@ -102,7 +102,7 @@ public final class Vect {
             int dedupColumnCount,
             long dedupColumnData
     ) {
-        long dedupCount = dedupSortedTimestampIndex(
+        long dedupRowCount = dedupSortedTimestampIndex(
                 inIndexAddr,
                 count,
                 outIndexAddr,
@@ -110,8 +110,8 @@ public final class Vect {
                 dedupColumnCount,
                 dedupColumnData
         );
-        assert dedupCount != -1 : "unsorted data passed to deduplication";
-        return dedupCount;
+        assert dedupRowCount != -1 : "unsorted data passed to deduplication";
+        return dedupRowCount;
     }
 
     public static native long dedupSortedTimestampIndexManyAddresses(

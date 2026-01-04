@@ -53,7 +53,6 @@ public class SeqTxnTracker {
     public SeqTxnTracker(CairoConfiguration configuration) {
         this.pressureControl = new TableWriterPressureControlImpl(configuration);
         this.metrics = configuration.getMetrics();
-
     }
 
     public String getErrorMessage() {
