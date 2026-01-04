@@ -24,6 +24,12 @@
 
 package io.questdb.std;
 
+/**
+ * Interface for mutable objects that can be cleared.
+ */
 public interface Mutable {
+    /**
+     * Clears the state of this object.
+     */
     void clear();
 }

@@ -213,7 +213,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -244,7 +244,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -276,7 +276,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -307,7 +307,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -523,7 +523,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -556,7 +556,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -590,7 +590,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -636,7 +636,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertFalse(eventCursor.hasNext());
             }
 
@@ -652,7 +652,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertFalse(eventCursor.hasNext());
             }
         });
@@ -698,7 +698,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -724,7 +724,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertFalse(eventCursor.hasNext());
             }
         });
@@ -780,7 +780,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -818,7 +818,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -892,7 +892,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -1269,7 +1269,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -1327,7 +1327,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -1440,7 +1440,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                         assertColumnMetadata(model, reader);
 
-                        final WalEventCursor eventCursor = reader.getEventCursor();
+                        final WalEventCursor eventCursor = reader.getWalEventCursor();
                         assertTrue(eventCursor.hasNext());
                         assertEquals(WalTxnType.DATA, eventCursor.getType());
                         txnSet.add(Numbers.encodeLowHighInts(walId * 10 + i, (int) eventCursor.getTxn()));
@@ -1468,7 +1468,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                         assertColumnMetadata(model, reader);
 
-                        final WalEventCursor eventCursor = reader.getEventCursor();
+                        final WalEventCursor eventCursor = reader.getWalEventCursor();
                         assertFalse(eventCursor.hasNext());
                     }
 
@@ -1589,7 +1589,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                         assertColumnMetadata(model, reader);
 
-                        final WalEventCursor eventCursor = reader.getEventCursor();
+                        final WalEventCursor eventCursor = reader.getWalEventCursor();
                         assertTrue(eventCursor.hasNext());
                         assertEquals(WalTxnType.DATA, eventCursor.getType());
                         txnSet.add(Numbers.encodeLowHighInts(walId, segmentId * 1000 + (int) eventCursor.getTxn()));
@@ -1938,7 +1938,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.MAT_VIEW_DATA, eventCursor.getType());
@@ -2539,7 +2539,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -2570,7 +2570,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -2605,7 +2605,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -2636,7 +2636,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -2687,7 +2687,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -2766,7 +2766,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -2861,7 +2861,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -2916,7 +2916,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -2991,7 +2991,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3022,7 +3022,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3058,7 +3058,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3089,7 +3089,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3157,7 +3157,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3187,7 +3187,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3441,7 +3441,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3499,7 +3499,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3533,7 +3533,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3591,7 +3591,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -3761,7 +3761,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     i++;
                 }
                 assertEquals(i, reader.size());
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
@@ -4591,7 +4591,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 TableModel model = defaultModel(tableName);
                 assertColumnMetadata(model, reader);
 
-                final WalEventCursor eventCursor = reader.getEventCursor();
+                final WalEventCursor eventCursor = reader.getWalEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());

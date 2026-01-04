@@ -29,10 +29,25 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 
+/**
+ * Abstract base class for binary equality comparison functions.
+ */
 public abstract class AbstractEqBinaryFunction extends NegatableBooleanFunction implements BinaryFunction {
+    /**
+     * The left argument function.
+     */
     protected final Function left;
+    /**
+     * The right argument function.
+     */
     protected final Function right;
 
+    /**
+     * Constructs a new binary equality function.
+     *
+     * @param left  the left argument function
+     * @param right the right argument function
+     */
     public AbstractEqBinaryFunction(Function left, Function right) {
         this.left = left;
         this.right = right;

@@ -45,6 +45,7 @@ import io.questdb.cairo.mv.NoOpMatViewStateStore;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
+import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.pool.SequencerMetadataPool;
 import io.questdb.cairo.pool.SqlCompilerPool;
@@ -107,6 +108,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -155,6 +157,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
+    private final RecentWriteTracker recentWriteTracker;
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
@@ -178,6 +181,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
@@ -192,7 +196,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.messageBus = new MessageBusImpl(configuration);
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
-            this.writerPool = new WriterPool(configuration, this);
+            this.recentWriteTracker = new RecentWriteTracker(configuration.getRecentWriteTrackerCapacity());
+            this.writerPool = new WriterPool(configuration, this, recentWriteTracker);
             this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
             this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
@@ -471,6 +476,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
+    @SuppressWarnings("unused")
     @TestOnly
     // this is used in replication test
     public void clearWalWriterPool() {
@@ -589,6 +595,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableSequencerAPI.dropTable(tableToken, false);
                 matViewStateStore.removeViewState(tableToken);
                 matViewGraph.removeView(tableToken);
+                recentWriteTracker.removeTable(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
             }
@@ -608,6 +615,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // it from the registry without knowing that the table is being dropped.
                     // Then it can push the scoreboard max txn value into incorrect state.
                     scoreboardPool.remove(tableToken);
+                    recentWriteTracker.removeTable(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
                 }
@@ -841,6 +849,10 @@ public class CairoEngine implements Closeable, WriterSource {
                     .I$();
             throw e;
         }
+    }
+
+    public RecentWriteTracker getRecentWriteTracker() {
+        return recentWriteTracker;
     }
 
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
@@ -1083,6 +1095,78 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
         return writerPool.get(tableToken, lockReason);
+    }
+
+    /**
+     * Populates the RecentWriteTracker with data from existing tables.
+     * This should be called at startup to ensure the tracker is not empty.
+     * <p>
+     * For each table, reads the _txn file to get the row count and uses
+     * the file modification time as the last write timestamp.
+     */
+    public void hydrateRecentWriteTracker() {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence dbRoot = configuration.getDbRoot();
+        final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
+        getTableTokens(tableTokens, false);
+
+        try (TxReader txReader = new TxReader(ff); Path path = new Path().of(dbRoot)) {
+            final int rootLen = path.size();
+
+            int hydratedCount = 0;
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                TableToken tableToken = tableTokens.get(i);
+                try {
+                    path.trimTo(rootLen).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+
+                    if (!ff.exists(path.$())) {
+                        continue;
+                    }
+
+                    // Get metadata for timestampType and partitionBy
+                    try (TableMetadata metadata = getTableMetadata(tableToken)) {
+                        txReader.ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy());
+                        TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+
+                        long maxTimestamp = txReader.getMaxTimestamp();
+                        long rowCount = txReader.getRowCount();
+                        long writerTxn = txReader.getSeqTxn();
+
+                        // For WAL tables, get sequencerTxn from the sequencer
+                        long sequencerTxn = Numbers.LONG_NULL;
+                        long walTimestamp = Numbers.LONG_NULL;
+                        if (tableToken.isWal()) {
+                            try {
+                                sequencerTxn = tableSequencerAPI.lastTxn(tableToken);
+                                walTimestamp = maxTimestamp;
+                            } catch (CairoException e) {
+                                // Sequencer may not be available, use LONG_NULL
+                                LOG.debug().$("could not get sequencer txn during hydration [table=").$(tableToken)
+                                        .$(", error=").$(e.getMessage()).I$();
+                            }
+                        }
+
+                        // Use CAS insert - writer data always wins over hydrated data
+                        if (recentWriteTracker.recordWriteIfAbsent(tableToken, maxTimestamp, rowCount, writerTxn, sequencerTxn, walTimestamp)) {
+                            hydratedCount++;
+                        }
+                    }
+                } catch (CairoException | TableReferenceOutOfDateException e) {
+                    // Table may have been dropped or is in inconsistent state, skip it
+                    LOG.info().$("skipping table during write tracker hydration [table=").$(tableToken)
+                            .$(", error=").$(e.getMessage()).I$();
+                } finally {
+                    txReader.clear();
+                }
+            }
+
+            LOG.info().$("recent write tracker hydrated [tables=").$(hydratedCount).I$();
+        }
+
+        Runnable callback = recentWriteTrackerHydrationCallback;
+        if (callback != null) {
+            callback.run();
+        }
     }
 
     public boolean isClosing() {
@@ -1470,6 +1554,17 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setReaderListener(ReaderPool.ReaderListener readerListener) {
         readerPool.setTableReaderListener(readerListener);
+    }
+
+    /**
+     * Sets a callback to be invoked after {@link #hydrateRecentWriteTracker()} completes.
+     * This is primarily for testing to avoid sleep-based synchronization.
+     *
+     * @param callback the callback to invoke, or null to clear
+     */
+    @TestOnly
+    public void setRecentWriteTrackerHydrationCallback(Runnable callback) {
+        this.recentWriteTrackerHydrationCallback = callback;
     }
 
     @TestOnly
