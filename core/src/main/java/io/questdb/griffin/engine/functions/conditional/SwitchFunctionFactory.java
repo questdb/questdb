@@ -98,6 +98,16 @@ public class SwitchFunctionFactory implements FunctionFactory {
                         .put(", actual=").put(ColumnType.nameOf(keyArgType))
                         .put(']');
             }
+            args.setQuick(
+                    i,
+                    CaseCommon.getCastFunction(
+                            args.getQuick(i),
+                            argPositions.getQuick(i),
+                            keyType,
+                            configuration,
+                            sqlExecutionContext
+                    )
+            );
 
             // determine common return type
             returnType = CaseCommon.getCommonType(returnType, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");

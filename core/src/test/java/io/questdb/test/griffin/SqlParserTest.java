@@ -8939,7 +8939,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPivotAggregateNameNoParam() throws Exception {
         assertSyntaxError(
-                "cities PIVOT (sum", 17, "'FOR' or ',' or ')' expected", citiesModel
+                "cities PIVOT (sum", 14, "expected aggregate function [col=sum]", citiesModel
         );
     }
 
@@ -8953,7 +8953,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPivotAsSubquery() throws Exception {
         assertQuery(
-                "select-virtual '2000' + 1 column from (select-group-by sum(switch(year, 2000, sum, null)) 2000, sum(switch(year, 2010, sum, null)) 2010 from (select-choose [sum, year] from (select-group-by [sum(population) sum, year] year, sum(population) sum from (select [population, year] from cities where year in (2000, 2010))) _xQdbA3))",
+                "select-virtual '2000' + 1 column from (select-choose 2000, 2010 from (select-group-by [first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010] first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010 from (select-group-by [sum(population) sum(population), year] year, sum(population) sum(population) from (select [population, year] from cities where year IN (2000, 2010)))))",
                 "select '2000' + 1 from (cities PIVOT (sum(population) FOR year IN (2000,2010)))",
                 citiesModel
         );
@@ -8976,7 +8976,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPivotForColumnUseExpression() throws Exception {
         assertQuery(
-                "select-group-by sum(switch(year, 2000, sum, null)) 2000, sum(switch(year, 2010, sum, null)) 2010 from (select-choose [sum, year] from (select-group-by [sum(population) sum, year] year, sum(population) sum from (select [population, year] from cities where year in (2000, 2010))) _xQdbA1)",
+                "select-choose true, false from (select-group-by [first_not_null(switch(year in (2000, 2010), true, sum(population), null)) true, first_not_null(switch(year in (2000, 2010), false, sum(population), null)) false] first_not_null(switch(year in (2000, 2010), true, sum(population), null)) true, first_not_null(switch(year in (2000, 2010), false, sum(population), null)) false from (select-group-by [sum(population) sum(population), year in (2000, 2010) 'year in (2000, 2010)'] year in (2000, 2010) 'year in (2000, 2010)', sum(population) sum(population) from (select [population, year] from cities where year in (2000, 2010) IN (true, false))))",
                 "cities PIVOT (sum(population) FOR (year IN (2000,2010)) IN (true, false))",
                 citiesModel
         );
@@ -8985,7 +8985,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPivotFull() throws Exception {
         assertQuery(
-                "select-group-by sum(switch(year, 2000, sum, null)) 2000, sum(switch(year, 2010, sum, null)) 2010 from (select-choose [sum, year] from (select-group-by [sum(population) sum, year] year, sum(population) sum from (select [population, year] from cities where year in (2000, 2010))) _xQdbA1)",
+                "select-choose 2000, 2010 from (select-group-by [first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010] first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010 from (select-group-by [sum(population) sum(population), year] year, sum(population) sum(population) from (select [population, year] from cities where year IN (2000, 2010))))",
                 "cities PIVOT (sum(population) FOR year IN (2000,2010))",
                 citiesModel
         );
@@ -9106,7 +9106,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPivotPartialAggregateName() throws Exception {
         assertSyntaxError(
-                "cities PIVOT (su", 16, "'FOR' or ',' or ')' expected", citiesModel
+                "cities PIVOT (su", 14, "expected aggregate function [col=su]", citiesModel
         );
     }
 

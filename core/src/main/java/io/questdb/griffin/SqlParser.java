@@ -3108,6 +3108,27 @@ public class SqlParser {
             tok = optTok(lexer);
         } while (tok != null && !isForKeyword(tok) && isComma(tok));
 
+        ObjList<QueryColumn> pivotGroupByCols = model.getPivotGroupByColumns();
+        boolean hasNoAlias = false;
+        for (int i = 0, n = pivotGroupByCols.size(); i < n; i++) {
+            QueryColumn qc = pivotGroupByCols.getQuick(i);
+            if (qc.getAlias() == null) {
+                hasNoAlias = true;
+                CharacterStoreEntry entry = characterStore.newEntry();
+                qc.getAst().toSink(entry);
+                CharSequence alias = SqlUtil.createExprColumnAlias(
+                        characterStore,
+                        entry.toImmutable(),
+                        pivotAliasMap,
+                        configuration.getColumnAliasGeneratedMaxSize(),
+                        true
+                );
+                pivotAliasMap.add(alias);
+                qc.setAlias(alias, qc.getAst().position);
+            }
+        }
+        model.setPivotGroupByColumnHasNoAlias(hasNoAlias && pivotGroupByCols.size() == 1);
+
         if (tok == null || !isForKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "expected FOR");
         }
@@ -3154,16 +3175,16 @@ public class SqlParser {
                 do {
                     ExpressionNode expr = expr(lexer, model, sqlParserCallback);
                     if (expr == null) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "expected constant value in PIVOT IN list");
+                        throw SqlException.$(lexer.lastTokenPosition(), "missing constant");
                     }
-                    if (expr.type != ExpressionNode.CONSTANT) {
-                        throw SqlException.$(expr.position, "PIVOT IN value must be a constant");
-                    }
-                    final int index = tempCharSequenceSet.keyIndex(expr.token);
+                    CharacterStoreEntry entry = characterStore.newEntry();
+                    expr.toSink(entry);
+                    CharSequence exprName = entry.toImmutable();
+                    final int index = tempCharSequenceSet.keyIndex(exprName);
                     if (index < 0) {
-                        throw SqlException.$(expr.position, "duplicate value in PIVOT IN list: ").put(expr.token);
+                        throw SqlException.$(expr.position, "duplicate value in PIVOT IN list: ").put(exprName);
                     }
-                    tempCharSequenceSet.addAtWithBorrowed(index, expr.token);
+                    tempCharSequenceSet.addAtWithBorrowed(index, exprName);
 
                     CharSequence nextTok = tok(lexer, "',' or ')'");
                     CharSequence alias;
@@ -3187,7 +3208,7 @@ public class SqlParser {
                         lexer.unparseLast();
                         alias = SqlUtil.createExprColumnAlias(
                                 characterStore,
-                                unquote(expr.token),
+                                unquote(exprName),
                                 pivotAliasMap,
                                 configuration.getColumnAliasGeneratedMaxSize(),
                                 true
@@ -3205,13 +3226,6 @@ public class SqlParser {
             }
 
             tok = optTok(lexer);
-            // ELSE clause
-            if (tok != null && isElseKeyword(tok)) {
-                tok = optTok(lexer);
-                pivotForColumn.setElseAlias(GenericLexer.immutableOf(unquote(tok)));
-                tok = optTok(lexer);
-            }
-
             if (tok != null && pivotForStop.contains(tok)) {
                 break;
             } else {
@@ -3268,8 +3282,9 @@ public class SqlParser {
         }
         CharSequence tok = tok(lexer, "'FOR' or ',' or ')'");
         QueryColumn col = queryColumnPool.next().of(null, expr);
-        CharSequence alias;
+
         if (!isForKeyword(tok) && columnAliasStop.excludes(tok)) {
+            CharSequence alias;
             assertNotDot(lexer, tok);
             if (isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
@@ -3282,21 +3297,10 @@ public class SqlParser {
                 SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                 alias = GenericLexer.immutableOf(unquote(tok));
             }
+            col.setAlias(alias, lexer.lastTokenPosition());
         } else {
-            CharacterStoreEntry entry = characterStore.newEntry();
-            expr.toSink(entry);
-            alias = SqlUtil.createExprColumnAlias(
-                    characterStore,
-                    entry.toImmutable(),
-                    pivotAliasMap,
-                    configuration.getColumnAliasGeneratedMaxSize(),
-                    true
-            );
-            pivotAliasMap.add(alias);
             lexer.unparseLast();
         }
-
-        col.setAlias(alias, lexer.lastTokenPosition());
         return col;
     }
 

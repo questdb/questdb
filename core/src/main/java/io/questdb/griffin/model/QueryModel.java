@@ -205,6 +205,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
+    private boolean pivotGroupByColumnHasNoAlias = false;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;
@@ -514,6 +515,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         pivotGroupByColumns.clear();
         pivotForColumns.clear();
         cacheable = true;
+        pivotGroupByColumnHasNoAlias = false;
     }
 
     public void clearColumnMapStructs() {
@@ -1171,6 +1173,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return pivotForColumns.size() > 0;
     }
 
+    public boolean isPivotGroupByColumnHasNoAlias() {
+        return pivotGroupByColumnHasNoAlias;
+    }
+
     public boolean isSelectTranslation() {
         return isSelectTranslation;
     }
@@ -1496,6 +1502,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
         this.outerJoinExpressionClause = outerJoinExpressionClause;
+    }
+
+    public void setPivotGroupByColumnHasNoAlias(boolean pivotGroupByColumnHasNoAlias) {
+        this.pivotGroupByColumnHasNoAlias = pivotGroupByColumnHasNoAlias;
     }
 
     public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
@@ -2231,10 +2241,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 }
 
                 sink.put(')');
-                if (pivotForName.getElseAlias() != null) {
-                    sink.putAscii(" else ");
-                    sink.put(pivotForName.getElseAlias());
-                }
                 if (i + 1 < n) {
                     sink.putAscii(' ');
                 }

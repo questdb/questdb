@@ -34,7 +34,6 @@ public final class PivotForColumn implements Mutable {
     public final static ObjectFactory<PivotForColumn> FACTORY = PivotForColumn::new;
     private final ObjList<CharSequence> valueAliases = new ObjList<>();
     private final ObjList<ExpressionNode> valueList = new ObjList<>();
-    private CharSequence elseAlias;
     private ExpressionNode inExpr;
     private CharSequence inExprAlias;
     private boolean isValueList = true;
@@ -51,7 +50,6 @@ public final class PivotForColumn implements Mutable {
         valueList.clear();
         inExpr = null;
         selectSubqueryExpr = null;
-        elseAlias = null;
         isValueList = true;
         inExprAlias = null;
     }
@@ -64,14 +62,9 @@ public final class PivotForColumn implements Mutable {
         return isValueList == that.isValueList
                 && Objects.equals(valueAliases, that.valueAliases)
                 && Objects.equals(valueList, that.valueList)
-                && Objects.equals(elseAlias, that.elseAlias)
                 && Objects.equals(inExpr, that.inExpr)
                 && Objects.equals(selectSubqueryExpr, that.selectSubqueryExpr)
                 && Objects.equals(inExprAlias, that.inExprAlias);
-    }
-
-    public CharSequence getElseAlias() {
-        return elseAlias;
     }
 
     public ExpressionNode getInExpr() {
@@ -96,7 +89,7 @@ public final class PivotForColumn implements Mutable {
 
     @Override
     public int hashCode() {
-        return Objects.hash(valueAliases, valueList, elseAlias, inExpr, isValueList, selectSubqueryExpr, inExprAlias);
+        return Objects.hash(valueAliases, valueList, inExpr, isValueList, selectSubqueryExpr, inExprAlias);
     }
 
     public boolean isValueList() {
@@ -107,10 +100,6 @@ public final class PivotForColumn implements Mutable {
         this.inExpr = inExpr;
         this.isValueList = isValueList;
         return this;
-    }
-
-    public void setElseAlias(CharSequence elseAlias) {
-        this.elseAlias = elseAlias;
     }
 
     public void setInExprAlias(CharSequence inExprAlias) {

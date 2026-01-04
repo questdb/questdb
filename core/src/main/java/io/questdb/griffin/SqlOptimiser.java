@@ -1057,36 +1057,13 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0; i < forColumnCount; i++) {
                     PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
                     ObjList<ExpressionNode> valueList = pivotForColumn.getValueList();
-                    int valueCount = valueList.size();
                     int valueIndex = indices.getQuick(i);
-
-                    ExpressionNode colCondition;
-                    CharSequence colAlias;
-
-                    if (pivotForColumn.getElseAlias() != null && valueIndex == valueCount) {
-                        // ELSE mode: use NOT IN
-                        ExpressionNode inNode = expressionNodePool.next().of(FUNCTION, "in", 0, position);
-                        inNode.paramCount = 1 + valueCount;
-                        if (inNode.paramCount == 2) {
-                            inNode.lhs = expressionNodePool.next().of(LITERAL, pivotForColumn.getInExprAlias(), 0, position);
-                            inNode.rhs = valueList.getQuick(0);
-                        } else {
-                            inNode.args.addAll(valueList);
-                            inNode.args.add(expressionNodePool.next().of(LITERAL, pivotForColumn.getInExprAlias(), 0, position));
-                        }
-                        colCondition = expressionNodePool.next().of(OPERATION, "not", 0, position);
-                        colCondition.paramCount = 1;
-                        colCondition.rhs = inNode;
-                        colAlias = pivotForColumn.getElseAlias();
-                    } else {
-                        // Normal mode: use =
-                        ExpressionNode valueExpr = valueList.getQuick(valueIndex);
-                        colCondition = expressionNodePool.next().of(OPERATION, "=", 0, position);
-                        colCondition.paramCount = 2;
-                        colCondition.lhs = expressionNodePool.next().of(LITERAL, pivotForColumn.getInExprAlias(), 0, position);
-                        colCondition.rhs = valueExpr;
-                        colAlias = pivotForColumn.getValueAliases().getQuick(valueIndex);
-                    }
+                    ExpressionNode valueExpr = valueList.getQuick(valueIndex);
+                    ExpressionNode colCondition = expressionNodePool.next().of(OPERATION, "=", 0, position);
+                    colCondition.paramCount = 2;
+                    colCondition.lhs = expressionNodePool.next().of(LITERAL, pivotForColumn.getInExprAlias(), 0, position);
+                    colCondition.rhs = valueExpr;
+                    CharSequence colAlias = pivotForColumn.getValueAliases().getQuick(valueIndex);
 
                     if (conditionNode == null) {
                         conditionNode = colCondition;
@@ -1104,19 +1081,25 @@ public class SqlOptimiser implements Mutable {
                     cse.put(colAlias);
                 }
 
-                cse.put('_').put(aggAlias);
+                if (!model.isPivotGroupByColumnHasNoAlias()) {
+                    cse.put('_').put(aggAlias);
+                }
+
                 // Use switch when: single FOR column, single constant value (not ELSE mode)
                 ExpressionNode thenNode = expressionNodePool.next().of(LITERAL, aggAlias, 0, position);
-                ExpressionNode defaultNode = expressionNodePool.next().of(CONSTANT, "null", 0, position);
+                boolean isCount = Chars.equalsIgnoreCase(aggColumn.getAst().token, "count") || Chars.equalsIgnoreCase(aggColumn.getAst().token, "count_distinct");
+                ExpressionNode defaultNode;
+                if (isCount) {
+                    defaultNode = expressionNodePool.next().of(CONSTANT, "0", 0, position);
+                } else {
+                    defaultNode = expressionNodePool.next().of(CONSTANT, "null", 0, position);
+                }
+
                 ExpressionNode caseNode;
                 PivotForColumn firstForColumn = pivotForColumns.getQuick(0);
                 int firstValueIndex = indices.getQuick(0);
-                boolean isElseMode = firstForColumn.getElseAlias() != null
-                        && firstValueIndex == firstForColumn.getValueList().size();
-                boolean useSwitch = forColumnCount == 1
-                        && !isElseMode;
 
-                if (useSwitch) {
+                if (forColumnCount == 1) { // use switch function
                     caseNode = expressionNodePool.next().of(FUNCTION, "switch", 0, position);
                     caseNode.paramCount = 4;
                     caseNode.args.add(defaultNode);
@@ -1133,7 +1116,7 @@ public class SqlOptimiser implements Mutable {
 
                 ExpressionNode aggNode = expressionNodePool.next().of(
                         FUNCTION,
-                        Chars.equals(aggColumn.getAst().token, "count") ? "sum" : "first_not_null",
+                        isCount ? "sum" : "first_not_null",
                         0,
                         position
                 );
@@ -1145,12 +1128,8 @@ public class SqlOptimiser implements Mutable {
 
             for (int i = forColumnCount - 1; i >= 0; i--) {
                 PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
-                int maxIndex = pivotForColumn.getValueList().size();
-                if (pivotForColumn.getElseAlias() != null) {
-                    maxIndex++;
-                }
                 int newIndex = indices.getQuick(i) + 1;
-                if (newIndex < maxIndex) {
+                if (newIndex < pivotForColumn.getValueList().size()) {
                     indices.setQuick(i, newIndex);
                     break;
                 }
@@ -3953,7 +3932,7 @@ public class SqlOptimiser implements Mutable {
     private int preparePivotForSelectSubquery(QueryModel model, QueryModel outerModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
         ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
-        int totalColumnCount = 1;
+        int forValueCombinations = 1;
 
         for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
             PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
@@ -4015,17 +3994,17 @@ public class SqlOptimiser implements Mutable {
                     outerModel.setCacheable(false);
                 }
             }
-            totalColumnCount *= (pivotForColumn.getValueList().size() + (pivotForColumn.getElseAlias() == null ? 0 : 1));
-            if (totalColumnCount > MAX_PIVOT_COLUMNS) {
+            forValueCombinations *= pivotForColumn.getValueList().size();
+            if (forValueCombinations > MAX_PIVOT_COLUMNS) {
                 throw SqlException
                         .$(pivotForColumn.getInExpr().position, "PIVOT produces too many columns: ")
-                        .put(totalColumnCount)
+                        .put(forValueCombinations)
                         .put(", limit is ")
                         .put(MAX_PIVOT_COLUMNS);
             }
         }
 
-        totalColumnCount *= model.getPivotGroupByColumns().size();
+        int totalColumnCount = forValueCombinations * model.getPivotGroupByColumns().size();
         if (totalColumnCount > MAX_PIVOT_COLUMNS) {
             throw SqlException
                     .$(model.getModelPosition(), "PIVOT produces too many columns: ")
@@ -4033,7 +4012,7 @@ public class SqlOptimiser implements Mutable {
                     .put(", limit is ")
                     .put(MAX_PIVOT_COLUMNS);
         }
-        return totalColumnCount;
+        return forValueCombinations;
     }
 
     private void processEmittedJoinClauses(QueryModel model) {
@@ -4492,10 +4471,6 @@ public class SqlOptimiser implements Mutable {
             pivotAliasMap.add(alias);
             pivotForColumn.setInExprAlias(alias);
             innerModel.addBottomUpColumn(queryColumnPool.next().of(alias, inExpr));
-
-            if (pivotForColumn.getElseAlias() != null) {
-                continue;
-            }
             ObjList<ExpressionNode> valueLists = pivotForColumn.getValueList();
             assert valueLists.size() != 0;
 
@@ -4505,7 +4480,7 @@ public class SqlOptimiser implements Mutable {
                 filter.lhs = inExpr;
                 filter.rhs = valueLists.getQuick(0);
             } else {
-                filter.args.addAll(valueLists);
+                filter.args.addReverseAll(valueLists);
                 filter.args.add(inExpr);
             }
             if (pushedFilter != null) {
@@ -5674,13 +5649,8 @@ public class SqlOptimiser implements Mutable {
             final QueryModel innerModel = queryModelPool.next();
             final QueryModel outerModel = queryModelPool.next();
             final QueryModel emptyModel = queryModelPool.next();
-            if (model.getNestedModel().getNestedModel() != null) {
-                final QueryModel emptyModel1 = queryModelPool.next();
-                emptyModel1.setNestedModel(model.getNestedModel());
-                innerModel.setNestedModel(emptyModel1);
-            } else {
-                innerModel.setNestedModel(model.getNestedModel());
-            }
+            innerModel.setNestedModel(model.getNestedModel());
+
             final QueryModel emptyModel2 = queryModelPool.next();
             emptyModel.setNestedModel(innerModel);
             outerModel.setNestedModel(emptyModel);
