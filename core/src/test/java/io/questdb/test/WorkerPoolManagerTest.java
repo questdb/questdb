@@ -297,6 +297,11 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
+            public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
+                return () -> workerCount;
+            }
+
+            @Override
             public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
                 return null;
             }

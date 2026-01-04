@@ -26,6 +26,7 @@ package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -47,6 +48,11 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
 
     @Override
     public void authorizePGWire() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeSelect(ViewDefinition viewDefinition) {
         throw CairoException.nonCritical().put("permission denied");
     }
 

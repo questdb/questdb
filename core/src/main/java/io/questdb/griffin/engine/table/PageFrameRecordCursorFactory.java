@@ -98,7 +98,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (framingSupported) {
-            PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, order);
+            PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, order);
             if (order == ORDER_ASC || order == ORDER_ANY) {
                 return initFwdPageFrameCursor(partitionFrameCursor, executionContext);
             }

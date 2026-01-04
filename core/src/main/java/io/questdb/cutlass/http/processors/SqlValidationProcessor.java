@@ -355,6 +355,10 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE MAT VIEW");
                     case CompiledQuery.REFRESH_MAT_VIEW ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "REFRESH MAT VIEW");
+                    case CompiledQuery.CREATE_VIEW ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE VIEW");
+                    case CompiledQuery.ALTER_VIEW ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER VIEW");
                     default -> sendConfirmation(state, configuration.getKeepAliveHeader(), "UNKNOWN");
                 }
             } catch (TableReferenceOutOfDateException e) {

@@ -78,6 +78,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -218,7 +220,9 @@ public class WalWriter implements TableWriterAPI {
 
             configureColumns();
             openNewSegment();
-            configureSymbolTable();
+            if (!tableToken.isView()) {
+                configureSymbolTable();
+            }
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -524,6 +528,19 @@ public class WalWriter implements TableWriterAPI {
         long txn = apply(alterOp, true);
         assert Chars.equals(newTableName, tableToken.getTableName());
         return txn;
+    }
+
+    public long replaceViewDefinition(
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) {
+        try {
+            lastSegmentTxn = events.appendViewDefinition(viewSql, dependencies);
+            return getSequencerTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
     }
 
     // Marks the materialized view as invalid or resets its invalidation status,
@@ -1418,7 +1435,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void markColumnRemoved(int columnIndex, int columnType) {
-        if (ColumnType.isSymbol(columnType)) {
+        if (ColumnType.isSymbol(columnType) && !tableToken.isView()) {
             removeSymbolMapReader(columnIndex);
         }
         final int pi = getDataColumnOffset(columnIndex);

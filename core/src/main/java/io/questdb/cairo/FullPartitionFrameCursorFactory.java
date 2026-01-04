@@ -27,16 +27,27 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
 
 public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
     private final int baseOrder;
     private FullBwdPartitionFrameCursor bwdCursor;
     private FullFwdPartitionFrameCursor fwdCursor;
 
-    public FullPartitionFrameCursorFactory(TableToken tableToken, long metadataVersion, RecordMetadata metadata, int order) {
-        super(tableToken, metadataVersion, metadata);
+    public FullPartitionFrameCursorFactory(
+            TableToken tableToken,
+            long metadataVersion,
+            RecordMetadata metadata,
+            int order,
+            String viewName,
+            int viewPosition,
+            boolean updateQuery
+    ) {
+        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
         this.baseOrder = order;
     }
 
@@ -48,7 +59,8 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     }
 
     @Override
-    public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, int order) {
+    public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, @NotNull IntList columnIndexes, int order) throws SqlException {
+        authorizeSelect(executionContext, columnIndexes);
         final TableReader reader = getReader(executionContext);
         try {
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {

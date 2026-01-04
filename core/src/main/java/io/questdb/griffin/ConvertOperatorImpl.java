@@ -194,14 +194,16 @@ public class ConvertOperatorImpl implements Closeable {
     ) {
         try {
             this.columnName = columnName;
-            if (ColumnType.isSymbol(newType)) {
+
+            final boolean notView = !tableWriter.getTableToken().isView();
+            if (ColumnType.isSymbol(newType) && notView) {
                 if (symbolMapper == null) {
                     symbolMapper = new SymbolMapper();
                 }
                 symbolMapper.of(tableWriter, columnIndex);
             }
 
-            if (ColumnType.isSymbol(existingType)) {
+            if (ColumnType.isSymbol(existingType) && notView) {
                 if (symbolMapReader == null) {
                     symbolMapReader = new SymbolMapReaderImpl();
                 }
