@@ -758,6 +758,25 @@ public class CairoEngine implements Closeable, WriterSource {
         return messageBus;
     }
 
+    /**
+     * Publishes an event to flush all query caches (HTTP and PGWire).
+     * This invalidates all cached query plans.
+     */
+    public void flushQueryCache() {
+        while (true) {
+            final long pubCursor = messageBus.getQueryCacheEventPubSeq().next();
+            if (pubCursor > -1) {
+                messageBus.getQueryCacheEventPubSeq().done(pubCursor);
+                return;
+            } else if (pubCursor == -1) {
+                Os.pause();
+            } else {
+                // Queue is full, break
+                return;
+            }
+        }
+    }
+
     public MetadataCache getMetadataCache() {
         return metadataCache;
     }

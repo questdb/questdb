@@ -4031,6 +4031,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final String pluginName = op.getPluginName();
         try {
             engine.getPluginManager().loadPlugin(pluginName);
+            // Flush query cache to invalidate any cached plans that might reference plugin functions
+            engine.flushQueryCache();
         } catch (SqlException e) {
             throw e;
         } catch (Exception e) {
@@ -4041,6 +4043,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void executeUnloadPlugin(PluginOperation op, SqlExecutionContext executionContext) throws SqlException {
         final String pluginName = op.getPluginName();
         try {
+            // Flush query cache BEFORE unloading to invalidate any cached plans using plugin functions
+            engine.flushQueryCache();
             engine.getPluginManager().unloadPlugin(pluginName);
         } catch (SqlException e) {
             throw e;
