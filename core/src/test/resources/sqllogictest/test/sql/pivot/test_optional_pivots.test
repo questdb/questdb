@@ -50,14 +50,14 @@ US
 
 # PIVOT Cities ON Year GROUP BY Country;
 query IIII rowsort
-Cities PIVOT (count() FOR year IN ('2000', '2010', '2020') GROUP BY country ORDER BY country);
+Cities PIVOT (count() FOR year IN ('2000', '2010', '2020') GROUP BY country)  ORDER BY country;
 ----
 NL	1	1	1
 US	2	2	2
 
 # PIVOT (SELECT Country, Year FROM Cities) ON Year;
 query IIII rowsort
-(SELECT Country, Year FROM Cities) PIVOT (count() FOR year IN ('2000', '2010', '2020')) GROUP BY country ORDER BY country;
+(SELECT Country, Year FROM Cities) PIVOT (count() FOR year IN ('2000', '2010', '2020') GROUP BY country) ORDER BY country;
 ----
 NL	1	1	1
 US	2	2	2

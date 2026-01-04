@@ -37,16 +37,14 @@ INSERT INTO Cities VALUES ('US', 'New York City', 2020, 8772);
 
 # pivot cities on (Country='NL') using avg(Population) group by name;
 query III rowsort
-Cities PIVOT (avg(Population) FOR Country IN ('US' AS 'false') ELSE 'true' GROUP BY Name ORDER BY Name);
+Cities PIVOT (avg(Population) FOR Country IN ('US' AS 'false') GROUP BY Name) ORDER BY Name;
 ----
-Amsterdam NULL 1076.000000
-New York City 8320.666667 NULL
-Seattle	636.666667 NULL
+New York City 8320.666667
+Seattle 636.666667
 
 # pivot cities on (Country='NL') in (false, true) using avg(Population) group by name;
 query III rowsort
-Cities PIVOT (avg(Population) FOR Country IN ('US' AS 'false') ELSE 'true' GROUP BY Name ORDER BY Name);
+Cities PIVOT (avg(Population) FOR Country IN ('US' AS 'false') GROUP BY Name) ORDER BY Name;
 ----
-Amsterdam NULL 1076.000000
-New York City 8320.666667 NULL
-Seattle	636.666667 NULL
+New York City 8320.666667
+Seattle 636.666667

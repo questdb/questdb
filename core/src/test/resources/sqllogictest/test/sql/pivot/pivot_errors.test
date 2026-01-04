@@ -1,12 +1,6 @@
 statement ok
 CREATE TABLE test(i INT, j VARCHAR);
 
-
-#statement error
-#PIVOT test ON j IN ('a', 'b') USING SUM(test.i);
-#----
-#PIVOT expression cannot contain qualified columns
-
 query II
 test PIVOT (sum(test.i) FOR j IN ('a', 'b'));
 ----
@@ -18,26 +12,13 @@ test PIVOT (now() FOR j IN ('a', 'b'));
 ----
 db error: ERROR: expected aggregate function [col=now()]
 
-
-
-
 #PIVOT test ON j IN ('a', 'b') USING sum(41) over ();
 query error
 test PIVOT (sum(41) over() FOR j IN ('a', 'b'));
 ----
 db error: ERROR: expected FOR
 
-
 #PIVOT test ON j IN ('a', 'b') USING sum(sum(41) over ());
 query error
 test PIVOT (sum(sum(41) over()) FOR j IN ('a', 'b'));
 db error: ERROR Nested window functions' context are not currently supported.
-
-
-
-#FROM tbl PIVOT (c FOR IN enum_val);
-## empty pivot clause
-#statement error
-
-#----
-#Parser Error

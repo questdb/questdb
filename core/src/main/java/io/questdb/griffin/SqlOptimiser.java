@@ -257,6 +257,41 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
+    public static boolean hasGroupByFunc(ArrayDeque<ExpressionNode> sqlNodeStack, FunctionFactoryCache functionFactoryCache, ExpressionNode node) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case LITERAL:
+                        node = null;
+                        continue;
+                    case FUNCTION:
+                        if (functionFactoryCache.isGroupBy(node.token)) {
+                            return true;
+                        }
+                        break;
+                    default:
+                        for (int i = 0, n = node.args.size(); i < n; i++) {
+                            sqlNodeStack.add(node.args.getQuick(i));
+                        }
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        break;
+                }
+
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
+    }
+
     public void clear() {
         clearForUnionModelInJoin();
         contextPool.clear();
@@ -294,41 +329,6 @@ public class SqlOptimiser implements Mutable {
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
-    }
-
-    public boolean hasGroupByFunc(ExpressionNode node) {
-        sqlNodeStack.clear();
-
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
-
-        while (!sqlNodeStack.isEmpty() || node != null) {
-            if (node != null) {
-                switch (node.type) {
-                    case LITERAL:
-                        node = null;
-                        continue;
-                    case FUNCTION:
-                        if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
-                            return true;
-                        }
-                        break;
-                    default:
-                        for (int i = 0, n = node.args.size(); i < n; i++) {
-                            sqlNodeStack.add(node.args.getQuick(i));
-                        }
-                        if (node.rhs != null) {
-                            sqlNodeStack.push(node.rhs);
-                        }
-                        break;
-                }
-
-                node = node.lhs;
-            } else {
-                node = sqlNodeStack.poll();
-            }
-        }
-        return false;
     }
 
     public boolean hasOrderedGroupByFunc(ExpressionNode node) {
@@ -3767,7 +3767,7 @@ public class SqlOptimiser implements Mutable {
                 if (model.getSampleBy() == null && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
                     for (int i = 0; i < n; i++) {
                         QueryColumn col = columns.getQuick(i);
-                        if (hasGroupByFunc(col.getAst())) {
+                        if (hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), col.getAst())) {
                             orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                             break;
                         }
@@ -5649,7 +5649,7 @@ public class SqlOptimiser implements Mutable {
             final QueryModel innerModel = queryModelPool.next();
             final QueryModel outerModel = queryModelPool.next();
             final QueryModel emptyModel = queryModelPool.next();
-            innerModel.setNestedModel(model.getNestedModel());
+            innerModel.setNestedModel(rewritePivot(model.getNestedModel(), sqlExecutionContext));
 
             final QueryModel emptyModel2 = queryModelPool.next();
             emptyModel.setNestedModel(innerModel);

@@ -27,7 +27,7 @@ WITH a AS (
 ), b AS (
   SELECT empid, amount, concat(year, '_', month) as name FROM a
 )
-SELECT * FROM b PIVOT (SUM(amount) FOR name IN (SELECT DISTINCT name FROM b ORDER BY name)) GROUP BY empid;
+SELECT * FROM b PIVOT (SUM(amount) FOR name IN (SELECT DISTINCT name FROM b ORDER BY name) GROUP BY empid);
 ----
 1	10400	8000	11000	NULL	NULL	NULL
 2	NULL	NULL	NULL	39500	90700	12000
@@ -41,7 +41,7 @@ WITH a AS (
 ), b AS (
   SELECT empid, amount, concat(year, '_', month) as name FROM a
 ), first_pivot AS (
-  SELECT * FROM b PIVOT (SUM(amount) FOR name IN (SELECT DISTINCT name FROM b ORDER BY name)) GROUP BY empid
+  SELECT * FROM b PIVOT (SUM(amount) FOR name IN (SELECT DISTINCT name FROM b ORDER BY name) GROUP BY empid)
 )
 SELECT * FROM first_pivot PIVOT (SUM(
   COALESCE("2000_1",0)
@@ -53,19 +53,3 @@ SELECT * FROM first_pivot PIVOT (SUM(
 ) FOR empid IN (SELECT DISTINCT empid FROM first_pivot ORDER BY empid));
 ----
 29400	142200
-
-
-#statement error
-#CREATE VIEW pivot_view AS PIVOT (SELECT YEAR(d) AS year, MONTH(d) AS month, empid, amount FROM sales) ON YEAR, MONTH USING SUM(AMOUNT);
-#----
-#cannot be used in views
-#
-#statement error
-#CREATE MACRO xt2(a) as TABLE PIVOT sales ON d USING SUM(amount)
-#----
-#cannot be used in macros
-#
-#statement error
-#CREATE MACRO xt2(a) as (PIVOT sales ON d USING SUM(amount))
-#----
-#cannot be used in macros

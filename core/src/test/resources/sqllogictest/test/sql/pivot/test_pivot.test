@@ -76,8 +76,7 @@ CREATE TABLE Produce AS (
 
 query IIIIII
 Produce
-PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
-GROUP BY product, year
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4') GROUP BY product, year)
 ORDER BY product, year;
 ----
 Apple	2020	77	0	NULL	NULL
@@ -87,14 +86,14 @@ Kale	2021	70	85	NULL	NULL
 
 query IIIII
 (SELECT product, sales, quarter FROM Produce)
-PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4') GROUP BY product ORDER BY product);
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4') GROUP BY product) ORDER BY product;
 ----
 Apple	78	0	NULL	NULL
 Kale	121	108	45	3
 
 query IIII
 (SELECT product, sales, quarter FROM Produce)
-PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3') GROUP BY product ORDER BY product);
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3') GROUP BY product) ORDER BY product;
 ----
 Apple	78	0	NULL
 Kale	121	108	45
@@ -108,8 +107,7 @@ PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
 query IIIII
 (SELECT product, sales, quarter FROM Produce)
 PIVOT(SUM(sales) as total_sales, COUNT(*) as num_records FOR quarter IN ('Q1', 'Q2')
-GROUP BY product
-ORDER BY product);
+GROUP BY product) ORDER BY product;
 ----
 Apple 78 2 0 1
 Kale 121 2 108 2
@@ -122,20 +120,3 @@ CREATE TABLE Produce AS (
   SELECT 'Kale' as product, 51 as Q1, 23 as Q2, 45 as Q3, 3 as Q4 UNION ALL
   SELECT 'Apple', 77, 0, 25, 2
 );
-
-#query III
-#SELECT * FROM
-#(
-#Produce
-#UNPIVOT(sales FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
-#)
-#ORDER BY product;
-#----
-#Apple	Q1	77
-#Apple	Q2	0
-#Apple	Q3	25
-#Apple	Q4	2
-#Kale	Q1	51
-#Kale	Q2	23
-#Kale	Q3	45
-#Kale	Q4	3

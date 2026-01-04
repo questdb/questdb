@@ -532,11 +532,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         orderByDirection.clear();
     }
 
-    public void clearPivot() {
-        pivotGroupByColumns.clear();
-        pivotForColumns.clear();
-    }
-
     public void clearSampleBy() {
         sampleBy = null;
         sampleByUnit = null;

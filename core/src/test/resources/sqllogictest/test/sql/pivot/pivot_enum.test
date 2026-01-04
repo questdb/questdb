@@ -20,11 +20,6 @@ INSERT INTO monthly_sales VALUES
     (2, 800, 'APR'),
     (2, 4500, 'APR');
 
-#statement ok
-#CREATE TYPE unique_months AS ENUM (SELECT DISTINCT month FROM monthly_sales ORDER BY
-#	CASE month WHEN 'JAN' THEN 1 WHEN 'FEB' THEN 2 WHEN 'MAR' THEN 3 ELSE 4 END);
-#
-
 #SELECT *
 #  FROM monthly_sales
 #    PIVOT(SUM(amount) FOR MONTH IN unique_months)
@@ -34,13 +29,12 @@ query IIIII
 monthly_sales
 PIVOT (
   SUM(amount)
-  FOR MONTH IN ('JAN' AS '1', 'FEB' AS '2', 'MAR' AS '3') ELSE '4'
+  FOR MONTH IN ('JAN' AS '1', 'FEB' AS '2', 'MAR' AS '3')
   GROUP BY EMPID
-  ORDER BY EMPID
-);
+) ORDER BY EMPID;
 ----
-1 10400 8000 11000 18000
-2 39500 90700 12000 5300
+1 10400 8000 11000
+2 39500 90700 12000
 
 
 
@@ -51,20 +45,5 @@ PIVOT (
 #  ORDER BY EMPID;
 ## enum does not exist
 statement error
-monthly_sales PIVOT (SUM(amount) FOR MONTH IN (SELECT DISTINCT MONTH FROM unique_monthsx) GROUP BY EMPID ORDER BY EMPID);
+monthly_sales PIVOT (SUM(amount) FOR MONTH IN (SELECT DISTINCT MONTH FROM unique_monthsx) GROUP BY EMPID) ORDER BY EMPID;
 error
-
-#unique_monthsx
-#
-#statement ok
-#CREATE TYPE not_an_enum AS VARCHAR;
-#
-## enum does not exist
-#statement error
-#SELECT *
-#  FROM monthly_sales
-#    PIVOT(SUM(amount) FOR MONTH IN not_an_enum)
-#      AS p
-#  ORDER BY EMPID;
-#----
-#Pivot must reference an ENUM type

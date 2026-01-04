@@ -19,8 +19,7 @@ Cities PIVOT (
     sum(population)
     FOR Year IN (SELECT DISTINCT YEAR FROM Cities ORDER BY YEAR DESC)
     GROUP BY Country, Name
-    ORDER BY Country, Name
-);
+) ORDER BY Country, Name;
 ----
 NL	Amsterdam	1158	1065	1005
 US	New York City	8772	8175	8015
@@ -37,8 +36,7 @@ PIVOT (
       )
     )
   GROUP BY Country, Name
-  ORDER BY Country, Name
-);
+) ORDER BY Country, Name;
 ----
 NL	Amsterdam	1158	1065	1005
 US	New York City	8772	8175	8015
@@ -51,8 +49,7 @@ Cities
     SUM(Population)
     FOR Year IN (SELECT 2010 UNION ALL SELECT 2000 UNION ALL SELECT 2020)
     GROUP BY Country, Name
-    ORDER BY Country, Name
-);
+) ORDER BY Country, Name;
 ----
 NL	Amsterdam	1065	1005	1158
 US	New York City	8175	8015	8772

@@ -76,8 +76,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.ArrayDeque;
+
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.SqlOptimiser.hasGroupByFunc;
 import static io.questdb.griffin.engine.ops.CreateMatViewOperation.*;
 import static io.questdb.std.GenericLexer.assertNoDotsAndSlashes;
 import static io.questdb.std.GenericLexer.unquote;
@@ -121,6 +124,7 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgNumericRef = this::rewritePgNumeric;
+    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final CharSequenceHashSet tempCharSequenceSet = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
@@ -3150,7 +3154,7 @@ public class SqlParser {
             if (inColumnExpr == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected IN expression");
             }
-            if (inColumnExpr.type == ExpressionNode.FUNCTION && functionFactoryCache.isGroupBy((inColumnExpr.token))) {
+            if (hasGroupByFunc(sqlNodeStack, functionFactoryCache, inColumnExpr)) {
                 throw SqlException.$(inColumnExpr.position, "aggregate functions are not supported in PIVOT FOR expressions");
             }
 
@@ -3277,7 +3281,7 @@ public class SqlParser {
         if (expr == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "missing aggregate function expression");
         }
-        if (expr.type != ExpressionNode.FUNCTION || !functionFactoryCache.isGroupBy((expr.token))) {
+        if (!hasGroupByFunc(sqlNodeStack, functionFactoryCache, expr)) {
             throw SqlException.$(expr.position, "expected aggregate function [col=").put(expr).put(']');
         }
         CharSequence tok = tok(lexer, "'FOR' or ',' or ')'");
