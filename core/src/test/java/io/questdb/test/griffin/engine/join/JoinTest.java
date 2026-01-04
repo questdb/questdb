@@ -3561,6 +3561,28 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoiningSubqueryWithDotInColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(
+                    """
+                            "foo.bar"	1
+                            1	1
+                            2	1
+                            3	1
+                            4	1
+                            5	1
+                            """,
+                    """
+                            SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
+                            LEFT JOIN (select 1) ON true;
+                            """,
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testLeftHashJoinOnFunctionCondition1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (i int)");

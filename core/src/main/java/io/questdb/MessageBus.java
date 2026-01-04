@@ -40,6 +40,7 @@ import io.questdb.mp.SPSequence;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
 import io.questdb.tasks.O3CopyTask;
@@ -87,6 +88,12 @@ public interface MessageBus extends Closeable {
     SCSequence getCopyImportRequestSubSeq();
 
     MCSequence getCopyImportSubSeq();
+
+    MPSequence getGroupByLongTopKPubSeq();
+
+    RingQueue<GroupByLongTopKTask> getGroupByLongTopKQueue();
+
+    MCSequence getGroupByLongTopKSubSeq();
 
     MPSequence getGroupByMergeShardPubSeq();
 

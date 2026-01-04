@@ -367,6 +367,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByParallelTopKThreshold() {
+        return getDelegate().getGroupByParallelTopKThreshold();
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return getDelegate().getGroupByPoolCapacity();
     }
@@ -384,6 +389,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getGroupByShardingThreshold() {
         return getDelegate().getGroupByShardingThreshold();
+    }
+
+    @Override
+    public int getGroupByTopKQueueCapacity() {
+        return getDelegate().getGroupByTopKQueueCapacity();
     }
 
     @Override
