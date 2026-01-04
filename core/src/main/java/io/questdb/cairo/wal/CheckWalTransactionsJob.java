@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -57,7 +57,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private boolean notificationQueueIsFull = false;
     private Path threadLocalPath;
 
-
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
         this.ff = engine.getConfiguration().getFilesFacade();
@@ -104,6 +103,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                     ) {
                         TableUtils.safeReadTxn(this.txReader, millisecondClock, spinLockTimeout);
                         if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader.getSeqTxn(), seqTxn)) {
+                            long floorSeqTxn = engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn();
+                            engine.getRecentWriteTracker().setFloorSeqTxn(tableToken, floorSeqTxn);
                             notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
                         }
                     } catch (CairoException e) {

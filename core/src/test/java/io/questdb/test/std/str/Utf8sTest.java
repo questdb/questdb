@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -583,6 +583,10 @@ public class Utf8sTest {
     public void testIsAscii() {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
             sink.put("foobar");
+            Assert.assertTrue(Utf8s.isAscii(sink));
+            Assert.assertTrue(Utf8s.isAscii(sink.ptr(), sink.size()));
+            sink.clear();
+            sink.put("foobarfoobarfoobarfoobarfoobarfoobarfoobar");
             Assert.assertTrue(Utf8s.isAscii(sink));
             Assert.assertTrue(Utf8s.isAscii(sink.ptr(), sink.size()));
             sink.clear();

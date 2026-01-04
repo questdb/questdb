@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,12 +28,27 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
 
     public LastNotNullFloatGroupByFunction(@NotNull Function arg) {
         super(arg);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            long hi = ptr + (count - 1) * 4L;
+            for (; hi >= ptr; hi -= 4L) {
+                float value = Unsafe.getUnsafe().getFloat(hi);
+                if (!Numbers.isNull(value)) {
+                    mapValue.putFloat(valueIndex + 1, value);
+                    break;
+                }
+            }
+        }
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -59,8 +59,8 @@ public class WalMetrics implements Mutable {
         applyRowsWriteRateGauge.setValue(rowsAppendRate);
     }
 
-    public void addRowsWritten(long rows) {
-        rowsWrittenCounter.add(rows);
+    public void addRowsWritten(long txnRowCount) {
+        rowsWrittenCounter.add(txnRowCount);
     }
 
     public void addSeqTxn(long txnDelta) {

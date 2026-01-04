@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,7 +49,8 @@ public class PowerBiTest extends AbstractCairoTest {
                         "pg_catalog\tinternal\t2281\tnull\t0\tb\t0\t0\n" +
                         "pg_catalog\toid\t26\tnull\t0\tb\t0\t0\n" +
                         "pg_catalog\t_float8\t1022\tnull\t0\tb\t0\t0\n" +
-                        "pg_catalog\tnumeric\t1700\tnull\t0\tb\t0\t0\n",
+                        "pg_catalog\tnumeric\t1700\tnull\t0\tb\t0\t0\n" +
+                        "pg_catalog\t_varchar\t1015\tnull\t0\tb\t0\t0\n",
                 "SELECT ns.nspname, a.typname, a.oid, a.typrelid, a.typbasetype,\n" +
                         "CASE WHEN pg_proc.proname='array_recv' THEN 'a' ELSE a.typtype END AS type,\n" +
                         "CASE\n" +

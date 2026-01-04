@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,12 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         }
     }
 
+    public static void copyColumns(RecordMetadata from, GenericRecordMetadata to, int columnCount) {
+        for (int i = 0, n = Math.min(from.getColumnCount(), columnCount); i < n; i++) {
+            to.add(from.getColumnMetadata(i));
+        }
+    }
+
     public static GenericRecordMetadata copyDense(TableRecordMetadata tableMetadata) {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         int columnCount = tableMetadata.getColumnCount();
@@ -65,6 +71,24 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             return metadata;
         }
         return null;
+    }
+
+    public static GenericRecordMetadata copyOf(RecordMetadata that, int columnCount) {
+        if (that != null) {
+            if (that instanceof GenericRecordMetadata) {
+                return (GenericRecordMetadata) that;
+            }
+            GenericRecordMetadata metadata = copyOfSansTimestamp(that, columnCount);
+            metadata.setTimestampIndex(that.getTimestampIndex());
+            return metadata;
+        }
+        return null;
+    }
+
+    public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that, int columnCount) {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        copyColumns(that, metadata, columnCount);
+        return metadata;
     }
 
     public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {

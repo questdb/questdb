@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,11 +58,29 @@ import io.questdb.std.QuietCloseable;
  */
 public abstract class AbstractArray implements QuietCloseable {
 
+    /**
+     * The underlying direct array storage.
+     */
     protected final DirectArray array = new DirectArray();
+    /**
+     * Flag indicating if this array has been closed.
+     */
     protected boolean closed = false;
+    /**
+     * The total number of elements in the flattened array.
+     */
     protected int flatLength;
+    /**
+     * Memory appender for writing array elements.
+     */
     protected MemoryA memA = array.startMemoryA();
 
+    /**
+     * Constructs a new array with the given shape and element type.
+     *
+     * @param shape      the dimensions of the array
+     * @param columnType the column type of array elements
+     */
     protected AbstractArray(int[] shape, short columnType) {
         if (shape.length == 0) {
             throw new LineSenderException("Shape must have at least one dimension");
@@ -92,6 +110,8 @@ public abstract class AbstractArray implements QuietCloseable {
 
     /**
      * Appends this array to the ILP request buffer, in the proper protocol format.
+     *
+     * @param mem the buffer appender to write to
      */
     public void appendToBufPtr(ArrayBufferAppender mem) {
         assert !closed;
@@ -273,6 +293,9 @@ public abstract class AbstractArray implements QuietCloseable {
         memA = array.startMemoryA();
     }
 
+    /**
+     * Ensures the append position is at a valid location, resetting if needed.
+     */
     protected void ensureLegalAppendPosition() {
         long elementSize = ColumnType.sizeOf(array.getElemType());
         if (memA.getAppendOffset() == flatLength * elementSize) {
@@ -280,9 +303,12 @@ public abstract class AbstractArray implements QuietCloseable {
         }
     }
 
-    /*
+    /**
      * Computes the flat array offset from the given coordinates.
      * NOTE: the passed coordinates must be valid for the array's shape.
+     *
+     * @param coords the multi-dimensional coordinates
+     * @return the flat array offset
      */
     protected int toFlatOffset(int[] coords) {
         if (coords == null || coords.length == 0) {
