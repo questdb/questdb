@@ -246,6 +246,40 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testBindEqualsOptimisation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (" +
+                            " select cast('ABC' as varchar) as name from long_sequence(1) " +
+                            "union " +
+                            " select cast('DEF' as varchar) as name from long_sequence(1)" +
+                            ")"
+            );
+
+            bindVariableService.setStr(0, "ABC");
+            assertLike(
+                    "name\n" +
+                            "ABC\n",
+                    "select * from x where name ilike $1"
+            );
+        });
+    }
+
+    @Test
+    public void testToPlanContainsEqualsAndCaseFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast('ABC' as varchar) as name from long_sequence(1))");
+
+            bindVariableService.setStr("str", "ABC");
+            assertLike(
+                    "name\n" +
+                            "ABC\n",
+                    "select * from x where name ilike :str"
+            );
+        });
+    }
+
     private void assertLike(String expected, String query) throws Exception {
         assertQueryNoLeakCheck(expected, query, null, true, false);
     }
