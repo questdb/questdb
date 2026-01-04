@@ -2515,6 +2515,11 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
 
+                // null check for token(WIP for NPE when token is missing
+                if (n.token == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expression expected");
+                }
+
                 if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token))
                         || (n.type == ExpressionNode.LITERAL && n.token.isEmpty())) {
                     throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
@@ -3502,10 +3507,20 @@ public class SqlParser {
                 accumulatedColumns.add(col);
                 accumulatedColumnPositions.add(colPosition);
 
-                if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {
-                    //accept ending ')' in create table as
+                if (tok == null || Chars.equals(tok, ';')) {
                     lexer.unparseLast();
                     break;
+                }
+
+                if (Chars.equals(tok, ')')) {
+                    if (subQueryMode || overClauseMode) {
+                        // it's a balanced: ')'
+                        lexer.unparseLast();
+                        break;
+                    } else {
+                        // it's an unbalanced ')' in top-level SELECT
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected ')'");
+                    }
                 }
 
                 if (isFromKeyword(tok)) {
