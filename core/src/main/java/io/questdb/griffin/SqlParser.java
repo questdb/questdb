@@ -2404,15 +2404,18 @@ public class SqlParser {
         }
 
         // expect [pivot]
+        // PIVOT operates on the result of a full subquery.
+        // Syntax: SELECT ... FROM <subquery> WHERE <condition> PIVOT (agg FOR col IN (...))
+        // The pivot transformation wraps the current model as a nested subquery.
+        boolean hasPivot = false;
         if (tok != null && isPivotKeyword(tok)) {
             try {
                 pivotMode = true;
                 QueryModel pivotModel = queryModelPool.next();
                 pivotModel.setNestedModel(model);
                 tok = parsePivot(lexer, pivotModel, sqlParserCallback);
-                QueryModel pivotModel1 = queryModelPool.next();
-                pivotModel1.setNestedModel(pivotModel);
-                model = pivotModel1;
+                hasPivot = true;
+                model = pivotModel;
             } finally {
                 pivotMode = false;
             }
@@ -2420,6 +2423,11 @@ public class SqlParser {
 
         // expect [sample by]
         if (tok != null && isSampleKeyword(tok)) {
+            if (hasPivot) {
+                QueryModel parentModel = queryModelPool.next();
+                parentModel.setNestedModel(model);
+                model = parentModel;
+            }
             expectBy(lexer);
             expectSample(lexer, model, sqlParserCallback);
             tok = optTok(lexer);
@@ -2513,6 +2521,11 @@ public class SqlParser {
         // expect [group by]
 
         if (tok != null && isGroupKeyword(tok)) {
+            if (hasPivot) {
+                QueryModel parentModel = queryModelPool.next();
+                parentModel.setNestedModel(model);
+                model = parentModel;
+            }
             expectBy(lexer);
             do {
                 tokIncludingLocalBrace(lexer, "literal");
@@ -3089,13 +3102,9 @@ public class SqlParser {
 
         // Parse aggregate functions: func(param) AS alias, ... terminated by FOR
         FunctionFactoryCache functionFactoryCache = cairoEngine.getFunctionFactoryCache();
+        pivotAliasMap.clear();
         do {
-            final QueryColumn nextAggregateCol = parsePivotAggregateColumn(lexer, model, sqlParserCallback);
-            if (nextAggregateCol.getAst().type != ExpressionNode.FUNCTION || !functionFactoryCache.isGroupBy((nextAggregateCol.getAst().token))) {
-                throw SqlException.$(nextAggregateCol.getAst().position, "expected aggregate function [col=").put(nextAggregateCol.getAst()).put(']');
-            }
-
-            model.addPivotGroupByColumn(nextAggregateCol);
+            model.addPivotGroupByColumn(parsePivotAggregateColumn(lexer, model, functionFactoryCache, sqlParserCallback));
             tok = optTok(lexer);
         } while (tok != null && !isForKeyword(tok) && isComma(tok));
 
@@ -3237,15 +3246,6 @@ public class SqlParser {
             } while (tok != null && !isRightParen(tok) && isComma(tok));
         }
 
-        // Parse optional ORDER BY and LIMIT
-        if (tok != null && isOrderKeyword(tok)) {
-            tok = parsePivotOrderBy(model, lexer, sqlParserCallback);
-        }
-
-        if (tok != null && isLimitKeyword(tok)) {
-            tok = parsePivotLimit(model, lexer, sqlParserCallback);
-        }
-
         if (tok == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
         }
@@ -3258,17 +3258,18 @@ public class SqlParser {
         return tok;
     }
 
-    private QueryColumn parsePivotAggregateColumn(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private QueryColumn parsePivotAggregateColumn(GenericLexer lexer, QueryModel model, FunctionFactoryCache functionFactoryCache, SqlParserCallback sqlParserCallback) throws SqlException {
         ExpressionNode expr = expr(lexer, model, sqlParserCallback);
         if (expr == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "missing aggregate function expression");
         }
-
+        if (expr.type != ExpressionNode.FUNCTION || !functionFactoryCache.isGroupBy((expr.token))) {
+            throw SqlException.$(expr.position, "expected aggregate function [col=").put(expr).put(']');
+        }
         CharSequence tok = tok(lexer, "'FOR' or ',' or ')'");
         QueryColumn col = queryColumnPool.next().of(null, expr);
-
+        CharSequence alias;
         if (!isForKeyword(tok) && columnAliasStop.excludes(tok)) {
-            CharSequence alias;
             assertNotDot(lexer, tok);
             if (isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
@@ -3281,67 +3282,22 @@ public class SqlParser {
                 SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                 alias = GenericLexer.immutableOf(unquote(tok));
             }
-
-            col.setAlias(alias, lexer.lastTokenPosition());
         } else {
+            CharacterStoreEntry entry = characterStore.newEntry();
+            expr.toSink(entry);
+            alias = SqlUtil.createExprColumnAlias(
+                    characterStore,
+                    entry.toImmutable(),
+                    pivotAliasMap,
+                    configuration.getColumnAliasGeneratedMaxSize(),
+                    true
+            );
+            pivotAliasMap.add(alias);
             lexer.unparseLast();
         }
 
+        col.setAlias(alias, lexer.lastTokenPosition());
         return col;
-    }
-
-    private CharSequence parsePivotLimit(QueryModel model, GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok;
-        model.setLimitPosition(lexer.lastTokenPosition());
-        ExpressionNode lo = expr(lexer, model, sqlParserCallback, model.getDecls());
-        ExpressionNode hi = null;
-
-        tok = optTok(lexer);
-        if (tok != null && isComma(tok)) {
-            hi = expr(lexer, model, sqlParserCallback, model.getDecls());
-        } else {
-            lexer.unparseLast();
-        }
-        model.setLimit(lo, hi);
-        tok = optTok(lexer);
-        return tok;
-    }
-
-    private CharSequence parsePivotOrderBy(QueryModel model, GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok;
-        model.setOrderByPosition(lexer.lastTokenPosition());
-        expectBy(lexer);
-        do {
-            tokIncludingLocalBrace(lexer, "literal");
-            lexer.unparseLast();
-
-            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
-            if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
-            }
-
-            if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token)) ||
-                    (n.type == ExpressionNode.LITERAL && n.token.isEmpty())) {
-                throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
-            }
-
-            tok = optTok(lexer);
-
-            if (tok != null && isDescKeyword(tok)) {
-                model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
-                tok = optTok(lexer);
-            } else {
-                model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
-                if (tok != null && isAscKeyword(tok)) {
-                    tok = optTok(lexer);
-                }
-            }
-
-            if (model.getOrderBy().size() >= MAX_ORDER_BY_COLUMNS) {
-                throw err(lexer, tok, "Too many columns");
-            }
-        } while (tok != null && isComma(tok));
-        return tok;
     }
 
     private ExecutionModel parseRenameStatement(GenericLexer lexer) throws SqlException {

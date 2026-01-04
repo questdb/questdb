@@ -36,6 +36,7 @@ public final class PivotForColumn implements Mutable {
     private final ObjList<ExpressionNode> valueList = new ObjList<>();
     private CharSequence elseAlias;
     private ExpressionNode inExpr;
+    private CharSequence inExprAlias;
     private boolean isValueList = true;
     private ExpressionNode selectSubqueryExpr;
 
@@ -52,6 +53,7 @@ public final class PivotForColumn implements Mutable {
         selectSubqueryExpr = null;
         elseAlias = null;
         isValueList = true;
+        inExprAlias = null;
     }
 
     @Override
@@ -64,7 +66,8 @@ public final class PivotForColumn implements Mutable {
                 && Objects.equals(valueList, that.valueList)
                 && Objects.equals(elseAlias, that.elseAlias)
                 && Objects.equals(inExpr, that.inExpr)
-                && Objects.equals(selectSubqueryExpr, that.selectSubqueryExpr);
+                && Objects.equals(selectSubqueryExpr, that.selectSubqueryExpr)
+                && Objects.equals(inExprAlias, that.inExprAlias);
     }
 
     public CharSequence getElseAlias() {
@@ -73,6 +76,10 @@ public final class PivotForColumn implements Mutable {
 
     public ExpressionNode getInExpr() {
         return inExpr;
+    }
+
+    public CharSequence getInExprAlias() {
+        return inExprAlias;
     }
 
     public ExpressionNode getSelectSubqueryExpr() {
@@ -89,7 +96,7 @@ public final class PivotForColumn implements Mutable {
 
     @Override
     public int hashCode() {
-        return Objects.hash(valueAliases, valueList, elseAlias, inExpr, isValueList, selectSubqueryExpr);
+        return Objects.hash(valueAliases, valueList, elseAlias, inExpr, isValueList, selectSubqueryExpr, inExprAlias);
     }
 
     public boolean isValueList() {
@@ -104,6 +111,10 @@ public final class PivotForColumn implements Mutable {
 
     public void setElseAlias(CharSequence elseAlias) {
         this.elseAlias = elseAlias;
+    }
+
+    public void setInExprAlias(CharSequence inExprAlias) {
+        this.inExprAlias = inExprAlias;
     }
 
     public void setIsValueList(boolean isValueList) {

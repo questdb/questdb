@@ -1267,6 +1267,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         baseModel.setLimit(null, null);
     }
 
+    public void moveOrderByFrom(QueryModel model) {
+        orderBy.addAll(model.getOrderBy());
+        orderByDirection.addAll(model.getOrderByDirection());
+        model.clearOrderBy();
+    }
+
     public void moveSampleByFrom(QueryModel model) {
         this.sampleBy = model.sampleBy;
         this.sampleByUnit = model.sampleByUnit;

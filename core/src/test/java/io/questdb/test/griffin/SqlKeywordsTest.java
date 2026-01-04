@@ -247,6 +247,8 @@ public class SqlKeywordsTest {
         specialCases.put("isDefaultTransactionReadOnly", "default_transaction_read_only");
         specialCases.put("isExcluding", "excluding");
         specialCases.put("isIncluding", "including");
+        specialCases.put("isComma", ",");
+        specialCases.put("isRightParen", ")");
 
         excludedCases.add("isPublicKeyword");
         excludedCases.add("isWindowKeyword");

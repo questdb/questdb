@@ -124,6 +124,7 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
+    private static final int MAX_PIVOT_COLUMNS = 5_000;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_EQUAL = 8;
     private static final int NOT_OP_GREATER = 4;
@@ -1024,6 +1025,137 @@ public class SqlOptimiser implements Mutable {
         // add dependency to prevent previous model reordering (left/right outer joins are not symmetric)
         if (joinIndex > 0) {
             linkDependencies(parent, joinIndex - 1, joinIndex);
+        }
+    }
+
+    private void addPivotAggregatesToInnerModel(QueryModel model, QueryModel innerModel) throws SqlException {
+        for (int i = 0, n = model.getPivotGroupByColumns().size(); i < n; i++) {
+            QueryColumn qc = model.getPivotGroupByColumns().getQuick(i);
+            innerModel.addBottomUpColumn(qc);
+        }
+    }
+
+    private void addPivotColumnsToOuterModel(int totalCombinations, QueryModel model, QueryModel outerModel) throws SqlException {
+        ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
+        ObjList<QueryColumn> pivotAggregates = model.getPivotGroupByColumns();
+        int forColumnCount = pivotForColumns.size();
+
+        IntList indices = tempCrosses;
+        indices.clear();
+        for (int i = 0; i < forColumnCount; i++) {
+            indices.add(0);
+        }
+
+        for (int combo = 0; combo < totalCombinations; combo++) {
+            for (int k = 0, p = pivotAggregates.size(); k < p; k++) {
+                QueryColumn aggColumn = pivotAggregates.getQuick(k);
+                CharSequence aggAlias = aggColumn.getAlias();
+                int position = aggColumn.getAst().position;
+                ExpressionNode conditionNode = null;
+                CharacterStoreEntry cse = characterStore.newEntry();
+
+                for (int i = 0; i < forColumnCount; i++) {
+                    PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
+                    ObjList<ExpressionNode> valueList = pivotForColumn.getValueList();
+                    int valueCount = valueList.size();
+                    int valueIndex = indices.getQuick(i);
+
+                    ExpressionNode colCondition;
+                    CharSequence colAlias;
+
+                    if (pivotForColumn.getElseAlias() != null && valueIndex == valueCount) {
+                        // ELSE mode: use NOT IN
+                        ExpressionNode inNode = expressionNodePool.next().of(FUNCTION, "in", 0, position);
+                        inNode.paramCount = 1 + valueCount;
+                        if (inNode.paramCount == 2) {
+                            inNode.lhs = expressionNodePool.next().of(LITERAL, pivotForColumn.getInExprAlias(), 0, position);
+                            inNode.rhs = valueList.getQuick(0);
+                        } else {
+                            inNode.args.addAll(valueList);
+                            inNode.args.add(expressionNodePool.next().of(LITERAL, pivotForColumn.getInExprAlias(), 0, position));
+                        }
+                        colCondition = expressionNodePool.next().of(OPERATION, "not", 0, position);
+                        colCondition.paramCount = 1;
+                        colCondition.rhs = inNode;
+                        colAlias = pivotForColumn.getElseAlias();
+                    } else {
+                        // Normal mode: use =
+                        ExpressionNode valueExpr = valueList.getQuick(valueIndex);
+                        colCondition = expressionNodePool.next().of(OPERATION, "=", 0, position);
+                        colCondition.paramCount = 2;
+                        colCondition.lhs = expressionNodePool.next().of(LITERAL, pivotForColumn.getInExprAlias(), 0, position);
+                        colCondition.rhs = valueExpr;
+                        colAlias = pivotForColumn.getValueAliases().getQuick(valueIndex);
+                    }
+
+                    if (conditionNode == null) {
+                        conditionNode = colCondition;
+                    } else {
+                        ExpressionNode andNode = expressionNodePool.next().of(OPERATION, "and", 0, position);
+                        andNode.paramCount = 2;
+                        andNode.lhs = conditionNode;
+                        andNode.rhs = colCondition;
+                        conditionNode = andNode;
+                    }
+
+                    if (i > 0) {
+                        cse.put('_');
+                    }
+                    cse.put(colAlias);
+                }
+
+                cse.put('_').put(aggAlias);
+                // Use switch when: single FOR column, single constant value (not ELSE mode)
+                ExpressionNode thenNode = expressionNodePool.next().of(LITERAL, aggAlias, 0, position);
+                ExpressionNode defaultNode = expressionNodePool.next().of(CONSTANT, "null", 0, position);
+                ExpressionNode caseNode;
+                PivotForColumn firstForColumn = pivotForColumns.getQuick(0);
+                int firstValueIndex = indices.getQuick(0);
+                boolean isElseMode = firstForColumn.getElseAlias() != null
+                        && firstValueIndex == firstForColumn.getValueList().size();
+                boolean useSwitch = forColumnCount == 1
+                        && !isElseMode;
+
+                if (useSwitch) {
+                    caseNode = expressionNodePool.next().of(FUNCTION, "switch", 0, position);
+                    caseNode.paramCount = 4;
+                    caseNode.args.add(defaultNode);
+                    caseNode.args.add(thenNode);
+                    caseNode.args.add(firstForColumn.getValueList().getQuick(firstValueIndex));
+                    caseNode.args.add(expressionNodePool.next().of(LITERAL, firstForColumn.getInExprAlias(), 0, position));
+                } else {
+                    caseNode = expressionNodePool.next().of(FUNCTION, "case", 0, position);
+                    caseNode.paramCount = 3;
+                    caseNode.args.add(defaultNode);
+                    caseNode.args.add(thenNode);
+                    caseNode.args.add(conditionNode);
+                }
+
+                ExpressionNode aggNode = expressionNodePool.next().of(
+                        FUNCTION,
+                        Chars.equals(aggColumn.getAst().token, "count") ? "sum" : "first_not_null",
+                        0,
+                        position
+                );
+                aggNode.paramCount = 1;
+                aggNode.rhs = caseNode;
+
+                outerModel.addBottomUpColumn(queryColumnPool.next().of(cse.toImmutable(), aggNode));
+            }
+
+            for (int i = forColumnCount - 1; i >= 0; i--) {
+                PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
+                int maxIndex = pivotForColumn.getValueList().size();
+                if (pivotForColumn.getElseAlias() != null) {
+                    maxIndex++;
+                }
+                int newIndex = indices.getQuick(i) + 1;
+                if (newIndex < maxIndex) {
+                    indices.setQuick(i, newIndex);
+                    break;
+                }
+                indices.setQuick(i, 0);
+            }
         }
     }
 
@@ -3818,9 +3950,10 @@ public class SqlOptimiser implements Mutable {
         copyColumnsFromMetadata(model, model.getTableNameFunction().getMetadata());
     }
 
-    private void preparePivotForSelectSubquery(QueryModel model, QueryModel outerModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private int preparePivotForSelectSubquery(QueryModel model, QueryModel outerModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
         ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        int totalColumnCount = 1;
 
         for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
             PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
@@ -3869,7 +4002,7 @@ public class SqlOptimiser implements Mutable {
                                         true
                                 );
                                 pivotAliasMap.add(alias);
-                                pivotForColumn.addValue(expressionNodePool.next().of(CONSTANT, token, 0, subQueryNode.position), null);
+                                pivotForColumn.addValue(expressionNodePool.next().of(CONSTANT, token, 0, subQueryNode.position), alias);
                                 valueCount++;
                             }
                         }
@@ -3882,7 +4015,25 @@ public class SqlOptimiser implements Mutable {
                     outerModel.setCacheable(false);
                 }
             }
+            totalColumnCount *= (pivotForColumn.getValueList().size() + (pivotForColumn.getElseAlias() == null ? 0 : 1));
+            if (totalColumnCount > MAX_PIVOT_COLUMNS) {
+                throw SqlException
+                        .$(pivotForColumn.getInExpr().position, "PIVOT produces too many columns: ")
+                        .put(totalColumnCount)
+                        .put(", limit is ")
+                        .put(MAX_PIVOT_COLUMNS);
+            }
         }
+
+        totalColumnCount *= model.getPivotGroupByColumns().size();
+        if (totalColumnCount > MAX_PIVOT_COLUMNS) {
+            throw SqlException
+                    .$(model.getModelPosition(), "PIVOT produces too many columns: ")
+                    .put(totalColumnCount)
+                    .put(", limit is ")
+                    .put(MAX_PIVOT_COLUMNS);
+        }
+        return totalColumnCount;
     }
 
     private void processEmittedJoinClauses(QueryModel model) {
@@ -4320,6 +4471,66 @@ public class SqlOptimiser implements Mutable {
         }
 
         return op;
+    }
+
+    private void pushPivotFiltersToInnerModel(QueryModel model, QueryModel innerModel) throws SqlException {
+        final ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
+        ExpressionNode pushedFilter = null;
+
+        for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
+            PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
+            ExpressionNode inExpr = pivotForColumn.getInExpr();
+            CharacterStoreEntry entry = characterStore.newEntry();
+            inExpr.toSink(entry);
+            CharSequence alias = SqlUtil.createExprColumnAlias(
+                    characterStore,
+                    entry.toImmutable(),
+                    pivotAliasMap,
+                    configuration.getColumnAliasGeneratedMaxSize(),
+                    true
+            );
+            pivotAliasMap.add(alias);
+            pivotForColumn.setInExprAlias(alias);
+            innerModel.addBottomUpColumn(queryColumnPool.next().of(alias, inExpr));
+
+            if (pivotForColumn.getElseAlias() != null) {
+                continue;
+            }
+            ObjList<ExpressionNode> valueLists = pivotForColumn.getValueList();
+            assert valueLists.size() != 0;
+
+            ExpressionNode filter = expressionNodePool.next().of(FUNCTION, "IN", 0, inExpr.position);
+            filter.paramCount = 1 + valueLists.size();
+            if (filter.paramCount == 2) {
+                filter.lhs = inExpr;
+                filter.rhs = valueLists.getQuick(0);
+            } else {
+                filter.args.addAll(valueLists);
+                filter.args.add(inExpr);
+            }
+            if (pushedFilter != null) {
+                ExpressionNode node = expressionNodePool.next().of(FUNCTION, "AND", 0, 0);
+                node.paramCount = 2;
+                node.lhs = pushedFilter;
+                node.rhs = filter;
+                pushedFilter = node;
+            } else {
+                pushedFilter = filter;
+            }
+        }
+
+        if (pushedFilter != null) {
+            ExpressionNode childWhereClause = model.getNestedModel().getWhereClause();
+            if (childWhereClause == null) {
+                model.getNestedModel().setWhereClause(pushedFilter);
+            } else {
+                ExpressionNode whereClause = expressionNodePool.next().of(FUNCTION, "AND", 0, 0);
+                whereClause.paramCount = 2;
+                whereClause.lhs = pushedFilter;
+                whereClause.rhs = childWhereClause;
+                model.getNestedModel().setWhereClause(whereClause);
+            }
+        }
     }
 
     /**
@@ -5461,19 +5672,45 @@ public class SqlOptimiser implements Mutable {
         }
         if (model.isPivot()) {
             final QueryModel innerModel = queryModelPool.next();
-            QueryModel outerModel = queryModelPool.next();
-            innerModel.setNestedModel(model.getNestedModel());
-            outerModel.setNestedModel(innerModel);
-            preparePivotForSelectSubquery(model, outerModel, sqlExecutionContext);
-            //pushPovitFiltersToInnerModel(model, innerModel);
-            //rewritePivotGroupByColumns(model, innerModel, outerModel);
-            //addPivotAggregatesToInnerModel(model, innerModel);
-            //addPivotColumnsToOuterModel(model, outerModel);
+            final QueryModel outerModel = queryModelPool.next();
+            final QueryModel emptyModel = queryModelPool.next();
+            if (model.getNestedModel().getNestedModel() != null) {
+                final QueryModel emptyModel1 = queryModelPool.next();
+                emptyModel1.setNestedModel(model.getNestedModel());
+                innerModel.setNestedModel(emptyModel1);
+            } else {
+                innerModel.setNestedModel(model.getNestedModel());
+            }
+            final QueryModel emptyModel2 = queryModelPool.next();
+            emptyModel.setNestedModel(innerModel);
+            outerModel.setNestedModel(emptyModel);
+            emptyModel2.setNestedModel(outerModel);
 
+            // Step 1: Execute subqueries in PIVOT IN clause (if any) and convert to value lists.
+            // Returns total number of pivot columns (Cartesian product of all FOR column values × aggregates).
+            final int totalCombinations = preparePivotForSelectSubquery(model, outerModel, sqlExecutionContext);
+
+            // Step 2: Add GROUP BY columns to both inner model (for grouping) and outer model (for output).
+            // These columns will be passed through unchanged from the aggregated inner query.
             rewritePivotGroupByColumns(model, innerModel, outerModel);
 
+            // Step 3: Add FOR column expressions to inner model's SELECT list with generated aliases.
+            // Also generates IN filter (e.g., col IN ('a','b','c')) and pushes it to the nested WHERE clause.
+            // Skips filter generation when ELSE is present (ELSE needs to match all non-listed values).
+            pushPivotFiltersToInnerModel(model, innerModel);
 
-            model = outerModel;
+            // Step 4: Add aggregate expressions (e.g., sum(amount)) to inner model's SELECT list.
+            // These are the measures that will be pivoted across the FOR column values.
+            addPivotAggregatesToInnerModel(model, innerModel);
+
+            // Step 5: Generate pivoted output columns in outer model using CASE/SWITCH expressions.
+            // Creates one column per combination of (FOR values × aggregates).
+            // Uses first_not_null() to pick the matching aggregate value, or sum() for count aggregates.
+            addPivotColumnsToOuterModel(totalCombinations, model, outerModel);
+
+            emptyModel2.moveLimitFrom(model);
+            emptyModel2.moveOrderByFrom(model);
+            model = emptyModel2;
         } else {
             model.setNestedModel(rewritePivot(model.getNestedModel(), sqlExecutionContext));
             for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
@@ -5487,13 +5724,24 @@ public class SqlOptimiser implements Mutable {
 
     private void rewritePivotGroupByColumns(QueryModel model, QueryModel innerModel, QueryModel outerModel) throws SqlException {
         ObjList<ExpressionNode> nestedGroupBy = model.getGroupBy();
+        pivotAliasMap.clear();
         for (int i = 0, n = nestedGroupBy.size(); i < n; i++) {
             ExpressionNode groupByExpr = nestedGroupBy.getQuick(i);
             if (groupByExpr.type == CONSTANT) {
                 throw SqlException.$(groupByExpr.position, "cannot use positional group by inside `PIVOT`");
             } else {
-                innerModel.addBottomUpColumn(queryColumnPool.next().of(groupByExpr.token, groupByExpr));
-                outerModel.addBottomUpColumn(queryColumnPool.next().of(groupByExpr.token, expressionNodePool.next().of(LITERAL, groupByExpr.token, 0, groupByExpr.position)));
+                CharacterStoreEntry entry = characterStore.newEntry();
+                groupByExpr.toSink(entry);
+                CharSequence alias = SqlUtil.createExprColumnAlias(
+                        characterStore,
+                        entry.toImmutable(),
+                        pivotAliasMap,
+                        configuration.getColumnAliasGeneratedMaxSize(),
+                        true
+                );
+                pivotAliasMap.add(alias);
+                innerModel.addBottomUpColumn(queryColumnPool.next().of(alias, groupByExpr));
+                outerModel.addBottomUpColumn(queryColumnPool.next().of(alias, expressionNodePool.next().of(LITERAL, alias, 0, groupByExpr.position)));
             }
         }
     }

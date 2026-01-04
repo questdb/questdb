@@ -185,6 +185,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
+    private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
     // fetch all rows at once, or in batches. In case of full fetch, this is the
@@ -233,7 +234,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             @NotNull AssociativeCache<TypesAndSelect> tasCache,
             @NotNull SimpleAssociativeCache<TypesAndInsert> taiCache
     ) {
-        if (isPortal() || isPreparedStatement()) {
+        if (isPortal() || isPreparedStatement() || !selectIsCacheable) {
             // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
             return;
         }
@@ -341,6 +342,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         arrayViewPool.clear();
         varcharArrayViewPool.clear();
         utf8StringSink.clear();
+        selectIsCacheable = true;
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
@@ -3171,6 +3173,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         msgParseParameterTypeOIDs,
                         outParameterTypeDescriptionTypes
                 );
+                selectIsCacheable = cq.isCacheable();
                 break;
             case CompiledQuery.SELECT:
                 sqlTag = TAG_SELECT;
@@ -3182,6 +3185,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         msgParseParameterTypeOIDs,
                         outParameterTypeDescriptionTypes
                 );
+                selectIsCacheable = cq.isCacheable();
                 break;
             case CompiledQuery.PSEUDO_SELECT:
                 // the PSEUDO_SELECT comes from a "copy" SQL, which is why
