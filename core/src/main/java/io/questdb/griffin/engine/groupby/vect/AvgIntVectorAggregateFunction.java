@@ -53,7 +53,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     private long countsAddr;
     private int valueOffset;
 
-    public AvgIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public AvgIntVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;

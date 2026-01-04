@@ -50,7 +50,7 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private final int workerCount;
     private int valueOffset;
 
-    public KSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public KSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * SUM_PADDING];
         this.count = new long[workerCount * COUNT_PADDING];

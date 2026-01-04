@@ -40,7 +40,6 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
-
     public static final DoubleBinaryOperator MAX = Math::max;
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
@@ -50,7 +49,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     );
     private int valueOffset;
 
-    public MaxDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public MaxDoubleVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             this.distinctFunc = Rosti::keyedMicroHourDistinct;
