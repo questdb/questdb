@@ -143,6 +143,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // list of "and" concatenated expressions
     private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConstants = new IntHashSet();
+    private final ObjList<PivotForColumn> pivotForColumns = new ObjList<>();
+    private final ObjList<QueryColumn> pivotGroupByColumns = new ObjList<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
@@ -164,6 +166,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
+    private boolean cacheable = true;
     // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
@@ -202,6 +205,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
+    private boolean pivotGroupByColumnHasNoAlias = false;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;
@@ -371,6 +375,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         parsedWhere.add(node);
     }
 
+    public void addPivotForColumn(PivotForColumn column) {
+        pivotForColumns.add(column);
+    }
+
+    public void addPivotGroupByColumn(QueryColumn column) {
+        pivotGroupByColumns.add(column);
+    }
+
     public void addSampleByFill(ExpressionNode sampleByFill) {
         this.sampleByFill.add(sampleByFill);
     }
@@ -500,6 +512,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         hintsMap.clear();
         asOfJoinTolerance = null;
         windowJoinContext.clear();
+        pivotGroupByColumns.clear();
+        pivotForColumns.clear();
+        cacheable = true;
+        pivotGroupByColumnHasNoAlias = false;
     }
 
     public void clearColumnMapStructs() {
@@ -514,6 +530,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void clearOrderBy() {
         orderBy.clear();
         orderByDirection.clear();
+    }
+
+    public void clearPivot() {
+        pivotGroupByColumns.clear();
+        pivotForColumns.clear();
     }
 
     public void clearSampleBy() {
@@ -660,6 +681,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && modelType == that.modelType
                 && artificialStar == that.artificialStar
                 && skipped == that.skipped
+                && cacheable == that.cacheable
                 && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice
                 && Objects.equals(bottomUpColumns, that.bottomUpColumns)
                 && Objects.equals(topDownNameSet, that.topDownNameSet)
@@ -720,7 +742,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && Objects.equals(decls, that.decls)
                 && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance)
-                && Objects.equals(windowJoinContext, that.windowJoinContext);
+                && Objects.equals(windowJoinContext, that.windowJoinContext)
+                && Objects.equals(pivotGroupByColumns, that.pivotGroupByColumns)
+                && Objects.equals(pivotForColumns, that.pivotForColumns);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -948,6 +972,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return parsedWhere;
     }
 
+    public ObjList<PivotForColumn> getPivotForColumns() {
+        return pivotForColumns;
+    }
+
+    public ObjList<QueryColumn> getPivotGroupByColumns() {
+        return pivotGroupByColumns;
+    }
+
     public ExpressionNode getPostJoinWhereClause() {
         return postJoinWhereClause;
     }
@@ -1106,6 +1138,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return artificialStar;
     }
 
+    public boolean isCacheable() {
+        if (nestedModel != null) {
+            return cacheable && nestedModel.isCacheable();
+        }
+        return cacheable;
+    }
+
     public boolean isCteModel() {
         return isCteModel;
     }
@@ -1128,6 +1167,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return orderDescendingByDesignatedTimestampOnly;
+    }
+
+    public boolean isPivot() {
+        return pivotForColumns.size() > 0;
+    }
+
+    public boolean isPivotGroupByColumnHasNoAlias() {
+        return pivotGroupByColumnHasNoAlias;
     }
 
     public boolean isSelectTranslation() {
@@ -1224,6 +1271,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.limitLo = baseModel.getLimitLo();
         this.limitHi = baseModel.getLimitHi();
         baseModel.setLimit(null, null);
+    }
+
+    public void moveOrderByFrom(QueryModel model) {
+        orderBy.addAll(model.getOrderBy());
+        orderByDirection.addAll(model.getOrderByDirection());
+        model.clearOrderBy();
     }
 
     public void moveSampleByFrom(QueryModel model) {
@@ -1330,6 +1383,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setBackupWhereClause(ExpressionNode backupWhereClause) {
         this.backupWhereClause = backupWhereClause;
+    }
+
+    public void setCacheable(boolean b) {
+        cacheable = b;
     }
 
     public void setConstWhereClause(ExpressionNode constWhereClause) {
@@ -1445,6 +1502,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
         this.outerJoinExpressionClause = outerJoinExpressionClause;
+    }
+
+    public void setPivotGroupByColumnHasNoAlias(boolean pivotGroupByColumnHasNoAlias) {
+        this.pivotGroupByColumnHasNoAlias = pivotGroupByColumnHasNoAlias;
     }
 
     public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
@@ -2149,6 +2210,41 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 first = false;
             }
             sink.putAscii(']');
+        }
+
+        if (pivotGroupByColumns.size() > 0) {
+            sink.putAscii(" pivot ");
+            pivotGroupByColumns.toSink(sink);
+            sink.putAscii(" for ");
+
+            for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
+                PivotForColumn pivotForName = pivotForColumns.getQuick(i);
+
+                sink.put(pivotForName.getInExpr()).put("in").put("(");
+                if (pivotForName.isValueList()) {
+                    ObjList<ExpressionNode> pivotForValueList = pivotForName.getValueList();
+                    ObjList<CharSequence> valueAliases = pivotForName.getValueAliases();
+
+                    for (int j = 0, m = pivotForValueList.size(); j < m; j++) {
+                        if (j > 0) {
+                            sink.put(',');
+                        }
+                        sink.put(pivotForValueList.getQuick(j));
+                        CharSequence alias = valueAliases.getQuick(j);
+                        if (alias != null) {
+                            sink.putAscii(" as ");
+                            sink.put(alias);
+                        }
+                    }
+                } else {
+                    sink.put(pivotForName.getSelectSubqueryExpr());
+                }
+
+                sink.put(')');
+                if (i + 1 < n) {
+                    sink.putAscii(' ');
+                }
+            }
         }
     }
 

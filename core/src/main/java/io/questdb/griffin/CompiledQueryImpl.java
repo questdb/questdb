@@ -50,6 +50,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
     private AlterOperation alterOp;
+    private boolean cacheable;
     private boolean done;
     private InsertOperation insertOp;
     private boolean isExecutedAtParseTime;
@@ -202,6 +203,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return updateOp;
     }
 
+    @Override
+    public boolean isCacheable() {
+        return cacheable;
+    }
+
     public void ofAlter(AlterOperation alterOp) {
         of(ALTER);
         this.alterOp = alterOp;
@@ -329,9 +335,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    public void ofSelect(RecordCursorFactory recordCursorFactory) {
+    public void ofSelect(RecordCursorFactory recordCursorFactory, boolean cacheable) {
         of(SELECT, recordCursorFactory);
         this.isExecutedAtParseTime = false;
+        this.cacheable = cacheable;
     }
 
     public void ofSet() {

@@ -212,6 +212,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getCopierType() {
+        return getDelegate().getCopierType();
+    }
+
+    @Override
     public @NotNull LongSupplier getCopyIDSupplier() {
         return getDelegate().getCopyIDSupplier();
     }
@@ -724,6 +729,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionPurgeListCapacity() {
         return getDelegate().getPartitionPurgeListCapacity();
+    }
+
+    @Override
+    public int getPivotColumnPoolCapacity() {
+        return getDelegate().getPivotColumnPoolCapacity();
     }
 
     @Override
@@ -1344,11 +1354,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isCopierChunkedEnabled() {
         return getDelegate().isCopierChunkedEnabled();
-    }
-
-    @Override
-    public int getCopierType() {
-        return getDelegate().getCopierType();
     }
 
     @Override

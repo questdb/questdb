@@ -122,6 +122,14 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         }
     }
 
+    public void addAtWithBorrowed(int index, @NotNull CharSequence key) {
+        keys[index] = key;
+        list.add(key);
+        if (--free < 1) {
+            rehash();
+        }
+    }
+
     public boolean addNull() {
         if (hasNull) {
             return false;
