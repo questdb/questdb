@@ -232,7 +232,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "SELECT MIN(EventTime), MAX(EventTime) FROM hits;",
                         """
                                 GroupBy vectorized: true workers: 1
-                                  values: [min(EventTime),max(EventTime)]
+                                  values: [min_designated(EventTime),max_designated(EventTime)]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits

@@ -98,7 +98,7 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public String getName() {
-        return "max";
+        return isDesignated ? "max_designated" : "max";
     }
 
     @Override

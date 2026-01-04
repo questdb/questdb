@@ -110,7 +110,7 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public String getName() {
-        return "min";
+        return isDesignated ? "min_designated" : "min";
     }
 
     @Override
