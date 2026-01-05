@@ -30,8 +30,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.str.Sinkable;
 
-public interface CreateViewOperationBuilder extends ExecutionModel {
+public interface CreateViewOperationBuilder extends ExecutionModel, Sinkable {
 
     CreateViewOperation build(
             SqlCompiler sqlCompiler,

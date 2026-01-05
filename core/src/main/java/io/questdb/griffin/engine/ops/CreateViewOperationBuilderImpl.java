@@ -34,10 +34,9 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
-public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilder, Mutable, Sinkable {
+public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilder, Mutable {
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
 
