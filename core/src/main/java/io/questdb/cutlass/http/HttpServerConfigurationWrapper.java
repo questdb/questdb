@@ -111,6 +111,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public ObjHashSet<String> getContextPathSqlValidation() {
+        return getDelegate().getContextPathSqlValidation();
+    }
+
+    @Override
     public ObjHashSet<String> getContextPathTableStatus() {
         return getDelegate().getContextPathTableStatus();
     }

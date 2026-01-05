@@ -68,9 +68,11 @@ public class TablesBootstrapTest extends AbstractBootstrapTest {
 
     private static void assertTables(TestServerMain serverMain) {
         serverMain.assertSql(
-                "tables()",
-                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
-                        "4\ttab\tts\tDAY\t500000\t600000000\ttrue\ttab~4\tfalse\t0\tHOUR\tfalse\n"
+                "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()",
+                """
+                        id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
+                        4\ttab\tts\tDAY\t500000\t600000000\ttrue\ttab~4\tfalse\t0\tHOUR\tfalse
+                        """
         );
     }
 }

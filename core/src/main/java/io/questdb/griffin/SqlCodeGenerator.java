@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.AbstractPartitionFrameCursorFactory;
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
@@ -39,6 +38,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.SqlJitMode;
@@ -299,6 +299,7 @@ import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WindowJoinContext;
+import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.jit.JitUtil;
@@ -341,7 +342,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_NANO_HOUR_INT = 2;
     public static final int GKK_VANILLA_INT = 0;
     public static final boolean[] joinsRequiringTimestamp = new boolean[JOIN_MAX + 1];
-    private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
+    private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, timestampIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
@@ -1047,6 +1048,91 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private void backupWhereClause(ExpressionNode node) {
         processNodeQueryModels(node, backupWhereClauseRef);
+    }
+
+    private GenericRecordMetadata buildQueryMetadata(
+            @Transient QueryModel model,
+            @Transient SqlExecutionContext executionContext,
+            @Transient RecordMetadata metadata,
+            int readerTimestampIndex,
+            boolean requiresTimestamp,
+            @Nullable IntList columnIndexes,
+            @Nullable IntList columnSizeShifts
+    ) throws SqlException {
+        final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
+        final int topDownColumnCount = topDownColumns.size();
+        final GenericRecordMetadata queryMeta = new GenericRecordMetadata();
+
+        try {
+            if (requiresTimestamp) {
+                executionContext.pushTimestampRequiredFlag(true);
+            }
+
+            boolean contextTimestampRequired = executionContext.isTimestampRequired();
+            // some "sample by" queries don't select any cols but needs timestamp col selected
+            // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
+            if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
+                for (int i = 0; i < topDownColumnCount; i++) {
+                    QueryColumn column = topDownColumns.getQuick(i);
+                    int columnIndex = metadata.getColumnIndexQuiet(column.getName());
+                    if (columnIndex == -1) {
+                        throw SqlException.invalidColumn(column.getAst().position, column.getName());
+                    }
+                    int type = metadata.getColumnType(columnIndex);
+
+                    if (columnIndexes != null) {
+                        columnIndexes.add(columnIndex);
+                    }
+                    if (columnSizeShifts != null) {
+                        int typeSize = ColumnType.sizeOf(type);
+                        columnSizeShifts.add(Numbers.msb(typeSize));
+                    }
+
+                    queryMeta.add(new TableColumnMetadata(
+                            metadata.getColumnName(columnIndex),
+                            type,
+                            metadata.isColumnIndexed(columnIndex),
+                            metadata.getIndexValueBlockCapacity(columnIndex),
+                            metadata.isSymbolTableStatic(columnIndex),
+                            metadata.getMetadata(columnIndex),
+                            -1,
+                            false,
+                            0,
+                            metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
+                            metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
+                    ));
+
+                    if (columnIndex == readerTimestampIndex) {
+                        queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
+                    }
+                }
+
+                // select timestamp when it is required but not already selected
+                if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
+                    int timestampType = metadata.getColumnType(readerTimestampIndex);
+                    queryMeta.add(new TableColumnMetadata(
+                            metadata.getColumnName(readerTimestampIndex),
+                            timestampType,
+                            metadata.getMetadata(readerTimestampIndex)
+                    ));
+                    queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
+
+                    if (columnIndexes != null) {
+                        columnIndexes.add(readerTimestampIndex);
+                    }
+
+                    if (columnSizeShifts != null) {
+                        columnSizeShifts.add(Numbers.msb(ColumnType.sizeOf(timestampType)));
+                    }
+                }
+            }
+        } finally {
+            if (requiresTimestamp) {
+                executionContext.popTimestampRequiredFlag();
+            }
+        }
+
+        return queryMeta;
     }
 
     // Checks if lo, hi is set and lo >= 0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
@@ -2744,6 +2830,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
             if (useJit && canCompile) {
                 CompiledFilter compiledFilter = null;
+                CompiledCountOnlyFilter compiledCountOnlyFilter = null;
                 try {
                     int jitOptions;
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
@@ -2755,6 +2842,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     compiledFilter = new CompiledFilter();
                     compiledFilter.compile(jitIRMem, jitOptions);
+
+                    compiledCountOnlyFilter = new CompiledCountOnlyFilter();
+                    compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
 
                     final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                     final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
@@ -2770,6 +2860,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory,
                             bindVarFunctions,
                             compiledFilter,
+                            compiledCountOnlyFilter,
                             filter,
                             reduceTaskFactory,
                             compileWorkerFilterConditionally(
@@ -2789,6 +2880,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // for these errors we are intentionally **not** rethrowing the exception
                     // if a JIT filter cannot be used, we will simply use a Java filter
                     Misc.free(compiledFilter);
+                    Misc.free(compiledCountOnlyFilter);
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
                             .$(", ex=").$safe(ex.getFlyweightMessage())
@@ -2796,6 +2888,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } catch (Throwable t) {
                     // other errors are fatal -> rethrow them
                     Misc.free(compiledFilter);
+                    Misc.free(compiledCountOnlyFilter);
                     Misc.free(filter);
                     Misc.free(factory);
                     throw t;
@@ -2839,17 +2932,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory tableFactory = model.getTableNameFunction();
+        RecordCursorFactory tableFactory = model.getTableNameFunction();
         if (tableFactory != null) {
             // We're transferring ownership of the tableFactory's factory to another factory
             // setting tableFactory to NULL will prevent double-ownership.
             // We should not release tableFactory itself, they typically just a lightweight factory wrapper.
             model.setTableNameFunction(null);
-            return tableFactory;
         } else {
             // when tableFactory is null we have to recompile it from scratch, including creating new factory
-            return TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
+            tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
         }
+
+        if (tableFactory instanceof ProjectableRecordCursorFactory factory) {
+            RecordMetadata metadata = factory.getMetadata();
+            int readerTimestampIndex = getTimestampIndex(model, metadata);
+            boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
+            factory.setQueryProjectedMetadata(buildQueryMetadata(
+                    model,
+                    executionContext,
+                    tableFactory.getMetadata(),
+                    readerTimestampIndex,
+                    requiresTimestamp,
+                    null,
+                    null
+            ));
+        }
+
+        return tableFactory;
     }
 
     private RecordCursorFactory generateIntersectOrExceptAllFactory(
@@ -5534,6 +5643,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     VectorAggregateFunction vaf = constructor.create(
                             tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0),
                             indexInBase,
+                            baseMetadata.getTimestampIndex(),
                             executionContext.getSharedQueryWorkerCount()
                     );
                     tempVaf.add(vaf);
@@ -6672,96 +6782,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         // create metadata based on top-down columns that are required
 
-        final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
-        final int topDownColumnCount = topDownColumns.size();
         final IntList columnIndexes = new IntList();
         final IntList columnSizeShifts = new IntList();
-
-        // topDownColumnCount can be 0 for 'select count()' queries
-
-        int readerTimestampIndex;
-        readerTimestampIndex = getTimestampIndex(model, metadata);
-
+        int readerTimestampIndex = getTimestampIndex(model, metadata);
         // Latest by on a table requires the provided timestamp column to be the designated timestamp.
         if (latestBy.size() > 0 && readerTimestampIndex != metadata.getTimestampIndex()) {
             throw SqlException.$(model.getTimestamp().position, "latest by over a table requires designated TIMESTAMP");
         }
 
         boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
-        final GenericRecordMetadata queryMeta = new GenericRecordMetadata();
-        try {
-            if (requiresTimestamp) {
-                executionContext.pushTimestampRequiredFlag(true);
-            }
-
-            boolean contextTimestampRequired = executionContext.isTimestampRequired();
-            // some "sample by" queries don't select any cols but needs timestamp col selected
-            // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
-            if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
-                for (int i = 0; i < topDownColumnCount; i++) {
-                    QueryColumn column = topDownColumns.getQuick(i);
-                    int columnIndex = metadata.getColumnIndexQuiet(column.getName());
-                    if (columnIndex == -1) {
-                        throw SqlException.invalidColumn(column.getAst().position, column.getName());
-                    }
-                    int type = metadata.getColumnType(columnIndex);
-                    int typeSize = sizeOf(type);
-
-                    columnIndexes.add(columnIndex);
-                    columnSizeShifts.add(Numbers.msb(typeSize));
-
-                    queryMeta.add(new TableColumnMetadata(
-                            metadata.getColumnName(columnIndex),
-                            type,
-                            metadata.isColumnIndexed(columnIndex),
-                            metadata.getIndexValueBlockCapacity(columnIndex),
-                            metadata.isSymbolTableStatic(columnIndex),
-                            metadata.getMetadata(columnIndex),
-                            -1,
-                            false,
-                            0,
-                            metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
-                            metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-                    ));
-
-                    if (columnIndex == readerTimestampIndex) {
-                        queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
-                    }
-                }
-
-                // select timestamp when it is required but not already selected
-                if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
-                    queryMeta.add(new TableColumnMetadata(
-                            metadata.getColumnName(readerTimestampIndex),
-                            metadata.getColumnType(readerTimestampIndex),
-                            metadata.getMetadata(readerTimestampIndex)
-                    ));
-                    queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
-
-                    columnIndexes.add(readerTimestampIndex);
-                    columnSizeShifts.add(Numbers.msb(TIMESTAMP));
-                }
-            }
-        } finally {
-            if (requiresTimestamp) {
-                executionContext.popTimestampRequiredFlag();
-            }
-        }
+        final GenericRecordMetadata queryMeta = buildQueryMetadata(
+                model,
+                executionContext,
+                metadata,
+                readerTimestampIndex,
+                requiresTimestamp,
+                columnIndexes,
+                columnSizeShifts
+        );
 
         if (reader == null) {
             // This is WAL serialisation compilation. We don't need to read data from table
             // and don't need optimisation for query validation.
-            return new AbstractRecordCursorFactory(queryMeta) {
-                @Override
-                public boolean recordCursorSupportsRandomAccess() {
-                    return false;
-                }
-
-                @Override
-                public boolean supportsUpdateRowId(TableToken tableToken) {
-                    return metadata.getTableToken() == tableToken;
-                }
-            };
+            return new EmptyTableRecordCursorFactory(queryMeta, metadata.getTableToken());
         }
 
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
@@ -7987,16 +8030,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         minConstructors.put(DOUBLE, MinDoubleVectorAggregateFunction::new);
         minConstructors.put(LONG, MinLongVectorAggregateFunction::new);
         minConstructors.put(DATE, MinDateVectorAggregateFunction::new);
-        minConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_MICRO));
-        minConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_NANO));
+        minConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_MICRO, timestampIndex));
+        minConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         minConstructors.put(INT, MinIntVectorAggregateFunction::new);
         minConstructors.put(SHORT, MinShortVectorAggregateFunction::new);
 
         maxConstructors.put(DOUBLE, MaxDoubleVectorAggregateFunction::new);
         maxConstructors.put(LONG, MaxLongVectorAggregateFunction::new);
         maxConstructors.put(DATE, MaxDateVectorAggregateFunction::new);
-        maxConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_MICRO));
-        maxConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_NANO));
+        maxConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_MICRO, timestampIndex));
+        maxConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         maxConstructors.put(INT, MaxIntVectorAggregateFunction::new);
         maxConstructors.put(SHORT, MaxShortVectorAggregateFunction::new);
     }

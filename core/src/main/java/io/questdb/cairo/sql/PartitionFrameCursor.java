@@ -37,7 +37,11 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
     default void calculateSize(RecordCursor.Counter counter) {
     }
 
-    // same TableReader is available on each partition frame
+    /**
+     * Returns the table reader. The same TableReader is available on each partition frame.
+     *
+     * @return the table reader
+     */
     TableReader getTableReader();
 
     /**

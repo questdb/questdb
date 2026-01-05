@@ -32,7 +32,7 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class CountDoubleVectorAggregateFunction extends AbstractCountVectorAggregateFunction {
 
-    public CountDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public CountDoubleVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         super(columnIndex);
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;
