@@ -91,7 +91,8 @@ public abstract class ToDecimalFunction extends DecimalFunction {
      * The implementation must fill the decimal with the store value following the target scale and precision.
      * If the value to store is null, it must return false without doing additional work.
      *
-     * @return whether the result is not null.
+     * @param rec the record to read from
+     * @return whether the result is not null
      */
     protected abstract boolean store(Record rec);
 }

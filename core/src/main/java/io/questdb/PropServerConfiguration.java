@@ -164,6 +164,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long cairoGroupByPresizeMaxCapacity;
     private final long cairoGroupByPresizeMaxHeapSize;
     private final int cairoGroupByShardingThreshold;
+    private final int cairoGroupByTopKQueueCapacity;
+    private final long cairoGroupByTopKThreshold;
     private final int cairoMaxCrashFiles;
     private final int cairoPageFrameReduceColumnListCapacity;
     private final int cairoPageFrameReduceQueueCapacity;
@@ -386,6 +388,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int queryCacheEventQueueCapacity;
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int readerPoolMaxSegments;
+    private final int recentWriteTrackerCapacity;
     private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
     private final int repeatMigrationFromVersion;
     private final double rerunExponentialWaitMultiplier;
@@ -1410,6 +1413,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inactiveReaderMaxOpenPartitions = getInt(properties, env, PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 10000);
             this.inactiveReaderTTL = getMillis(properties, env, PropertyKey.CAIRO_INACTIVE_READER_TTL, 120_000);
             this.inactiveWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_INACTIVE_WRITER_TTL, 600_000);
+            this.recentWriteTrackerCapacity = getInt(properties, env, PropertyKey.CAIRO_RECENT_WRITE_TRACKER_CAPACITY, 1000);
             this.inactiveWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_WAL_INACTIVE_WRITER_TTL, 120_000);
             this.ttlUseWallClock = getBoolean(properties, env, PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, true);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
@@ -1839,10 +1843,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByTopKQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 10_000);
             this.cairoGroupByPresizeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED, true);
             this.cairoGroupByPresizeMaxCapacity = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY, 100_000_000);
             this.cairoGroupByPresizeMaxHeapSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE, Numbers.SIZE_1GB);
+            this.cairoGroupByTopKThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD, 5_000_000);
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             final int defaultReduceShardCount = queryWorkers > 0 ? Math.min(queryWorkers, 4) : 0;
@@ -3112,6 +3118,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getCopierType() {
+            return copierType;
+        }
+
+        @Override
         public @NotNull LongSupplier getCopyIDSupplier() {
             if (cairoSQLCopyIdSupplier == 0) {
                 return randomIDSupplier;
@@ -3265,6 +3276,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getGroupByParallelTopKThreshold() {
+            return cairoGroupByTopKThreshold;
+        }
+
+        @Override
         public int getGroupByPoolCapacity() {
             return sqlGroupByPoolCapacity;
         }
@@ -3282,6 +3298,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getGroupByShardingThreshold() {
             return cairoGroupByShardingThreshold;
+        }
+
+        @Override
+        public int getGroupByTopKQueueCapacity() {
+            return cairoGroupByTopKQueueCapacity;
         }
 
         @Override
@@ -3632,6 +3653,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getReaderPoolMaxSegments() {
             return readerPoolMaxSegments;
+        }
+
+        @Override
+        public int getRecentWriteTrackerCapacity() {
+            return recentWriteTrackerCapacity;
         }
 
         @Override
@@ -4227,11 +4253,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isColumnAliasExpressionEnabled() {
             return cairoSqlColumnAliasExpressionEnabled;
-        }
-
-        @Override
-        public int getCopierType() {
-            return copierType;
         }
 
         @Override

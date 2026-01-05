@@ -39,7 +39,6 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class MaxIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
-
     public static final LongBinaryOperator MAX = Math::max;
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
@@ -49,7 +48,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     );
     private int valueOffset;
 
-    public MaxIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public MaxIntVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         super();
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {

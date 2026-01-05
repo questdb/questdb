@@ -160,7 +160,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     }
 
     private int addAlias(CharSequence tableAlias, CharSequence columnName) {
-        int dot = Chars.indexOf(columnName, '.');
+        int dot = Chars.indexOfLastUnquoted(columnName, '.');
         // add column with its own alias
         MapKey key = map.withKey();
 

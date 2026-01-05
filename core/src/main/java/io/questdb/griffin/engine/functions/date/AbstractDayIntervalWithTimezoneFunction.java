@@ -37,9 +37,21 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 
+/**
+ * Abstract base class for day-based interval functions with timezone support.
+ */
 public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDayIntervalFunction implements UnaryFunction {
+    /**
+     * The timezone function argument.
+     */
     protected final Function tzFunc;
 
+    /**
+     * Constructs a new day interval function with timezone.
+     *
+     * @param intervalType the interval type
+     * @param tzFunc       the timezone function
+     */
     public AbstractDayIntervalWithTimezoneFunction(int intervalType, Function tzFunc) {
         super(intervalType);
         this.tzFunc = tzFunc;
@@ -72,6 +84,13 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
         return UnaryFunction.super.isThreadSafe();
     }
 
+    /**
+     * Calculates the interval for the given timestamp and timezone.
+     *
+     * @param now the current timestamp
+     * @param tz  the timezone
+     * @return the calculated interval
+     */
     protected Interval calculateInterval(long now, CharSequence tz) {
         if (tz == null) {
             // no timezone, default to UTC

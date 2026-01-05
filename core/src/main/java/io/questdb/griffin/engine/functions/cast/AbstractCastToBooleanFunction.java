@@ -29,9 +29,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
+/**
+ * Abstract base class for functions that cast values to boolean.
+ */
 public abstract class AbstractCastToBooleanFunction extends BooleanFunction implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to boolean function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToBooleanFunction(Function arg) {
         this.arg = arg;
     }
