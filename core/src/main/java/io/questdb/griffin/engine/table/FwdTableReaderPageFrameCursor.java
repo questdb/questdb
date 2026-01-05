@@ -73,7 +73,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     ) {
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
-        columnCount = columnIndexes.size();
+        this.columnCount = columnIndexes.size();
         this.sharedQueryWorkerCount = sharedQueryWorkerCount;
         this.pageFrameMinRows = pageFrameMinRows;
         this.pageFrameMaxRows = pageFrameMaxRows;
@@ -304,11 +304,26 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = Math.min(
-                pageFrameMaxRows,
-                Math.max(pageFrameMinRows, (hi - lo) / Math.max(sharedQueryWorkerCount, 1))
-        );
+        reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
+    }
+
+    static long calculatePageFrameRowLimit(
+            long partitionLo,
+            long partitionHi,
+            long pageFrameMinRows,
+            long pageFrameMaxRows,
+            int sharedQueryWorkerCount
+    ) {
+        final int workerCount = Math.max(sharedQueryWorkerCount, 1);
+        long rowsPerFrame = Math.min(pageFrameMaxRows, Math.max(pageFrameMinRows, (partitionHi - partitionLo) / workerCount));
+        final long lastFrameSize = (partitionHi - partitionLo) % rowsPerFrame;
+        if (lastFrameSize > pageFrameMinRows) {
+            // Adjust the limit, so that we don't have tiny trailing frames.
+            final long frameCount = Math.max((partitionHi - partitionLo) / rowsPerFrame, 1);
+            rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
+        }
+        return rowsPerFrame;
     }
 
     private class TableReaderPageFrame implements PageFrame {

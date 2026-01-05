@@ -90,8 +90,8 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         this.partitionFrameCursorFactory = partitionFrameCursorFactory;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
-        pageFrameMinRows = configuration.getSqlPageFrameMinRows();
-        pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
+        this.pageFrameMinRows = configuration.getSqlPageFrameMinRows();
+        this.pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
     }
 
     @Override
