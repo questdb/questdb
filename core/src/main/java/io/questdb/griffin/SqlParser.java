@@ -3239,7 +3239,10 @@ public class SqlParser {
             }
 
             tok = optTok(lexer);
-            if (tok != null && pivotForStop.contains(tok)) {
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
+            }
+            if (pivotForStop.contains(tok)) {
                 break;
             } else {
                 lexer.unparseLast();

@@ -8960,6 +8960,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotDuplicateAlias() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000 AS y, 2010 AS y))", 62, "duplicate alias in PIVOT IN list: y", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotDuplicateValue() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000, 2000))", 49, "duplicate value in PIVOT IN list: 2000", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotDuplicateValueAlias() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000 AS y, 2010 AS y))", 62, "duplicate alias in PIVOT IN list: y", citiesModel
+        );
+    }
+
+    @Test
     public void testPivotExpectedFor() throws Exception {
         assertSyntaxError(
                 "cities PIVOT (sum(population) sum_a sum_b for year IN (2000,2010) )", 36, "expected FOR", citiesModel
@@ -8967,9 +8988,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testPivotForAggregateFunctions() throws Exception {
-        assertSyntaxError(
-                "cities PIVOT (sum(population) FOR year IN (2000,2010)", 52, "expected IN expression", citiesModel
+    public void testPivotForColumnExpression() throws Exception {
+        assertQuery(
+                "select-choose true, false from (select-group-by [first_not_null(switch(year > 2005, true, sum(population), null)) true, first_not_null(switch(year > 2005, false, sum(population), null)) false] first_not_null(switch(year > 2005, true, sum(population), null)) true, first_not_null(switch(year > 2005, false, sum(population), null)) false from (select-group-by [sum(population) sum(population), year > 2005 'year > 2005'] year > 2005 'year > 2005', sum(population) sum(population) from (select [population, year] from cities where year > 2005 IN (true, false))))",
+                "cities PIVOT (sum(population) FOR year > 2005 IN (true, false))",
+                citiesModel
         );
     }
 
@@ -8979,6 +9002,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose true, false from (select-group-by [first_not_null(switch(year in (2000, 2010), true, sum(population), null)) true, first_not_null(switch(year in (2000, 2010), false, sum(population), null)) false] first_not_null(switch(year in (2000, 2010), true, sum(population), null)) true, first_not_null(switch(year in (2000, 2010), false, sum(population), null)) false from (select-group-by [sum(population) sum(population), year in (2000, 2010) 'year in (2000, 2010)'] year in (2000, 2010) 'year in (2000, 2010)', sum(population) sum(population) from (select [population, year] from cities where year in (2000, 2010) IN (true, false))))",
                 "cities PIVOT (sum(population) FOR (year IN (2000,2010)) IN (true, false))",
                 citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotForColumnWithAggregateFunction() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR sum(year) + 1 IN (2000, 2010))", 44, "aggregate functions are not supported in PIVOT FOR expressions", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotForMissingCloseParenAfterIn() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000", 47, "')' expected", citiesModel
         );
     }
 
@@ -9090,6 +9127,45 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotGroupByExpressionExpected() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010) GROUP BY)", 63, "group by expression expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotInListMissingRightParen() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010 GROUP BY county))", 60, "')' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotMissingCloseParen() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010)", 53, "')' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotMultipleAggregates() throws Exception {
+        assertQuery(
+                "select-choose 2000_sum, 2000_avg, 2010_sum, 2010_avg from (select-group-by [first_not_null(switch(year, 2000, sum, null)) 2000_sum, first_not_null(switch(year, 2000, avg, null)) 2000_avg, first_not_null(switch(year, 2010, sum, null)) 2010_sum, first_not_null(switch(year, 2010, avg, null)) 2010_avg] first_not_null(switch(year, 2000, sum, null)) 2000_sum, first_not_null(switch(year, 2000, avg, null)) 2000_avg, first_not_null(switch(year, 2010, sum, null)) 2010_sum, first_not_null(switch(year, 2010, avg, null)) 2010_avg from (select-group-by [sum(population) sum, year, avg(population) avg] year, sum(population) sum, avg(population) avg from (select [population, year] from cities where year IN (2000, 2010))))",
+                "cities PIVOT (sum(population) as sum, avg(population) as avg FOR year IN (2000, 2010))",
+                citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotMultipleForColumns() throws Exception {
+        assertQuery(
+                "select-choose 2000_NL, 2000_US, 2010_NL, 2010_US from (select-group-by [first_not_null(case when year = 2000 and (country = 'NL') then sum(population) else null end) 2000_NL, first_not_null(case when year = 2000 and (country = 'US') then sum(population) else null end) 2000_US, first_not_null(case when year = 2010 and (country = 'NL') then sum(population) else null end) 2010_NL, first_not_null(case when year = 2010 and (country = 'US') then sum(population) else null end) 2010_US] first_not_null(case when year = 2000 and (country = 'NL') then sum(population) else null end) 2000_NL, first_not_null(case when year = 2000 and (country = 'US') then sum(population) else null end) 2000_US, first_not_null(case when year = 2010 and (country = 'NL') then sum(population) else null end) 2010_NL, first_not_null(case when year = 2010 and (country = 'US') then sum(population) else null end) 2010_US from (select-group-by [sum(population) sum(population), year, country] year, country, sum(population) sum(population) from (select [population, year, country] from cities where year IN (2000, 2010) and country IN ('NL', 'US'))))",
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010) country IN ('NL', 'US'))",
+                citiesModel
+        );
+    }
+
+    @Test
     public void testPivotNoBody() throws Exception {
         assertSyntaxError(
                 "cities PIVOT", 12, "'(' expected", citiesModel
@@ -9111,6 +9187,81 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotUnexpectedTokenAfterFor() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010)", 53, "')' expected", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotValueAliasDot() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000 .alias))", 48, "'.' is not allowed here", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotValueAliasKeywordNotQuoted() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (2000 AS select))", 51, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotValueWithAliasNoAs() throws Exception {
+        assertQuery(
+                "select-choose y2000, y2010 from (select-group-by [first_not_null(switch(year, 2000, sum(population), null)) y2000, first_not_null(switch(year, 2010, sum(population), null)) y2010] first_not_null(switch(year, 2000, sum(population), null)) y2000, first_not_null(switch(year, 2010, sum(population), null)) y2010 from (select-group-by [sum(population) sum(population), year] year, sum(population) sum(population) from (select [population, year] from cities where year IN (2000, 2010))))",
+                "cities PIVOT (sum(population) FOR year IN (2000 y2000, 2010 y2010))",
+                citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotValueWithAsAlias() throws Exception {
+        assertQuery(
+                "select-choose y2000, y2010 from (select-group-by [first_not_null(switch(year, 2000, sum(population), null)) y2000, first_not_null(switch(year, 2010, sum(population), null)) y2010] first_not_null(switch(year, 2000, sum(population), null)) y2000, first_not_null(switch(year, 2010, sum(population), null)) y2010 from (select-group-by [sum(population) sum(population), year] year, sum(population) sum(population) from (select [population, year] from cities where year IN (2000, 2010))))",
+                "cities PIVOT (sum(population) FOR year IN (2000 AS y2000, 2010 AS y2010))",
+                citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotWithAlias() throws Exception {
+        assertQuery(
+                "select-choose 2000, 2010 from (select-group-by [first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010] first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010 from (select-group-by [sum(population) sum(population), year] year, sum(population) sum(population) from (select [population, year] from cities where year IN (2000, 2010)))) p",
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010)) p",
+                citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotWithGroupBy() throws Exception {
+        assertQuery(
+                "select-choose country, 2000, 2010 from (select-group-by [country, first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010] country, first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010 from (select-group-by [country, sum(population) sum(population), year] country, year, sum(population) sum(population) from (select [country, population, year] from cities where year IN (2000, 2010))))",
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010) GROUP BY country)",
+                citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotWithGroupByExpression() throws Exception {
+        assertQuery(
+                "select-choose concat(country, name), 2000, 2010 from (select-group-by [concat(country, name), first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010] concat(country, name), first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010 from (select-group-by [concat(country, name) 'concat(country, name)', sum(population) sum(population), year] concat(country, name) 'concat(country, name)', year, sum(population) sum(population) from (select [name, country, population, year] from cities where year IN (2000, 2010))))",
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010) GROUP BY concat(country, name))",
+                citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotWithGroupByMultipleColumns() throws Exception {
+        assertQuery(
+                "select-choose country, name, 2000, 2010 from (select-group-by [country, name, first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010] country, name, first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010 from (select-group-by [country, name, sum(population) sum(population), year] country, name, year, sum(population) sum(population) from (select [country, name, population, year] from cities where year IN (2000, 2010))))",
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010) GROUP BY country, name)",
+                citiesModel
+        );
+    }
+
+    @Test
     public void testPivotWithNonAggregateFunction() throws Exception {
         assertSyntaxError(
                 "cities PIVOT (now() FOR county IN ('NL', 'US'));", 14, "expected aggregate function [col=now()]", citiesModel
@@ -9121,6 +9272,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testPivotWithNonAggregateFunction2() throws Exception {
         assertSyntaxError(
                 "cities PIVOT (FOR county IN ('NL', 'US'));", 14, "expected aggregate function [col=FOR]", citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotWithSubquery() throws Exception {
+        assertQuery(
+                "select-choose 2000, 2010 from (select-group-by [first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010] first_not_null(switch(year, 2000, sum(population), null)) 2000, first_not_null(switch(year, 2010, sum(population), null)) 2010 from (select-group-by [sum(population) sum(population), year] year, sum(population) sum(population) from (select [population, year] from cities where year IN (2000, 2010))))",
+                "cities PIVOT (sum(population) FOR year IN (select 2000 union select 2010))",
+                citiesModel
+        );
+    }
+
+    @Test
+    public void testPivotWithSubqueryMissing() throws Exception {
+        assertSyntaxError(
+                "cities PIVOT (sum(population) FOR year IN (select))", 50, "[distinct] column expected", citiesModel
         );
     }
 

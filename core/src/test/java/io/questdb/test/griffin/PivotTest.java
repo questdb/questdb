@@ -610,7 +610,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
                                               values: [first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name]))]
-                                                Async JIT Group By workers: 1
+                                                Async Group By workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [last(str_value)]
                                                   filter: sensor_name in [s001,s005,s006,s009,s003,s008,s002,s004,s007,s000]
