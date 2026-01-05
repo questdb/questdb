@@ -2252,6 +2252,3 @@ public class PivotTest extends AbstractSqlParserTest {
                         """);
     }
 }
-
-
-
