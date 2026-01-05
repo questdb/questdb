@@ -1037,6 +1037,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlPivotMaxProducedColumns() {
+        return getDelegate().getSqlPivotMaxProducedColumns();
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return getDelegate().getSqlSmallMapKeyCapacity();
     }

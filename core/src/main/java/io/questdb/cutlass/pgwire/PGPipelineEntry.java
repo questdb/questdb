@@ -234,8 +234,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             @NotNull AssociativeCache<TypesAndSelect> tasCache,
             @NotNull SimpleAssociativeCache<TypesAndInsert> taiCache
     ) {
-        if (isPortal() || isPreparedStatement() || !selectIsCacheable) {
-            // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
+        if (isPortal()) {
+            return;
+        }
+
+        // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
+        if (isPreparedStatement()) {
+            if (!selectIsCacheable) {
+                factory = Misc.free(factory);
+            }
+            return;
+        }
+
+        if (!selectIsCacheable) {
             return;
         }
 
@@ -1437,7 +1448,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             sqlExecutionContext.setCacheHit(cacheHit);
             // if the current execution is in the execute stage of prepare-execute mode, we always set the `cacheHit` to true after the first execution.
             // (The execute stage always does not compile the query, while the first execution corresponds to the prepare stage's cacheHit flag.)
-            if (isPreparedStatement()) {
+            if (isPreparedStatement() && selectIsCacheable) {
                 cacheHit = true;
             }
 
@@ -3152,6 +3163,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     ) {
         sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
         this.sqlType = cq.getType();
+        selectIsCacheable = true;
         switch (sqlType) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
                 // fall-through

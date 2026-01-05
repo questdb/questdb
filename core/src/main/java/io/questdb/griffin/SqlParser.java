@@ -3096,15 +3096,26 @@ public class SqlParser {
     }
 
     /**
-     * Parse expressions of the form:
+     * Parses PIVOT clause with the following syntax:
+     * <pre>
+     * PIVOT (
+     *     agg_func(col) [AS alias], ...
+     *     FOR pivot_col IN (val1 [AS alias1], val2 [AS alias2], ... | subquery)
+     *     [FOR pivot_col2 IN (...)]
+     *     [GROUP BY col1, col2, ...] ) [alias]
+     * </pre>
      * <p>
-     * `tableName` PIVOT (sum(value) FOR name IN ('a', 'b', 'c') GROUP BY something);
+     * <b>Note:</b> ELSE clause is not supported in PIVOT FOR columns. Two-phase aggregates (e.g., avg requires
+     * sum + count in phase 1) cannot be correctly rewritten for ELSE values. Inserting
+     * appropriate expressions during the first aggregation phase is complex and would
+     * significantly impact performance. This aligns with mainstream databases which also
+     * do not support ELSE in PIVOT. For such requirements, user can use subqueries instead.
      */
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectTok(lexer, '(');
 
-        // Parse aggregate functions: func(param) AS alias, ... terminated by FOR
+        // Parse aggregate functions.
         FunctionFactoryCache functionFactoryCache = cairoEngine.getFunctionFactoryCache();
         pivotAliasMap.clear();
         do {
@@ -3137,15 +3148,13 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "expected FOR");
         }
 
-        // Parse FOR expressions: FOR col1 IN (v1 as v1_val, v2 v2_val) col2 IN (v3, v4)
-        // We parse column + "IN" + values list separately instead of parsing as a standard IN expression,
-        // because PIVOT requires alias support for each value in the list (e.g., 'value' AS alias),
-        // which is not supported by regular IN expression parsing.
+        // Parse FOR expressions (e.g., FOR region IN ('East', 'West') ELSE 'Other')
+        // We parse "col IN (values)" separately (not as standard IN expression) because
+        // PIVOT supports per-value aliases (e.g., 'value' AS alias) which regular IN doesn't.
         while (true) {
             ExpressionNode inColumnExpr;
             try {
-                // Disable greedy parsing mode, stop at top-level IN operator
-                // so we can handle the IN values list separately with alias support
+                // Stop at top-level IN operator to handle values list with alias support
                 expressionParser.setStopOnTopINOperator(true);
                 inColumnExpr = expr(lexer, model, sqlParserCallback);
             } finally {
@@ -3237,7 +3246,7 @@ public class SqlParser {
             }
         }
 
-        // Parse GROUP BY (no inference, PIVOT only accepts wildcard selects)
+        // Parse optional GROUP BY clause
         if (isGroupKeyword(tok)) {
             expectBy(lexer);
             do {
@@ -3271,7 +3280,7 @@ public class SqlParser {
         if (!isRightParen(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
         }
-        tok = optTok(lexer);
+        tok = setModelAliasAndGetOptTok(lexer, model);
 
         return tok;
     }
@@ -3716,9 +3725,6 @@ public class SqlParser {
                 final int aliasPosition;
                 if (tok != null && columnAliasStop.excludes(tok)) {
                     assertNotDot(lexer, tok);
-
-                    // verify that * wildcard is not aliased
-
                     if (isAsKeyword(tok)) {
                         tok = tok(lexer, "alias");
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());

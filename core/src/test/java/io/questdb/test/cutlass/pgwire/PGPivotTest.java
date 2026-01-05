@@ -26,18 +26,13 @@ package io.questdb.test.cutlass.pgwire;
 
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
 
-@SuppressWarnings("SqlNoDataSourceInspection")
-@RunWith(Parameterized.class)
 public class PGPivotTest extends BasePGTest {
-
     @Test
     public void testBindVariablesAreAllowedElsewhereInPivot() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -77,8 +72,10 @@ public class PGPivotTest extends BasePGTest {
             try (PreparedStatement ps = connection.prepareStatement("foo PIVOT (sum(y) FOR x IN (SELECT DISTINCT x FROM foo ORDER BY x))")) {
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
-                            "1[BIGINT],2[BIGINT]\n" +
-                                    "5,6\n",
+                            """
+                                    1[BIGINT],2[BIGINT]
+                                    5,6
+                                    """,
                             sink,
                             rs
                     );
@@ -90,11 +87,12 @@ public class PGPivotTest extends BasePGTest {
             }
 
             try (PreparedStatement ps = connection.prepareStatement("foo PIVOT (sum(y) FOR x IN (SELECT DISTINCT x FROM foo ORDER BY x))")) {
-
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
-                            "1[BIGINT],2[BIGINT],3[BIGINT],4[BIGINT]\n" +
-                                    "5,6,7,8\n",
+                            """
+                                    1[BIGINT],2[BIGINT],3[BIGINT],4[BIGINT]
+                                    5,6,7,8
+                                    """,
                             sink,
                             rs
                     );
@@ -118,8 +116,10 @@ public class PGPivotTest extends BasePGTest {
                 ps.setInt(1, 1);
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
-                            "1[BIGINT]\n" +
-                                    "5\n",
+                            """
+                                    1[BIGINT]
+                                    5
+                                    """,
                             sink,
                             rs
                     );
@@ -127,8 +127,8 @@ public class PGPivotTest extends BasePGTest {
                         Assert.fail("should not be supported");
                     }
                 } catch (SQLException e) {
-                    Assert.assertEquals("ERROR: cannot use bind variables in a PIVOT query\n" +
-                            "  Position: 80", e.getMessage());
+                    Assert.assertEquals("ERROR: PIVOT IN subquery returned empty result set\n" +
+                            "  Position: 29", e.getMessage());
                 }
             }
         });
@@ -181,8 +181,10 @@ public class PGPivotTest extends BasePGTest {
                 ps.setInt(1, 1);
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
-                            "1[BIGINT]\n" +
-                                    "5\n",
+                            """
+                                    '1'::INT[BIGINT]
+                                    5
+                                    """,
                             sink,
                             rs
                     );
@@ -190,8 +192,8 @@ public class PGPivotTest extends BasePGTest {
                         Assert.fail("should not be supported");
                     }
                 } catch (SQLException e) {
-                    Assert.assertEquals("ERROR: literal IN list must must only contain constants\n" +
-                            "  Position: 31", e.getMessage());
+                    Assert.assertEquals("ERROR: constant expected\n" +
+                            "  Position: 29", e.getMessage());
                 }
             }
         });

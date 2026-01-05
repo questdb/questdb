@@ -606,6 +606,8 @@ public interface CairoConfiguration {
 
     int getSqlParquetFrameCacheCapacity();
 
+    int getSqlPivotMaxProducedColumns();
+
     int getSqlSmallMapKeyCapacity();
 
     long getSqlSmallMapPageSize();

@@ -124,7 +124,6 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
-    private static final int MAX_PIVOT_COLUMNS = 5_000;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_EQUAL = 8;
     private static final int NOT_OP_GREATER = 4;
@@ -172,6 +171,7 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet literalCollectorBIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
+    private final int maxPivotProducedColumns;
     private final int maxRecursion;
     private final CharSequenceHashSet missingDependentTokens = new CharSequenceHashSet();
     private final AtomicInteger nonAggSelectCount = new AtomicInteger(0);
@@ -225,6 +225,7 @@ public class SqlOptimiser implements Mutable {
         this.queryColumnPool = queryColumnPool;
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
+        this.maxPivotProducedColumns = configuration.getSqlPivotMaxProducedColumns();
         this.path = path;
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
         initialiseOperatorExpressions();
@@ -3929,6 +3930,15 @@ public class SqlOptimiser implements Mutable {
         copyColumnsFromMetadata(model, model.getTableNameFunction().getMetadata());
     }
 
+    /**
+     * Executes PIVOT IN subqueries and converts them to value lists.
+     * <p>
+     * Subqueries must be executed during the planning phase (not at runtime) because
+     * PIVOT's IN values determine the output column metadata. Since RecordCursorFactory
+     * requires fixed metadata at compile time, we cannot defer subquery execution to runtime.
+     *
+     * @return the number of FOR value combinations (Cartesian product of all FOR column values)
+     */
     private int preparePivotForSelectSubquery(QueryModel model, QueryModel outerModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
         ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
@@ -3995,22 +4005,22 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             forValueCombinations *= pivotForColumn.getValueList().size();
-            if (forValueCombinations > MAX_PIVOT_COLUMNS) {
+            if (forValueCombinations > maxPivotProducedColumns) {
                 throw SqlException
                         .$(pivotForColumn.getInExpr().position, "PIVOT produces too many columns: ")
                         .put(forValueCombinations)
                         .put(", limit is ")
-                        .put(MAX_PIVOT_COLUMNS);
+                        .put(maxPivotProducedColumns);
             }
         }
 
         int totalColumnCount = forValueCombinations * model.getPivotGroupByColumns().size();
-        if (totalColumnCount > MAX_PIVOT_COLUMNS) {
+        if (totalColumnCount > maxPivotProducedColumns) {
             throw SqlException
                     .$(model.getModelPosition(), "PIVOT produces too many columns: ")
                     .put(totalColumnCount)
                     .put(", limit is ")
-                    .put(MAX_PIVOT_COLUMNS);
+                    .put(maxPivotProducedColumns);
         }
         return forValueCombinations;
     }
@@ -5655,9 +5665,10 @@ public class SqlOptimiser implements Mutable {
             emptyModel.setNestedModel(innerModel);
             outerModel.setNestedModel(emptyModel);
             emptyModel2.setNestedModel(outerModel);
+            emptyModel2.setAlias(model.getAlias());
 
             // Step 1: Execute subqueries in PIVOT IN clause (if any) and convert to value lists.
-            // Returns total number of pivot columns (Cartesian product of all FOR column values × aggregates).
+            // Returns total number of pivot columns (Cartesian product of all FOR column values).
             final int totalCombinations = preparePivotForSelectSubquery(model, outerModel, sqlExecutionContext);
 
             // Step 2: Add GROUP BY columns to both inner model (for grouping) and outer model (for output).
@@ -7260,6 +7271,7 @@ public class SqlOptimiser implements Mutable {
                 root.copyUpdateTableMetadata(model);
             }
         }
+        root.setCacheable(model.isCacheable());
         return root;
     }
 
