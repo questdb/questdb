@@ -598,7 +598,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
                                               values: [first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name]))]
-                                                Async JIT Group By workers: 1
+                                                Async Group By workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [avg(int_value)]
                                                   filter: sensor_name in [i009,i000,i002,i004,i008,i003,i007,i005,i006,i001]
@@ -724,7 +724,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [country]
                               values: [first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year]))]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [country,year]
                                   values: [sum(population)]
                                   filter: year in [2000,2010,2020]
@@ -765,7 +765,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [country,name]
                               values: [first_not_null(case([sum,nullL,year])),first_not_null(case([sum,nullL,year])),first_not_null(case([sum,nullL,year]))]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [country,name,year]
                                   values: [sum(population)]
                                   filter: (population%2=0 and year in [2000,2010,2020])
@@ -862,7 +862,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: false
                               values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),null]))]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [year,name]
                                   values: [sum(population)]
                                   filter: (year in [2000,2010,2020] and name in [Amsterdam,New York City,Seattle])
@@ -910,7 +910,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: false
                               values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2000 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle'),AVG(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle'),AVG(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle'),AVG(population),null]))]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [year,name]
                                   values: [sum(population),avg(population)]
                                   filter: (year in [2000,2010,2020] and name in [Amsterdam,New York City,Seattle])
@@ -1194,7 +1194,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [name]
                               values: [first_not_null(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),sum(case([(year=2000 and country='NL'),count_dis,0])),first_not_null(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),sum(case([(year=2000 and country='US'),count_dis,0])),first_not_null(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),sum(case([(year=2010 and country='NL'),count_dis,0])),first_not_null(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0])),sum(case([(year=2010 and country='US'),count_dis,0]))]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [name,year,country]
                                   values: [sum(population),count(population),count_distinct(population)]
                                   filter: (year in [2000,2010] and country in [NL,US])
@@ -1237,7 +1237,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [name]
                               values: [first_not_null(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),first_not_null(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),first_not_null(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),first_not_null(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [name,year,country]
                                   values: [sum(population),count(population)]
                                   filter: (year in [2000,2010] and country in [NL,US])
@@ -1277,7 +1277,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 """
                         GroupBy vectorized: false
                           values: [first_not_null(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),first_not_null(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),first_not_null(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),first_not_null(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]
-                            Async JIT Group By workers: 1
+                            Async Group By workers: 1
                               keys: [year,country]
                               values: [sum(population),count(population)]
                               filter: (year in [2000,2010] and country in [NL,US])
@@ -1318,7 +1318,7 @@ public class PivotTest extends AbstractSqlParserTest {
                               keys: [country]
                               values: [first_not_null(case([(year=2000 and country_2='NL'),SUM(population),null]))]
                                 SelectedRecord
-                                    Async JIT Group By workers: 1
+                                    Async Group By workers: 1
                                       keys: [country,year]
                                       values: [sum(population)]
                                       filter: (year in [2000] and country in [NL])
@@ -1360,7 +1360,7 @@ public class PivotTest extends AbstractSqlParserTest {
                               keys: [country]
                               values: [first_not_null(case([(year=2000 and country_2='NL'),SUM(population),null])),first_not_null(case([(year=2000 and country_2='NL'),AVG(population),null]))]
                                 SelectedRecord
-                                    Async JIT Group By workers: 1
+                                    Async Group By workers: 1
                                       keys: [country,year]
                                       values: [sum(population),avg(population)]
                                       filter: (year in [2000] and country in [NL])
@@ -1399,7 +1399,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         GroupBy vectorized: false
                           keys: [name]
                           values: [first_not_null(case([(year=2000 and country='NL'),SUM(population),null])),first_not_null(case([(year=2000 and country='US'),SUM(population),null])),first_not_null(case([(year=2010 and country='NL'),SUM(population),null])),first_not_null(case([(year=2010 and country='US'),SUM(population),null])),first_not_null(case([(year=2020 and country='NL'),SUM(population),null])),first_not_null(case([(year=2020 and country='US'),SUM(population),null]))]
-                            Async JIT Group By workers: 1
+                            Async Group By workers: 1
                               keys: [name,year,country]
                               values: [sum(population)]
                               filter: (year in [2000,2010,2020] and country in [NL,US])
@@ -1441,7 +1441,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 """
                         GroupBy vectorized: false
                           values: [first_not_null(case([(year=2000 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='New York City' and country='US'),COUNT(population),0]))]
-                            Async JIT Group By workers: 1
+                            Async Group By workers: 1
                               keys: [year,name,country]
                               values: [sum(population),count(population)]
                               filter: (year in [2000,2010,2020] and name in [Amsterdam,Seattle,New York City] and country in [NL,US])
@@ -1752,7 +1752,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp]
                               values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),null]))]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
                                   filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT] and side in [buy,sell])
@@ -1976,7 +1976,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp,symbol,side]
                               values: [sum(price)]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [timestamp,symbol,side]
                                   values: [avg(price)]
                                   filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
@@ -2025,7 +2025,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                   values: [sum(price)]
                                     Radix sort light
                                       keys: [timestamp]
-                                        Async JIT Group By workers: 1
+                                        Async Group By workers: 1
                                           keys: [timestamp,symbol,side]
                                           values: [avg(price)]
                                           filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
@@ -2074,7 +2074,7 @@ public class PivotTest extends AbstractSqlParserTest {
                               values: [sum(price)]
                                 Radix sort light
                                   keys: [timestamp]
-                                    Async JIT Group By workers: 1
+                                    Async Group By workers: 1
                                       keys: [timestamp,symbol,side]
                                       values: [avg(price)]
                                       filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
@@ -2242,7 +2242,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [country,name]
                               values: [first_not_null(case([sum,nullL,year])),first_not_null(case([sum,nullL,year])),first_not_null(case([sum,nullL,year]))]
-                                Async JIT Group By workers: 1
+                                Async Group By workers: 1
                                   keys: [country,name,year]
                                   values: [sum(population)]
                                   filter: (year in [2000,2010,2020] and population%2=0)

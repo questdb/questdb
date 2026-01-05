@@ -41,10 +41,3 @@ Cities PIVOT (avg(Population) FOR Country IN ('US' AS 'false') GROUP BY Name) OR
 ----
 New York City 8320.666667
 Seattle 636.666667
-
-# pivot cities on (Country='NL') in (false, true) using avg(Population) group by name;
-query III rowsort
-Cities PIVOT (avg(Population) FOR Country IN ('US' AS 'false') GROUP BY Name) ORDER BY Name;
-----
-New York City 8320.666667
-Seattle 636.666667
