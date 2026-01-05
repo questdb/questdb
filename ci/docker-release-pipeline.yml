@@ -111,7 +111,7 @@ jobs:
         inputs:
           script: |
             curl -X POST -H 'Content-type: application/json' \
-              --data '{"text":"🚨 *Docker Build Failed*\n\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`"}' \
+              --data '{"text":"🚨 *Docker Build Failed (OSS)*\n\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`"}' \
               "$(BUILDS_SLACK_HOOK_URL)"
         condition: failed()
         env:
