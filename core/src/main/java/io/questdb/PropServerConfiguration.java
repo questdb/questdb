@@ -6221,7 +6221,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getPoolName() {
-            return "view-refresh";
+            return "view-compiler";
         }
 
         @Override
