@@ -34,7 +34,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,7 +43,6 @@ import io.questdb.std.ConcurrentIntHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -208,12 +206,14 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             ObjList<WalWriter> writerObjList = new ObjList<>();
                             try {
                                 TableToken tableToken = serverMain.getEngine().getTableTokenIfExists("test" + threadId);
-                                for (int in = 0; in < 5; in++) {
-                                    WalWriter ww = commitRow(serverMain, tableToken, in);
-                                    if (rndForInserts.nextBoolean()) {
-                                        ww.close();
-                                    } else {
-                                        writerObjList.add(ww);
+                                if (tableToken != null) {
+                                    for (int in = 0; in < 5; in++) {
+                                        WalWriter ww = commitRow(serverMain, tableToken, in);
+                                        if (rndForInserts.nextBoolean()) {
+                                            ww.close();
+                                        } else {
+                                            writerObjList.add(ww);
+                                        }
                                     }
                                 }
                             } catch (CairoException ex) {
