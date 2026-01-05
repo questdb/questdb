@@ -48,12 +48,6 @@ jobs:
         displayName: 'Validate semantic version format'
         condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
 
-      - task: CmdLine@2
-        displayName: TESTING Failure
-        inputs:
-          script: |
-            exit 1
-
       - task: Docker@2
         inputs:
           command: 'login'
