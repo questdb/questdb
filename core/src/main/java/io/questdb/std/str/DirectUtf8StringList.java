@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.std.BoolList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -39,19 +40,27 @@ import org.jetbrains.annotations.Nullable;
  * A list of UTF-8 strings backed by native memory.
  */
 public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable, Utf8Sink {
+    private final BoolList asciiFlags = new BoolList();
     private final DirectLongList offsets;
     private final DirectByteSink sink;
     private final DirectUtf8StringView view = new DirectUtf8StringView();
+    private boolean currentElemAscii = true;
 
     public DirectUtf8StringList(long initialCapacity, long initialElementCount) {
-        this.sink = new DirectByteSink(initialCapacity, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
-        this.offsets = new DirectLongList(initialElementCount, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+        this(initialCapacity, initialElementCount, true);
+    }
+
+    public DirectUtf8StringList(long initialCapacity, long initialElementCount, boolean alloc) {
+        this.sink = new DirectByteSink(initialCapacity, alloc, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+        this.offsets = new DirectLongList(initialElementCount, alloc, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
     }
 
     @Override
     public void clear() {
         sink.clear();
         offsets.clear();
+        asciiFlags.clear();
+        currentElemAscii = true;
     }
 
     @Override
@@ -67,12 +76,19 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
     public DirectUtf8Sequence getQuick(int index) {
         long lo = index == 0 ? 0 : offsets.get(index - 1);
         long hi = offsets.get(index);
-        view.of(sink.ptr() + lo, sink.ptr() + hi, sink.isAscii());
+        view.of(sink.ptr() + lo, sink.ptr() + hi, asciiFlags.get(index));
         return view;
     }
 
+    @Override
+    public Utf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
+        Utf8Sink sink = Utf8Sink.super.put(cs, lo, hi);
+        setElem();
+        return sink;
+    }
+
     public DirectUtf8StringList put(byte b) {
-        sink.setAscii(sink.isAscii() & b >= 0);
+        currentElemAscii = currentElemAscii & b >= 0;
         sink.put(b);
         return this;
     }
@@ -94,7 +110,7 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
         if (us == null) {
             return this;
         }
-        sink.setAscii(sink.isAscii() & us.isAscii());
+        currentElemAscii = us.isAscii();
         final int size = us.size();
         final long dest = sink.ensureCapacity(size);
         us.writeTo(dest, 0, size);
@@ -115,7 +131,8 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
         if (dus == null) {
             return this;
         }
-        putNonAscii(dus.lo(), dus.hi());
+        currentElemAscii = dus.isAscii();
+        sink.put(dus.lo(), dus.hi());
         setElem();
         return this;
     }
@@ -127,7 +144,7 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
 
     @Override
     public DirectUtf8StringList putNonAscii(long lo, long hi) {
-        sink.setAscii(false);
+        currentElemAscii = false;
         sink.put(lo, hi);
         return this;
     }
@@ -136,6 +153,8 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
     public void reopen() {
         offsets.reopen();
         sink.reopen();
+        asciiFlags.clear();
+        currentElemAscii = true;
     }
 
     /**
@@ -144,6 +163,8 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
      */
     public void setElem() {
         offsets.add(sink.size());
+        asciiFlags.add(currentElemAscii);
+        currentElemAscii = true;
     }
 
     /**

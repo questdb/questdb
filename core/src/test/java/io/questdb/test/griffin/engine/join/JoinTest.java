@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -3557,6 +3557,28 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheckWithFatJoin(query, expected, "k", true, false, true);
             assertQueryNoLeakCheck(expected, query, "k", false, true);
+        });
+    }
+
+    @Test
+    public void testJoiningSubqueryWithDotInColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(
+                    """
+                            "foo.bar"	1
+                            1	1
+                            2	1
+                            3	1
+                            4	1
+                            5	1
+                            """,
+                    """
+                            SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
+                            LEFT JOIN (select 1) ON true;
+                            """,
+                    null,
+                    false
+            );
         });
     }
 

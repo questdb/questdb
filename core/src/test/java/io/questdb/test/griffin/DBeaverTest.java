@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,6 +50,7 @@ public class DBeaverTest extends AbstractCairoTest {
                         pg_catalog\t26\t11\toid\tb\tnull\tfalse\t\tnull\t\t\t\t0
                         pg_catalog\t1022\t11\t_float8\tb\tnull\tfalse\t\tnull\t\t\t\t0
                         pg_catalog\t1700\t11\tnumeric\tb\tnull\tfalse\t\tnull\t\t\t\t0
+                        pg_catalog\t1015\t11\t_varchar\tb\tnull\tfalse\t\tnull\t\t\t\t0
                         """,
                 """
                         SELECT ns.nspname, typ_and_elem_type.*,
@@ -183,6 +184,7 @@ public class DBeaverTest extends AbstractCairoTest {
                         26\t26\toid\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t
                         700\t700\tfloat4\t0\t1021\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t
                         701\t701\tfloat8\t0\t1022\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t
+                        1015\t1015\t_varchar\t0\t0\t11\tfalse\t0\tb\tA\tnull\t1043\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t
                         1022\t1022\t_float8\t0\t0\t11\tfalse\t0\tb\tA\tnull\t701\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t
                         1042\t1042\tbpchar\t0\t0\t11\tfalse\t0\tb\tZ\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t
                         1043\t1043\tvarchar\t0\t1015\t11\tfalse\t0\tb\tS\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t

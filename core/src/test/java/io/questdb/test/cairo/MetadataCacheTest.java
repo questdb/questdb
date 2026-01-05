@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -245,7 +245,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                                 id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
                                 1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse
                                 """,
-                        "tables()",
+                        "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()",
                         ""
                 );
             }
@@ -257,8 +257,10 @@ public class MetadataCacheTest extends AbstractCairoTest {
                                 id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
                                 1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse
                                 """,
-                        "tables()",
-                        ""
+                        "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()",
+                        "",
+                        false,
+                        true
                 );
             }
         });
@@ -810,7 +812,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
                             1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse
                             """,
-                    "tables()"
+                    "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()"
             );
 
             execute("rename table foo to bah");
@@ -820,7 +822,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
                             1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse
                             """,
-                    "tables()"
+                    "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()"
             );
         });
     }

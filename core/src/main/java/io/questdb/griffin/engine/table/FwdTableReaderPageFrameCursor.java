@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -249,8 +249,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
         frame.format = PartitionFormat.NATIVE;
-        frame.parquetAddr = -1;
-        frame.parquetFileSize = 0;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
         frame.rowGroupHi = -1;
@@ -288,8 +286,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
         frame.format = PartitionFormat.PARQUET;
-        frame.parquetAddr = reenterParquetDecoder.getFileAddr();
-        frame.parquetFileSize = reenterParquetDecoder.getFileSize();
         frame.rowGroupIndex = rowGroupIndex;
         frame.rowGroupLo = (int) (partitionLo - rowCount);
         frame.rowGroupHi = (int) (adjustedHi - rowCount);
@@ -317,8 +313,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private class TableReaderPageFrame implements PageFrame {
         private byte format;
-        private long parquetAddr;
-        private long parquetFileSize;
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
@@ -362,14 +356,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getParquetAddr() {
-            return parquetAddr;
-        }
-
-        @Override
-        public long getParquetFileSize() {
-            assert parquetFileSize > 0 || format == PartitionFormat.NATIVE;
-            return parquetFileSize;
+        public PartitionDecoder getParquetPartitionDecoder() {
+            assert reenterParquetDecoder != null || format != PartitionFormat.PARQUET;
+            return reenterParquetDecoder;
         }
 
         @Override

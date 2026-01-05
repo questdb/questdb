@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,11 +44,17 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     private long pos;
 
     public DirectLongList(long capacity, int memoryTag) {
+        this(capacity, true, memoryTag);
+    }
+
+    public DirectLongList(long capacity, boolean alloc, int memoryTag) {
         this.memoryTag = memoryTag;
         this.capacity = (capacity * Long.BYTES);
-        this.address = Unsafe.malloc(this.capacity, memoryTag);
-        this.pos = address;
-        this.limit = pos + this.capacity;
+        if (alloc) {
+            this.address = Unsafe.malloc(this.capacity, memoryTag);
+            this.pos = address;
+            this.limit = pos + this.capacity;
+        }
         this.initialCapacity = this.capacity;
     }
 

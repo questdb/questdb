@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
+/**
+ * Interface for functions that take two arguments.
+ */
 public interface BinaryFunction extends Function {
 
     @Override
@@ -46,8 +49,18 @@ public interface BinaryFunction extends Function {
         getRight().cursorClosed();
     }
 
+    /**
+     * Returns the left (first) argument of this binary function.
+     *
+     * @return the left function argument
+     */
     Function getLeft();
 
+    /**
+     * Returns the right (second) argument of this binary function.
+     *
+     * @return the right function argument
+     */
     Function getRight();
 
     @Override
@@ -107,9 +120,9 @@ public interface BinaryFunction extends Function {
 
     @Override
     default void offerStateTo(Function that) {
-        if (that instanceof BinaryFunction) {
-            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
-            getRight().offerStateTo(((BinaryFunction) that).getRight());
+        if (that instanceof BinaryFunction other) {
+            getLeft().offerStateTo(other.getLeft());
+            getRight().offerStateTo(other.getRight());
         }
     }
 

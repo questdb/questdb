@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,83 @@
 
 namespace questdb::x86 {
     using namespace asmjit::x86;
+
+    // Pre-scan instruction stream and load column addresses before the loop.
+    // This hoists column address loads out of the hot loop.
+    void preload_column_addresses(Compiler &c,
+                                   const instruction_t *istream,
+                                   size_t size,
+                                   const Gp &data_ptr,
+                                   ColumnAddressCache &cache) {
+        for (size_t i = 0; i < size; ++i) {
+            auto &instr = istream[i];
+            if (instr.opcode == opcodes::Mem) {
+                auto type = static_cast<data_type_t>(instr.options);
+                // Only cache fixed-size column addresses (not variable-size like string/binary/varchar)
+                if (type != data_type_t::string_header &&
+                    type != data_type_t::binary_header &&
+                    type != data_type_t::varchar_header) {
+                    auto column_idx = static_cast<int32_t>(instr.ipayload.lo);
+                    if (!cache.has(column_idx)) {
+                        Gp column_address = c.newInt64("col_addr_%d", column_idx);
+                        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+                        cache.set(column_idx, column_address);
+                    }
+                }
+            }
+        }
+    }
+
+    // Pre-scan instruction stream and load constants into registers before the loop.
+    // This hoists constant loads out of the hot loop.
+    void preload_constants(Compiler &c,
+                           const instruction_t *istream,
+                           size_t size,
+                           ConstantCache &cache) {
+        for (size_t i = 0; i < size; ++i) {
+            auto &instr = istream[i];
+            if (instr.opcode == opcodes::Imm) {
+                auto type = static_cast<data_type_t>(instr.options);
+                switch (type) {
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
+                    case data_type_t::i64: {
+                        int64_t value = instr.ipayload.lo;
+                        Gp dummy;
+                        if (!cache.findInt(value, dummy)) {
+                            Gp reg = c.newInt64("const_%lld", value);
+                            c.mov(reg, value);
+                            cache.addInt(value, reg);
+                        }
+                        break;
+                    }
+                    case data_type_t::f32:
+                    case data_type_t::f64: {
+                        double value = instr.dpayload;
+                        Xmm dummy;
+                        if (!cache.findFloat(value, dummy)) {
+                            Xmm reg;
+                            if (type == data_type_t::f32) {
+                                reg = c.newXmmSs("const_f_%f", value);
+                                Mem mem = c.newFloatConst(ConstPool::kScopeLocal, static_cast<float>(value));
+                                c.movss(reg, mem);
+                            } else {
+                                reg = c.newXmmSd("const_d_%f", value);
+                                Mem mem = c.newDoubleConst(ConstPool::kScopeLocal, value);
+                                c.movsd(reg, mem);
+                            }
+                            cache.addFloat(value, reg);
+                        }
+                        break;
+                    }
+                    default:
+                        // i128 constants are rare, skip caching
+                        break;
+                }
+            }
+        }
+    }
 
     jit_value_t
     read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
@@ -105,7 +182,9 @@ namespace questdb::x86 {
 
     jit_value_t read_mem(
             Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr,
-            const Gp &varsize_aux_ptr, const Gp &input_index
+            const Gp &varsize_aux_ptr, const Gp &input_index,
+            const ColumnAddressCache &addr_cache,
+            ColumnValueCache &value_cache
     ) {
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
@@ -126,20 +205,87 @@ namespace questdb::x86 {
             return read_mem_varsize(c, header_size, column_idx, data_ptr, varsize_aux_ptr, input_index);
         }
 
-        // Simple case: column has fixed-length data.
+        // Check if value is already cached
+        Gp cached_gp;
+        Xmm cached_xmm;
+        if (type == data_type_t::f32 || type == data_type_t::f64) {
+            if (value_cache.findXmm(column_idx, type, cached_xmm)) {
+                return {cached_xmm, type, data_kind_t::kMemory};
+            }
+        } else {
+            if (value_cache.find(column_idx, type, cached_gp)) {
+                return {cached_gp, type, data_kind_t::kMemory};
+            }
+        }
 
-        Gp column_address = c.newInt64("column_address");
-        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+        // Simple case: column has fixed-length data.
+        // Use cached column address if available.
+        Gp column_address;
+        if (addr_cache.has(column_idx)) {
+            column_address = addr_cache.get(column_idx);
+        } else {
+            column_address = c.newInt64("column_address");
+            c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+        }
 
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
-        if (type_size <= 8) {
-            return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
-        } else {
-            Gp offset = c.newInt64("row_offset");
-            c.mov(offset, input_index);
-            c.sal(offset, shift);
-            return {Mem(column_address, offset, 0, 0, type_size), type, data_kind_t::kMemory};
+
+        // Load value into register and cache it
+        Mem mem_op = (type_size <= 8)
+            ? Mem(column_address, input_index, shift, 0, type_size)
+            : [&]() {
+                Gp offset = c.newInt64("row_offset");
+                c.mov(offset, input_index);
+                c.sal(offset, shift);
+                return Mem(column_address, offset, 0, 0, type_size);
+            }();
+
+        switch (type) {
+            case data_type_t::i8: {
+                Gp reg = c.newGpd("col_%d_i8", column_idx);
+                c.movsx(reg, mem_op);
+                value_cache.add(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::i16: {
+                Gp reg = c.newGpd("col_%d_i16", column_idx);
+                c.movsx(reg, mem_op);
+                value_cache.add(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::i32: {
+                Gp reg = c.newGpd("col_%d_i32", column_idx);
+                c.mov(reg, mem_op);
+                value_cache.add(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::i64: {
+                Gp reg = c.newGpq("col_%d_i64", column_idx);
+                c.mov(reg, mem_op);
+                value_cache.add(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::i128: {
+                Xmm reg = c.newXmm("col_%d_i128", column_idx);
+                c.movdqu(reg, mem_op);
+                value_cache.addXmm(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::f32: {
+                Xmm reg = c.newXmmSs("col_%d_f32", column_idx);
+                c.movss(reg, mem_op);
+                value_cache.addXmm(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            case data_type_t::f64: {
+                Xmm reg = c.newXmmSd("col_%d_f64", column_idx);
+                c.movsd(reg, mem_op);
+                value_cache.addXmm(column_idx, type, reg);
+                return {reg, type, data_kind_t::kMemory};
+            }
+            default:
+                __builtin_unreachable();
         }
     }
 
@@ -187,13 +333,18 @@ namespace questdb::x86 {
         }
     }
 
-    jit_value_t read_imm(Compiler &c, const instruction_t &instr) {
+    jit_value_t read_imm(Compiler &c, const instruction_t &instr, const ConstantCache &cache) {
         auto type = static_cast<data_type_t>(instr.options);
         switch (type) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::i64: {
+                // Check if constant is already in a register
+                Gp reg;
+                if (cache.findInt(instr.ipayload.lo, reg)) {
+                    return {reg, type, data_kind_t::kConst};
+                }
                 return {imm(instr.ipayload.lo), type, data_kind_t::kConst};
             }
             case data_type_t::i128: {
@@ -205,6 +356,11 @@ namespace questdb::x86 {
             }
             case data_type_t::f32:
             case data_type_t::f64: {
+                // Check if constant is already in a register
+                Xmm reg;
+                if (cache.findFloat(instr.dpayload, reg)) {
+                    return {reg, type, data_kind_t::kConst};
+                }
                 return {imm(instr.dpayload), type, data_kind_t::kConst};
             }
             default:
@@ -377,6 +533,36 @@ namespace questdb::x86 {
                 return {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
             case data_type_t::f64:
                 return {double_ne_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk};
+            default:
+                __builtin_unreachable();
+        }
+    }
+
+    jit_value_t cmp_eq_zero(Compiler &c, const jit_value_t &lhs) {
+        auto dt = lhs.dtype();
+        auto dk = lhs.dkind();
+        switch (dt) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_eq_zero(c, lhs.gp().r32()), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_eq_zero(c, lhs.gp()), data_type_t::i32, dk};
+            default:
+                __builtin_unreachable();
+        }
+    }
+
+    jit_value_t cmp_ne_zero(Compiler &c, const jit_value_t &lhs) {
+        auto dt = lhs.dtype();
+        auto dk = lhs.dkind();
+        switch (dt) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_ne_zero(c, lhs.gp().r32()), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_ne_zero(c, lhs.gp()), data_type_t::i32, dk};
             default:
                 __builtin_unreachable();
         }
@@ -731,7 +917,124 @@ namespace questdb::x86 {
         return convert(c, args.first, args.second, null_check);
     }
 
-    void emit_bin_op(Compiler &c, const instruction_t &instr, ZoneStack<jit_value_t> &values, bool null_check) {
+    inline bool is_number(data_type_t dt) {
+        return dt == data_type_t::i8 || dt == data_type_t::i16 ||
+               dt == data_type_t::i32 || dt == data_type_t::i64 ||
+               dt == data_type_t::f32 || dt == data_type_t::f64;
+    }
+
+    inline bool is_imm_int_zero(const jit_value_t &v) {
+        if (!v.op().isImm()) {
+            return false;
+        }
+        if (!is_number(v.dtype())) {
+            return false;
+        }
+        return v.op().as<Imm>().valueAs<int64_t>() == 0;
+    }
+
+    // Check if a type supports flag-based short-circuit optimization
+    inline bool supports_flag_optimization(data_type_t dt) {
+        return dt == data_type_t::i8 || dt == data_type_t::i16 ||
+               dt == data_type_t::i32 || dt == data_type_t::i64 ||
+               dt == data_type_t::i128;
+    }
+
+    // Label array for short-circuit evaluation
+    // Index 0 is reserved for l_next_row (skip current row)
+    // Indices 1+ are for user-defined labels (e.g., OR success in IN())
+    struct LabelArray {
+        static constexpr size_t MAX_LABELS = 8;
+        Label labels[MAX_LABELS];
+        bool valid[MAX_LABELS] = {false};
+
+        void set(size_t index, Label label) {
+            if (index < MAX_LABELS) {
+                labels[index] = label;
+                valid[index] = true;
+            }
+        }
+
+        Label get(size_t index) const {
+            return labels[index];
+        }
+
+        bool has(size_t index) const {
+            return index < MAX_LABELS && valid[index];
+        }
+    };
+
+    void emit_bin_op(Compiler &c, const instruction_t &instr, ZoneStack<jit_value_t> &values, bool null_check,
+                     bool has_short_circuit_label, opcodes next_opcode) {
+        // Special case: comparison with immediate zero can use TEST instead of CMP
+        if (instr.opcode == opcodes::Eq || instr.opcode == opcodes::Ne) {
+            auto lhs_raw = values.pop();
+            auto rhs_raw = values.pop();
+
+            bool lhs_is_zero = is_imm_int_zero(lhs_raw);
+            bool rhs_is_zero = is_imm_int_zero(rhs_raw);
+
+            if (lhs_is_zero || rhs_is_zero) {
+                // Use TEST instruction for comparison with zero
+                const jit_value_t &non_zero = lhs_is_zero ? rhs_raw : lhs_raw;
+                auto loaded = load_register(c, non_zero);
+
+                if (instr.opcode == opcodes::Eq) {
+                    values.append(cmp_eq_zero(c, loaded));
+                } else {
+                    values.append(cmp_ne_zero(c, loaded));
+                }
+                return;
+            }
+
+            // Not a zero comparison, proceed with normal path
+            auto args = load_registers(c, lhs_raw, rhs_raw);
+            auto converted = convert(c, args.first, args.second, null_check);
+            auto lhs = converted.first;
+            auto rhs = converted.second;
+
+            // Optimization: if next instruction is a short-circuit op, emit only CMP and push flag marker
+            // This avoids boolean materialization (SETE/SETNE + TEST + JZ/JNZ)
+            if (has_short_circuit_label &&
+                (next_opcode == opcodes::And_Sc || next_opcode == opcodes::Or_Sc) &&
+                supports_flag_optimization(lhs.dtype())) {
+                auto dt = lhs.dtype();
+                // Emit only CMP, no SETE/SETNE
+                switch (dt) {
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
+                        c.cmp(lhs.gp().r32(), rhs.gp().r32());
+                        break;
+                    case data_type_t::i64:
+                        c.cmp(lhs.gp(), rhs.gp());
+                        break;
+                    case data_type_t::i128: {
+                        // For i128, use pcmpeqb + pmovmskb + cmp (same as int128_cmp)
+                        Gp mask = c.newInt16();
+                        c.pcmpeqb(lhs.xmm(), rhs.xmm());
+                        c.pmovmskb(mask, lhs.xmm());
+                        c.cmp(mask, 0xffff);
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                // Push a dummy register with flag marker kind
+                Gp dummy = c.newInt32("flags_marker");
+                auto flag_kind = (instr.opcode == opcodes::Eq) ? data_kind_t::kFlagsEq : data_kind_t::kFlagsNe;
+                values.append({dummy, data_type_t::i32, flag_kind});
+                return;
+            }
+
+            if (instr.opcode == opcodes::Eq) {
+                values.append(cmp_eq(c, lhs, rhs));
+            } else {
+                values.append(cmp_ne(c, lhs, rhs));
+            }
+            return;
+        }
+
         auto args = get_arguments(c, values, null_check);
         auto lhs = args.first;
         auto rhs = args.second;
@@ -741,12 +1044,6 @@ namespace questdb::x86 {
                 break;
             case opcodes::Or:
                 values.append(bin_or(c, lhs, rhs));
-                break;
-            case opcodes::Eq:
-                values.append(cmp_eq(c, lhs, rhs));
-                break;
-            case opcodes::Ne:
-                values.append(cmp_ne(c, lhs, rhs));
                 break;
             case opcodes::Gt:
                 values.append(cmp_gt(c, lhs, rhs, null_check));
@@ -783,7 +1080,11 @@ namespace questdb::x86 {
               const Gp &data_ptr,
               const Gp &varsize_aux_ptr,
               const Gp &vars_ptr,
-              const Gp &input_index) {
+              const Gp &input_index,
+              LabelArray &labels,
+              const ColumnAddressCache &addr_cache,
+              const ConstantCache &const_cache,
+              ColumnValueCache &value_cache) {
 
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
@@ -801,11 +1102,11 @@ namespace questdb::x86 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index));
+                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache, value_cache));
                 }
                     break;
                 case opcodes::Imm:
-                    values.append(read_imm(c, instr));
+                    values.append(read_imm(c, instr, const_cache));
                     break;
                 case opcodes::Neg:
                     values.append(neg(c, get_argument(c, values), null_check));
@@ -813,12 +1114,73 @@ namespace questdb::x86 {
                 case opcodes::Not:
                     values.append(bin_not(c, get_argument(c, values)));
                     break;
-                default:
-                    emit_bin_op(c, instr, values, null_check);
+                case opcodes::And_Sc: {
+                    // Short-circuit AND: if false, jump to label[index]
+                    auto label_idx = static_cast<size_t>(instr.ipayload.lo);
+                    auto arg = values.pop();
+                    if (labels.has(label_idx)) {
+                        Label target = labels.get(label_idx);
+                        if (arg.dkind() == data_kind_t::kFlagsEq) {
+                            // Flags set by CMP for equality: jump if NOT equal
+                            c.jne(target);
+                        } else if (arg.dkind() == data_kind_t::kFlagsNe) {
+                            // Flags set by CMP for inequality: jump if equal
+                            c.je(target);
+                        } else {
+                            // Normal path: test and jump if zero (false)
+                            auto loaded = load_register(c, arg);
+                            c.test(loaded.gp().r32(), loaded.gp().r32());
+                            c.jz(target);
+                        }
+                    }
                     break;
+                }
+                case opcodes::Or_Sc: {
+                    // Short-circuit OR: if true, jump to label[index]
+                    auto label_idx = static_cast<size_t>(instr.ipayload.lo);
+                    auto arg = values.pop();
+                    if (labels.has(label_idx)) {
+                        Label target = labels.get(label_idx);
+                        if (arg.dkind() == data_kind_t::kFlagsEq) {
+                            // Flags set by CMP for equality: jump if equal
+                            c.je(target);
+                        } else if (arg.dkind() == data_kind_t::kFlagsNe) {
+                            // Flags set by CMP for inequality: jump if not equal
+                            c.jne(target);
+                        } else {
+                            // Normal path: test and jump if non-zero (true)
+                            auto loaded = load_register(c, arg);
+                            c.test(loaded.gp().r32(), loaded.gp().r32());
+                            c.jnz(target);
+                        }
+                    }
+                    break;
+                }
+                case opcodes::Begin_Sc: {
+                    // Create label at index
+                    auto label_idx = static_cast<size_t>(instr.ipayload.lo);
+                    Label label = c.newLabel();
+                    labels.set(label_idx, label);
+                    break;
+                }
+                case opcodes::End_Sc: {
+                    // Bind label at index
+                    auto label_idx = static_cast<size_t>(instr.ipayload.lo);
+                    if (labels.has(label_idx)) {
+                        c.bind(labels.get(label_idx));
+                    }
+                    break;
+                }
+                default: {
+                    // Get next opcode for lookahead optimization
+                    opcodes next_op = (i + 1 < size) ? istream[i + 1].opcode : opcodes::Ret;
+                    emit_bin_op(c, instr, values, null_check, labels.has(0), next_op);
+                    break;
+                }
             }
         }
     }
+
 }
 
 #endif //QUESTDB_JIT_X86_H

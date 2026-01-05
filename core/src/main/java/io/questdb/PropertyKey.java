@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,6 +53,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS("cairo.inactive.reader.max.open.partitions"),
     CAIRO_INACTIVE_READER_TTL("cairo.inactive.reader.ttl"),
     CAIRO_INACTIVE_WRITER_TTL("cairo.inactive.writer.ttl"),
+    CAIRO_RECENT_WRITE_TRACKER_CAPACITY("cairo.recent.write.tracker.capacity"),
     CAIRO_INDEX_VALUE_BLOCK_SIZE("cairo.index.value.block.size"),
     CAIRO_MAX_SWAP_FILE_COUNT("cairo.max.swap.file.count"),
     CAIRO_PARALLEL_INDEX_THRESHOLD("cairo.parallel.index.threshold"),
@@ -106,6 +107,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED("cairo.sql.parallel.groupby.presize.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY("cairo.sql.parallel.groupby.presize.max.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE("cairo.sql.parallel.groupby.presize.max.heap.size"),
+    CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD("cairo.sql.parallel.groupby.topk.threshold"),
+    CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY("cairo.sql.parallel.groupby.topk.queue.capacity"),
     CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD("cairo.sql.parallel.work.stealing.threshold"),
     CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED("cairo.sql.parallel.read.parquet.enabled"),
     CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY("cairo.sql.parquet.frame.cache.capacity"),

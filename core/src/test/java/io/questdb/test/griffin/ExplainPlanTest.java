@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.WithinGeohashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.GlobFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
 import io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
@@ -144,7 +145,6 @@ import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.GlobFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -1524,6 +1524,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: b
                     """, "explain update a set l1 = 1, d1=d2 from b where l1=l2;");
         });
+    }
+
+    @Test
+    public void testExplainUpdateWalTable() throws Exception {
+        // Reproducer for https://github.com/questdb/questdb/issues/6194
+        assertPlan(
+                "create table trades (" +
+                        "symbol symbol, " +
+                        "price double, " +
+                        "amount int, " +
+                        "ts timestamp" +
+                        ") timestamp(ts) partition by day WAL",
+                "update trades set amount = 0 where ts in '2022-11-11'",
+                """
+                        Update table: trades
+                            VirtualRecord
+                              functions: [0]
+                                Filter filter: ts in [1668124800000000,1668211199999999]
+                                    on: trades
+                        """
+        );
     }
 
     @Test
@@ -4849,6 +4870,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonKeyedGroupByMinMaxTimestamp() throws Exception {
+        assertPlan(
+                "create table x (ts timestamp, ts1 timestamp) timestamp(ts) partition by day;",
+                "select min(ts), max(ts), min(ts1), max(ts1) from x",
+                """
+                        GroupBy vectorized: true workers: 1
+                          values: [min_designated(ts),max_designated(ts),min(ts1),max(ts1)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                        """
+        );
+    }
+
+    @Test
     public void testOrderByAdvicePushdown() throws Exception {
         // TODO: improve :
         // - limit propagation to async filter factory
@@ -5476,13 +5512,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Async JIT Filter workers: 1
                           filter: a_long=42
                             parquet page frame scan
-                        """);
+                              columns: a_long,a_str,a_ts
+                        """
+                );
 
                 assertPlanNoLeakCheck("select avg(a_long) from read_parquet('x.parquet');", """
                         GroupBy vectorized: true workers: 1
                           values: [avg(a_long)]
                             parquet page frame scan
-                        """);
+                              columns: a_long
+                        """
+                );
 
                 assertPlanNoLeakCheck("select a_str, max(a_long) from read_parquet('x.parquet');", """
                         Async Group By workers: 1
@@ -5490,7 +5530,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           values: [max(a_long)]
                           filter: null
                             parquet page frame scan
-                        """);
+                              columns: a_str,a_long
+                        """
+                );
             }
         });
     }

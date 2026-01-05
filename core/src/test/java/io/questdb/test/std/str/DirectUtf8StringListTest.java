@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,6 +53,77 @@ public class DirectUtf8StringListTest extends AbstractTest {
             Assert.assertEquals("hello", list.getQuick(0).toString());
             Assert.assertEquals("world", list.getQuick(1).toString());
             Assert.assertEquals("test", list.getQuick(2).toString());
+        }
+    }
+
+    @Test
+    public void testAsciiFlagsAfterClear() {
+        try (DirectUtf8StringList list = new DirectUtf8StringList(256, 8)) {
+            list.put(new Utf8String("Привет"));
+            Assert.assertFalse(list.getQuick(0).isAscii());
+            list.clear();
+            list.put(new Utf8String("hello"));
+            Assert.assertTrue(list.getQuick(0).isAscii());
+        }
+    }
+
+    @Test
+    public void testAsciiFlagsManualConstruction() {
+        try (DirectUtf8StringList list = new DirectUtf8StringList(64, 4)) {
+            list.putAscii('h');
+            list.putAscii('e');
+            list.putAscii('l');
+            list.putAscii('l');
+            list.putAscii('o');
+            list.setElem();
+            Assert.assertTrue(list.getQuick(0).isAscii());
+            list.put((byte) 0xD0);
+            list.put((byte) 0x9F);
+            list.setElem();
+            Assert.assertFalse(list.getQuick(1).isAscii());
+        }
+    }
+
+    @Test
+    public void testAsciiFlagsMixedStrings() {
+        try (DirectUtf8StringList list = new DirectUtf8StringList(256, 8)) {
+            list.put(new Utf8String("hello"));
+            list.put(new Utf8String("Привет"));
+            list.put(new Utf8String("world"));
+            list.put(new Utf8String("你好"));
+            list.put(new Utf8String("test"));
+
+            Assert.assertTrue(list.getQuick(0).isAscii());
+            Assert.assertFalse(list.getQuick(1).isAscii());
+            Assert.assertTrue(list.getQuick(2).isAscii());
+            Assert.assertFalse(list.getQuick(3).isAscii());
+            Assert.assertTrue(list.getQuick(4).isAscii());
+        }
+    }
+
+    @Test
+    public void testAsciiFlagsWithAsciiStrings() {
+        try (DirectUtf8StringList list = new DirectUtf8StringList(64, 4)) {
+            list.put(new Utf8String("hello"));
+            list.put(new Utf8String("world"));
+            list.put(new Utf8String("test123"));
+
+            Assert.assertTrue(list.getQuick(0).isAscii());
+            Assert.assertTrue(list.getQuick(1).isAscii());
+            Assert.assertTrue(list.getQuick(2).isAscii());
+        }
+    }
+
+    @Test
+    public void testAsciiFlagsWithNonAsciiStrings() {
+        try (DirectUtf8StringList list = new DirectUtf8StringList(256, 8)) {
+            list.put(new Utf8String("Привет"));
+            list.put(new Utf8String("你好"));
+            list.put(new Utf8String("🌍"));
+
+            Assert.assertFalse(list.getQuick(0).isAscii());
+            Assert.assertFalse(list.getQuick(1).isAscii());
+            Assert.assertFalse(list.getQuick(2).isAscii());
         }
     }
 

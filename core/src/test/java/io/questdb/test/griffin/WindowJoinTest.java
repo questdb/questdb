@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1035,6 +1035,186 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testHasJoinFilterWithDuplicatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+            Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+            execute(
+                    "create table trades (" +
+                            "  ts timestamp, " +
+                            "  sym symbol, " +
+                            "  price double " +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table prices (" +
+                            "  ts timestamp, " +
+                            "  sym symbol, " +
+                            "  price double" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into trades(sym, price, ts) values " +
+                            "('TSLA', 400.0, cast('2023-01-01T09:10:00.000000Z' as TIMESTAMP))," +
+                            "('TSLA', 401.0, cast('2023-01-01T09:11:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 500.0, cast('2023-01-01T09:12:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 501.0, cast('2023-01-01T09:12:00.000000Z' as TIMESTAMP))," +
+                            "('META', 600.0, cast('2023-01-01T09:15:00.000000Z' as TIMESTAMP))," +
+                            "('META', 601.0, cast('2023-01-01T09:15:00.000000Z' as TIMESTAMP))," +
+                            "('TSLA', 402.0, cast('2023-01-01T09:15:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 502.0, cast('2023-01-01T09:16:00.000000Z' as TIMESTAMP))," +
+                            "('META', 602.0, cast('2023-01-01T09:17:00.000000Z' as TIMESTAMP));"
+            );
+            execute(
+                    "insert into prices(sym, price, ts) values " +
+                            "('TSLA', 399.5, cast('2023-01-01T09:09:00.000000Z' as TIMESTAMP))," +
+                            "('TSLA', 400.5, cast('2023-01-01T09:10:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 499.5, cast('2023-01-01T09:11:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 500.5, cast('2023-01-01T09:11:00.000000Z' as TIMESTAMP))," +
+                            "('META', 599.5, cast('2023-01-01T09:14:00.000000Z' as TIMESTAMP))," +
+                            "('META', 600.5, cast('2023-01-01T09:14:00.000000Z' as TIMESTAMP))," +
+                            "('TSLA', 401.5, cast('2023-01-01T09:14:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 501.5, cast('2023-01-01T09:15:00.000000Z' as TIMESTAMP))," +
+                            "('META', 601.5, cast('2023-01-01T09:16:00.000000Z' as TIMESTAMP));"
+            );
+
+            if (!includePrevailing) {
+                printSql("select t.sym, t.price, t.ts, count(p.price) window_price " +
+                        "from trades t " +
+                        "left join prices p " +
+                        " on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) AND p.price > 0 " +
+                        "order by t.ts, t.sym;", sink);
+            } else {
+                printSql("""
+                                select sym,price,ts, count(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
+                                            from trades t
+                                            left join prices p 
+                                            on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) and p.price > 0
+                                        union 
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from trades t 
+                                            join prices p 
+                                            on p.ts <= dateadd('m', 1, t.ts) and p.price > 0) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts, sym;
+                                """,
+                        sink);
+            }
+
+            assertQuery(
+                    sink,
+                    String.format("""
+                                    SELECT t.sym, t.price, t.ts, count(p.price) AS window_price
+                                    FROM trades t
+                                    WINDOW JOIN prices p
+                                    ON p.price > 0
+                                       RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts, t.sym
+                                    """,
+                            includePrevailing ? "include" : "exclude"),
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testHasMaterAndJoinFilterWithDuplicatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+            Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+            execute(
+                    "create table trades (" +
+                            "  ts timestamp, " +
+                            "  sym symbol, " +
+                            "  price double " +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table prices (" +
+                            "  ts timestamp, " +
+                            "  sym symbol, " +
+                            "  price double" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into trades(sym, price, ts) values " +
+                            "('TSLA', 400.0, cast('2023-01-01T09:10:00.000000Z' as TIMESTAMP))," +
+                            "('TSLA', 401.0, cast('2023-01-01T09:11:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 500.0, cast('2023-01-01T09:12:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 501.0, cast('2023-01-01T09:12:00.000000Z' as TIMESTAMP))," +
+                            "('META', 600.0, cast('2023-01-01T09:15:00.000000Z' as TIMESTAMP))," +
+                            "('META', 601.0, cast('2023-01-01T09:15:00.000000Z' as TIMESTAMP))," +
+                            "('TSLA', 402.0, cast('2023-01-01T09:15:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 502.0, cast('2023-01-01T09:16:00.000000Z' as TIMESTAMP))," +
+                            "('META', 602.0, cast('2023-01-01T09:17:00.000000Z' as TIMESTAMP));"
+            );
+            execute(
+                    "insert into prices(sym, price, ts) values " +
+                            "('TSLA', 399.5, cast('2023-01-01T09:09:00.000000Z' as TIMESTAMP))," +
+                            "('TSLA', 400.5, cast('2023-01-01T09:10:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 499.5, cast('2023-01-01T09:11:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 500.5, cast('2023-01-01T09:11:00.000000Z' as TIMESTAMP))," +
+                            "('META', 599.5, cast('2023-01-01T09:14:00.000000Z' as TIMESTAMP))," +
+                            "('META', 600.5, cast('2023-01-01T09:14:00.000000Z' as TIMESTAMP))," +
+                            "('TSLA', 401.5, cast('2023-01-01T09:14:00.000000Z' as TIMESTAMP))," +
+                            "('AMZN', 501.5, cast('2023-01-01T09:15:00.000000Z' as TIMESTAMP))," +
+                            "('META', 601.5, cast('2023-01-01T09:16:00.000000Z' as TIMESTAMP));"
+            );
+
+            if (!includePrevailing) {
+                printSql("select t.sym, t.price, t.ts, count(p.price) window_price " +
+                        "from (select * from trades where price > 0) t " +
+                        "left join prices p " +
+                        " on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) AND p.price > 0 " +
+                        "order by t.ts, t.sym;", sink);
+            } else {
+                printSql("""
+                                select sym,price,ts, count(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
+                                            from (select * from trades where price > 0) t
+                                            left join prices p 
+                                            on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) and p.price > 0
+                                        union 
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from (select * from trades where price > 0) t 
+                                            join prices p 
+                                            on p.ts <= dateadd('m', 1, t.ts) and p.price > 0) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts, sym;
+                                """,
+                        sink);
+            }
+
+            assertQuery(
+                    sink,
+                    String.format("""
+                                    SELECT t.sym, t.price, t.ts, count(p.price) AS window_price
+                                    FROM (select * from trades where price > 0) t
+                                    WINDOW JOIN prices p
+                                    ON p.price > 0
+                                       RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts, t.sym
+                                    """,
+                            includePrevailing ? "include" : "exclude"),
                     "ts",
                     true,
                     false

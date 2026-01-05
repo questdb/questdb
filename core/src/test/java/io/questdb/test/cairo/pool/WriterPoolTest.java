@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1007,7 +1007,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, engine)) {
+            try (WriterPool pool = new WriterPool(configuration, engine, null)) {
                 code.run(pool);
             }
         });

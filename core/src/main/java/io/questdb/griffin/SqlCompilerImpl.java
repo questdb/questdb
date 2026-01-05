@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -283,6 +283,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CopyDataProgressReporter reporter,
             int reportFrequency
     ) {
+        assert batchSize > 0;
         long rowCount;
         int timestampColumnType = metadata.getColumnType(cursorTimestampIndex);
         if (ColumnType.isSymbolOrString(timestampColumnType)) {
@@ -3464,7 +3465,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long rowCount;
         if (timestampIndex == -1) {
             rowCount = copyUnordered(context, cursor, writer, recordToRowCopier, reporter, reportFrequency);
-        } else if (batchSize != -1) {
+        } else if (batchSize > 0) {
             rowCount = copyOrderedBatched(context, writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, reporter, configuration.getParquetExportCopyReportFrequencyLines());
         } else {
             rowCount = copyOrderedBatched(context, writer, metadata, cursor, recordToRowCopier, timestampIndex, Long.MAX_VALUE, o3MaxLag, reporter, configuration.getParquetExportCopyReportFrequencyLines());
