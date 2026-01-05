@@ -939,36 +939,36 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareConst() throws Exception {
+    public void testDeclareOverridable() throws Exception {
         assertModel("select-virtual 5 5 from (long_sequence(1))",
-                "DECLARE CONST @x := 5 SELECT @x", ExecutionModel.QUERY);
+                "DECLARE OVERRIDABLE @x := 5 SELECT @x", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareConstCaseInsensitive() throws Exception {
+    public void testDeclareOverridableCaseInsensitive() throws Exception {
         assertModel("select-virtual 5 5 from (long_sequence(1))",
-                "DECLARE const @x := 5 SELECT @x", ExecutionModel.QUERY);
+                "DECLARE overridable @x := 5 SELECT @x", ExecutionModel.QUERY);
         assertModel("select-virtual 5 5 from (long_sequence(1))",
-                "DECLARE Const @x := 5 SELECT @x", ExecutionModel.QUERY);
+                "DECLARE Overridable @x := 5 SELECT @x", ExecutionModel.QUERY);
         assertModel("select-virtual 5 5 from (long_sequence(1))",
-                "DECLARE CONST @x := 5 SELECT @x", ExecutionModel.QUERY);
+                "DECLARE OVERRIDABLE @x := 5 SELECT @x", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareConstMixed() throws Exception {
+    public void testDeclareOverridableMixed() throws Exception {
         assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
-                "DECLARE CONST @x := 5, @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
+                "DECLARE OVERRIDABLE @x := 5, @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareConstMultiple() throws Exception {
+    public void testDeclareOverridableMultiple() throws Exception {
         assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
-                "DECLARE CONST @x := 5, CONST @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
+                "DECLARE OVERRIDABLE @x := 5, OVERRIDABLE @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareConstMissingVariable() throws Exception {
-        assertException("DECLARE CONST SELECT 1", 14, "variable name expected after CONST");
+    public void testDeclareOverridableMissingVariable() throws Exception {
+        assertException("DECLARE OVERRIDABLE SELECT 1", 20, "variable name expected after OVERRIDABLE");
     }
 
     @Test

@@ -43,11 +43,11 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
-    public void testDeclareConstViewCannotOverride() throws Exception {
+    public void testDeclareViewCannotOverrideByDefault() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query1 = "DECLARE CONST @x := 6 select ts, v from " + TABLE1 + " where v = @x";
+            final String query1 = "DECLARE @x := 6 select ts, v from " + TABLE1 + " where v = @x";
             execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
             drainWalAndViewQueues();
 
@@ -58,17 +58,18 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     VIEW1, "ts", true, sqlExecutionContext);
 
-            assertExceptionNoLeakCheck("DECLARE @x := 5 SELECT * FROM " + VIEW1, 11, "cannot override CONST variable: @x");
+            assertExceptionNoLeakCheck("DECLARE @x := 5 SELECT * FROM " + VIEW1, 11, "variable is not overridable: @x");
         });
     }
 
     @Test
-    public void testDeclareConstViewMixedCannotOverrideConst() throws Exception {
+    public void testDeclareViewMixedOverridable() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            // view with mixed CONST and non-CONST variables
-            final String query1 = "DECLARE CONST @lo := 5, @hi := 8 select ts, v from " + TABLE1 + " where v >= @lo and v <= @hi";
+            // view with mixed OVERRIDABLE and non-overridable variables
+            // @lo is non-overridable (no modifier), @hi is OVERRIDABLE
+            final String query1 = "DECLARE @lo := 5, OVERRIDABLE @hi := 8 select ts, v from " + TABLE1 + " where v >= @lo and v <= @hi";
             execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
             drainWalAndViewQueues();
 
@@ -82,7 +83,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     "VIEW1", "ts", true, sqlExecutionContext);
 
-            // can override @hi (not const)
+            // can override @hi (marked as OVERRIDABLE)
             assertQueryNoLeakCheck("""
                             ts	v
                             1970-01-01T00:00:50.000000Z	5
@@ -91,17 +92,18 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     "DECLARE @hi := 7 SELECT * FROM " + VIEW1, "ts", true, sqlExecutionContext);
 
-            // override @lo (const) should fail
-            assertExceptionNoLeakCheck("DECLARE @lo := 3 SELECT * FROM " + VIEW1, 12, "cannot override CONST variable: @lo");
+            // override @lo (not overridable) should fail
+            assertExceptionNoLeakCheck("DECLARE @lo := 3 SELECT * FROM " + VIEW1, 12, "variable is not overridable: @lo");
         });
     }
 
     @Test
-    public void testDeclareConstViewMultipleCannotOverride() throws Exception {
+    public void testDeclareViewMultipleCannotOverrideByDefault() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query1 = "DECLARE CONST @x := 5, CONST @y := 8 select ts, v from " + TABLE1 + " where v >= @x and v <= @y";
+            // Neither variable is marked OVERRIDABLE, so neither can be overridden
+            final String query1 = "DECLARE @x := 5, @y := 8 select ts, v from " + TABLE1 + " where v >= @x and v <= @y";
             execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
             drainWalAndViewQueues();
 
@@ -115,8 +117,8 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     VIEW1, "ts", true, sqlExecutionContext);
 
-            assertExceptionNoLeakCheck("DECLARE @x := 3 SELECT * FROM " + VIEW1, 11, "cannot override CONST variable: @x");
-            assertExceptionNoLeakCheck("DECLARE @y := 10 SELECT * FROM " + VIEW1, 11, "cannot override CONST variable: @y");
+            assertExceptionNoLeakCheck("DECLARE @x := 3 SELECT * FROM " + VIEW1, 11, "variable is not overridable: @x");
+            assertExceptionNoLeakCheck("DECLARE @y := 10 SELECT * FROM " + VIEW1, 11, "variable is not overridable: @y");
         });
     }
 
@@ -125,7 +127,7 @@ public class ViewQueryTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query1 = "DECLARE @x := k, @z := 'hohoho' select ts, @x, @z as red, max(v) as v_max from " + TABLE1 + " where v > 5";
+            final String query1 = "DECLARE OVERRIDABLE @x := k, OVERRIDABLE @z := 'hohoho' select ts, @x, @z as red, max(v) as v_max from " + TABLE1 + " where v > 5";
             createView(VIEW1, query1, TABLE1);
 
             String query = VIEW1;
@@ -188,7 +190,7 @@ public class ViewQueryTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query1 = "DECLARE @x := 6 select ts, v from " + TABLE1 + " where v = @x";
+            final String query1 = "DECLARE OVERRIDABLE @x := 6 select ts, v from " + TABLE1 + " where v = @x";
             execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
             drainWalAndViewQueues();
             assertViewDefinition(VIEW1, query1, TABLE1);

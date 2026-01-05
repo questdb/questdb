@@ -122,7 +122,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final LowerCaseCharSequenceHashSet constDecls = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet overridableDecls = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
@@ -506,7 +506,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
-        constDecls.clear();
+        overridableDecls.clear();
         orderDescendingByDesignatedTimestampOnly = false;
         forceBackwardScan = false;
         hintsMap.clear();
@@ -602,10 +602,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 final ObjList<CharSequence> keys = decls.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     final CharSequence key = keys.getQuick(i);
-                    if (this.constDecls.contains(key)) {
+                    // Only allow override if the variable is marked as OVERRIDABLE
+                    if (!this.overridableDecls.contains(key) && this.decls.contains(key)) {
                         ExpressionNode existing = decls.get(key);
                         int position = existing != null ? existing.position : 0;
-                        throw SqlException.$(position, "cannot override CONST variable: ").put(key);
+                        throw SqlException.$(position, "variable is not overridable: ").put(key);
                     }
                 }
                 this.decls.putAll(decls);
@@ -803,8 +804,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
     }
 
-    public LowerCaseCharSequenceHashSet getConstDecls() {
-        return constDecls;
+    public LowerCaseCharSequenceHashSet getOverridableDecls() {
+        return overridableDecls;
     }
 
     public ExpressionNode getConstWhereClause() {
