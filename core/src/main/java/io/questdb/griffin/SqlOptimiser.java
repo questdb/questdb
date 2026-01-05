@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -171,7 +170,6 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet literalCollectorBIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
-    private final int maxPivotProducedColumns;
     private final int maxRecursion;
     private final CharSequenceHashSet missingDependentTokens = new CharSequenceHashSet();
     private final AtomicInteger nonAggSelectCount = new AtomicInteger(0);
@@ -195,6 +193,7 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempCrosses = new IntList();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tempCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final IntList tempIntList = new IntList();
+    private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
     private final TrivialExpressionVisitor trivialExpressionVisitor = new TrivialExpressionVisitor();
@@ -225,7 +224,6 @@ public class SqlOptimiser implements Mutable {
         this.queryColumnPool = queryColumnPool;
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
-        this.maxPivotProducedColumns = configuration.getSqlPivotMaxProducedColumns();
         this.path = path;
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
         initialiseOperatorExpressions();
@@ -320,6 +318,7 @@ public class SqlOptimiser implements Mutable {
         tempColumns2.clear();
         tempCharSequenceSet.clear();
         pivotAliasMap.clear();
+        tmpStringSink.clear();
     }
 
     public void clearForUnionModelInJoin() {
@@ -407,6 +406,7 @@ public class SqlOptimiser implements Mutable {
 
     private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink) {
         final int columnType = metadata.getColumnType(0);
+        sink.clear();
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
             case ColumnType.ARRAY_STRING: {
@@ -489,7 +489,7 @@ public class SqlOptimiser implements Mutable {
                     sink.put("NULL");
                     return true;
                 }
-                sink.put(val);
+                sink.putISODateMillis(val);
                 return false;
             }
             case ColumnType.TIMESTAMP: {
@@ -498,7 +498,7 @@ public class SqlOptimiser implements Mutable {
                     sink.put("NULL");
                     return true;
                 }
-                sink.put(val);
+                sink.putISODate(ColumnType.getTimestampDriver(columnType), val);
                 return false;
             }
             case ColumnType.CHAR: {
@@ -3943,6 +3943,7 @@ public class SqlOptimiser implements Mutable {
         ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         int forValueCombinations = 1;
+        int maxPivotProducedColumns = engine.getConfiguration().getSqlPivotMaxProducedColumns();
 
         for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
             PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
@@ -3958,26 +3959,29 @@ public class SqlOptimiser implements Mutable {
                                     .$(subQueryNode.position, "PIVOT IN subquery must return exactly one column, got ")
                                     .put(columnCount);
                         }
-                        final TableColumnMetadata columnMetadata = inListMetadata.getColumnMetadata(0);
-                        final boolean quote = ColumnType.isSymbolOrStringOrVarchar(columnMetadata.getColumnType());
+                        final int columnType = inListMetadata.getColumnMetadata(0).getColumnType();
+                        final boolean quote = switch (ColumnType.tagOf(columnType)) {
+                            case ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.TIMESTAMP,
+                                 ColumnType.DATE, ColumnType.CHAR, ColumnType.UUID, ColumnType.IPv4, ColumnType.ARRAY,
+                                 ColumnType.LONG128, ColumnType.LONG256 -> true;
+                            default -> false;
+                        };
                         int valueCount = 0;
                         tempCharSequenceSet.clear();
                         pivotAliasMap.clear();
 
                         try (RecordCursor cursor = inListFactory.getCursor(sqlExecutionContext)) {
-                            StringSink sink = Misc.getThreadLocalSink();
                             while (cursor.hasNext()) {
                                 final Record record = cursor.getRecord();
-                                sink.clear();
-                                boolean isNull = printRecordColumnOrNull(record, inListMetadata, sink);
-                                if (!tempCharSequenceSet.add(sink)) {
+                                boolean isNull = printRecordColumnOrNull(record, inListMetadata, tmpStringSink);
+                                if (!tempCharSequenceSet.add(tmpStringSink)) {
                                     continue;
                                 }
                                 CharacterStoreEntry quotedCse = characterStore.newEntry();
                                 if (quote && !isNull) {
                                     quotedCse.put('\'');
                                 }
-                                quotedCse.put(sink);
+                                quotedCse.put(tmpStringSink);
                                 if (quote && !isNull) {
                                     quotedCse.put('\'');
                                 }
@@ -5678,6 +5682,10 @@ public class SqlOptimiser implements Mutable {
             // Step 3: Add FOR column expressions to inner model's SELECT list with generated aliases.
             // Also generates IN filter (e.g., col IN ('a','b','c')) and pushes it to the nested WHERE clause.
             // Skips filter generation when ELSE is present (ELSE needs to match all non-listed values).
+            //
+            // NOTE: This filter pushdown is debatable - when FOR values don't exist in the data,
+            // we return empty rows instead of rows with NULL pivot columns (unlike DuckDB).
+            // This behavior is kept for performance reasons. See PivotTest.testPivotWithNoMatchingForValues.
             pushPivotFiltersToInnerModel(model, innerModel);
 
             // Step 4: Add aggregate expressions (e.g., sum(amount)) to inner model's SELECT list.

@@ -2416,6 +2416,7 @@ public class SqlParser {
             try {
                 pivotMode = true;
                 QueryModel pivotModel = queryModelPool.next();
+                pivotModel.setModelPosition(lexer.lastTokenPosition());
                 pivotModel.setNestedModel(model);
                 tok = parsePivot(lexer, pivotModel, sqlParserCallback);
                 hasPivot = true;

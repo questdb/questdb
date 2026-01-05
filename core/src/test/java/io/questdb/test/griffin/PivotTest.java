@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import org.junit.Test;
 
 public class PivotTest extends AbstractSqlParserTest {
@@ -463,6 +464,109 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotInUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010
+                            NL\t1005\t1065
+                            US\t8579\t8783
+                            NL\t1005\t1065
+                            US\t8579\t8783
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (2000, 2010)
+                                GROUP BY country
+                            )
+                            UNION ALL
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (2000, 2010)
+                                GROUP BY country
+                            )
+                            """,
+                    null,
+                    false,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotMaxProducedColumnsExceededByForCombinations() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 5);
+            execute(ddlMonthlySales);
+            assertException("""
+                    SELECT * FROM monthly_sales
+                    PIVOT (
+                        SUM(amount)
+                        FOR month IN ('JAN', 'FEB', 'MAR', 'APR')
+                          empid IN (1, 2)
+                    )
+                    """, 104, "PIVOT produces too many columns: 8, limit is 5");
+        });
+    }
+
+    @Test
+    public void testPivotMaxProducedColumnsExceededByTotalColumnCount() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 10);
+            execute(ddlMonthlySales);
+            assertException("""
+                    SELECT * FROM monthly_sales
+                    PIVOT (
+                        SUM(amount),
+                        AVG(amount),
+                        COUNT(amount)
+                        FOR month IN ('JAN', 'FEB', 'MAR', 'APR')
+                        GROUP BY empid
+                    )
+                    """, 28, "PIVOT produces too many columns: 12, limit is 10");
+        });
+    }
+
+    @Test
+    public void testPivotNestedPivot() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country	NL	US
+                            NL	3228	null
+                            US	null	26872
+                            """,
+                    """
+                            SELECT * FROM (
+                                SELECT * FROM cities
+                                PIVOT (
+                                    SUM(population)
+                                    FOR year IN (2000, 2010, 2020)
+                                    GROUP BY country
+                                )
+                            ) PIVOT (
+                                SUM("2000" + "2010" + "2020")
+                                FOR country IN ('NL', 'US')
+                                GROUP BY country
+                            ) order by country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
     public void testPivotOHLC() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrades);
@@ -504,6 +608,535 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotPositionalGroupByNotAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertException(
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY 1
+                            )
+                            """,
+                    97,
+                    "cannot use positional group by inside `PIVOT`"
+            );
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryReturnsEmptyResultSet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertException(
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (SELECT year FROM cities WHERE year > 9999)
+                                GROUP BY country
+                            )
+                            """,
+                    66,
+                    "PIVOT IN subquery returned empty result set"
+            );
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryReturnsMultipleColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertException(
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (SELECT year, country FROM cities)
+                                GROUP BY country
+                            )
+                            """,
+                    66,
+                    "PIVOT IN subquery must return exactly one column, got 2"
+            );
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithBooleanType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat BOOLEAN, val INT);");
+            execute("CREATE TABLE cats (c BOOLEAN);");
+            execute("INSERT INTO cats VALUES (true), (false);");
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 48, "there is no matching operator `IN` with the argument type: BOOLEAN");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithByteType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat BYTE, val INT);");
+            execute("CREATE TABLE cats (c BYTE);");
+            execute("INSERT INTO cats VALUES (1), (2);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1, 10),
+                        ('A', 2, 20),
+                        ('B', 1, 30),
+                        ('B', 2, 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp\t1\t2
+                            A\t10\t20
+                            B\t30\t40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithCharType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat CHAR, val INT);");
+            execute("CREATE TABLE cats (c CHAR);");
+            execute("INSERT INTO cats VALUES ('X'), ('Y');");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'X', 10),
+                        ('A', 'Y', 20),
+                        ('B', 'X', 30),
+                        ('B', 'Y', 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp\tX\tY
+                            A\t10\t20
+                            B\t30\t40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithDateType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat DATE, val INT);");
+            execute("CREATE TABLE cats (c DATE);");
+            execute("INSERT INTO cats VALUES ('2024-01-01'), ('2024-01-02');");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', '2024-01-01', 10),
+                        ('A', '2024-01-02', 20),
+                        ('B', '2024-01-01', 30),
+                        ('B', '2024-01-02', 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp	"2024-01-01T00:00:00.000Z"	"2024-01-02T00:00:00.000Z"
+                            A	10	20
+                            B	30	40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithIPv4Type() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat IPv4, val INT);");
+            execute("CREATE TABLE cats (c IPv4);");
+            execute("INSERT INTO cats VALUES ('192.168.1.1'), ('192.168.1.2');");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', '192.168.1.1', 10),
+                        ('A', '192.168.1.2', 20),
+                        ('B', '192.168.1.1', 30),
+                        ('B', '192.168.1.2', 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp	"192.168.1.1"	"192.168.1.2"
+                            A	10	20
+                            B	30	40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithIntType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+            execute("CREATE TABLE years (y INT);");
+            execute("INSERT INTO years VALUES (2000), (2010);");
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010
+                            NL\t1005\t1065
+                            US\t8579\t8783
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (SELECT y FROM years)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithLongType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat LONG, val INT);");
+            execute("CREATE TABLE cats (c LONG);");
+            execute("INSERT INTO cats VALUES (1000000000000), (2000000000000);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1000000000000, 10),
+                        ('A', 2000000000000, 20),
+                        ('B', 1000000000000, 30),
+                        ('B', 2000000000000, 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp\t1000000000000\t2000000000000
+                            A\t10\t20
+                            B\t30\t40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithNullIntValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat INT, val INT);");
+            execute("CREATE TABLE cats (c INT);");
+            execute("INSERT INTO cats VALUES (1), (null);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1, 10),
+                        ('A', null, 20),
+                        ('B', 1, 30),
+                        ('B', null, 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp\t1\tNULL
+                            A\t10\t20
+                            B\t30\t40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithNullValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT);");
+            execute("CREATE TABLE cats (c SYMBOL);");
+            execute("INSERT INTO cats VALUES ('X'), (null);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'X', 10),
+                        ('A', null, 20),
+                        ('B', 'X', 30),
+                        ('B', null, 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp\tX\tNULL
+                            A\t10\t20
+                            B\t30\t40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithShortType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat SHORT, val INT);");
+            execute("CREATE TABLE cats (c SHORT);");
+            execute("INSERT INTO cats VALUES (1), (2);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1, 10),
+                        ('A', 2, 20),
+                        ('B', 1, 30),
+                        ('B', 2, 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp\t1\t2
+                            A\t10\t20
+                            B\t30\t40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithStringType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("CREATE TABLE cats (c STRING);");
+            execute("INSERT INTO cats VALUES ('X'), ('Y');");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'X', 10),
+                        ('A', 'Y', 20),
+                        ('B', 'X', 30),
+                        ('B', 'Y', 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp\tX\tY
+                            A\t10\t20
+                            B\t30\t40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithSymbolType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT);");
+            execute("CREATE TABLE cats (c SYMBOL);");
+            execute("INSERT INTO cats VALUES ('X'), ('Y');");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'X', 10),
+                        ('A', 'Y', 20),
+                        ('B', 'X', 30),
+                        ('B', 'Y', 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp\tX\tY
+                            A\t10\t20
+                            B\t30\t40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithTimestampType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat TIMESTAMP, val INT);");
+            execute("CREATE TABLE cats (c TIMESTAMP);");
+            execute("INSERT INTO cats VALUES ('2024-01-01T00:00:00.000000Z'), ('2024-01-02T00:00:00.000000Z');");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', '2024-01-01T00:00:00.000000Z', 10),
+                        ('A', '2024-01-02T00:00:00.000000Z', 20),
+                        ('B', '2024-01-01T00:00:00.000000Z', 30),
+                        ('B', '2024-01-02T00:00:00.000000Z', 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp	"2024-01-01T00:00:00.000000Z"	"2024-01-02T00:00:00.000000Z"
+                            A	10	20
+                            B	30	40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithVarcharType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat VARCHAR, val INT);");
+            execute("CREATE TABLE cats (c VARCHAR);");
+            execute("INSERT INTO cats VALUES ('X'), ('Y');");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'X', 10),
+                        ('A', 'Y', 20),
+                        ('B', 'X', 30),
+                        ('B', 'Y', 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp\tX\tY
+                            A\t10\t20
+                            B\t30\t40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
     public void testPivotWithAliasedAggregate() throws Exception {
         assertQueryAndPlan(
                 "country\t2000_total\t2010_total\t2020_total\n",
@@ -541,6 +1174,39 @@ public class PivotTest extends AbstractSqlParserTest {
                                         Row forward scan
                                         Frame forward scan on: cities
                         """);
+    }
+
+    @Test
+    public void testPivotWithAllNullColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sparse (grp SYMBOL, cat SYMBOL, val INT);");
+            execute("""
+                    INSERT INTO sparse VALUES
+                        ('G1', 'A', 10),
+                        ('G1', 'B', null),
+                        ('G2', 'A', 20),
+                        ('G2', 'B', null);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp	A_SUM(val)	A_count(val)	B_SUM(val)	B_count(val)
+                            G1	10	1	null	0
+                            G2	20	1	null	0
+                            """,
+                    """
+                            SELECT * FROM sparse
+                            PIVOT (
+                                SUM(val), count(val)
+                                FOR cat IN ('A', 'B')
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
     }
 
     @Test
@@ -776,6 +1442,67 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country	2000_COUNT()	2000_last(population)	2010_COUNT()	2010_last(population)	2020_COUNT()	2020_last(population)	null_COUNT()	null_last(population)	2030_COUNT()	2030_last(population)
+                            NL	1	1005	1	1065	1	1158	0	null	0	null
+                            US	2	8015	2	8175	2	8772	0	null	0	null
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                COUNT(*),
+                                last(population)
+                                FOR year IN (2000, 2010, 2020, null, 2030)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotWithDoubleType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE measurements (sensor SYMBOL, metric SYMBOL, value DOUBLE);");
+            execute("""
+                    INSERT INTO measurements VALUES
+                        ('S1', 'temp', 25.5),
+                        ('S1', 'humidity', 60.2),
+                        ('S2', 'temp', 28.3),
+                        ('S2', 'humidity', 55.8);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            sensor	temp	humidity
+                            S1	12.75	30.1
+                            S2	14.15	27.9
+                            """,
+                    """
+                            SELECT * FROM measurements
+                            PIVOT (
+                                avg(value) / 2
+                                FOR metric IN ('temp', 'humidity')
+                                GROUP BY sensor
+                            ) ORDER BY sensor
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
     public void testPivotWithDynamicInList() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
@@ -918,6 +1645,56 @@ public class PivotTest extends AbstractSqlParserTest {
                                         Row forward scan
                                         Frame forward scan on: cities
                             """);
+        });
+    }
+
+    @Test
+    public void testPivotWithEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010\t2020
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY country
+                            )
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotWithExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country	0	10
+                            NL	1005	1065
+                            US	8579	8783
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year - 2000 IN (0, 10)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
         });
     }
 
@@ -1078,6 +1855,43 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+            execute("CREATE TABLE country_info (code VARCHAR, continent VARCHAR);");
+            execute("""
+                    INSERT INTO country_info VALUES
+                        ('NL', 'Europe'),
+                        ('US', 'America');
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            continent\t2000\t2010\t2020
+                            America\t8579\t8783\t9510
+                            Europe\t1005\t1065\t1158
+                            """,
+                    """
+                            SELECT continent, "2000", "2010", "2020" FROM (
+                                SELECT ci.continent, c.year, c.population
+                                FROM cities c
+                                JOIN country_info ci ON c.country = ci.code
+                            )
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY continent
+                            ) ORDER BY continent
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
     public void testPivotWithLatestOnGroupBy() throws Exception {
         assertQueryAndPlan(
                 "side\tETH-USDT\tBTC-USDT\tDOGE-USDT\n",
@@ -1116,6 +1930,33 @@ public class PivotTest extends AbstractSqlParserTest {
                                             Row forward scan
                                             Frame forward scan on: trades
                         """);
+    }
+
+    @Test
+    public void testPivotWithMinMax() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000_min\t2000_max\t2010_min\t2010_max\t2020_min\t2020_max
+                            NL\t1005\t1005\t1065\t1065\t1158\t1158
+                            US\t564\t8015\t608\t8175\t738\t8772
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                MIN(population) AS min, MAX(population) AS max
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
     }
 
     @Test
@@ -1495,6 +2336,44 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithNoMatchingForValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            // DUCKDB result:
+            // ┌─────────┬────────┬────────┐
+            // │ country │  1990  │  1995  │
+            // │ varchar │ int128 │ int128 │
+            // ├─────────┼────────┼────────┤
+            // │ NL      │   NULL │   NULL │
+            // │ US      │   NULL │   NULL │
+            // └─────────┴────────┴────────┘
+            //
+            // We return empty rows because pushPivotFiltersToInnerModel() pushes IN filter
+            // conditions down to the inner query, so no rows match when FOR values don't
+            // exist in the data (e.g., year IN (1990, 1995) filters out all rows).
+            // This behavior is kept for performance reasons.
+            assertQueryNoLeakCheck(
+                    """
+                            country\t1990\t1995
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (1990, 1995)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
     public void testPivotWithNonDistinctQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrades);
@@ -1555,6 +2434,47 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithNullValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (category SYMBOL, type SYMBOL, value INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'X', 10),
+                        ('A', 'Y', null),
+                        ('B', 'X', null),
+                        ('B', 'Y', 30),
+                        ('C', 'X', 50),
+                        ('C', 'Y', 60),
+                        ('D', 'y', 70),
+                        ('D', null, 80),
+                        ('E', 'null', 90);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category	NULL	X	Y	null_2	y_2
+                            A	null	21	null	null	null
+                            B	null	null	41	null	null
+                            C	null	61	71	null	null
+                            D	91	null	null	null	81
+                            E	null	null	null	101	null
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(value + 1) + 10
+                                FOR type IN (select distinct type from data order by type)
+                                GROUP BY category
+                            ) ORDER BY category
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
     public void testPivotWithOrderBy() throws Exception {
         assertQueryAndPlan(
                 "country\t2000\t2010\t2020\n",
@@ -1593,6 +2513,8 @@ public class PivotTest extends AbstractSqlParserTest {
                                         Frame forward scan on: cities
                         """);
     }
+
+    // Tests for printRecordColumnOrNull - various data types in PIVOT IN subqueries
 
     @Test
     public void testPivotWithOrderByNotPresentInForOrGroupBy() throws Exception {
@@ -1679,6 +2601,101 @@ public class PivotTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: trades
                         """);
+    }
+
+    @Test
+    public void testPivotWithStringType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE logs (category SYMBOL, status SYMBOL, message STRING);");
+            execute("""
+                    INSERT INTO logs VALUES
+                        ('error', 'critical', 'msg1'),
+                        ('error', 'warning', 'msg2'),
+                        ('info', 'critical', 'msg3'),
+                        ('info', 'warning', 'msg4');
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category\tcritical\twarning
+                            error\tmsg1\tmsg2
+                            info\tmsg3\tmsg4
+                            """,
+                    """
+                            SELECT * FROM logs
+                            PIVOT (
+                                last(message)
+                                FOR status IN ('critical', 'warning')
+                                GROUP BY category
+                            ) ORDER BY category
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotWithSubqueryDuplicateValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+            execute("CREATE TABLE years (y INT);");
+            execute("INSERT INTO years VALUES (2000), (2000), (2010);");
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010
+                            NL\t1005\t1065
+                            US\t8579\t8783
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                SUM(population)
+                                FOR year IN (SELECT y FROM years)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotWithTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (ts TIMESTAMP, category SYMBOL, value INT) timestamp(ts);");
+            execute("""
+                    INSERT INTO events VALUES
+                        ('2024-01-01', 'A', 10),
+                        ('2024-01-01', 'B', 20),
+                        ('2024-01-02', 'A', 30),
+                        ('2024-01-02', 'B', 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tA\tB
+                            2024-01-01T00:00:00.000000Z\t10\t20
+                            2024-01-02T00:00:00.000000Z\t30\t40
+                            """,
+                    """
+                            SELECT * FROM events
+                            PIVOT (
+                                SUM(value)
+                                FOR category IN ('A', 'B')
+                                GROUP BY ts
+                            ) ORDER BY ts
+                            """,
+                    "ts",
+                    true,
+                    true,
+                    false);
+        });
     }
 
     @Test
