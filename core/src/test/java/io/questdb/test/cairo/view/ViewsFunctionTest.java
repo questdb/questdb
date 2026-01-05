@@ -164,18 +164,18 @@ public class ViewsFunctionTest extends AbstractViewTest {
 
             assertQueryAndPlan(
                     """
-                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
-                            1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
-                            2\ttable2\tts\tDAY\t1000\t300000000\ttrue\ttable2~2\tfalse\t0\tHOUR\tT
-                            3\tview1\t\tN/A\t0\t0\ttrue\tview1~3\tfalse\t0\tHOUR\tV
-                            4\tview2\t\tN/A\t0\t0\ttrue\tview2~4\tfalse\t0\tHOUR\tV
-                            5\tview3\tts\tDAY\t1000\t-1\ttrue\tview3~5\tfalse\t0\tHOUR\tM
-                            6\tview4\tts\tDAY\t1000\t-1\ttrue\tview4~6\tfalse\t0\tHOUR\tM
+                            id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_type	table_row_count	table_max_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
+                            1	table1	ts	DAY	true	false	0	HOUR	false	table1~1	1000	300000000	false	T	9	2025-06-19T15:00:00.000000Z	9	0	1	1.0078125	1.0078125	1.0078125	1.0078125	1	9043967	9043967	9043967	9043967	0	0	9	1970-01-01T00:01:20.000000Z	9	1	1	1	1	0	0	0	0	0	false
+                            2	table2	ts	DAY	true	false	0	HOUR	false	table2~2	1000	300000000	false	T	9	2025-06-19T15:00:00.000000Z	9	0	1	1.0078125	1.0078125	1.0078125	1.0078125	1	9043967	9043967	9043967	9043967	0	0	9	1970-01-01T00:01:20.000000Z	9	1	1	1	1	0	0	0	0	0	false
+                            3	view1		N/A	true	false	0	HOUR	false	view1~3	0	0	false	V	null		null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
+                            4	view2		N/A	true	false	0	HOUR	false	view2~4	0	0	false	V	null		null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
+                            5	view3	ts	DAY	true	false	0	HOUR	true	view3~5	1000	-1	false	M	9	2025-06-19T15:00:00.000000Z	1	0	1	1.0078125	1.0078125	1.0078125	1.0078125	1	9043967	9043967	9043967	9043967	0	0	1	1970-01-01T00:01:00.000000Z	1	9	9	9	9	0	0	0	0	0	false
+                            6	view4	ts	DAY	true	false	0	HOUR	true	view4~6	1000	-1	false	M	1	2025-06-19T15:00:00.000000Z	1	0	1	1.0078125	1.0078125	1.0078125	1.0078125	1	1003519	1003519	1003519	1003519	0	0	1	1970-01-01T00:00:00.000000Z	1	1	1	1	1	0	0	0	0	0	false
                             """,
                     "tables() order by 1",
                     null,
                     true,
-                    false,
+                    true,
                     """
                             QUERY PLAN
                             Sort

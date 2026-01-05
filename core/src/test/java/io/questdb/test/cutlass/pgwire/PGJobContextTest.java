@@ -133,10 +133,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
-import static org.junit.Assert.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3167,10 +3167,10 @@ if __name__ == "__main__":
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
-                try (ResultSet rs = stmt.executeQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables();")) {
+                try (ResultSet rs = stmt.executeQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables();")) {
                     assertResultSet("""
-                                    id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],table_type[CHAR]
-                                    2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,T
+                                    id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT],table_type[CHAR]
+                                    2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false,T
                                     """,
                             sink, rs
                     );
@@ -3180,10 +3180,10 @@ if __name__ == "__main__":
                 drainWalQueue();
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
 
-                try (ResultSet rs = stmt.executeQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables();")) {
+                try (ResultSet rs = stmt.executeQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables();")) {
                     assertResultSet("""
-                                    id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],table_type[CHAR]
-                                    3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,T
+                                    id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT],table_type[CHAR]
+                                    3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false,T
                                     """,
                             sink, rs
                     );
@@ -9854,123 +9854,6 @@ create table tab as (
         }, () -> recvBufferSize = 4096); // all bind vars need to fit the buffer
     }
 
-    @Test
-    public void testVarcharArrayBindVarsWithSpecialChars() throws Exception {
-        // Tests varchar[] bind variables with special characters (backslash, quotes, commas, braces)
-        // in extended protocol mode with both binary and text transfer.
-        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement(
-                    "create table special_chars (ts timestamp, val varchar) timestamp(ts) partition by day"
-            ).execute();
-
-            // Insert rows with special characters
-            connection.prepareStatement(
-                    "insert into special_chars values " +
-                            "('2023-01-01T09:10:00.000000Z', 'hello\\world')," +  // backslash
-                            "('2023-01-01T09:11:00.000000Z', 'say\"hi')," +       // quote
-                            "('2023-01-01T09:12:00.000000Z', 'a,b,c')," +         // commas
-                            "('2023-01-01T09:13:00.000000Z', '{braces}')," +      // braces
-                            "('2023-01-01T09:14:00.000000Z', 'normal')"
-            ).execute();
-            connection.commit();
-            connection.setAutoCommit(true);
-            mayDrainWalQueue();
-
-            // Test with backslash in array
-            try (PreparedStatement stmt = connection.prepareStatement(
-                    "SELECT * FROM special_chars WHERE val IN (?)"
-            )) {
-                Array array = connection.createArrayOf("varchar", new String[]{"hello\\world", "normal"});
-                stmt.setArray(1, array);
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet(
-                            """
-                                    ts[TIMESTAMP],val[VARCHAR]
-                                    2023-01-01 09:10:00.0,hello\\world
-                                    2023-01-01 09:14:00.0,normal
-                                    """,
-                            sink,
-                            rs
-                    );
-                }
-            }
-
-            // Test with quote in array
-            try (PreparedStatement stmt = connection.prepareStatement(
-                    "SELECT * FROM special_chars WHERE val IN (?)"
-            )) {
-                Array array = connection.createArrayOf("varchar", new String[]{"say\"hi"});
-                stmt.setArray(1, array);
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet(
-                            """
-                                    ts[TIMESTAMP],val[VARCHAR]
-                                    2023-01-01 09:11:00.0,say"hi
-                                    """,
-                            sink,
-                            rs
-                    );
-                }
-            }
-
-            // Test with commas and braces
-            try (PreparedStatement stmt = connection.prepareStatement(
-                    "SELECT * FROM special_chars WHERE val IN (?)"
-            )) {
-                Array array = connection.createArrayOf("varchar", new String[]{"a,b,c", "{braces}"});
-                stmt.setArray(1, array);
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet(
-                            """
-                                    ts[TIMESTAMP],val[VARCHAR]
-                                    2023-01-01 09:12:00.0,a,b,c
-                                    2023-01-01 09:13:00.0,{braces}
-                                    """,
-                            sink,
-                            rs
-                    );
-                }
-            }
-
-            // Test with symbol column too
-            connection.setAutoCommit(false);
-            connection.prepareStatement(
-                    "create table special_symbols (ts timestamp, sym symbol) timestamp(ts) partition by day"
-            ).execute();
-
-            connection.prepareStatement(
-                    "insert into special_symbols values " +
-                            "('2023-01-01T09:10:00.000000Z', 'path\\to\\file')," +
-                            "('2023-01-01T09:11:00.000000Z', 'normal')"
-            ).execute();
-            connection.commit();
-            connection.setAutoCommit(true);
-            mayDrainWalQueue();
-
-            try (PreparedStatement stmt = connection.prepareStatement(
-                    "SELECT * FROM special_symbols WHERE sym IN (?)"
-            )) {
-                Array array = connection.createArrayOf("varchar", new String[]{"path\\to\\file"});
-                stmt.setArray(1, array);
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet(
-                            """
-                                    ts[TIMESTAMP],sym[VARCHAR]
-                                    2023-01-01 09:10:00.0,path\\to\\file
-                                    """,
-                            sink,
-                            rs
-                    );
-                }
-            }
-        });
-    }
-
     /* asyncqp.py - bind variable in where clause.
        Unlike jdbc driver, Asyncpg doesn't pass parameter types in Parse message and relies on types returned in ParameterDescription.
     import asyncio
@@ -12234,6 +12117,123 @@ create table tab as (
         });
     }
 
+    @Test
+    public void testVarcharArrayBindVarsWithSpecialChars() throws Exception {
+        // Tests varchar[] bind variables with special characters (backslash, quotes, commas, braces)
+        // in extended protocol mode with both binary and text transfer.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement(
+                    "create table special_chars (ts timestamp, val varchar) timestamp(ts) partition by day"
+            ).execute();
+
+            // Insert rows with special characters
+            connection.prepareStatement(
+                    "insert into special_chars values " +
+                            "('2023-01-01T09:10:00.000000Z', 'hello\\world')," +  // backslash
+                            "('2023-01-01T09:11:00.000000Z', 'say\"hi')," +       // quote
+                            "('2023-01-01T09:12:00.000000Z', 'a,b,c')," +         // commas
+                            "('2023-01-01T09:13:00.000000Z', '{braces}')," +      // braces
+                            "('2023-01-01T09:14:00.000000Z', 'normal')"
+            ).execute();
+            connection.commit();
+            connection.setAutoCommit(true);
+            mayDrainWalQueue();
+
+            // Test with backslash in array
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM special_chars WHERE val IN (?)"
+            )) {
+                Array array = connection.createArrayOf("varchar", new String[]{"hello\\world", "normal"});
+                stmt.setArray(1, array);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP],val[VARCHAR]
+                                    2023-01-01 09:10:00.0,hello\\world
+                                    2023-01-01 09:14:00.0,normal
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            // Test with quote in array
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM special_chars WHERE val IN (?)"
+            )) {
+                Array array = connection.createArrayOf("varchar", new String[]{"say\"hi"});
+                stmt.setArray(1, array);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP],val[VARCHAR]
+                                    2023-01-01 09:11:00.0,say"hi
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            // Test with commas and braces
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM special_chars WHERE val IN (?)"
+            )) {
+                Array array = connection.createArrayOf("varchar", new String[]{"a,b,c", "{braces}"});
+                stmt.setArray(1, array);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP],val[VARCHAR]
+                                    2023-01-01 09:12:00.0,a,b,c
+                                    2023-01-01 09:13:00.0,{braces}
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            // Test with symbol column too
+            connection.setAutoCommit(false);
+            connection.prepareStatement(
+                    "create table special_symbols (ts timestamp, sym symbol) timestamp(ts) partition by day"
+            ).execute();
+
+            connection.prepareStatement(
+                    "insert into special_symbols values " +
+                            "('2023-01-01T09:10:00.000000Z', 'path\\to\\file')," +
+                            "('2023-01-01T09:11:00.000000Z', 'normal')"
+            ).execute();
+            connection.commit();
+            connection.setAutoCommit(true);
+            mayDrainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM special_symbols WHERE sym IN (?)"
+            )) {
+                Array array = connection.createArrayOf("varchar", new String[]{"path\\to\\file"});
+                stmt.setArray(1, array);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP],sym[VARCHAR]
+                                    2023-01-01 09:10:00.0,path\\to\\file
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
     /*
         use sqlx::postgres::PgPoolOptions;
 
@@ -12475,8 +12475,10 @@ create table tab as (
                 stmt.setInt(1, 1);
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("y[INTEGER],x[INTEGER]\n" +
-                                    "1,2\n",
+                    assertResultSet("""
+                                    y[INTEGER],x[INTEGER]
+                                    1,2
+                                    """,
                             sink,
                             rs
                     );
