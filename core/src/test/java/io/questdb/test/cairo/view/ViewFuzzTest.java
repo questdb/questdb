@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo.view;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
