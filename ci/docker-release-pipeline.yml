@@ -48,6 +48,12 @@ jobs:
         displayName: 'Validate semantic version format'
         condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
 
+      - task: CmdLine@2
+        displayName: TESTING Failure
+        inputs:
+          script: |
+            exit 1
+
       - task: Docker@2
         inputs:
           command: 'login'
@@ -105,12 +111,6 @@ jobs:
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel --target rhel .
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
-        
-      - task: CmdLine@2
-        displayName: TESTING Failure
-        inputs:
-          script: |
-            exit 1
 
       - task: CmdLine@2
         displayName: Notify Slack on Failure
