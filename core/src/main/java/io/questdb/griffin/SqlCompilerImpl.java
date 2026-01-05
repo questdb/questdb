@@ -2556,55 +2556,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
-    private void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        int rollbackPosition = lexer.lastTokenPosition();
-        CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
-        if (!isOrKeyword(tok)) {
-            // not CREATE OR REPLACE VIEW
-            // just bail out and let parseCreate() handle it
-            lexerToFirstToken(lexer, rollbackPosition);
-            return;
-        }
-        tok = expectToken(lexer, "'replace'");
-        if (!isReplaceKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'replace' expected");
-        }
-        tok = expectToken(lexer, "'view'");
-        if (!isViewKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'view' expected");
-        }
-
-        final int viewNamePosition = lexer.getPosition();
-        tok = expectToken(lexer, "view name");
-        assertNameIsQuotedOrNotAKeyword(tok, viewNamePosition);
-        final CharSequence viewName = unquote(tok);
-
-        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
-        if (viewToken == null) {
-            // view does not exist yet
-            // just bail out and let CREATE VIEW handle it
-            lexerToFirstToken(lexer, rollbackPosition);
-            return;
-        }
-        if (engine.getViewGraph().getViewDefinition(viewToken) == null) {
-            // view does not exist yet
-            // just bail out and let CREATE VIEW handle it
-            lexerToFirstToken(lexer, rollbackPosition);
-            return;
-        }
-        assert viewToken.isView();
-
-        tok = expectToken(lexer, "'as'");
-        if (!isAsKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
-        }
-
-        final int viewSqlPosition = lexer.getPosition();
-        final String viewSql = parser.parseViewSql(lexer, this);
-
-        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
-    }
-
     private void compileDeallocate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence statementName = unquote(expectToken(lexer, "statement name"));
         CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -4638,11 +4589,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
     }
 
-    private void lexerToFirstToken(GenericLexer lexer, int rollbackPosition) throws SqlException {
-        lexer.goToPosition(rollbackPosition);
-        SqlUtil.fetchNext(lexer);
-    }
-
     private void lightlyValidateInsertModel(InsertModel model) throws SqlException {
         ExpressionNode tableNameExpr = model.getTableNameExpr();
         if (tableNameExpr.type != ExpressionNode.LITERAL) {
@@ -4834,6 +4780,55 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
     }
 
+    protected void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        int rollbackPosition = lexer.lastTokenPosition();
+        CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
+        if (!isOrKeyword(tok)) {
+            // not CREATE OR REPLACE VIEW
+            // just bail out and let parseCreate() handle it
+            lexerToFirstToken(lexer, rollbackPosition);
+            return;
+        }
+        tok = expectToken(lexer, "'replace'");
+        if (!isReplaceKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'replace' expected");
+        }
+        tok = expectToken(lexer, "'view'");
+        if (!isViewKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'view' expected");
+        }
+
+        final int viewNamePosition = lexer.getPosition();
+        tok = expectToken(lexer, "view name");
+        assertNameIsQuotedOrNotAKeyword(tok, viewNamePosition);
+        final CharSequence viewName = unquote(tok);
+
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        if (viewToken == null) {
+            // view does not exist yet
+            // just bail out and let CREATE VIEW handle it
+            lexerToFirstToken(lexer, rollbackPosition);
+            return;
+        }
+        if (engine.getViewGraph().getViewDefinition(viewToken) == null) {
+            // view does not exist yet
+            // just bail out and let CREATE VIEW handle it
+            lexerToFirstToken(lexer, rollbackPosition);
+            return;
+        }
+        assert viewToken.isView();
+
+        tok = expectToken(lexer, "'as'");
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        final int viewSqlPosition = lexer.getPosition();
+        final String viewSql = parser.parseViewSql(lexer, this);
+
+        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
+    }
+
     protected void compileDropExt(
             @NotNull SqlExecutionContext executionContext,
             @NotNull GenericDropOperationBuilder opBuilder,
@@ -4870,6 +4865,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else {
             return factory;
         }
+    }
+
+    protected void lexerToFirstToken(GenericLexer lexer, int rollbackPosition) throws SqlException {
+        lexer.goToPosition(rollbackPosition);
+        SqlUtil.fetchNext(lexer);
     }
 
     @NotNull
