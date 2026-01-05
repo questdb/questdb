@@ -48,7 +48,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 Title varchar,
                 GoodEvent byte,
                 EventTime timestamp,
-                Eventdate date,
+                EventDate date,
                 CounterID int,
                 ClientIP ipv4,
                 RegionID int,
@@ -229,10 +229,10 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q6",
-                        "SELECT MIN(EventDate), MAX(EventDate) FROM hits;",
+                        "SELECT MIN(EventTime), MAX(EventTime) FROM hits;",
                         """
                                 GroupBy vectorized: true workers: 1
-                                  values: [min(Eventdate),max(Eventdate)]
+                                  values: [min_designated(EventTime),max_designated(EventTime)]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits
@@ -732,12 +732,12 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q40",
-                        "SELECT URLHash, EventDate, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventDate ORDER BY PageViews DESC LIMIT 100, 110;",
+                        "SELECT URLHash, EventTime, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventTime ORDER BY PageViews DESC LIMIT 100, 110;",
                         """
                                 Sort light lo: 100 hi: 110
                                   keys: [PageViews desc]
                                     Async JIT Group By workers: 1
-                                      keys: [URLHash,EventDate]
+                                      keys: [URLHash,EventTime]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0 and TraficSourceID in [-1,6] and RefererHash=3594120000172545465L)
                                         PageFrame

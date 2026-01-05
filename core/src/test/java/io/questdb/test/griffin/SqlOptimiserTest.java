@@ -2835,7 +2835,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [max(ts)]
+                              values: [max_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -2856,7 +2856,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [min(ts)]
+                              values: [min_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -5043,7 +5043,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [max(ts)]
+                              values: [max_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -5064,7 +5064,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [min(ts)]
+                              values: [min_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y

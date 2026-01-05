@@ -345,6 +345,8 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
+    int getRecentWriteTrackerCapacity();
+
     int getMetadataPoolCapacity();
 
     Metrics getMetrics();

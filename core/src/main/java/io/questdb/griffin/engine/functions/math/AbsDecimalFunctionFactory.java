@@ -42,6 +42,9 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+/**
+ * Factory for the abs() function on decimal types.
+ */
 public class AbsDecimalFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {

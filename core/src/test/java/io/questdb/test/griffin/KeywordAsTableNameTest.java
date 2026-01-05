@@ -146,10 +146,10 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             execute("rename table \"from\" to \"to\"");
             assertSql(
                     """
-                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
-                            1\tto\t\tNONE\t1000\t300000000\tfalse\tto~\tfalse\t0\tHOUR\tT
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
+                            1\tto\t\tNONE\t1000\t300000000\tfalse\tto~\tfalse\t0\tHOUR\tfalse
                             """,
-                    "tables()"
+                    "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()"
             );
         });
     }

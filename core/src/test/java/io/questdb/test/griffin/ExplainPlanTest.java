@@ -1527,21 +1527,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplainUpdateWithFilter() throws Exception {
-        assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)", "update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );", """
-                Update table: a
-                    VirtualRecord
-                      functions: [20,memoize(d+rnd_double())]
-                        Async Filter workers: 1
-                          filter: d<100.0
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-02T00:00:00.000001Z","MAX")]
-                """);
-    }
-
-    @Test
     public void testExplainUpdateWalTable() throws Exception {
         // Reproducer for https://github.com/questdb/questdb/issues/6194
         assertPlan(
@@ -1560,6 +1545,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     on: trades
                         """
         );
+    }
+
+    @Test
+    public void testExplainUpdateWithFilter() throws Exception {
+        assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)", "update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );", """
+                Update table: a
+                    VirtualRecord
+                      functions: [20,memoize(d+rnd_double())]
+                        Async Filter workers: 1
+                          filter: d<100.0
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: a
+                                  intervals: [("1970-01-02T00:00:00.000001Z","MAX")]
+                """);
     }
 
     @Test
@@ -4867,6 +4867,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: tab
                     """);
         });
+    }
+
+    @Test
+    public void testNonKeyedGroupByMinMaxTimestamp() throws Exception {
+        assertPlan(
+                "create table x (ts timestamp, ts1 timestamp) timestamp(ts) partition by day;",
+                "select min(ts), max(ts), min(ts1), max(ts1) from x",
+                """
+                        GroupBy vectorized: true workers: 1
+                          values: [min_designated(ts),max_designated(ts),min(ts1),max(ts1)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                        """
+        );
     }
 
     @Test
