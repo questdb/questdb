@@ -48,8 +48,10 @@ public class PGPivotTest extends BasePGTest {
                 ps.setInt(1, 1);
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
-                            "x[INTEGER],1[BIGINT],2[BIGINT]\n" +
-                                    "1,5,null\n",
+                            """
+                                    x[INTEGER],1[BIGINT],2[BIGINT]
+                                    1,5,null
+                                    """,
                             sink,
                             rs
                     );

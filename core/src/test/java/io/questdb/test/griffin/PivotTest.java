@@ -63,23 +63,25 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('US', 'New York City', 2000, 8015),
                         ('US', 'New York City', 2010, 8175),
                         ('US', 'New York City', 2020, 8772);""";
-    public static String dmlMonthlySales = " INSERT INTO monthly_sales VALUES\n" +
-            "            (1, 10000, 'JAN'),\n" +
-            "    (1, 400, 'JAN'),\n" +
-            "            (2, 4500, 'JAN'),\n" +
-            "            (2, 35000, 'JAN'),\n" +
-            "            (1, 5000, 'FEB'),\n" +
-            "            (1, 3000, 'FEB'),\n" +
-            "            (2, 200, 'FEB'),\n" +
-            "            (2, 90500, 'FEB'),\n" +
-            "            (1, 6000, 'MAR'),\n" +
-            "            (1, 5000, 'MAR'),\n" +
-            "            (2, 2500, 'MAR'),\n" +
-            "            (2, 9500, 'MAR'),\n" +
-            "            (1, 8000, 'APR'),\n" +
-            "            (1, 10000, 'APR'),\n" +
-            "            (2, 800, 'APR'),\n" +
-            "            (2, 4500, 'APR');";
+    public static String dmlMonthlySales = """
+             INSERT INTO monthly_sales VALUES
+                        (1, 10000, 'JAN'),
+                (1, 400, 'JAN'),
+                        (2, 4500, 'JAN'),
+                        (2, 35000, 'JAN'),
+                        (1, 5000, 'FEB'),
+                        (1, 3000, 'FEB'),
+                        (2, 200, 'FEB'),
+                        (2, 90500, 'FEB'),
+                        (1, 6000, 'MAR'),
+                        (1, 5000, 'MAR'),
+                        (2, 2500, 'MAR'),
+                        (2, 9500, 'MAR'),
+                        (1, 8000, 'APR'),
+                        (1, 10000, 'APR'),
+                        (2, 800, 'APR'),
+                        (2, 4500, 'APR');\
+            """;
     public static String dmlSensors = """
             INSERT INTO sensors
             SELECT
