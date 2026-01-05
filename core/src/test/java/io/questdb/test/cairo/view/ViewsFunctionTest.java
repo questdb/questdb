@@ -164,15 +164,15 @@ public class ViewsFunctionTest extends AbstractViewTest {
 
             assertQueryAndPlan(
                     """
-                            id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_type	table_row_count	table_max_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
-                            1	table1	ts	DAY	true	false	0	HOUR	false	table1~1	1000	300000000	false	T	9	2025-06-19T15:00:00.000000Z	9	0	1	1.0078125	1.0078125	1.0078125	1.0078125	1	9043967	9043967	9043967	9043967	0	0	9	1970-01-01T00:01:20.000000Z	9	1	1	1	1	0	0	0	0	0	false
-                            2	table2	ts	DAY	true	false	0	HOUR	false	table2~2	1000	300000000	false	T	9	2025-06-19T15:00:00.000000Z	9	0	1	1.0078125	1.0078125	1.0078125	1.0078125	1	9043967	9043967	9043967	9043967	0	0	9	1970-01-01T00:01:20.000000Z	9	1	1	1	1	0	0	0	0	0	false
-                            3	view1		N/A	true	false	0	HOUR	false	view1~3	0	0	false	V	null		null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
-                            4	view2		N/A	true	false	0	HOUR	false	view2~4	0	0	false	V	null		null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
-                            5	view3	ts	DAY	true	false	0	HOUR	true	view3~5	1000	-1	false	M	9	2025-06-19T15:00:00.000000Z	1	0	1	1.0078125	1.0078125	1.0078125	1.0078125	1	9043967	9043967	9043967	9043967	0	0	1	1970-01-01T00:01:00.000000Z	1	9	9	9	9	0	0	0	0	0	false
-                            6	view4	ts	DAY	true	false	0	HOUR	true	view4~6	1000	-1	false	M	1	2025-06-19T15:00:00.000000Z	1	0	1	1.0078125	1.0078125	1.0078125	1.0078125	1	1003519	1003519	1003519	1003519	0	0	1	1970-01-01T00:00:00.000000Z	1	1	1	1	1	0	0	0	0	0	false
+                            id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	table_suspended	table_type
+                            1	table1	ts	DAY	true	false	0	HOUR	false	T
+                            2	table2	ts	DAY	true	false	0	HOUR	false	T
+                            3	view1		N/A	true	false	0	HOUR	false	V
+                            4	view2		N/A	true	false	0	HOUR	false	V
+                            5	view3	ts	DAY	true	false	0	HOUR	false	M
+                            6	view4	ts	DAY	true	false	0	HOUR	false	M
                             """,
-                    "tables() order by 1",
+                    "select id,table_name,designatedTimestamp,partitionBy,walEnabled,dedup,ttlValue,ttlUnit,table_suspended,table_type from tables() order by 1",
                     null,
                     true,
                     true,
@@ -180,7 +180,8 @@ public class ViewsFunctionTest extends AbstractViewTest {
                             QUERY PLAN
                             Sort
                               keys: [id]
-                                tables()
+                                SelectedRecord
+                                    tables()
                             """
             );
 
