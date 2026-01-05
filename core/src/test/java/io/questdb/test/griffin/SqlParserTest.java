@@ -9132,7 +9132,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPivotInListMissingRightParen() throws Exception {
         assertSyntaxError(
-                "cities PIVOT (sum(population) FOR year IN (2000, 2010 GROUP BY county))", 60, "')' expected", getCitiesModel()
+                "cities PIVOT (sum(population) FOR year IN (2000, 2010", 53, "',' or ')' expected", getCitiesModel()
         );
     }
 
