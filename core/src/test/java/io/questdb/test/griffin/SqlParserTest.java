@@ -62,14 +62,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
     private static final List<String> outerJoinTypes = Arrays.asList("left", "right", "full");
 
-    protected TableModel getCitiesModel()  {
-        return modelOf("cities")
-                .col("country", ColumnType.VARCHAR)
-                .col("name", ColumnType.VARCHAR)
-                .col("year", ColumnType.INT)
-                .col("population", ColumnType.INT);
-    }
-
     @Test
     public void test2Between() throws Exception {
         assertQuery(
@@ -12776,6 +12768,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 },
                 tableModels
         );
+    }
+
+    protected TableModel getCitiesModel() {
+        return modelOf("cities")
+                .col("country", ColumnType.VARCHAR)
+                .col("name", ColumnType.VARCHAR)
+                .col("year", ColumnType.INT)
+                .col("population", ColumnType.INT);
     }
 
     @FunctionalInterface
