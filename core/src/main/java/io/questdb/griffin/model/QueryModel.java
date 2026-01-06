@@ -2206,41 +2206,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
             sink.putAscii(']');
         }
-
-        if (pivotGroupByColumns.size() > 0) {
-            sink.putAscii(" pivot ");
-            pivotGroupByColumns.toSink(sink);
-            sink.putAscii(" for ");
-
-            for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
-                PivotForColumn pivotForName = pivotForColumns.getQuick(i);
-
-                sink.put(pivotForName.getInExpr()).put("in").put("(");
-                if (pivotForName.isValueList()) {
-                    ObjList<ExpressionNode> pivotForValueList = pivotForName.getValueList();
-                    ObjList<CharSequence> valueAliases = pivotForName.getValueAliases();
-
-                    for (int j = 0, m = pivotForValueList.size(); j < m; j++) {
-                        if (j > 0) {
-                            sink.put(',');
-                        }
-                        sink.put(pivotForValueList.getQuick(j));
-                        CharSequence alias = valueAliases.getQuick(j);
-                        if (alias != null) {
-                            sink.putAscii(" as ");
-                            sink.put(alias);
-                        }
-                    }
-                } else {
-                    sink.put(pivotForName.getSelectSubqueryExpr());
-                }
-
-                sink.put(')');
-                if (i + 1 < n) {
-                    sink.putAscii(' ');
-                }
-            }
-        }
     }
 
     private void updateToSink(CharSink<?> sink) {

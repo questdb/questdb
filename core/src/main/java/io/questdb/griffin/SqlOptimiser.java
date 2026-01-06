@@ -5666,7 +5666,6 @@ public class SqlOptimiser implements Mutable {
 
             // Step 3: Add FOR column expressions to inner model's SELECT list with generated aliases.
             // Also generates IN filter (e.g., col IN ('a','b','c')) and pushes it to the nested WHERE clause.
-            // Skips filter generation when ELSE is present (ELSE needs to match all non-listed values).
             //
             // NOTE: This filter pushdown is debatable - when FOR values don't exist in the data,
             // we return empty rows instead of rows with NULL pivot columns (unlike DuckDB).
