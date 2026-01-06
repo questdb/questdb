@@ -467,6 +467,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelWindowJoinEnabled;
     private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
+    private final int sqlPivotForColumnPoolCapacity;
+    private final int sqlPivotMaxProducedColumns;
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final boolean sqlSampleByDefaultAlignment;
@@ -1459,6 +1461,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, Integer.MAX_VALUE);
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
             this.sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, sqlWindowColumnPoolCapacity);
+            this.sqlPivotForColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_PIVOT_COLUMN_POOL_CAPACITY, 8);
+            this.sqlPivotMaxProducedColumns = getInt(properties, env, PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 5_000);
             this.sqlCreateTableModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE, 1_000_000);
             this.sqlCreateTableColumnModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY, 16);
             this.sqlRenameTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY, 16);
@@ -3643,6 +3647,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPivotColumnPoolCapacity() {
+            return sqlPivotForColumnPoolCapacity;
+        }
+
+        @Override
         public int getPreferencesStringPoolCapacity() {
             return preferencesStringPoolCapacity;
         }
@@ -3945,6 +3954,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlParquetFrameCacheCapacity() {
             return sqlParquetFrameCacheCapacity;
+        }
+
+        @Override
+        public int getSqlPivotMaxProducedColumns() {
+            return sqlPivotMaxProducedColumns;
         }
 
         @Override

@@ -260,6 +260,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             );
 
             parser = new SqlParser(
+                    engine,
                     configuration,
                     characterStore,
                     sqlNodePool,
@@ -2984,7 +2985,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false));
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -3312,7 +3313,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     null,
                                     executionContext,
                                     generateProgressLogger
-                            )
+                            ),
+                            ((QueryModel) executionModel).isCacheable()
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:
