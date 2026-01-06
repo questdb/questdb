@@ -161,6 +161,7 @@ HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD 
                 FILE_ATTRIBUTE_NORMAL,
                 NULL
         );
+        fprintf(stderr, "File opened: %ls - handle: %p\n", buf, handle);
 
         if (handle == INVALID_HANDLE_VALUE) {
             SaveLastError();
@@ -894,7 +895,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jint fd) {
-    if (LockFile(FD_TO_HANDLE(fd), 0, 0, 1, 0)) {
+    HANDLE handle = FD_TO_HANDLE(fd);
+    fprintf(stderr, "Trying to lock %d - %p\n", fd, handle);
+    if (LockFile(handle, 0, 0, 1, 0)) {
         return 0;
     }
 
