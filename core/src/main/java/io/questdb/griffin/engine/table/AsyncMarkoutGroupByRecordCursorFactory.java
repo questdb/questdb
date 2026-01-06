@@ -213,6 +213,23 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         return frameSequence.getAtom().getCompiledFilter() != null;
     }
 
+    private static void aggregateRecord(
+            CombinedRecord combinedRecord,
+            long masterRowId,
+            Map partialMap,
+            RecordSink groupByKeyCopier,
+            GroupByFunctionsUpdater functionUpdater
+    ) {
+        MapKey key = partialMap.withKey();
+        key.put(combinedRecord, groupByKeyCopier);
+        MapValue value = key.createValue();
+        if (value.isNew()) {
+            functionUpdater.updateNew(value, combinedRecord, masterRowId);
+        } else {
+            functionUpdater.updateExisting(value, combinedRecord, masterRowId);
+        }
+    }
+
     /**
      * Page frame reducer for filtered markout GROUP BY.
      * <p>
@@ -279,12 +296,19 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
+            // Track previous master row's first offset ASOF position
+            // (master rows move forward in time, so we can start from there)
+            long prevFirstOffsetAsOfRowId = Long.MIN_VALUE;
+
             for (long i = 0; i < filteredRowCount; i++) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 final long r = rows.get(i);
                 record.setRowIndex(r);
 
-                processMarkoutRow(
+                // Set bookmark to previous master row's first offset position
+                slaveTimeFrameHelper.setBookmark(prevFirstOffsetAsOfRowId);
+
+                prevFirstOffsetAsOfRowId = processMarkoutRow(
                         record,
                         baseRowId + r,
                         atom,
@@ -304,6 +328,166 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         } finally {
             atom.release(slotId);
         }
+    }
+
+    /**
+     * Process a single master row through all offsets with proper keyed ASOF JOIN semantics.
+     *
+     * @return the ASOF position (rowId) found for the first offset, for bookmark optimization
+     */
+    private static long processMarkoutRow(
+            PageFrameMemoryRecord masterRecord,
+            long masterRowId,
+            AsyncMarkoutGroupByAtom atom,
+            MarkoutTimeFrameHelper slaveTimeFrameHelper,
+            Map asOfJoinMap,
+            RecordSink masterKeyCopier,
+            RecordSink slaveKeyCopier,
+            Record slaveRecord,
+            CombinedRecord combinedRecord,
+            Map partialMap,
+            RecordSink groupByKeyCopier,
+            GroupByFunctionsUpdater functionUpdater,
+            int masterTimestampColumnIndex,
+            long sequenceRowCount
+    ) {
+        final long masterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
+
+        // Look up cached rowId for master's join key
+        long cachedRowId = Long.MIN_VALUE;
+        if (asOfJoinMap != null && masterKeyCopier != null) {
+            MapKey cacheKey = asOfJoinMap.withKey();
+            cacheKey.put(masterRecord, masterKeyCopier);
+            MapValue cacheValue = cacheKey.findValue();
+            if (cacheValue != null) {
+                cachedRowId = cacheValue.getLong(0);
+            }
+        }
+
+        // Track state across offsets
+        long prevMatchRowId = Long.MIN_VALUE;  // Last matched slave rowId (used for subsequent offsets)
+        long prevAsOfRowId = Long.MIN_VALUE;   // Last ASOF position (used when no match found)
+
+        // ========================================
+        // FIRST OFFSET (bootstrap) - handles cache lookup and update
+        // ========================================
+        long secOffsValue0 = atom.getSequenceOffsetValue(0);
+        // TODO(puzpuzpuz): support nanos
+        long horizonTs0 = masterTimestamp + secOffsValue0 * 1_000_000L;
+
+        long match0RowId = Long.MIN_VALUE;
+        long asOfRowId0 = Long.MIN_VALUE;  // Track first offset's ASOF position for bookmark optimization
+        if (asOfJoinMap != null && masterKeyCopier != null) {
+            // Navigate to ASOF position for first offset
+            asOfRowId0 = slaveTimeFrameHelper.findAsOfRow(horizonTs0);
+            prevAsOfRowId = asOfRowId0;
+
+            if (asOfRowId0 != Long.MIN_VALUE) {
+                // Set master key in asofJoinMap for comparison during backward scan
+                // We reuse the asofJoinMap temporarily - put master key, backward scan checks for it
+                asOfJoinMap.clear();
+                MapKey masterKey = asOfJoinMap.withKey();
+                masterKey.put(masterRecord, masterKeyCopier);
+                masterKey.createValue().putLong(0, 1L);  // Dummy value, just need key presence
+
+                // Backward scan for key match, stop at cached position
+                match0RowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
+                        asOfJoinMap,
+                        slaveKeyCopier,
+                        cachedRowId
+                );
+
+                // Update cache with first offset's match
+                if (match0RowId != Long.MIN_VALUE) {
+                    // TODO(puzpuzpuz): this is very inefficient
+                    asOfJoinMap.clear();
+                    MapKey newCacheKey = asOfJoinMap.withKey();
+                    newCacheKey.put(masterRecord, masterKeyCopier);
+                    newCacheKey.createValue().putLong(0, match0RowId);
+                    prevMatchRowId = match0RowId;
+                }
+            }
+        }
+
+        // Aggregate first offset
+        Record matchedSlaveRecord0 = null;
+        if (match0RowId != Long.MIN_VALUE) {
+            slaveTimeFrameHelper.recordAt(match0RowId);
+            matchedSlaveRecord0 = slaveRecord;
+        }
+        combinedRecord.of(masterRecord, secOffsValue0, matchedSlaveRecord0);
+        aggregateRecord(combinedRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
+
+        // ========================================
+        // REMAINING OFFSETS
+        // ========================================
+        for (int seqIdx = 1; seqIdx < sequenceRowCount; seqIdx++) {
+            long secOffsValue = atom.getSequenceOffsetValue(seqIdx);
+            // TODO(puzpuzpuz): support nanos
+            long horizonTs = masterTimestamp + secOffsValue * 1_000_000L;
+
+            long matchRowId = Long.MIN_VALUE;
+            if (asOfJoinMap != null && masterKeyCopier != null) {
+                // Navigate forward to ASOF position for this offset
+                long asofRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
+
+                if (asofRowId != Long.MIN_VALUE) {
+                    // Determine stop position for backward scan
+                    long stopRowId;
+                    if (prevMatchRowId != Long.MIN_VALUE) {
+                        // Stop at previous match (can't be before it)
+                        stopRowId = prevMatchRowId;
+                    } else {
+                        // No previous match, stop at previous ASOF position (already scanned that range)
+                        stopRowId = prevAsOfRowId;
+                    }
+
+                    // Set master key for comparison
+                    asOfJoinMap.clear();
+                    MapKey masterKey = asOfJoinMap.withKey();
+                    masterKey.put(masterRecord, masterKeyCopier);
+                    masterKey.createValue().putLong(0, 1L);
+
+                    // Backward scan for key match
+                    matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
+                            asOfJoinMap,
+                            slaveKeyCopier,
+                            stopRowId
+                    );
+
+                    if (matchRowId != Long.MIN_VALUE) {
+                        // Found new match
+                        prevMatchRowId = matchRowId;
+                    }
+                    // If no new match found, prevMatchRowId stays valid (its ts <= horizonTs0 < horizonTs)
+
+                    prevAsOfRowId = asofRowId;
+                }
+            }
+
+            // Aggregate with prevMatchRowId (may be from earlier offset or null)
+            Record matchedSlaveRecord = null;
+            long effectiveMatchRowId = (matchRowId != Long.MIN_VALUE) ? matchRowId : prevMatchRowId;
+            if (effectiveMatchRowId != Long.MIN_VALUE) {
+                slaveTimeFrameHelper.recordAt(effectiveMatchRowId);
+                matchedSlaveRecord = slaveRecord;
+            }
+            combinedRecord.of(masterRecord, secOffsValue, matchedSlaveRecord);
+            aggregateRecord(combinedRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
+        }
+
+        // Restore the cache with the first offset's match position for use by subsequent master rows
+        // This is necessary because the backward scan for subsequent offsets corrupts the cache
+        // by putting dummy values
+        if (asOfJoinMap != null && masterKeyCopier != null && match0RowId != Long.MIN_VALUE) {
+            // TODO(puzpuzpuz): this is very inefficient
+            asOfJoinMap.clear();
+            MapKey cacheKey = asOfJoinMap.withKey();
+            cacheKey.put(masterRecord, masterKeyCopier);
+            cacheKey.createValue().putLong(0, match0RowId);
+        }
+
+        return asOfRowId0;
     }
 
     /**
@@ -356,11 +540,18 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
+            // Track previous master row's first offset ASOF position
+            // (master rows move forward in time, so we can start from there)
+            long prevFirstOffsetAsOfRowId = Long.MIN_VALUE;
+
             for (long r = 0; r < frameRowCount; r++) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
 
-                processMarkoutRow(
+                // Set bookmark to previous master row's first offset position
+                slaveTimeFrameHelper.setBookmark(prevFirstOffsetAsOfRowId);
+
+                prevFirstOffsetAsOfRowId = processMarkoutRow(
                         record,
                         baseRowId + r,
                         atom,
@@ -379,166 +570,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             }
         } finally {
             atom.release(slotId);
-        }
-    }
-
-    /**
-     * Process a single master row through all offsets with proper keyed ASOF JOIN semantics.
-     */
-    private static void processMarkoutRow(
-            PageFrameMemoryRecord masterRecord,
-            long masterRowId,
-            AsyncMarkoutGroupByAtom atom,
-            MarkoutTimeFrameHelper slaveTimeFrameHelper,
-            Map asofJoinMap,
-            RecordSink masterKeyCopier,
-            RecordSink slaveKeyCopier,
-            Record slaveRecord,
-            CombinedRecord combinedRecord,
-            Map partialMap,
-            RecordSink groupByKeyCopier,
-            GroupByFunctionsUpdater functionUpdater,
-            int masterTimestampColumnIndex,
-            long sequenceRowCount
-    ) {
-        final long masterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
-
-        // Look up cached rowId for master's join key
-        long cachedRowId = Long.MIN_VALUE;
-        if (asofJoinMap != null && masterKeyCopier != null) {
-            MapKey cacheKey = asofJoinMap.withKey();
-            cacheKey.put(masterRecord, masterKeyCopier);
-            MapValue cacheValue = cacheKey.findValue();
-            if (cacheValue != null) {
-                cachedRowId = cacheValue.getLong(0);
-            }
-        }
-
-        // Track state across offsets
-        long prevMatchRowId = Long.MIN_VALUE;  // Last matched slave rowId (used for subsequent offsets)
-        long prevAsofRowId = Long.MIN_VALUE;   // Last ASOF position (used when no match found)
-
-        // ========================================
-        // FIRST OFFSET (bootstrap) - handles cache lookup and update
-        // ========================================
-        long secOffsValue0 = atom.getSequenceOffsetValue(0);
-        // TODO(puzpuzpuz): support nanos
-        long horizonTs0 = masterTimestamp + secOffsValue0 * 1_000_000L;
-
-        long match0RowId = Long.MIN_VALUE;
-        if (asofJoinMap != null && masterKeyCopier != null) {
-            // Navigate to ASOF position for first offset
-            long asofRowId0 = slaveTimeFrameHelper.findAsOfRow(horizonTs0);
-            prevAsofRowId = asofRowId0;
-
-            if (asofRowId0 != Long.MIN_VALUE) {
-                // Set master key in asofJoinMap for comparison during backward scan
-                // We reuse the asofJoinMap temporarily - put master key, backward scan checks for it
-                asofJoinMap.clear();
-                MapKey masterKey = asofJoinMap.withKey();
-                masterKey.put(masterRecord, masterKeyCopier);
-                masterKey.createValue().putLong(0, 1L);  // Dummy value, just need key presence
-
-                // Backward scan for key match, stop at cached position
-                match0RowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                        asofJoinMap,
-                        slaveKeyCopier,
-                        cachedRowId
-                );
-
-                // Update cache with first offset's match
-                if (match0RowId != Long.MIN_VALUE) {
-                    asofJoinMap.clear();
-                    MapKey newCacheKey = asofJoinMap.withKey();
-                    newCacheKey.put(masterRecord, masterKeyCopier);
-                    newCacheKey.createValue().putLong(0, match0RowId);
-                    prevMatchRowId = match0RowId;
-                }
-            }
-        }
-
-        // Aggregate first offset
-        Record matchedSlaveRecord0 = null;
-        if (match0RowId != Long.MIN_VALUE) {
-            slaveTimeFrameHelper.recordAt(match0RowId);
-            matchedSlaveRecord0 = slaveRecord;
-        }
-        combinedRecord.of(masterRecord, secOffsValue0, matchedSlaveRecord0);
-        aggregateRecord(combinedRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
-
-        // ========================================
-        // REMAINING OFFSETS
-        // ========================================
-        for (int seqIdx = 1; seqIdx < sequenceRowCount; seqIdx++) {
-            long secOffsValue = atom.getSequenceOffsetValue(seqIdx);
-            // TODO(puzpuzpuz): support nanos
-            long horizonTs = masterTimestamp + secOffsValue * 1_000_000L;
-
-            long matchRowId = Long.MIN_VALUE;
-            if (asofJoinMap != null && masterKeyCopier != null) {
-                // Navigate forward to ASOF position for this offset
-                long asofRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
-
-                if (asofRowId != Long.MIN_VALUE) {
-                    // Determine stop position for backward scan
-                    long stopRowId;
-                    if (prevMatchRowId != Long.MIN_VALUE) {
-                        // Stop at previous match (can't be before it)
-                        stopRowId = prevMatchRowId;
-                    } else {
-                        // No previous match, stop at previous ASOF position (already scanned that range)
-                        stopRowId = prevAsofRowId;
-                    }
-
-                    // Set master key for comparison
-                    asofJoinMap.clear();
-                    MapKey masterKey = asofJoinMap.withKey();
-                    masterKey.put(masterRecord, masterKeyCopier);
-                    masterKey.createValue().putLong(0, 1L);
-
-                    // Backward scan for key match
-                    matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                            asofJoinMap,
-                            slaveKeyCopier,
-                            stopRowId
-                    );
-
-                    if (matchRowId != Long.MIN_VALUE) {
-                        // Found new match
-                        prevMatchRowId = matchRowId;
-                    }
-                    // If no new match found, prevMatchRowId stays valid (its ts <= horizonTs0 < horizonTs)
-
-                    prevAsofRowId = asofRowId;
-                }
-            }
-
-            // Aggregate with prevMatchRowId (may be from earlier offset or null)
-            Record matchedSlaveRecord = null;
-            long effectiveMatchRowId = (matchRowId != Long.MIN_VALUE) ? matchRowId : prevMatchRowId;
-            if (effectiveMatchRowId != Long.MIN_VALUE) {
-                slaveTimeFrameHelper.recordAt(effectiveMatchRowId);
-                matchedSlaveRecord = slaveRecord;
-            }
-            combinedRecord.of(masterRecord, secOffsValue, matchedSlaveRecord);
-            aggregateRecord(combinedRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
-        }
-    }
-
-    private static void aggregateRecord(
-            CombinedRecord combinedRecord,
-            long masterRowId,
-            Map partialMap,
-            RecordSink groupByKeyCopier,
-            GroupByFunctionsUpdater functionUpdater
-    ) {
-        MapKey key = partialMap.withKey();
-        key.put(combinedRecord, groupByKeyCopier);
-        MapValue value = key.createValue();
-        if (value.isNew()) {
-            functionUpdater.updateNew(value, combinedRecord, masterRowId);
-        } else {
-            functionUpdater.updateExisting(value, combinedRecord, masterRowId);
         }
     }
 

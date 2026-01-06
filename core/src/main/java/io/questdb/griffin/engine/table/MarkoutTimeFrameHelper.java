@@ -45,14 +45,12 @@ import io.questdb.std.Rows;
  */
 public class MarkoutTimeFrameHelper {
     private static final int LINEAR_SCAN_LIMIT = 64;
-
-    // Current position after findAsOfRow or backward scan
-    private int currentFrameIndex = -1;
-    private long currentRowIndex = -1;
-
     private final long lookahead;
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
+    // Current position after findAsOfRow or backward scan
+    private int currentFrameIndex = -1;
+    private long currentRowIndex = -1;
     private Record record;
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
@@ -60,6 +58,71 @@ public class MarkoutTimeFrameHelper {
 
     public MarkoutTimeFrameHelper(long lookahead) {
         this.lookahead = lookahead;
+    }
+
+    /**
+     * Backward scan from current position to find a row matching the given key.
+     * <p>
+     * The scan starts from the current position (set by findAsOfRow) and moves
+     * backward until a row with matching key is found or stopRowId is reached.
+     *
+     * @param keyMap         temporary map for key comparison (should have master key already set)
+     * @param slaveKeyCopier copier for slave's join key columns
+     * @param stopRowId      don't scan past this rowId (exclusive), or Long.MIN_VALUE for no limit
+     * @return matched rowId, or Long.MIN_VALUE if no match found
+     */
+    public long backwardScanForKeyMatch(
+            Map keyMap,
+            RecordSink slaveKeyCopier,
+            long stopRowId
+    ) {
+        if (currentFrameIndex < 0 || currentRowIndex < 0) {
+            return Long.MIN_VALUE;
+        }
+
+        int frameIndex = currentFrameIndex;
+        long rowIndex = currentRowIndex;
+
+        // Make sure we're in the correct frame
+        timeFrameCursor.jumpTo(frameIndex);
+        if (timeFrameCursor.open() == 0) {
+            return Long.MIN_VALUE;
+        }
+
+        while (true) {
+            long currentRowId = Rows.toRowID(frameIndex, rowIndex);
+            // Check if we're beyond the stop position
+            if (currentRowId < stopRowId) {
+                return Long.MIN_VALUE;
+            }
+
+            // Position record and check key match
+            timeFrameCursor.recordAtRowIndex(record, rowIndex);
+
+            MapKey key = keyMap.withKey();
+            key.put(record, slaveKeyCopier);
+            if (key.findValue() != null) {
+                // Found a match!
+                setCurrentPosition(frameIndex, rowIndex);
+                return currentRowId;
+            }
+
+            // Move backward
+            rowIndex--;
+            if (rowIndex < timeFrame.getRowLo()) {
+                // Need to go to previous frame
+                if (!timeFrameCursor.prev()) {
+                    // No more frames
+                    return Long.MIN_VALUE;
+                }
+                if (timeFrameCursor.open() == 0) {
+                    // Empty frame, try previous
+                    continue;
+                }
+                frameIndex = timeFrame.getFrameIndex();
+                rowIndex = timeFrame.getRowHi() - 1;
+            }
+        }
     }
 
     /**
@@ -200,72 +263,6 @@ public class MarkoutTimeFrameHelper {
     }
 
     /**
-     * Backward scan from current position to find a row matching the given key.
-     * <p>
-     * The scan starts from the current position (set by findAsOfRow) and moves
-     * backward until a row with matching key is found or stopRowId is reached.
-     *
-     * @param keyMap          temporary map for key comparison (should have master key already set)
-     * @param slaveKeyCopier  copier for slave's join key columns
-     * @param stopRowId       don't scan past this rowId (exclusive), or Long.MIN_VALUE for no limit
-     * @return matched rowId, or Long.MIN_VALUE if no match found
-     */
-    public long backwardScanForKeyMatch(
-            Map keyMap,
-            RecordSink slaveKeyCopier,
-            long stopRowId
-    ) {
-        if (currentFrameIndex < 0 || currentRowIndex < 0) {
-            return Long.MIN_VALUE;
-        }
-
-        int frameIndex = currentFrameIndex;
-        long rowIndex = currentRowIndex;
-
-        // Make sure we're in the correct frame
-        timeFrameCursor.jumpTo(frameIndex);
-        if (timeFrameCursor.open() == 0) {
-            return Long.MIN_VALUE;
-        }
-
-        while (true) {
-            long currentRowId = Rows.toRowID(frameIndex, rowIndex);
-
-            // Check if we've reached the stop position
-            if (stopRowId != Long.MIN_VALUE && currentRowId <= stopRowId) {
-                return Long.MIN_VALUE;
-            }
-
-            // Position record and check key match
-            timeFrameCursor.recordAtRowIndex(record, rowIndex);
-
-            MapKey key = keyMap.withKey();
-            key.put(record, slaveKeyCopier);
-            if (key.findValue() != null) {
-                // Found a match!
-                setCurrentPosition(frameIndex, rowIndex);
-                return currentRowId;
-            }
-
-            // Move backward
-            rowIndex--;
-            if (rowIndex < timeFrame.getRowLo()) {
-                // Need to go to previous frame
-                if (!timeFrameCursor.prev()) {
-                    // No more frames
-                    return Long.MIN_VALUE;
-                }
-                if (timeFrameCursor.open() == 0) {
-                    // Empty frame, try previous
-                    continue;
-                }
-                frameIndex = timeFrame.getFrameIndex();
-                rowIndex = timeFrame.getRowHi() - 1;
-            }
-        }
-    }
-
-    /**
      * Get the current row ID (after findAsOfRow or backwardScanForKeyMatch).
      */
     public long getCurrentRowId() {
@@ -302,6 +299,20 @@ public class MarkoutTimeFrameHelper {
         timeFrameCursor.open();
         timeFrameCursor.recordAtRowIndex(record, rowIndex);
         setCurrentPosition(frameIndex, rowIndex);
+    }
+
+    /**
+     * Set the bookmark to a specific row ID.
+     * This allows external code to control where findAsOfRow starts searching.
+     */
+    public void setBookmark(long rowId) {
+        if (rowId == Long.MIN_VALUE) {
+            bookmarkedFrameIndex = -1;
+            bookmarkedRowIndex = Long.MIN_VALUE;
+        } else {
+            bookmarkedFrameIndex = Rows.toPartitionIndex(rowId);
+            bookmarkedRowIndex = Rows.toLocalRowID(rowId);
+        }
     }
 
     public void toTop() {

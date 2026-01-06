@@ -941,17 +941,17 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuWalApplyWorkers = 2;
+        int cpuExportWorkers = 1;
         int cpuSpare = 0;
-        int exportWorker = 1;
 
         if (cpuAvailable > 32) {
             cpuWalApplyWorkers = 4;
+            cpuExportWorkers = 4;
             cpuSpare = 2;
-            exportWorker = 4;
         } else if (cpuAvailable > 16) {
             cpuWalApplyWorkers = 3;
+            cpuExportWorkers = 2;
             cpuSpare = 1;
-            exportWorker = 2;
         } else if (cpuAvailable > 8) {
             cpuWalApplyWorkers = 3;
         }
@@ -1395,7 +1395,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
 
             // Export pool configuration
-            this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, exportWorker);
+            this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, cpuExportWorkers);
             this.exportWorkerAffinity = getAffinity(properties, env, PropertyKey.EXPORT_WORKER_AFFINITY, exportWorkerCount);
             this.exportWorkerHaltOnError = getBoolean(properties, env, PropertyKey.EXPORT_WORKER_HALT_ON_ERROR, false);
             this.exportWorkerNapThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_NAP_THRESHOLD, 7_000);
@@ -1774,20 +1774,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             // Legacy shared pool, it used to be a single shared pool for all the tasks.
             // Now it's split into 3: IO, Query and Write
             // But the old props are the defaults for the new shared pools, read them.
-            int sharedWorkerCountSett = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(2, cpuAvailable - cpuSpare));
-            boolean sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
-            long sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
-            long sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
-            long sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
-            long sharedWorkerSleepTimeout = getMillis(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
+            final int sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(2, cpuAvailable - cpuSpare));
+            final boolean sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
+            final long sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
+            final long sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
+            final long sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
+            final long sharedWorkerSleepTimeout = getMillis(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
 
             // IO will be slightly higher priority than query and write pools to make the server more responsive
-            int networkPoolWorkerCount = configureSharedThreadPool(
-                    properties, env,
-                    this.sharedWorkerPoolNetworkConfiguration,
+            final int networkPoolWorkerCount = configureSharedThreadPool(
+                    properties,
+                    env,
+                    sharedWorkerPoolNetworkConfiguration,
                     PropertyKey.SHARED_NETWORK_WORKER_COUNT,
                     PropertyKey.SHARED_NETWORK_WORKER_AFFINITY,
-                    sharedWorkerCountSett,
+                    sharedWorkerCount,
                     Thread.NORM_PRIORITY + 1,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
@@ -1796,12 +1797,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout
             );
 
-            int queryWorkers = configureSharedThreadPool(
-                    properties, env,
-                    this.sharedWorkerPoolQueryConfiguration,
+            final int queryWorkers = configureSharedThreadPool(
+                    properties,
+                    env,
+                    sharedWorkerPoolQueryConfiguration,
                     PropertyKey.SHARED_QUERY_WORKER_COUNT,
                     PropertyKey.SHARED_QUERY_WORKER_AFFINITY,
-                    sharedWorkerCountSett,
+                    sharedWorkerCount,
                     Thread.NORM_PRIORITY,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
@@ -1810,12 +1812,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout
             );
 
-            int writeWorkers = configureSharedThreadPool(
-                    properties, env,
-                    this.sharedWorkerPoolWriteConfiguration,
+            final int writeWorkers = configureSharedThreadPool(
+                    properties,
+                    env,
+                    sharedWorkerPoolWriteConfiguration,
                     PropertyKey.SHARED_WRITE_WORKER_COUNT,
                     PropertyKey.SHARED_WRITE_WORKER_AFFINITY,
-                    sharedWorkerCountSett,
+                    sharedWorkerCount,
                     Thread.NORM_PRIORITY - 1,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
