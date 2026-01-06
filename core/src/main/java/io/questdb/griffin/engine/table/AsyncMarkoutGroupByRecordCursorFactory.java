@@ -358,8 +358,12 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         if (asOfJoinMap != null && masterKeyCopier != null) {
             MapKey cacheKey = asOfJoinMap.withKey();
             cacheKey.put(masterRecord, masterKeyCopier);
-            MapValue cacheValue = cacheKey.findValue();
-            if (cacheValue != null) {
+            MapValue cacheValue = cacheKey.createValue();
+            if (cacheValue.isNew()) {
+                // backwardScanForKeyMatch relies on presence of the key in the map,
+                // so let's create an entry for it.
+                cacheValue.putLong(0, Long.MIN_VALUE);
+            } else {
                 cachedRowId = cacheValue.getLong(0);
             }
         }
@@ -383,13 +387,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             prevAsOfRowId = asOfRowId0;
 
             if (asOfRowId0 != Long.MIN_VALUE) {
-                // Set master key in asofJoinMap for comparison during backward scan
-                // We reuse the asofJoinMap temporarily - put master key, backward scan checks for it
-                asOfJoinMap.clear();
-                MapKey masterKey = asOfJoinMap.withKey();
-                masterKey.put(masterRecord, masterKeyCopier);
-                masterKey.createValue().putLong(0, 1L);  // Dummy value, just need key presence
-
                 // Backward scan for key match, stop at cached position
                 match0RowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                         asOfJoinMap,
@@ -399,8 +396,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
 
                 // Update cache with first offset's match
                 if (match0RowId != Long.MIN_VALUE) {
-                    // TODO(puzpuzpuz): this is very inefficient
-                    asOfJoinMap.clear();
                     MapKey newCacheKey = asOfJoinMap.withKey();
                     newCacheKey.put(masterRecord, masterKeyCopier);
                     newCacheKey.createValue().putLong(0, match0RowId);
@@ -442,12 +437,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         stopRowId = prevAsOfRowId;
                     }
 
-                    // Set master key for comparison
-                    asOfJoinMap.clear();
-                    MapKey masterKey = asOfJoinMap.withKey();
-                    masterKey.put(masterRecord, masterKeyCopier);
-                    masterKey.createValue().putLong(0, 1L);
-
                     // Backward scan for key match
                     matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                             asOfJoinMap,
@@ -474,17 +463,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             }
             combinedRecord.of(masterRecord, secOffsValue, matchedSlaveRecord);
             aggregateRecord(combinedRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
-        }
-
-        // Restore the cache with the first offset's match position for use by subsequent master rows
-        // This is necessary because the backward scan for subsequent offsets corrupts the cache
-        // by putting dummy values
-        if (asOfJoinMap != null && masterKeyCopier != null && match0RowId != Long.MIN_VALUE) {
-            // TODO(puzpuzpuz): this is very inefficient
-            asOfJoinMap.clear();
-            MapKey cacheKey = asOfJoinMap.withKey();
-            cacheKey.put(masterRecord, masterKeyCopier);
-            cacheKey.createValue().putLong(0, match0RowId);
         }
 
         return asOfRowId0;
