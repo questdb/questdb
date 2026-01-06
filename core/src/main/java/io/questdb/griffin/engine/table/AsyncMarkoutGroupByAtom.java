@@ -26,12 +26,14 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -52,6 +54,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -67,7 +70,7 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * Atom that manages per-worker resources for parallel markout query execution.
  * <p>
  * This class holds:
- * 1. Per-worker slave cursors for ASOF JOIN lookups
+ * 1. Per-worker time frame helpers for ASOF JOIN lookups via ConcurrentTimeFrameCursor
  * 2. Per-worker aggregation maps and group by functions
  * 3. Per-worker ASOF join maps for symbol -> rowId mappings
  */
@@ -85,6 +88,8 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final Map ownerMap;
+    private final ConcurrentTimeFrameCursor ownerSlaveTimeFrameCursor;
+    private final MarkoutTimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Map> perWorkerAsofJoinMaps;
     private final ObjList<CombinedRecord> perWorkerCombinedRecords;
@@ -93,15 +98,13 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Map> perWorkerMaps;
-    private final ObjList<RecordCursor> perWorkerSlaveCursors;
+    private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
+    private final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final int sequenceColumnIndex;
     private final LongList sequenceOffsetValues = new LongList();
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeyCopier;
     private final int slaveTimestampIndex;
-    private RecordCursor ownerSlaveCursor;
     private long sequenceRowCount;
-    private SqlExecutionContext storedExecutionContext;
 
     public AsyncMarkoutGroupByAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -133,7 +136,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
-            this.slaveFactory = slaveFactory;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.sequenceColumnIndex = sequenceColumnIndex;
 
@@ -155,17 +157,22 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             // Per-worker locks
             this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-            // Per-worker slave cursors (populated lazily)
-            this.perWorkerSlaveCursors = new ObjList<>(slotCount);
+            // Create time frame cursors from slave factory - one per worker + owner
+            final long lookahead = configuration.getSqlAsOfJoinLookAhead();
+            this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
+            this.ownerSlaveTimeFrameHelper = new MarkoutTimeFrameHelper(lookahead);
+            this.perWorkerSlaveTimeFrameCursors = new ObjList<>(slotCount);
+            this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveCursors.add(null);
+                perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
+                perWorkerSlaveTimeFrameHelpers.add(new MarkoutTimeFrameHelper(lookahead));
             }
 
             // Per-worker ASOF maps
             this.perWorkerAsofJoinMaps = new ObjList<>(slotCount);
             if (asOfJoinKeyTypes != null) {
                 ArrayColumnTypes asofValueTypes = new ArrayColumnTypes();
-                asofValueTypes.add(io.questdb.cairo.ColumnType.LONG);
+                asofValueTypes.add(ColumnType.LONG);
                 for (int i = 0; i < slotCount; i++) {
                     perWorkerAsofJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asofValueTypes));
                 }
@@ -256,20 +263,9 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         }
         Misc.freeObjListAndKeepObjects(perWorkerAsofJoinMaps);
 
-        // Close slave cursors (but NOT the factory)
-        if (ownerSlaveCursor != null) {
-            ownerSlaveCursor.close();
-            ownerSlaveCursor = null;
-        }
-        for (int i = 0, n = perWorkerSlaveCursors.size(); i < n; i++) {
-            RecordCursor cursor = perWorkerSlaveCursors.getQuick(i);
-            if (cursor != null) {
-                cursor.close();
-                perWorkerSlaveCursors.setQuick(i, null);
-            }
-        }
-
-        storedExecutionContext = null;
+        // Clear time frame cursors
+        Misc.free(ownerSlaveTimeFrameCursor);
+        Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
     }
 
     @Override
@@ -286,12 +282,8 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         }
         Misc.free(ownerAsofJoinMap);
         Misc.freeObjList(perWorkerAsofJoinMaps);
-        for (int i = 0, n = perWorkerSlaveCursors.size(); i < n; i++) {
-            Misc.free(perWorkerSlaveCursors.getQuick(i));
-        }
-        perWorkerSlaveCursors.clear();
-        Misc.free(ownerSlaveCursor);
-        Misc.free(slaveFactory);
+        Misc.free(ownerSlaveTimeFrameCursor);
+        Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
         // Filter resources
         Misc.free(compiledFilter);
         Misc.free(bindVarMemory);
@@ -386,27 +378,18 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         return sequenceRowCount;
     }
 
-    public RecordCursor getSlaveCursor(int slotId) throws SqlException {
-        if (slotId == -1) {
-            if (ownerSlaveCursor == null) {
-                ownerSlaveCursor = slaveFactory.getCursor(storedExecutionContext);
-            }
-            return ownerSlaveCursor;
-        }
-        RecordCursor cursor = perWorkerSlaveCursors.getQuick(slotId);
-        if (cursor == null) {
-            cursor = slaveFactory.getCursor(storedExecutionContext);
-            perWorkerSlaveCursors.setQuick(slotId, cursor);
-        }
-        return cursor;
-    }
-
-    public RecordCursorFactory getSlaveFactory() {
-        return slaveFactory;
-    }
-
     public RecordSink getSlaveKeyCopier() {
         return slaveKeyCopier;
+    }
+
+    /**
+     * Get the time frame helper for the given slot.
+     */
+    public MarkoutTimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
+        if (slotId == -1) {
+            return ownerSlaveTimeFrameHelper;
+        }
+        return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
     }
 
     public int getSlaveTimestampIndex() {
@@ -454,9 +437,55 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
                 executionContext.setCloneSymbolTables(current);
             }
         }
+    }
 
-        // Store execution context for lazy cursor creation
-        this.storedExecutionContext = executionContext;
+    /**
+     * Initialize all time frame cursors with shared frame data.
+     * Must be called after the slave page frame cursor has been fully iterated.
+     */
+    public void initTimeFrameCursors(
+            TablePageFrameCursor slavePageFrameCursor,
+            PageFrameAddressCache slaveFrameAddressCache,
+            IntList slaveFramePartitionIndexes,
+            LongList slaveFrameRowCounts,
+            LongList slavePartitionTimestamps,
+            int frameCount
+    ) throws SqlException {
+        // Initialize owner cursor
+        ownerSlaveTimeFrameCursor.of(
+                slavePageFrameCursor,
+                slaveFrameAddressCache,
+                slaveFramePartitionIndexes,
+                slaveFrameRowCounts,
+                slavePartitionTimestamps,
+                frameCount
+        );
+        ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
+
+        // Initialize per-worker cursors with the same shared data
+        for (int i = 0, n = perWorkerSlaveTimeFrameCursors.size(); i < n; i++) {
+            ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
+            workerCursor.of(
+                    slavePageFrameCursor,
+                    slaveFrameAddressCache,
+                    slaveFramePartitionIndexes,
+                    slaveFrameRowCounts,
+                    slavePartitionTimestamps,
+                    frameCount
+            );
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
+        }
+
+        // Reopen ASOF maps
+        if (ownerAsofJoinMap != null) {
+            ownerAsofJoinMap.reopen();
+        }
+        for (int i = 0, n = perWorkerAsofJoinMaps.size(); i < n; i++) {
+            Map map = perWorkerAsofJoinMaps.getQuick(i);
+            if (map != null) {
+                map.reopen();
+            }
+        }
     }
 
     /**
@@ -508,7 +537,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     @Override
     public void reopen() {
-        // Maps will be opened lazily by worker threads
+        // Maps and cursors will be opened lazily
     }
 
     @Override
@@ -517,6 +546,13 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     }
 
     public void toTop() {
+        // Reset time frame helpers
+        ownerSlaveTimeFrameHelper.toTop();
+        for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).toTop();
+        }
+
+        // Reset group by functions
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));

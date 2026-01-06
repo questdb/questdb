@@ -24,14 +24,18 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.MessageBus;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -43,9 +47,13 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 /**
  * Cursor for parallel markout GROUP BY using PageFrameSequence.
@@ -53,34 +61,43 @@ import io.questdb.std.Os;
 class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncMarkoutGroupByRecordCursor.class);
 
-    private final MessageBus messageBus;
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
     private final RecordCursorFactory sequenceFactory;
-    private SqlExecutionCircuitBreaker circuitBreaker;
+    private final RecordCursorFactory slaveFactory;
+    private final LongList slavePartitionTimestamps = new LongList();
+    // Slave time frame cache data
+    private final PageFrameAddressCache slaveTimeFrameAddressCache;
+    private final IntList slaveTimeFramePartitionIndexes = new IntList();
+    private final LongList slaveTimeFrameRowCounts = new LongList();
     private int frameLimit;
     private PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence;
     private boolean isDataMapBuilt;
     private boolean isOpen;
+    private boolean isSlaveTimeFrameCacheBuilt;
     private MapRecordCursor mapCursor;
     private RecordCursor sequenceCursor;
+    private TablePageFrameCursor slavePageFrameCursor;
 
     public AsyncMarkoutGroupByRecordCursor(
+            CairoConfiguration configuration,
             ObjList<Function> recordFunctions,
             RecordCursorFactory sequenceFactory,
-            MessageBus messageBus
+            RecordCursorFactory slaveFactory
     ) {
         this.recordFunctions = recordFunctions;
         this.sequenceFactory = sequenceFactory;
-        this.messageBus = messageBus;
+        this.slaveFactory = slaveFactory;
         this.recordA = new VirtualRecord(recordFunctions);
         this.recordB = new VirtualRecord(recordFunctions);
+        this.slaveTimeFrameAddressCache = new PageFrameAddressCache(configuration);
         this.isOpen = true;
     }
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        buildSlaveTimeFrameCacheConditionally();
         buildMapConditionally();
         mapCursor.calculateSize(circuitBreaker, counter);
     }
@@ -91,6 +108,8 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
             isOpen = false;
             mapCursor = Misc.free(mapCursor);
             sequenceCursor = Misc.free(sequenceCursor);
+            slavePageFrameCursor = Misc.free(slavePageFrameCursor);
+            slaveTimeFrameAddressCache.clear();
 
             if (frameSequence != null) {
                 LOG.debug()
@@ -123,6 +142,7 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
+        buildSlaveTimeFrameCacheConditionally();
         buildMapConditionally();
         return mapCursor.hasNext();
     }
@@ -159,24 +179,6 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
             GroupByUtils.toTop(recordFunctions);
             frameSequence.getAtom().toTop();
         }
-    }
-
-    void of(PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
-        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
-        if (!isOpen) {
-            isOpen = true;
-            atom.reopen();
-        }
-        this.frameSequence = frameSequence;
-        this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
-
-        // Materialize sequence cursor
-        this.sequenceCursor = sequenceFactory.getCursor(executionContext);
-        atom.materializeSequenceCursor(sequenceCursor, circuitBreaker);
-
-        isDataMapBuilt = false;
-        frameLimit = -1;
     }
 
     private void buildMap() {
@@ -247,11 +249,80 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         }
     }
 
+    private void buildSlaveTimeFrameCacheConditionally() {
+        if (!isSlaveTimeFrameCacheBuilt) {
+            final int frameCount = initializeSlaveTimeFrameCache();
+            populateSlavePartitionTimestamps();
+            initializeTimeFrameCursors(frameCount);
+            isSlaveTimeFrameCacheBuilt = true;
+        }
+    }
+
+    private int initializeSlaveTimeFrameCache() {
+        RecordMetadata slaveMetadata = slaveFactory.getMetadata();
+        slaveTimeFrameAddressCache.of(slaveMetadata, slavePageFrameCursor.getColumnIndexes(), slavePageFrameCursor.isExternal());
+        slaveTimeFramePartitionIndexes.clear();
+        slaveTimeFrameRowCounts.clear();
+
+        int frameCount = 0;
+        PageFrame frame;
+        while ((frame = slavePageFrameCursor.next()) != null) {
+            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
+            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            slaveTimeFrameAddressCache.add(frameCount++, frame);
+        }
+        return frameCount;
+    }
+
+    private void initializeTimeFrameCursors(int frameCount) {
+        try {
+            frameSequence.getAtom().initTimeFrameCursors(
+                    slavePageFrameCursor,
+                    slaveTimeFrameAddressCache,
+                    slaveTimeFramePartitionIndexes,
+                    slaveTimeFrameRowCounts,
+                    slavePartitionTimestamps,
+                    frameCount
+            );
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put(e.getFlyweightMessage());
+        }
+    }
+
+    private void populateSlavePartitionTimestamps() {
+        slavePartitionTimestamps.clear();
+        final TableReader reader = slavePageFrameCursor.getTableReader();
+        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+            slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
+        }
+    }
+
     private void throwTimeoutException() {
         if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
             throw CairoException.queryCancelled();
         } else {
             throw CairoException.queryTimedOut();
         }
+    }
+
+    void of(PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
+        if (!isOpen) {
+            isOpen = true;
+            atom.reopen();
+        }
+        this.frameSequence = frameSequence;
+        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
+
+        // Materialize sequence cursor
+        this.sequenceCursor = sequenceFactory.getCursor(executionContext);
+        atom.materializeSequenceCursor(sequenceCursor, executionContext.getCircuitBreaker());
+
+        // Get slave page frame cursor for time frame initialization
+        this.slavePageFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
+
+        isDataMapBuilt = false;
+        isSlaveTimeFrameCacheBuilt = false;
+        frameLimit = -1;
     }
 }
