@@ -1455,7 +1455,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 Sort light
                                   keys: [x, x1]
                                     VirtualRecord
-                                      functions: [x,max,case([1<x,100*x,10*x1]),x1]
+                                      functions: [x,max,x1,case([1<x,100*x,10*x1])]
                                         GroupBy vectorized: false
                                           keys: [x,x1]
                                           values: [max(y)]
