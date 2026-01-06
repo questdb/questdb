@@ -2087,8 +2087,10 @@ public class SqlParser {
         while (true) {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses = prevModel != null ? prevModel.getWithClauses() : withClauses;
             LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses = useTopLevelWithClauses && model == null ? topLevelWithModel : null;
+            // Propagate DECLARE variables from previous UNION branch, similar to how WITH clauses are propagated
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> parentDecls = prevModel != null ? prevModel.getDecls() : decls;
 
-            QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition, sqlParserCallback, decls, overrideDeclare);
+            QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition, sqlParserCallback, parentDecls, overrideDeclare);
             if (prevModel == null) {
                 model = unionModel;
                 prevModel = model;

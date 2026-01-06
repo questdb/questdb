@@ -1555,9 +1555,7 @@ public class ViewQueryTest extends AbstractViewTest {
         });
     }
 
-    @Ignore("TODO: This looks like a bug in the DECLARE implementation, to be investigated")
     @Test
-    // todo: investigate and fix
     public void testDeclareInUnionInsideView() throws Exception {
         // Test: DECLARE scoping across UNION branches inside a VIEW
         assertMemoryLeak(() -> {
