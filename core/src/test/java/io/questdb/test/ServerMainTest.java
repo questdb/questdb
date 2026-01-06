@@ -41,8 +41,8 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ConcurrentIntHashMap;
 import io.questdb.std.Files;
-import io.questdb.std.ObjList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -60,6 +60,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.*;
@@ -160,18 +161,24 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testConcurrentTableDrop() throws Exception {
         assertMemoryLeak(() -> {
+            int tableCount = 20;
+
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.DEBUG_CAIRO_POOL_SEGMENT_SIZE.getEnvVarName(), "2",
                     PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS.getEnvVarName(), "30",
-                    PropertyKey.CAIRO_WAL_PURGE_INTERVAL.getEnvVarName(), "1"
+                    PropertyKey.CAIRO_WAL_PURGE_INTERVAL.getEnvVarName(), "1",
+                    // Increase HTTP workers to get enough SQL compiler pool segments
+                    PropertyKey.HTTP_WORKER_COUNT.getEnvVarName(), String.valueOf(tableCount)
             )) {
                 serverMain.start();
 
-                int tableCount = 20;
                 AtomicInteger errorCount = new AtomicInteger(0);
                 ObjList<Thread> threads = new ObjList<>();
                 ConcurrentIntHashMap<Boolean> tableMap = new ConcurrentIntHashMap<>();
                 var configuration = serverMain.getConfiguration();
+
+                int insertThreadCount = 5;
+                CyclicBarrier latch = new CyclicBarrier(tableCount * (1 + insertThreadCount));
 
                 Rnd rnd = TestUtils.generateRandom(LOG);
                 for (int i = 0; i < tableCount; i++) {
@@ -180,7 +187,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     int threadId = i;
 
                     Thread dropThread = new Thread(() -> {
-                        Os.sleep(10);
                         try (SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1)
                                 .with(
                                         configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -189,6 +195,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                         -1,
                                         null
                                 )) {
+                            latch.await();
                             serverMain.getEngine().execute("drop table test" + threadId, sqlExecutionContext);
                             tableMap.remove(threadId);
                         } catch (Throwable e) {
@@ -201,13 +208,14 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     });
 
                     Rnd rndForInserts = new Rnd(rnd.nextLong(), rnd.nextLong());
-                    for (int t = 0; t < 5; t++) {
+                    for (int t = 0; t < insertThreadCount; t++) {
                         Thread insertThread = new Thread(() -> {
                             ObjList<WalWriter> writerObjList = new ObjList<>();
                             try {
+                                latch.await();
                                 TableToken tableToken = serverMain.getEngine().getTableTokenIfExists("test" + threadId);
                                 if (tableToken != null) {
-                                    for (int in = 0; in < 5; in++) {
+                                    for (int in = 0; in < insertThreadCount; in++) {
                                         WalWriter ww = commitRow(serverMain, tableToken, in);
                                         if (rndForInserts.nextBoolean()) {
                                             ww.close();
