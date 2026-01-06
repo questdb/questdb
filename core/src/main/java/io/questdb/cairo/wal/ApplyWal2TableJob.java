@@ -759,6 +759,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$(", msg=").$safe(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .I$();
+                    throw e;
                 }
                 // WAL-E files can be deleted by the purge job after a commit.
                 // Update the view state before committing the transaction.
