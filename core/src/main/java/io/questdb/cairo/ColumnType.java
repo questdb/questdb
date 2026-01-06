@@ -897,7 +897,7 @@ public final class ColumnType {
                 /* 10 DOUBLE     */, {DOUBLE}
                 /* 11 STRING     */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
                 /* 12 SYMBOL     */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
-                /* 13 LONG256    */, {LONG256}
+                /* 13 LONG256    */, {LONG256, LONG}
                 /* 14 GEOBYTE    */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 15 GEOSHORT   */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 16 GEOINT     */, {GEOINT, GEOLONG, GEOHASH}

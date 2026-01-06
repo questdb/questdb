@@ -74,7 +74,6 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
-import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -101,7 +100,6 @@ import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.std.GenericLexer.unquote;
-import static io.questdb.std.Long256Impl.isNull;
 import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class SqlOptimiser implements Mutable {
@@ -547,15 +545,6 @@ public class SqlOptimiser implements Mutable {
                     return true;
                 }
                 sink.put(val);
-                return false;
-            }
-            case ColumnType.LONG256: {
-                final Long256 val = record.getLong256A(0);
-                if (isNull(val)) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Numbers.appendLong256(val, sink);
                 return false;
             }
             case ColumnType.LONG128:

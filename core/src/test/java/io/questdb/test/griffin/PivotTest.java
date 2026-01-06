@@ -1235,7 +1235,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """, 48, "there is no matching operator `IN` with the argument type: LONG256");
+                            """, 56, "unsupported PIVOT FOR column type: LONG256");
         });
     }
 
