@@ -580,11 +580,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getRecentWriteTrackerCapacity() {
-        return 1000;
-    }
-
-    @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
     }
@@ -756,13 +751,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPoolSegmentSize() {
-        return 32;
+    public int getPivotColumnPoolCapacity() {
+        return 8;
     }
 
     @Override
-    public int getPivotColumnPoolCapacity() {
-        return 8;
+    public int getPoolSegmentSize() {
+        return 32;
     }
 
     @Override
@@ -783,6 +778,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getReaderPoolMaxSegments() {
         return 5;
+    }
+
+    @Override
+    public int getRecentWriteTrackerCapacity() {
+        return 1000;
     }
 
     @Override

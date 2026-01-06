@@ -139,38 +139,35 @@ public class SwitchFunctionFactory implements FunctionFactory {
             );
         }
 
-        switch (ColumnType.tagOf(keyType)) {
-            case ColumnType.CHAR:
-                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
-            case ColumnType.INT:
-            case ColumnType.IPv4:
-                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
-            case ColumnType.BYTE:
-                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);
-            case ColumnType.SHORT:
-                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SHORT);
-            case ColumnType.LONG:
-                return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_LONG);
-            case ColumnType.FLOAT:
-                return getFloatKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            case ColumnType.DOUBLE:
-                return getDoubleKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            case ColumnType.DATE:
-                return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
-            case ColumnType.TIMESTAMP:
-                return getTimestampKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, keyType);
-            case ColumnType.BOOLEAN:
-                return getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.VARCHAR: // varchar is treated as char sequence, this works, but it's suboptimal
-                return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            default:
-                throw SqlException.
-                        $(argPositions.getQuick(0), "type ")
-                        .put(ColumnType.nameOf(keyType))
-                        .put(" is not supported in 'switch' type of 'case' statement");
-        }
+        return switch (ColumnType.tagOf(keyType)) {
+            case ColumnType.CHAR ->
+                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
+            case ColumnType.INT, ColumnType.IPv4 ->
+                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
+            case ColumnType.BYTE ->
+                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);
+            case ColumnType.SHORT ->
+                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SHORT);
+            case ColumnType.LONG ->
+                    getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_LONG);
+            case ColumnType.FLOAT ->
+                    getFloatKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            case ColumnType.DOUBLE ->
+                    getDoubleKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            case ColumnType.DATE ->
+                    getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
+            case ColumnType.TIMESTAMP ->
+                    getTimestampKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, keyType);
+            case ColumnType.BOOLEAN ->
+                    getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            case ColumnType.STRING, ColumnType.SYMBOL,
+                 ColumnType.VARCHAR -> // varchar is treated as char sequence, this works, but it's suboptimal
+                    getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            default -> throw SqlException.
+                    $(argPositions.getQuick(0), "type ")
+                    .put(ColumnType.nameOf(keyType))
+                    .put(" is not supported in 'switch' type of 'case' statement");
+        };
     }
 
     @Override

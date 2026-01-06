@@ -3642,13 +3642,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPoolSegmentSize() {
-            return poolSegmentSize;
+        public int getPivotColumnPoolCapacity() {
+            return sqlPivotForColumnPoolCapacity;
         }
 
         @Override
-        public int getPivotColumnPoolCapacity() {
-            return sqlPivotForColumnPoolCapacity;
+        public int getPoolSegmentSize() {
+            return poolSegmentSize;
         }
 
         @Override

@@ -351,8 +351,6 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
-    int getRecentWriteTrackerCapacity();
-
     int getMetadataPoolCapacity();
 
     Metrics getMetrics();
@@ -455,9 +453,9 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
-    int getPoolSegmentSize();
-
     int getPivotColumnPoolCapacity();
+
+    int getPoolSegmentSize();
 
     int getPreferencesStringPoolCapacity();
 
@@ -479,6 +477,8 @@ public interface CairoConfiguration {
     }
 
     int getReaderPoolMaxSegments();
+
+    int getRecentWriteTrackerCapacity();
 
     int getRenameTableModelPoolCapacity();
 
