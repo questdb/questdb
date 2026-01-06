@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -991,6 +991,36 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 continue;
             }
 
+            // This block resolves ambiguity between variadic functions (e.g., InSymbolFunctionFactory "in(KV)")
+            // and array functions (e.g., InSymbolVarcharArrayFunctionFactory "in(KØ[])") when bind variables
+            // have undefined types (deferred type inference at bind time).
+            //
+            // Example Problem: For "symbol_col IN ($1)" where $1 is an undefined bind variable, the default overload
+            // rules would match the variadic version "in(KV)" (variadic functions exactly match).
+            // However, when there is only one undefined argument, we want "in(KØ[])" to match instead.
+            //
+            // Solution: When all variadic arguments are undefined, we delegate to the factory's
+            // variadicTypeSupportUndefinedBindVariables() method to decide whether to skip this function.
+            // This gives more specific signatures (like "in(KØ[]")) a chance to match first.
+            //
+            // Note: The function matching logic is intricate and fragile. So introduced this as a minimal fix
+            // to avoid side effects.
+            if (sigVarArg && argCount != sigArgCount) {
+                if (argCount < sigArgCount) {
+                    continue;
+                }
+                boolean variadicTypeAreAllUndefinedVariables = true;
+                for (int argIdx = sigArgCount; argIdx < argCount; argIdx++) {
+                    if (!args.getQuick(argIdx).isUndefined()) {
+                        variadicTypeAreAllUndefinedVariables = false;
+                        break;
+                    }
+                }
+                if (variadicTypeAreAllUndefinedVariables && !factory.variadicTypeSupportUndefinedBindVariables(args)) {
+                    continue;
+                }
+            }
+
             // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = sigArgCount == 0 ? MATCH_EXACT_MATCH : MATCH_NO_MATCH;
@@ -1168,7 +1198,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 final short sigArgType = FunctionFactoryDescriptor.toTypeTag(t);
                 final int argType;
                 if (FunctionFactoryDescriptor.isArray(t)) {
-                    argType = ColumnType.encodeArrayTypeWithWeakDims(sigArgType, true);
+                    // allow varchar array only if the element type in signature is varchar
+                    argType = ColumnType.encodeArrayTypeWithWeakDims(sigArgType, sigArgType != ColumnType.VARCHAR);
                 } else {
                     argType = sigArgType;
                 }

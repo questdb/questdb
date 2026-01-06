@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -262,6 +262,8 @@ public interface CairoConfiguration {
 
     int getGroupByMergeShardQueueCapacity();
 
+    long getGroupByParallelTopKThreshold();
+
     int getGroupByPoolCapacity();
 
     long getGroupByPresizeMaxCapacity();
@@ -269,6 +271,8 @@ public interface CairoConfiguration {
     long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
+
+    int getGroupByTopKQueueCapacity();
 
     @NotNull
     default IOURingFacade getIOURingFacade() {
@@ -341,6 +345,8 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    int getRecentWriteTrackerCapacity();
 
     int getMetadataPoolCapacity();
 
@@ -599,6 +605,10 @@ public interface CairoConfiguration {
 
     long getSqlSmallMapPageSize();
 
+    int getSqlSmallPageFrameMaxRows();
+
+    int getSqlSmallPageFrameMinRows();
+
     int getSqlSortKeyMaxPages();
 
     long getSqlSortKeyPageSize();
@@ -745,6 +755,16 @@ public interface CairoConfiguration {
      */
     boolean isColumnAliasExpressionEnabled();
 
+    boolean isCopierChunkedEnabled();
+
+    /**
+     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
+     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
+     */
+    default int getCopierType() {
+        return 0; // COPIER_TYPE_DEFAULT
+    }
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
@@ -786,6 +806,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelReadParquetEnabled();
 
     boolean isSqlParallelTopKEnabled();
+
+    boolean isSqlParallelWindowJoinEnabled();
 
     boolean isTableTypeConversionEnabled();
 

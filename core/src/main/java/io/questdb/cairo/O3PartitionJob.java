@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1668,6 +1668,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
             duplicateCount = mergeRowCount - dedupRows;
+            if (duplicateCount > 0) {
+                tableWriter.addDedupRowsRemoved(duplicateCount);
+            }
             mergeRowCount = dedupRows;
         }
 
@@ -2147,6 +2150,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long duplicateCount = mergeRowCount - dedupRows;
                     boolean appendOnly = false;
                     if (duplicateCount > 0) {
+                        tableWriter.addDedupRowsRemoved(duplicateCount);
                         if (duplicateCount == mergeOOOHi - mergeOOOLo + 1 && prefixType != O3_BLOCK_O3) {
 
                             // All the rows are duplicates, the commit does not add any new lines.

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -156,6 +156,24 @@ public class ExpressionNode implements Mutable, Sinkable {
         queryModel = null;
         innerPredicate = false;
         implemented = false;
+    }
+
+    public ExpressionNode copyFrom(final ExpressionNode other) {
+        this.clear();
+        for (int i = 0, n = other.args.size(); i < n; i++) {
+            this.args.add(other.args.get(i));
+        }
+        this.token = other.token;
+        this.queryModel = other.queryModel;
+        this.precedence = other.precedence;
+        this.position = other.position;
+        this.lhs = other.lhs;
+        this.rhs = other.rhs;
+        this.type = other.type;
+        this.paramCount = other.paramCount;
+        this.intrinsicValue = other.intrinsicValue;
+        this.innerPredicate = other.innerPredicate;
+        return this;
     }
 
     @Override

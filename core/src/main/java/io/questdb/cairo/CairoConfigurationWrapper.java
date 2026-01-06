@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -367,6 +367,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByParallelTopKThreshold() {
+        return getDelegate().getGroupByParallelTopKThreshold();
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return getDelegate().getGroupByPoolCapacity();
     }
@@ -384,6 +389,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getGroupByShardingThreshold() {
         return getDelegate().getGroupByShardingThreshold();
+    }
+
+    @Override
+    public int getGroupByTopKQueueCapacity() {
+        return getDelegate().getGroupByTopKQueueCapacity();
     }
 
     @Override
@@ -539,6 +549,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return getDelegate().getMaxUncommittedRows();
+    }
+
+    @Override
+    public int getRecentWriteTrackerCapacity() {
+        return getDelegate().getRecentWriteTrackerCapacity();
     }
 
     @Override
@@ -1032,6 +1047,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSmallPageFrameMaxRows() {
+        return getDelegate().getSqlSmallPageFrameMaxRows();
+    }
+
+    @Override
+    public int getSqlSmallPageFrameMinRows() {
+        return getDelegate().getSqlSmallPageFrameMinRows();
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return getDelegate().getSqlSortKeyMaxPages();
     }
@@ -1327,6 +1352,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCopierChunkedEnabled() {
+        return getDelegate().isCopierChunkedEnabled();
+    }
+
+    @Override
+    public int getCopierType() {
+        return getDelegate().getCopierType();
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return getDelegate().isDevModeEnabled();
     }
@@ -1429,6 +1464,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelTopKEnabled() {
         return getDelegate().isSqlParallelTopKEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowJoinEnabled() {
+        return getDelegate().isSqlParallelWindowJoinEnabled();
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,8 @@ enum class data_type_t : uint8_t {
 enum class data_kind_t : uint8_t {
     kMemory,
     kConst,
+    kFlagsEq,  // CMP emitted for equality; use JNE to skip if not equal
+    kFlagsNe,  // CMP emitted for inequality; use JE to skip if equal
 };
 
 enum class opcodes : int32_t {
@@ -56,16 +58,19 @@ enum class opcodes : int32_t {
     And = 6,
     Or = 7,
     Eq = 8,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Rem,
+    Ne = 9,
+    Lt = 10,
+    Le = 11,
+    Gt = 12,
+    Ge = 13,
+    Add = 14,
+    Sub = 15,
+    Mul = 16,
+    Div = 17,
+    And_Sc = 18, // Short-circuit AND: if false, jump to label[payload.lo] (0 = next_row)
+    Or_Sc = 19,  // Short-circuit OR: if true, jump to label[payload.lo] (0 = next_row)
+    Begin_Sc = 20, // Create label at index payload.lo
+    End_Sc = 21,   // Bind label at index payload.lo
 };
 
 struct instruction_t {
@@ -134,5 +139,212 @@ inline data_kind_t dst_kind(const jit_value_t &lhs, const jit_value_t &rhs) {
                                                                                          : data_kind_t::kMemory;
     return dk;
 }
+
+// Cache for pre-loaded column addresses to avoid redundant loads inside the loop
+struct ColumnAddressCache {
+    static constexpr size_t MAX_COLUMNS = 8;
+
+    ColumnAddressCache() {
+        for (size_t i = 0; i < MAX_COLUMNS; ++i) {
+            valid[i] = false;
+        }
+    }
+
+    bool has(int32_t column_idx) const {
+        return column_idx >= 0 && static_cast<size_t>(column_idx) < MAX_COLUMNS && valid[column_idx];
+    }
+
+    asmjit::x86::Gp get(int32_t column_idx) const {
+        return addresses[column_idx];
+    }
+
+    void set(int32_t column_idx, asmjit::x86::Gp reg) {
+        if (column_idx >= 0 && static_cast<size_t>(column_idx) < MAX_COLUMNS) {
+            addresses[column_idx] = reg;
+            valid[column_idx] = true;
+        }
+    }
+
+private:
+    asmjit::x86::Gp addresses[MAX_COLUMNS];
+    bool valid[MAX_COLUMNS];
+};
+
+// Cache for pre-loaded constants to avoid redundant loads inside the loop
+struct ConstantCache {
+    static constexpr size_t MAX_CONSTANTS = 8;
+
+    ConstantCache() : count(0) {}
+
+    // Find an integer constant and return its register
+    bool findInt(int64_t value, asmjit::x86::Gp &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (!is_float[i] && int_values[i] == value) {
+                out_reg = gp_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Find a float constant and return its register
+    bool findFloat(double value, asmjit::x86::Xmm &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (is_float[i] && float_values[i] == value) {
+                out_reg = xmm_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Add an integer constant
+    void addInt(int64_t value, asmjit::x86::Gp reg) {
+        if (count < MAX_CONSTANTS) {
+            is_float[count] = false;
+            int_values[count] = value;
+            gp_regs[count] = reg;
+            count++;
+        }
+    }
+
+    // Add a float constant
+    void addFloat(double value, asmjit::x86::Xmm reg) {
+        if (count < MAX_CONSTANTS) {
+            is_float[count] = true;
+            float_values[count] = value;
+            xmm_regs[count] = reg;
+            count++;
+        }
+    }
+
+private:
+    size_t count;
+    bool is_float[MAX_CONSTANTS];
+    int64_t int_values[MAX_CONSTANTS];
+    double float_values[MAX_CONSTANTS];
+    asmjit::x86::Gp gp_regs[MAX_CONSTANTS];
+    asmjit::x86::Xmm xmm_regs[MAX_CONSTANTS];
+};
+
+// Cache for loaded column values to avoid redundant loads within a single row iteration
+struct ColumnValueCache {
+    static constexpr size_t MAX_VALUES = 8;
+
+    ColumnValueCache() : count(0) {}
+
+    // Find a cached value for a column
+    bool find(int32_t column_idx, data_type_t type, asmjit::x86::Gp &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (column_idxs[i] == column_idx && types[i] == type && !is_xmm[i]) {
+                out_reg = gp_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Find a cached float/double value for a column
+    bool findXmm(int32_t column_idx, data_type_t type, asmjit::x86::Xmm &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (column_idxs[i] == column_idx && types[i] == type && is_xmm[i]) {
+                out_reg = xmm_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Add an integer column value
+    void add(int32_t column_idx, data_type_t type, asmjit::x86::Gp reg) {
+        if (count < MAX_VALUES) {
+            column_idxs[count] = column_idx;
+            types[count] = type;
+            is_xmm[count] = false;
+            gp_regs[count] = reg;
+            count++;
+        }
+    }
+
+    // Add a float/double column value
+    void addXmm(int32_t column_idx, data_type_t type, asmjit::x86::Xmm reg) {
+        if (count < MAX_VALUES) {
+            column_idxs[count] = column_idx;
+            types[count] = type;
+            is_xmm[count] = true;
+            xmm_regs[count] = reg;
+            count++;
+        }
+    }
+
+    // Clear cache (call at start of each row iteration if needed)
+    void clear() {
+        count = 0;
+    }
+
+private:
+    size_t count;
+    int32_t column_idxs[MAX_VALUES];
+    data_type_t types[MAX_VALUES];
+    bool is_xmm[MAX_VALUES];
+    asmjit::x86::Gp gp_regs[MAX_VALUES];
+    asmjit::x86::Xmm xmm_regs[MAX_VALUES];
+};
+
+// Cache for pre-broadcasted constants in YMM registers for AVX2 SIMD loops
+struct ConstantCacheYmm {
+    static constexpr size_t MAX_CONSTANTS = 8;
+
+    ConstantCacheYmm() : count(0) {}
+
+    // Find an integer constant and return its YMM register
+    bool findInt(int64_t value, asmjit::x86::Ymm &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (!is_float[i] && int_values[i] == value) {
+                out_reg = ymm_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Find a float constant and return its YMM register
+    bool findFloat(double value, asmjit::x86::Ymm &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (is_float[i] && float_values[i] == value) {
+                out_reg = ymm_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Add an integer constant
+    void addInt(int64_t value, asmjit::x86::Ymm reg) {
+        if (count < MAX_CONSTANTS) {
+            is_float[count] = false;
+            int_values[count] = value;
+            ymm_regs[count] = reg;
+            count++;
+        }
+    }
+
+    // Add a float constant
+    void addFloat(double value, asmjit::x86::Ymm reg) {
+        if (count < MAX_CONSTANTS) {
+            is_float[count] = true;
+            float_values[count] = value;
+            ymm_regs[count] = reg;
+            count++;
+        }
+    }
+
+private:
+    size_t count;
+    bool is_float[MAX_CONSTANTS];
+    int64_t int_values[MAX_CONSTANTS];
+    double float_values[MAX_CONSTANTS];
+    asmjit::x86::Ymm ymm_regs[MAX_CONSTANTS];
+};
 
 #endif //QUESTDB_JIT_COMMON_H

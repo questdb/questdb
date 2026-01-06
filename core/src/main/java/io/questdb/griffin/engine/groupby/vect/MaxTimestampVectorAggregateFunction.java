@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,19 +39,20 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class MaxTimestampVectorAggregateFunction extends TimestampFunction implements VectorAggregateFunction {
-
     public static final LongBinaryOperator MAX = Math::max;
-    private final int columnIndex;
-    private final DistinctFunc distinctFunc;
-    private final KeyValueFunc keyValueFunc;
-    private final LongAccumulator max = new LongAccumulator(
+    private final LongAccumulator accumulator = new LongAccumulator(
             MAX, Long.MIN_VALUE
     );
+    private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final boolean isDesignated;
+    private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MaxTimestampVectorAggregateFunction(int keyKind, int columnIndex, int workerCount, int timestampType) {
+    public MaxTimestampVectorAggregateFunction(int keyKind, int columnIndex, int timestampType, int timestampIndex) {
         super(timestampType);
         this.columnIndex = columnIndex;
+        this.isDesignated = columnIndex == timestampIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             this.distinctFunc = Rosti::keyedMicroHourDistinct;
             this.keyValueFunc = Rosti::keyedMicroHourMaxLong;
@@ -67,7 +68,12 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            max.accumulate(Vect.maxLong(address, frameRowCount));
+            if (isDesignated) {
+                final long value = Unsafe.getUnsafe().getLong(address + 8L * (frameRowCount - 1));
+                accumulator.accumulate(value);
+            } else {
+                accumulator.accumulate(Vect.maxLong(address, frameRowCount));
+            }
         }
     }
 
@@ -82,7 +88,7 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void clear() {
-        max.reset();
+        accumulator.reset();
     }
 
     @Override
@@ -92,12 +98,12 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public String getName() {
-        return "max";
+        return isDesignated ? "max_designated" : "max";
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return max.longValue();
+        return accumulator.longValue();
     }
 
     @Override
@@ -123,6 +129,6 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
+        return Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, accumulator.longValue());
     }
 }

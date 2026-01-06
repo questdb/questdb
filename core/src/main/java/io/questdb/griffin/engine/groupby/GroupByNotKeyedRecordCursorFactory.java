@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -125,6 +125,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
+        Misc.free(simpleMapValue);
         Misc.freeObjList(groupByFunctions);
         Misc.free(base);
     }
@@ -150,7 +151,6 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
-
         private static final int INIT_DONE = 2;
         private static final int INIT_FIRST_RECORD_DONE = 1;
         private static final int INIT_PENDING = 0;
@@ -161,7 +161,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int initState;
-        private int recordsRemaining = 1;
+        private boolean isExhausted = false;
         private long rowId;
 
         public GroupByNotKeyedRecordCursor(
@@ -176,9 +176,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (recordsRemaining > 0) {
-                counter.add(recordsRemaining);
-                recordsRemaining = 0;
+            if (!isExhausted) {
+                counter.inc();
+                isExhausted = true;
             }
         }
 
@@ -205,6 +205,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public boolean hasNext() {
+            if (isExhausted) {
+                return false;
+            }
             if (initState != INIT_DONE) {
                 final Record baseRecord = baseCursor.getRecord();
                 if (initState != INIT_FIRST_RECORD_DONE) {
@@ -225,7 +228,8 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 toTop();
                 initState = INIT_DONE;
             }
-            return recordsRemaining-- > 0;
+            isExhausted = true;
+            return true;
         }
 
         @Override
@@ -255,7 +259,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public void toTop() {
             rowId = 0;
-            recordsRemaining = 1;
+            isExhausted = false;
             GroupByUtils.toTop(groupByFunctions);
         }
     }
