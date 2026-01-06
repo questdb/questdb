@@ -1617,7 +1617,7 @@ public class ExpressionParser {
                             if (en == null) {
                                 throw SqlException.$(lastPos, "qualifier expected");
                             }
-                            if (en.type != ExpressionNode.LITERAL) {
+                            if (en.type != ExpressionNode.LITERAL && en.type != ExpressionNode.CONSTANT) {
                                 throw SqlException.$(lexer.getContent().toString().lastIndexOf('.', lastPos), "unexpected dot");
                             }
                             // two possibilities here:
