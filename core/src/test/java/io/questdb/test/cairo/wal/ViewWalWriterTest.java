@@ -455,7 +455,7 @@ public class ViewWalWriterTest extends AbstractCairoTest {
                     // Only one event should exist - the one committed after rollback
                     walEventReader.of(path, 0);
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "wal1/0/_event.i does not have txn with id 0");
+                    TestUtils.assertContains(e.getMessage(), "_event.i does not have txn with id 0");
                 }
 
                 path.of(configuration.getDbRoot())
