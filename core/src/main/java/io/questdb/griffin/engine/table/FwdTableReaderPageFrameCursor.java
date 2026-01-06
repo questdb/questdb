@@ -318,7 +318,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final int workerCount = Math.max(sharedQueryWorkerCount, 1);
         long rowsPerFrame = Math.min(pageFrameMaxRows, Math.max(pageFrameMinRows, (partitionHi - partitionLo) / workerCount));
         final long lastFrameSize = (partitionHi - partitionLo) % rowsPerFrame;
-        if (lastFrameSize > pageFrameMinRows) {
+        if (lastFrameSize > 0 && lastFrameSize < pageFrameMinRows) {
             // Adjust the limit, so that we don't have tiny trailing frames.
             final long frameCount = Math.max((partitionHi - partitionLo) / rowsPerFrame, 1);
             rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
