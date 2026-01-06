@@ -285,8 +285,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     }
 
     public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
-        private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-        private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+        private DirectLongList columnData = new DirectLongList(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
+        private DirectLongList columnMetadata = new DirectLongList(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
         private DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
         private long currentFrameRowCount = 0;
         private long currentPartitionIndex = -1;
@@ -298,9 +298,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         @Override
         public void clear() {
-            columnNames.clear();
-            columnData.clear();
-            columnMetadata.clear();
+            // free memory after one query finished, will re-malloc on next query
+            columnNames.close();
+            columnData.close();
+            columnMetadata.close();
             closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
