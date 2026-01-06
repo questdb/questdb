@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,12 +79,12 @@ public class TelemetryTest extends AbstractCairoTest {
                         column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
                         id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
                         enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                        version\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        os\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        package\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse
-                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                        version\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        os\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        package\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
                         """;
                 assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
                 expected = """

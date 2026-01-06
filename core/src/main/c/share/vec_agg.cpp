@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 #include "vec_agg.h"
 #include "util.h"
+#include <immintrin.h>
 
 #define MAX_VECTOR_SIZE 512
 
@@ -31,6 +32,7 @@
 
 #define COUNT_DOUBLE F_AVX512(countDouble)
 #define SUM_DOUBLE F_AVX512(sumDouble)
+#define SUM_DOUBLE_ACC F_AVX512(sumDoubleAcc)
 #define SUM_DOUBLE_KAHAN F_AVX512(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_AVX512(sumDoubleNeumaier)
 #define MIN_DOUBLE F_AVX512(minDouble)
@@ -42,11 +44,13 @@
 
 #define COUNT_INT F_AVX512(countInt)
 #define SUM_INT F_AVX512(sumInt)
+#define SUM_INT_ACC F_AVX512(sumIntAcc)
 #define MIN_INT F_AVX512(minInt)
 #define MAX_INT F_AVX512(maxInt)
 
 #define COUNT_LONG F_AVX512(countLong)
 #define SUM_LONG F_AVX512(sumLong)
+#define SUM_LONG_ACC F_AVX512(sumLongAcc)
 #define MIN_LONG F_AVX512(minLong)
 #define MAX_LONG F_AVX512(maxLong)
 
@@ -54,6 +58,7 @@
 
 #define COUNT_DOUBLE F_AVX2(countDouble)
 #define SUM_DOUBLE F_AVX2(sumDouble)
+#define SUM_DOUBLE_ACC F_AVX2(sumDoubleAcc)
 #define SUM_DOUBLE_KAHAN F_AVX2(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_AVX2(sumDoubleNeumaier)
 #define MIN_DOUBLE F_AVX2(minDouble)
@@ -65,11 +70,13 @@
 
 #define COUNT_INT F_AVX2(countInt)
 #define SUM_INT F_AVX2(sumInt)
+#define SUM_INT_ACC F_AVX2(sumIntAcc)
 #define MIN_INT F_AVX2(minInt)
 #define MAX_INT F_AVX2(maxInt)
 
 #define COUNT_LONG F_AVX2(countLong)
 #define SUM_LONG F_AVX2(sumLong)
+#define SUM_LONG_ACC F_AVX2(sumLongAcc)
 #define MIN_LONG F_AVX2(minLong)
 #define MAX_LONG F_AVX2(maxLong)
 
@@ -77,6 +84,7 @@
 
 #define COUNT_DOUBLE F_SSE41(countDouble)
 #define SUM_DOUBLE F_SSE41(sumDouble)
+#define SUM_DOUBLE_ACC F_SSE41(sumDoubleAcc)
 #define SUM_DOUBLE_KAHAN F_SSE41(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_SSE41(sumDoubleNeumaier)
 #define MIN_DOUBLE F_SSE41(minDouble)
@@ -88,11 +96,13 @@
 
 #define COUNT_INT F_SSE41(countInt)
 #define SUM_INT F_SSE41(sumInt)
+#define SUM_INT_ACC F_SSE41(sumIntAcc)
 #define MIN_INT F_SSE41(minInt)
 #define MAX_INT F_SSE41(maxInt)
 
 #define COUNT_LONG F_SSE41(countLong)
 #define SUM_LONG F_SSE41(sumLong)
+#define SUM_LONG_ACC F_SSE41(sumLongAcc)
 #define MIN_LONG F_SSE41(minLong)
 #define MAX_LONG F_SSE41(maxLong)
 
@@ -100,6 +110,7 @@
 
 #define COUNT_DOUBLE F_SSE2(countDouble)
 #define SUM_DOUBLE F_SSE2(sumDouble)
+#define SUM_DOUBLE_ACC F_SSE2(sumDoubleAcc)
 #define SUM_DOUBLE_KAHAN F_SSE2(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_SSE2(sumDoubleNeumaier)
 #define MIN_DOUBLE F_SSE2(minDouble)
@@ -111,11 +122,13 @@
 
 #define COUNT_INT F_SSE2(countInt)
 #define SUM_INT F_SSE2(sumInt)
+#define SUM_INT_ACC F_SSE2(sumIntAcc)
 #define MIN_INT F_SSE2(minInt)
 #define MAX_INT F_SSE2(maxInt)
 
 #define COUNT_LONG F_SSE2(countLong)
 #define SUM_LONG F_SSE2(sumLong)
+#define SUM_LONG_ACC F_SSE2(sumLongAcc)
 #define MIN_LONG F_SSE2(minLong)
 #define MAX_LONG F_SSE2(maxLong)
 
@@ -189,6 +202,44 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
     }
 
     return L_MIN;
+}
+
+double SUM_LONG_ACC(int64_t *pl, int64_t count, int64_t *accCount) {
+    if (count == 0) {
+        *accCount = 0;
+        return NAN;
+    }
+
+    Vec8q vec;
+    Vec8d dVec;
+    const int step = 8;
+    Vec8d vecsum = 0.;
+    Vec8qb bVec;
+    Vec8q nancount = 0;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
+        vec.load(pl + i);
+        bVec = vec == L_MIN;
+        dVec = to_double(vec);
+        vecsum = if_add(!bVec, vecsum, dVec);
+        nancount = if_add(bVec, nancount, 1);
+    }
+
+    _mm_prefetch(pl, _MM_HINT_T0);
+    double sum = horizontal_add(vecsum);
+    int64_t nans = horizontal_add(nancount);
+    for (; i < count; i++) {
+        int64_t l = *(pl + i);
+        if (PREDICT_TRUE(l != L_MIN)) {
+            sum += (double) l;
+        } else {
+            nans++;
+        }
+    }
+
+    *accCount = count - nans;
+    return nans < count ? sum : NAN;
 }
 
 int64_t MIN_LONG(int64_t *pl, int64_t count) {
@@ -322,6 +373,44 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
     return hasData > 0 ? result : L_MIN;
 }
 
+double SUM_INT_ACC(int32_t *pi, int64_t count, int64_t *accCount) {
+    if (count == 0) {
+        *accCount = 0;
+        return NAN;
+    }
+
+    const int32_t step = 16;
+    const auto remainder = (int32_t) (count % step);
+    const auto *lim = pi + count;
+    const auto *vec_lim = lim - remainder;
+
+    Vec16i vec;
+    Vec16ib bVec;
+    Vec16i nancount = 0;
+    double sum = 0;
+    for (; pi < vec_lim; pi += step) {
+        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
+        vec.load(pi);
+        bVec = vec != I_MIN;
+        sum += (double) horizontal_add_x(select(bVec, vec, 0));
+        nancount = if_add(!bVec, nancount, 1);
+    }
+
+    _mm_prefetch(pi, _MM_HINT_T0);
+    int64_t nans = horizontal_add_x(nancount);
+    for (; pi < lim; pi++) {
+        int32_t v = *pi;
+        if (PREDICT_TRUE(v != I_MIN)) {
+            sum += (double) v;
+        } else {
+            nans++;
+        }
+    }
+
+    *accCount = count - nans;
+    return nans < count ? sum : NAN;
+}
+
 int32_t MIN_INT(int32_t *pi, int64_t count) {
     if (count == 0) {
         return I_MIN;
@@ -394,15 +483,45 @@ int64_t SUM_SHORT(int16_t *ps, int64_t count) {
         return L_MIN;
     }
 
+#if INSTRSET >= 8
+    // Faster AVX2 version: uses raw intrinsics since _mm256_madd_epi16 (vpmaddwd) is not available in VCL
     const int32_t step = 32;
     const auto remainder = (int32_t) (count % step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
-    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
-    Vec32s vec;
-    Vec16i acc0 = 0;
-    Vec16i acc1 = 0;
+    const __m256i ones = _mm256_set1_epi16(1);
+    __m256i acc0 = _mm256_setzero_si256();
+    __m256i acc1 = _mm256_setzero_si256();
+    for (; ps < vec_lim; ps += step) {
+        _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
+        __m256i vec0 = _mm256_loadu_si256((__m256i const*) ps);
+        __m256i vec1 = _mm256_loadu_si256((__m256i const*) (ps + 16));
+        // multiply the loaded vectors by 1 (no-op) and extend them to 32-bit;
+        // then add them to the accumulators
+        acc0 = _mm256_add_epi32(acc0, _mm256_madd_epi16(vec0, ones));
+        acc1 = _mm256_add_epi32(acc1, _mm256_madd_epi16(vec1, ones));
+    }
+
+    _mm_prefetch(ps, _MM_HINT_T0);
+    // Horizontal sum of both accumulators to int64
+    __m256i combined = _mm256_add_epi32(acc0, acc1);
+    __m128i lo = _mm256_castsi256_si128(combined);
+    __m128i hi = _mm256_extracti128_si256(combined, 1);
+    __m128i sum128 = _mm_add_epi32(lo, hi);
+    int64_t sum = (int64_t) _mm_extract_epi32(sum128, 0) +
+                  (int64_t) _mm_extract_epi32(sum128, 1) +
+                  (int64_t) _mm_extract_epi32(sum128, 2) +
+                  (int64_t) _mm_extract_epi32(sum128, 3);
+#else
+    const int32_t step = 16;
+    const auto remainder = (int32_t) (count % step);
+    const auto *lim = ps + count;
+    const auto *vec_lim = lim - remainder;
+
+    Vec16s vec;
+    Vec8i acc0 = 0;
+    Vec8i acc1 = 0;
     for (; ps < vec_lim; ps += step) {
         _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
         vec.load(ps);
@@ -410,13 +529,15 @@ int64_t SUM_SHORT(int16_t *ps, int64_t count) {
         acc1 += extend_high(vec);
     }
 
-    int64_t result = horizontal_add_x(acc0) + horizontal_add_x(acc1);
+    _mm_prefetch(ps, _MM_HINT_T0);
+    int64_t sum = horizontal_add_x(acc0) + horizontal_add_x(acc1);
+#endif
     for (; ps < lim; ps++) {
         int16_t v = *ps;
-        result += v;
+        sum += v;
     }
 
-    return result;
+    return sum;
 }
 
 int32_t MIN_SHORT(int16_t *ps, int64_t count) {
@@ -431,14 +552,14 @@ int32_t MIN_SHORT(int16_t *ps, int64_t count) {
 
     // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
     Vec32s vec;
-    Vec32s vecMin = S_MAX;
+    Vec32s vec_min = S_MAX;
     for (; ps < vec_lim; ps += step) {
-        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
+        _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
         vec.load(ps);
-        vecMin = min(vecMin, vec);
+        vec_min = min(vec_min, vec);
     }
 
-    int32_t min = horizontal_min(vecMin);
+    int32_t min = horizontal_min(vec_min);
     for (; ps < lim; ps++) {
         int16_t x = *ps;
         if (x < min) {
@@ -460,14 +581,14 @@ int32_t MAX_SHORT(int16_t *ps, int64_t count) {
 
     // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
     Vec32s vec;
-    Vec32s vecMax = S_MIN;
+    Vec32s vec_max = S_MIN;
     for (; ps < vec_lim; ps += step) {
-        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
+        _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
         vec.load(ps);
-        vecMax = max(vecMax, vec);
+        vec_max = max(vec_max, vec);
     }
 
-    int32_t max = horizontal_max(vecMax);
+    int32_t max = horizontal_max(vec_max);
     for (; ps < lim; ps++) {
         int16_t x = *ps;
         if (x > max) {
@@ -538,10 +659,43 @@ double SUM_DOUBLE(double *d, int64_t count) {
         }
     }
 
-    if (n < count) {
-        return sum;
+    return n < count ? sum : NAN;
+}
+
+double SUM_DOUBLE_ACC(double *d, int64_t count, int64_t *accCount) {
+    if (count == 0) {
+        *accCount = 0;
+        return NAN;
     }
-    return NAN;
+
+    Vec8d vec;
+    const int step = 8;
+    Vec8d vecsum = 0.;
+    Vec8db bVec;
+    Vec8q nancount = 0;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(d + i + 63 * step, _MM_HINT_T1);
+        vec.load(d + i);
+        bVec = is_nan(vec);
+        vecsum += select(bVec, 0, vec);
+        nancount = if_add(bVec, nancount, 1);
+    }
+
+    _mm_prefetch(d, _MM_HINT_T0);
+    double sum = horizontal_add(vecsum);
+    int64_t nans = horizontal_add(nancount);
+    for (; i < count; i++) {
+        double v = *(d + i);
+        if (PREDICT_TRUE(!std::isnan(v))) {
+            sum += v;
+        } else {
+            nans++;
+        }
+    }
+
+    *accCount = count - nans;
+    return nans < count ? sum : NAN;
 }
 
 double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
@@ -587,10 +741,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
         }
     }
 
-    if (nans < count) {
-        return sum;
-    }
-    return NAN;
+    return nans < count ? sum : NAN;
 }
 
 double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
@@ -639,10 +790,7 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
         }
     }
 
-    if (nans < count) {
-        return sum + c;
-    }
-    return D_NAN;
+    return nans < count ? sum + c : D_NAN;
 }
 
 double MIN_DOUBLE(double *d, int64_t count) {
@@ -671,10 +819,7 @@ double MIN_DOUBLE(double *d, int64_t count) {
         }
     }
 
-    if (min < D_MAX) {
-        return min;
-    }
-    return NAN;
+    return min < D_MAX ? min : NAN;
 }
 
 double MAX_DOUBLE(double *d, int64_t count) {
@@ -704,10 +849,7 @@ double MAX_DOUBLE(double *d, int64_t count) {
         }
     }
 
-    if (max > D_MIN) {
-        return max;
-    }
-    return NAN;
+    return max > D_MIN ? max : NAN;
 }
 
 #endif
@@ -717,6 +859,7 @@ double MAX_DOUBLE(double *d, int64_t count) {
 // Dispatchers
 DOUBLE_LONG_DISPATCHER(countDouble)
 DOUBLE_DISPATCHER(sumDouble)
+DOUBLE_ACC_DISPATCHER(sumDoubleAcc)
 DOUBLE_DISPATCHER(sumDoubleKahan)
 DOUBLE_DISPATCHER(sumDoubleNeumaier)
 DOUBLE_DISPATCHER(minDouble)
@@ -728,11 +871,13 @@ SHORT_INT_DISPATCHER(maxShort)
 
 INT_LONG_DISPATCHER(countInt)
 INT_LONG_DISPATCHER(sumInt)
+INT_LONG_ACC_DISPATCHER(sumIntAcc)
 INT_INT_DISPATCHER(minInt)
 INT_INT_DISPATCHER(maxInt)
 
 LONG_LONG_DISPATCHER(countLong)
 LONG_LONG_DISPATCHER(sumLong)
+LONG_LONG_ACC_DISPATCHER(sumLongAcc)
 LONG_LONG_DISPATCHER(minLong)
 LONG_LONG_DISPATCHER(maxLong)
 

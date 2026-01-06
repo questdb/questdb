@@ -4,7 +4,6 @@ pr:
   branches:
     include:
       - master
-      - master-ent-next
   drafts: false
 
 variables:
@@ -183,6 +182,7 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
+            persistCredentials: true
           - download: current
             artifact: jacoco-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -231,32 +231,37 @@ stages:
               export PATH=$LLVM_TOOLS_PATH:$PATH
               ls -al $(Pipeline.Workspace)/rust-llvm-coverage
 
-              # Merge partial profdata files into the complete report
+              # Merge partial profdata files from all jobs into the complete report
               llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
-              
+
+              COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
+              OBJECTS="--object $COVERAGE_DIR/libquestdbr.so --object $COVERAGE_DIR/questdbr-test-binary"
+              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '/azp/_work/[0-9]+/s' | head -n 1 || true)
+              PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
+              echo "Objects args: $OBJECTS"
+
               # Export the merged coverage report to LCOV format
-              # NOTE: We have to use --path-equivalence to remap paths collected on self-hosted runners
               llvm-cov export \
               --format=lcov \
               --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-              --path-equivalence=/azp/_work/1/s,$(Build.SourcesDirectory) \
+              $OBJECTS \
               --instr-profile=questdbr.profdata \
-              --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
-              --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary \
               > questdbr.lcov.dat
-              
+
+              # Generate HTML report for local inspection
+              llvm-cov show \
+                --format=html \
+                --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+                $PATH_EQUIV_ARGS \
+                $OBJECTS \
+                --instr-profile=questdbr.profdata \
+                --output-dir $(Build.SourcesDirectory)/rust-coverage
+
+              # Merge LCOV coverage results from multiple objects into a single report
+              python3 ./ci/merge_lcov_paths.py questdbr.lcov.dat questdbr-patched.lcov.dat
+
               # Convert LCOV coverage results to Cobertura XML format
-              # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
-              curl -LsSf https://astral.sh/uv/install.sh | sh
-              
-              # NOTE: We use a hard-coded path '/azp/_work/1/s' instead of $(Build.SourcesDirectory) because:
-              # 1. Coverage data is generated on self-hosted runners (which always use /azp/_work/1/s)
-              # 2. This conversion to Cobertura format runs on Azure-hosted runners (where $(Build.SourcesDirectory) differs)
-              # 3. The --base-dir must match the path where coverage was originally generated for correct source mapping
-              uv run --with lcov_cobertura python3 -m lcov_cobertura \
-              questdbr.lcov.dat \
-              --output cobertura.xml \
-              --base-dir /azp/_work/1/s/core/rust/qdbr/src
+              python3 ./ci/lcov_cobertura.py questdbr-patched.lcov.dat --output cobertura.xml --base-dir core/rust
             displayName: "Merge partial Rust reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 
@@ -268,8 +273,15 @@ stages:
               done
               [ -f cobertura.xml ] && COVER_ARGS="$COVER_ARGS -type cobertura --cover cobertura.xml"
 
+              # cover-checker is able to automatically retrieve the diff from the Github Rest API.
+              # Unfortunately, it happpens that the Rest API responses are missing the patch field for some files
+              # which excludes these files from being covered.
+              git fetch origin $(System.PullRequest.targetBranchName)
+              git diff origin/$(System.PullRequest.targetBranchName)..HEAD > pr.diff
+
               $JAVA_HOME_17_X64/bin/java -jar \
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
+                -dt file -d pr.diff \
                 $COVER_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
             displayName: "Post combined report to GitHub"

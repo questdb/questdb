@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1619,28 +1619,6 @@ public final class TestUtils {
         return rnd;
     }
 
-    @NotNull
-    public static Rnd generateRandomForTestParams(Log log, long s0, long s1) {
-        if (log != null) {
-            log.info().$("random test params seeds: ").$(s0).$("L, ").$(s1).$('L').$();
-        }
-        System.out.printf("random test params seeds: %dL, %dL%n", s0, s1);
-        Rnd rnd = new Rnd(s0, s1);
-        // Random impl is biased on first few calls, always return same bool,
-        // so we need to make a few calls to get it going randomly
-        rnd.nextBoolean();
-        rnd.nextBoolean();
-        rnd.nextBoolean();
-        rnd.nextBoolean();
-        rnd.nextBoolean();
-        return rnd;
-    }
-
-    @NotNull
-    public static Rnd generateRandomForTestParams(Log log) {
-        return generateRandomForTestParams(log, System.nanoTime(), System.currentTimeMillis());
-    }
-
     public static String getCsvRoot() {
         return getTestResourcePath("/csv");
     }
@@ -1909,7 +1887,6 @@ public final class TestUtils {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> Numbers.LONG_NULL,
                 engine
         );
     }

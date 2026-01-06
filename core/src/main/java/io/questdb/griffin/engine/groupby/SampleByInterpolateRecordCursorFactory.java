@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -171,9 +171,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);
 
             // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
+            this.mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter);
             entityColumnFilter.of(keyTypes.getColumnCount());
-            this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter);
+            this.mapSink2 = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter);
 
             this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         } catch (Throwable th) {

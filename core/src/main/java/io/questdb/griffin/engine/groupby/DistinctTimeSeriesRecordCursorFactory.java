@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,20 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -55,7 +63,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             final RecordMetadata metadata = base.getMetadata();
             // sink will be storing record columns to map key
             columnFilter.of(metadata.getColumnCount());
-            RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter);
+            RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, metadata, columnFilter);
             Map dataMap = new OrderedMap(
                     configuration.getSqlSmallMapPageSize(),
                     metadata,
@@ -217,14 +225,14 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
-        }
-
-        @Override
         public long preComputedStateSize() {
             // no pre-computed state
             return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            baseCursor.recordAt(record, atRowId);
         }
 
         @Override

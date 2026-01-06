@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,8 @@ int64_t countDouble_Vanilla(double *d, int64_t count);
 
 double sumDouble_Vanilla(double *d, int64_t count);
 
+double sumDoubleAcc_Vanilla(double *d, int64_t count, int64_t *accCount);
+
 double sumDoubleKahan_Vanilla(double *d, int64_t count);
 
 double sumDoubleNeumaier_Vanilla(double *d, int64_t count);
@@ -41,6 +43,8 @@ int64_t countInt_Vanilla(int32_t *pi, int64_t count);
 
 int64_t sumInt_Vanilla(int32_t *pi, int64_t count);
 
+double sumIntAcc_Vanilla(int32_t *pi, int64_t count, int64_t *accCount);
+
 int32_t minInt_Vanilla(int32_t *pi, int64_t count);
 
 int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
@@ -48,6 +52,8 @@ int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
 int64_t countLong_Vanilla(int64_t *pl, int64_t count);
 
 int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
+
+double sumLongAcc_Vanilla(int64_t *pl, int64_t count, int64_t *accCount);
 
 int64_t minLong_Vanilla(int64_t *pl, int64_t count);
 

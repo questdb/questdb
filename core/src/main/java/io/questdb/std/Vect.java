@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,12 +42,6 @@ public final class Vect {
     // Part 2:
     // (1-8) bytes of reverse index, e.g. what is the index of the row with current index in the sorted result set
     public static final byte SHUFFLE_INDEX_FORMAT = 2;
-
-    public static native double avgDoubleAcc(long pInt, long count, long pCount);
-
-    public static native double avgIntAcc(long pInt, long count, long pCount);
-
-    public static native double avgLongAcc(long pInt, long count, long pCount);
 
     // Note: high is inclusive!
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
@@ -108,7 +102,7 @@ public final class Vect {
             int dedupColumnCount,
             long dedupColumnData
     ) {
-        long dedupCount = dedupSortedTimestampIndex(
+        long dedupRowCount = dedupSortedTimestampIndex(
                 inIndexAddr,
                 count,
                 outIndexAddr,
@@ -116,8 +110,8 @@ public final class Vect {
                 dedupColumnCount,
                 dedupColumnData
         );
-        assert dedupCount != -1 : "unsorted data passed to deduplication";
-        return dedupCount;
+        assert dedupRowCount != -1 : "unsorted data passed to deduplication";
+        return dedupRowCount;
     }
 
     public static native long dedupSortedTimestampIndexManyAddresses(
@@ -455,13 +449,25 @@ public final class Vect {
 
     public static native double sumDouble(long pDouble, long count);
 
+    // returns sum of the elements; also stores non-null count to pCount address
+    // meant to be used for average calculation
+    public static native double sumDoubleAcc(long pInt, long count, long pCount);
+
     public static native double sumDoubleKahan(long pDouble, long count);
 
     public static native double sumDoubleNeumaier(long pDouble, long count);
 
     public static native long sumInt(long pInt, long count);
 
+    // returns sum of the elements; also stores non-null count to pCount address
+    // meant to be used for average calculation
+    public static native double sumIntAcc(long pInt, long count, long pCount);
+
     public static native long sumLong(long pLong, long count);
+
+    // returns sum of the elements; also stores non-null count to pCount address
+    // meant to be used for average calculation
+    public static native double sumLongAcc(long pInt, long count, long pCount);
 
     public static native long sumShort(long pLong, long count);
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ import org.jetbrains.annotations.Nullable;
  * Symbol API allows record cursor consumers to store "int" value of symbol function
  * and then retrieve CharSequence values via SymbolTable. Symbol Table is typically
  * populated by function dynamically, in that values that have not yet been returned via
- * getInt() are not cached.*
+ * getInt() are not cached.
  */
 public abstract class SymbolFunction implements Function, SymbolTable {
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
@@ -256,6 +256,11 @@ public abstract class SymbolFunction implements Function, SymbolTable {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Returns true if the symbol table is static (immutable).
+     *
+     * @return true if the symbol table is static
+     */
     public abstract boolean isSymbolTableStatic();
 
     /**

@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -52,17 +53,15 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
 /**
  * Atom that manages per-worker resources for parallel markout query execution.
@@ -79,17 +78,17 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final RecordSink groupByKeyCopier;
     private final RecordSink masterKeyCopier;
     private final int masterTimestampColumnIndex;
-    private final Function ownerFilter;
-    private final ObjList<Function> perWorkerFilters;
     private final GroupByAllocator ownerAllocator;
     private final Map ownerAsofJoinMap;
     private final CombinedRecord ownerCombinedRecord;
+    private final Function ownerFilter;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final Map ownerMap;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Map> perWorkerAsofJoinMaps;
     private final ObjList<CombinedRecord> perWorkerCombinedRecords;
+    private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
@@ -387,10 +386,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         return sequenceRowCount;
     }
 
-    public RecordCursorFactory getSlaveFactory() {
-        return slaveFactory;
-    }
-
     public RecordCursor getSlaveCursor(int slotId) throws SqlException {
         if (slotId == -1) {
             if (ownerSlaveCursor == null) {
@@ -404,6 +399,10 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             perWorkerSlaveCursors.setQuick(slotId, cursor);
         }
         return cursor;
+    }
+
+    public RecordCursorFactory getSlaveFactory() {
+        return slaveFactory;
     }
 
     public RecordSink getSlaveKeyCopier() {

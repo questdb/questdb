@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
@@ -72,6 +73,7 @@ public class WorkerPoolUtils {
         if (configuration.isSqlParallelGroupByEnabled()) {
             sharedPoolQuery.assign(new GroupByVectorAggregateJob(messageBus));
             sharedPoolQuery.assign(new GroupByMergeShardJob(messageBus));
+            sharedPoolQuery.assign(new GroupByLongTopKJob(messageBus));
         }
 
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {

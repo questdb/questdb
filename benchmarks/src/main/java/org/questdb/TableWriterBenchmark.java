@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -109,7 +108,6 @@ public class TableWriterBenchmark {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> Numbers.LONG_NULL,
                 cairoEngine
         );
         writer2 = new TableWriter(
@@ -121,7 +119,6 @@ public class TableWriterBenchmark {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> Numbers.LONG_NULL,
                 cairoEngine
         );
         writer3 = new TableWriter(
@@ -133,7 +130,6 @@ public class TableWriterBenchmark {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> Numbers.LONG_NULL,
                 cairoEngine
         );
         rnd.reset();
@@ -225,26 +221,17 @@ public class TableWriterBenchmark {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compiler.compile(ddl, sqlExecutionContext);
             } catch (SqlException e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
             }
         }
     }
 
     private CairoConfiguration getConfiguration() {
-        final int commitMode;
-        switch (writerCommitMode) {
-            case NOSYNC:
-                commitMode = CommitMode.NOSYNC;
-                break;
-            case SYNC:
-                commitMode = CommitMode.SYNC;
-                break;
-            case ASYNC:
-                commitMode = CommitMode.ASYNC;
-                break;
-            default:
-                throw new IllegalStateException("Unexpected commit mode: " + writerCommitMode);
-        }
+        final int commitMode = switch (writerCommitMode) {
+            case NOSYNC -> CommitMode.NOSYNC;
+            case SYNC -> CommitMode.SYNC;
+            case ASYNC -> CommitMode.ASYNC;
+        };
 
         return new DefaultCairoConfiguration(".") {
             @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,6 +49,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -126,6 +127,7 @@ public class WalWriter implements TableWriterAPI {
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
+    private final RecentWriteTracker recentWriteTracker;
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableSequencerAPI sequencer;
@@ -156,6 +158,7 @@ public class WalWriter implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
+    private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
@@ -176,10 +179,12 @@ public class WalWriter implements TableWriterAPI {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
-            WalDirectoryPolicy walDirectoryPolicy
+            WalDirectoryPolicy walDirectoryPolicy,
+            RecentWriteTracker recentWriteTracker
     ) {
         LOG.info().$("open [table=").$(tableToken).I$();
         this.sequencer = tableSequencerAPI;
+        this.recentWriteTracker = recentWriteTracker;
         this.configuration = configuration;
         this.ddlListener = ddlListener;
         this.mkDirMode = configuration.getMkDirMode();
@@ -1031,7 +1036,7 @@ public class WalWriter implements TableWriterAPI {
         checkDistressed();
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
-                final long rowsToCommit = getUncommittedRowCount();
+                final long txnRowCount = getUncommittedRowCount();
 
                 this.isCommittingData = true;
                 this.lastTxnType = txnType;
@@ -1041,6 +1046,14 @@ public class WalWriter implements TableWriterAPI {
                 this.lastMatViewRefreshBaseTxn = lastRefreshBaseTxn;
                 this.lastMatViewRefreshTimestamp = lastRefreshTimestamp;
                 this.lastMatViewPeriodHi = lastPeriodHi;
+                if (txnRowCount == 0) {
+                    // Sometimes symbols are added but rows are cancelled.
+                    // This can only theoretically happen for replace range commits
+                    // but at the moment it can only happen in fuzz tests because
+                    // in regular usage nothing uses row.cancel() when writing to WAL.
+                    // In this exotic case we do not need to write symbol maps for empty txns.
+                    resetSymbolMaps();
+                }
 
                 lastSegmentTxn = events.appendData(
                         txnType,
@@ -1074,7 +1087,16 @@ public class WalWriter implements TableWriterAPI {
                 }
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.walMetrics().addRowsWritten(rowsToCommit);
+                metrics.walMetrics().addRowsWritten(txnRowCount);
+                // Track WAL commit for tables() function
+                if (recentWriteTracker != null) {
+                    recentWriteTracker.recordWalWrite(
+                            tableToken,
+                            seqTxn,
+                            lastTxnMaxTimestamp == -1 ? Numbers.LONG_NULL : lastTxnMaxTimestamp,
+                            txnRowCount
+                    );
+                }
             }
         } catch (CairoException ex) {
             distressed = true;
@@ -1374,7 +1396,16 @@ public class WalWriter implements TableWriterAPI {
     private long getSequencerTxn() {
         long seqTxn;
         do {
-            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
+            seqTxn = sequencer.nextTxn(
+                    tableToken,
+                    walId,
+                    getColumnStructureVersion(),
+                    segmentId,
+                    lastSegmentTxn,
+                    txnMinTimestamp,
+                    txnMaxTimestamp,
+                    segmentRowCount - currentTxnStartRowNum
+            );
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
@@ -1631,6 +1662,8 @@ public class WalWriter implements TableWriterAPI {
     private void resetDataTxnProperties() {
         currentTxnStartRowNum = segmentRowCount;
         txnMinTimestamp = Long.MAX_VALUE;
+        // Store the max timestamp before resetting for tracking purposes
+        lastTxnMaxTimestamp = txnMaxTimestamp;
         txnMaxTimestamp = -1;
         txnOutOfOrder = false;
         resetSymbolMaps();
@@ -2544,6 +2577,20 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
+            if (hexString == null) {
+                putLong256(columnIndex, (CharSequence) null);
+                return;
+            }
+            if (hexString instanceof DirectUtf8Sequence) {
+                putLong256Utf8(columnIndex, (DirectUtf8Sequence) hexString);
+                return;
+            }
+            // Long256 hex strings are always ASCII
+            putLong256(columnIndex, hexString.asAsciiCharSequence());
+        }
+
+        @Override
         public void putShort(int columnIndex, short value) {
             getPrimaryColumn(columnIndex).putShort(value);
             setRowValueNotNull(columnIndex);
@@ -2571,6 +2618,25 @@ public class WalWriter implements TableWriterAPI {
         public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
+            if (value == null) {
+                putStr(columnIndex, null);
+                return;
+            }
+            if (value instanceof DirectUtf8Sequence ds) {
+                putStrUtf8(columnIndex, ds);
+                return;
+            }
+            if (value.isAscii()) {
+                putStr(columnIndex, value.asAsciiCharSequence());
+            } else {
+                tempSink.clear();
+                Utf8s.utf8ToUtf16(value, tempSink);
+                putStr(columnIndex, tempSink);
+            }
         }
 
         @Override
