@@ -546,13 +546,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     }
 
     public void toTop() {
-        // Reset time frame helpers
-        ownerSlaveTimeFrameHelper.toTop();
-        for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
-            perWorkerSlaveTimeFrameHelpers.getQuick(i).toTop();
-        }
-
-        // Reset group by functions
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
