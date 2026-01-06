@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactory {
     public static final String NAME = "first_not_null";
@@ -60,22 +61,32 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         Function function = args.getQuick(0);
         int type = function.getType();
 
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.GEOBYTE:
-                return new FirstNotNullGeoHashGroupByFunctionByte(type, function);
-            case ColumnType.GEOSHORT:
-                return new FirstNotNullGeoHashGroupByFunctionShort(type, function);
-            case ColumnType.GEOINT:
-                return new FirstNotNullGeoHashGroupByFunctionInt(type, function);
-            default:
-                return new FirstNotNullGeoHashGroupByFunctionLong(type, function);
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE -> new FirstNotNullGeoHashGroupByFunctionByte(type, function);
+            case ColumnType.GEOSHORT -> new FirstNotNullGeoHashGroupByFunctionShort(type, function);
+            case ColumnType.GEOINT -> new FirstNotNullGeoHashGroupByFunctionInt(type, function);
+            default -> new FirstNotNullGeoHashGroupByFunctionLong(type, function);
+        };
     }
 
     private static class FirstNotNullGeoHashGroupByFunctionByte extends FirstGeoHashGroupByFunctionByte {
 
         public FirstNotNullGeoHashGroupByFunctionByte(int type, Function function) {
             super(type, function);
+        }
+
+        @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                final long hi = ptr + count;
+                for (; ptr < hi; ptr++) {
+                    byte value = Unsafe.getUnsafe().getByte(ptr);
+                    if (value != GeoHashes.BYTE_NULL) {
+                        mapValue.putByte(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
         }
 
         @Override
@@ -112,6 +123,20 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         }
 
         @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                final long hi = ptr + count * 4L;
+                for (; ptr < hi; ptr += 4L) {
+                    int value = Unsafe.getUnsafe().getInt(ptr);
+                    if (value != GeoHashes.INT_NULL) {
+                        mapValue.putInt(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
+        }
+
+        @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (mapValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL) {
                 computeFirst(mapValue, record, rowId);
@@ -145,6 +170,20 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         }
 
         @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                final long hi = ptr + count * 8L;
+                for (; ptr < hi; ptr += 8L) {
+                    long value = Unsafe.getUnsafe().getLong(ptr);
+                    if (value != GeoHashes.NULL) {
+                        mapValue.putLong(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
+        }
+
+        @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (mapValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL) {
                 computeFirst(mapValue, record, rowId);
@@ -175,6 +214,20 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
     private static class FirstNotNullGeoHashGroupByFunctionShort extends FirstGeoHashGroupByFunctionShort {
         public FirstNotNullGeoHashGroupByFunctionShort(int type, Function function) {
             super(type, function);
+        }
+
+        @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                final long hi = ptr + count * 2L;
+                for (; ptr < hi; ptr += 2L) {
+                    short value = Unsafe.getUnsafe().getShort(ptr);
+                    if (value != GeoHashes.SHORT_NULL) {
+                        mapValue.putShort(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
         }
 
         @Override

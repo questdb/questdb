@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -81,7 +81,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (frameIndex == -1) {
-            fetchNextFrame(dispatchLimit);
+            fetchNextFrame(dispatchLimit, true);
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
 
@@ -107,7 +107,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         collectCursor(false);
 
         while (frameIndex < frameLimit) {
-            fetchNextFrame(dispatchLimit);
+            fetchNextFrame(dispatchLimit, true);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
                 rowsRemaining -= frameRowsLeft;
@@ -188,11 +188,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public boolean hasNext() {
         // Check for the first hasNext call.
         if (frameIndex == -1) {
-            fetchNextFrame(dispatchLimit);
+            fetchNextFrame(dispatchLimit, false);
         }
 
         // Check for already reached row limit.
-        if (rowsRemaining < 0) {
+        if (rowsRemaining <= 0) {
             return false;
         }
 
@@ -210,7 +210,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
         // Do we have more frames?
         if (frameIndex < frameLimit) {
-            fetchNextFrame(dispatchLimit);
+            fetchNextFrame(dispatchLimit, false);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 record.setRowIndex(rows.get(rowIndex()));
                 frameRowIndex++;
@@ -249,7 +249,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public void skipRows(Counter rowCount) throws DataUnavailableException {
         if (frameIndex == -1) {
-            fetchNextFrame(dispatchLimit);
+            fetchNextFrame(dispatchLimit, false);
         }
 
         long rowCountLeft = Math.min(rowsRemaining, rowCount.get());
@@ -272,7 +272,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         collectCursor(false);
 
         while (frameIndex < frameLimit) {
-            fetchNextFrame(dispatchLimit);
+            fetchNextFrame(dispatchLimit, false);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
                 rowsRemaining -= frameRowsLeft;
@@ -326,7 +326,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
     }
 
-    private void fetchNextFrame(int dispatchLimit) {
+    private void fetchNextFrame(int dispatchLimit, boolean countOnly) {
         if (frameLimit == -1) {
             frameSequence.prepareForDispatch();
             frameLimit = frameSequence.getFrameCount() - 1;
@@ -334,7 +334,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
         try {
             do {
-                cursor = frameSequence.next(dispatchLimit);
+                cursor = frameSequence.next(dispatchLimit, countOnly);
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
                     LOG.debug()
@@ -356,8 +356,13 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     }
 
                     allFramesActive &= frameSequence.isActive();
-                    rows = task.getFilteredRows();
-                    frameRowCount = rows.size();
+                    frameRowCount = task.getFilteredRowCount();
+                    if (task.isCountOnly()) {
+                        rows = null;
+                    } else {
+                        rows = task.getFilteredRows();
+                        assert rows.size() == frameRowCount;
+                    }
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;
                     if (frameRowCount > 0 && frameSequence.isActive()) {

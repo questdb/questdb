@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -139,6 +139,7 @@ import java.io.Closeable;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
@@ -244,7 +245,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int pathRootSize;
     private final int pathSize;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
-    private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
+    private final LongAdder dedupRowsRemovedSinceLastCommit = new LongAdder();
+    private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
@@ -774,9 +776,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$("]' to ").$substr(pathRootSize, path).$();
     }
 
-    public void addPhysicallyWrittenRows(long rows) {
-        physicallyWrittenRowsSinceLastCommit.addAndGet(rows);
-        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
+    public void addDedupRowsRemoved(long count) {
+        dedupRowsRemovedSinceLastCommit.add(count);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -1283,97 +1284,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.commit(denseSymbolMapWriters);
     }
 
-    public void commitWalInsertTransactions(
-            @Transient Path walPath,
-            long seqTxn,
-            TableWriterPressureControl pressureControl
-    ) {
-        if (hasO3() || columnVersionWriter.hasChanges()) {
-            // When the writer is returned to the pool, it should be rolled back. Having an open transaction is very suspicious.
-            // Set the writer to distressed state and throw exception so that the writer is re-created.
-            distressed = true;
-            throw CairoException.critical(0).put("cannot process WAL while in transaction");
-        }
-
-        physicallyWrittenRowsSinceLastCommit.set(0);
-        txWriter.beginPartitionSizeUpdate();
-        long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
-        int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
-        // Capture wall clock once to reduce syscalls. Used for:
-        // - commit latency threshold check in processWalCommit()
-        // - recording last WAL commit timestamp
-        // - TTL wall clock comparison in housekeep()
-        final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
-
-        boolean committed;
-        final long initialCommittedRowCount = txWriter.getRowCount();
-        walRowsProcessed = 0;
-
-        try {
-            if (transactionBlock == 1) {
-                committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
-            } else {
-                try {
-                    int blockSize = processWalCommitBlock(
-                            seqTxn,
-                            transactionBlock,
-                            pressureControl
-                    );
-                    committed = blockSize > 0;
-                    seqTxn += blockSize - 1;
-                } catch (CairoException e) {
-                    if (e.isBlockApplyError()) {
-                        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
-                            // Do not re-try the application as 1 by 1 in tests.
-                            throw e;
-                        }
-                        pressureControl.onBlockApplyError();
-                        pressureControl.updateInflightTxnBlockLength(
-                                1,
-                                Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
-                        );
-                        LOG.info().$("failed to apply block, trying to apply 1 by 1 [table=").$(tableToken)
-                                .$(", startTxn=").$(seqTxn)
-                                .I$();
-                        // Try applying 1 transaction at a time
-                        committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
-                    } else {
-                        throw e;
-                    }
-                }
-            }
-        } catch (CairoException e) {
-            if (e.isOutOfMemory()) {
-                // oom -> we cannot rely on internal TableWriter consistency, all bets are off, better to discard it and re-recreate
-                distressed = true;
-            }
-            throw e;
-        }
-
-        walTxnDetails.setIncrementRowsCommitted(walRowsProcessed);
-        if (committed) {
-            assert txWriter.getLagRowCount() == 0;
-
-            txWriter.setSeqTxn(seqTxn);
-            txWriter.setLagTxnCount(0);
-            txWriter.setLagOrdered(true);
-
-            commit00();
-            lastWalCommitTimestampMicros = wallClockMicros;
-            housekeep(wallClockMicros);
-            shrinkO3Mem();
-
-            assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
-            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
-                    .$(", minTs=").$ts(timestampDriver, txWriter.getMinTimestamp())
-                    .$(", maxTs=").$ts(timestampDriver, txWriter.getMaxTimestamp()).I$();
-        }
-
-        // Sometimes nothing is committed to the table, only copied to LAG.
-        // Sometimes data from LAG is made visible to the table using fast commit that increment transient row count.
-        // Keep in memory last committed seq txn, but do not write it to _txn file.
-        assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
-        metrics.tableWriterMetrics().addCommittedRows(txWriter.getRowCount() - initialCommittedRowCount);
+    public void addPhysicallyWrittenRows(long rows) {
+        physicallyWrittenRowsSinceLastCommit.add(rows);
+        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
     }
 
     @Override
@@ -2336,8 +2249,107 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionTimestampByIndex(partitionIndex);
     }
 
+    public void commitWalInsertTransactions(
+            @Transient Path walPath,
+            long seqTxn,
+            TableWriterPressureControl pressureControl
+    ) {
+        if (hasO3() || columnVersionWriter.hasChanges()) {
+            // When the writer is returned to the pool, it should be rolled back. Having an open transaction is very suspicious.
+            // Set the writer to distressed state and throw exception so that the writer is re-created.
+            distressed = true;
+            throw CairoException.critical(0).put("cannot process WAL while in transaction");
+        }
+
+        physicallyWrittenRowsSinceLastCommit.reset();
+        dedupRowsRemovedSinceLastCommit.reset();
+        txWriter.beginPartitionSizeUpdate();
+        long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
+        int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+        // Capture wall clock once to reduce syscalls. Used for:
+        // - commit latency threshold check in processWalCommit()
+        // - recording last WAL commit timestamp
+        // - TTL wall clock comparison in housekeep()
+        final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
+
+        boolean committed;
+        final long initialCommittedRowCount = txWriter.getRowCount();
+        walRowsProcessed = 0;
+
+        try {
+            if (transactionBlock == 1) {
+                committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
+            } else {
+                try {
+                    int blockSize = processWalCommitBlock(
+                            seqTxn,
+                            transactionBlock,
+                            pressureControl
+                    );
+                    committed = blockSize > 0;
+                    seqTxn += blockSize - 1;
+                } catch (CairoException e) {
+                    if (e.isBlockApplyError()) {
+                        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
+                            // Do not re-try the application as 1 by 1 in tests.
+                            throw e;
+                        }
+                        pressureControl.onBlockApplyError();
+                        pressureControl.updateInflightTxnBlockLength(
+                                1,
+                                Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
+                        );
+                        LOG.info().$("failed to apply block, trying to apply 1 by 1 [table=").$(tableToken)
+                                .$(", startTxn=").$(seqTxn)
+                                .I$();
+                        // Try applying 1 transaction at a time
+                        committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
+                    } else {
+                        throw e;
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            if (e.isOutOfMemory()) {
+                // oom -> we cannot rely on internal TableWriter consistency, all bets are off, better to discard it and re-recreate
+                distressed = true;
+            }
+            throw e;
+        }
+
+        walTxnDetails.setIncrementRowsCommitted(walRowsProcessed);
+        if (committed) {
+            assert txWriter.getLagRowCount() == 0;
+
+            txWriter.setSeqTxn(seqTxn);
+            txWriter.setLagTxnCount(0);
+            txWriter.setLagOrdered(true);
+
+            commit00();
+            lastWalCommitTimestampMicros = wallClockMicros;
+            housekeep(wallClockMicros);
+            shrinkO3Mem();
+
+            assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
+            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
+                    .$(", minTs=").$ts(timestampDriver, txWriter.getMinTimestamp())
+                    .$(", maxTs=").$ts(timestampDriver, txWriter.getMaxTimestamp()).I$();
+        }
+
+        // Sometimes nothing is committed to the table, only copied to LAG.
+        // Sometimes data from LAG is made visible to the table using fast commit that increment transient row count.
+        // Keep in memory last committed seq txn, but do not write it to _txn file.
+        assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
+        long rowsCommitted = txWriter.getRowCount() - initialCommittedRowCount;
+        metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
+    }
+
+    public long getDedupRowsRemovedSinceLastCommit() {
+        return dedupRowsRemovedSinceLastCommit.sum();
+    }
+
     public long getPhysicallyWrittenRowsSinceLastCommit() {
-        return physicallyWrittenRowsSinceLastCommit.get();
+        return physicallyWrittenRowsSinceLastCommit.sum();
     }
 
     public long getRowCount() {
@@ -4013,7 +4025,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void commit(long o3MaxLag) {
         checkDistressed();
-        physicallyWrittenRowsSinceLastCommit.set(0);
+        physicallyWrittenRowsSinceLastCommit.reset();
 
         if (o3InError) {
             rollback();
@@ -5108,7 +5120,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 assert dedupKeyIndex <= dedupColumnCommitAddresses.getColumnCount();
             }
-            long deduplicatedRowCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+            long dedupRowCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
                     indexSrcAddr,
                     longIndexLength,
                     indexDstAddr,
@@ -5117,13 +5129,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
             );
 
+            long dedupRowsRemoved = dedupRowCount > 0 ? longIndexLength - dedupRowCount : 0;
             LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
                     .$(", totalRows=").$(longIndexLength)
                     .$(", lagRows=").$(lagRows)
-                    .$(", dups=")
-                    .$(deduplicatedRowCount > 0 ? longIndexLength - deduplicatedRowCount : 0)
+                    .$(", dups=").$(dedupRowsRemoved)
                     .I$();
-            return deduplicatedRowCount;
+            if (dedupRowsRemoved > 0) {
+                dedupRowsRemovedSinceLastCommit.add(dedupRowsRemoved);
+            }
+            return dedupRowCount;
         } finally {
             if (dedupColumnCommitAddresses.getColumnCount() > 0 && lagRows > 0) {
                 // Release mapped column buffers for lag rows
@@ -8175,6 +8190,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", totalRows=").$(totalRows)
                         .$(", dups=").$(totalRows - dedupedRowCount)
                         .I$();
+                if (dedupedRowCount < totalRows) {
+                    dedupRowsRemovedSinceLastCommit.add(totalRows - dedupedRowCount);
+                }
 
                 // Swap tsMemory and tsMemoryCopy, result of index dedup is in o3TimestampMemCpy
                 timestampAddr = swapTimestampInMemCols(timestampIndex);
@@ -10945,6 +10963,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString);
 
+        /**
+         * Writes Long256 from UTF8-encoded hex string. Accepts any Utf8Sequence implementation.
+         */
+        void putLong256Utf8(int columnIndex, Utf8Sequence hexString);
+
         void putShort(int columnIndex, short value);
 
         void putStr(int columnIndex, CharSequence value);
@@ -10962,6 +10985,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
          *                    On this interface, getChar() returns a byte, not complete character.
          */
         void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
+
+        /**
+         * Writes UTF8-encoded string. Accepts any Utf8Sequence implementation.
+         * For DirectUtf8Sequence, delegates to the more efficient putStrUtf8(int, DirectUtf8Sequence).
+         * For other implementations (e.g., Utf8StringSink), converts to UTF-16 and writes.
+         *
+         * @param columnIndex index of the column we are writing to
+         * @param value       UTF8 sequence to write
+         */
+        void putStrUtf8(int columnIndex, Utf8Sequence value);
 
         void putSym(int columnIndex, CharSequence value);
 
@@ -11129,6 +11162,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
+            // no-op
+        }
+
+        @Override
         public void putShort(int columnIndex, short value) {
             // no-op
         }
@@ -11150,6 +11188,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            // no-op
+        }
+
+        @Override
+        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
             // no-op
         }
 
@@ -11373,6 +11416,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
+            if (hexString == null) {
+                putLong256(columnIndex, (CharSequence) null);
+                return;
+            }
+            if (hexString instanceof DirectUtf8Sequence ds) {
+                putLong256Utf8(columnIndex, ds);
+                return;
+            }
+            // Long256 hex strings are always ASCII
+            putLong256(columnIndex, hexString.asAsciiCharSequence());
+        }
+
+        @Override
         public void putShort(int columnIndex, short value) {
             getPrimaryColumn(columnIndex).putShort(value);
             setRowValueNotNull(columnIndex);
@@ -11400,6 +11457,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
+            if (value == null) {
+                putStr(columnIndex, null);
+                return;
+            }
+            if (value instanceof DirectUtf8Sequence ds) {
+                putStrUtf8(columnIndex, ds);
+                return;
+            }
+            if (value.isAscii()) {
+                putStr(columnIndex, value.asAsciiCharSequence());
+            } else {
+                utf16Sink.clear();
+                Utf8s.utf8ToUtf16(value, utf16Sink);
+                putStr(columnIndex, utf16Sink);
+            }
         }
 
         @Override

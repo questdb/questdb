@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,36 +24,61 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.Mutable;
 import io.questdb.std.Rows;
 
-public interface TimeFrame {
+public final class TimeFrame implements Mutable {
+    private long estimateTimestampHi;
+    private long estimateTimestampLo;
+    private int frameIndex;
+    private long rowHi;
+    private long rowLo;
+    private long timestampHi;
+    private long timestampLo;
+
+    @Override
+    public void clear() {
+        frameIndex = -1;
+        estimateTimestampLo = Long.MIN_VALUE;
+        estimateTimestampHi = Long.MIN_VALUE;
+        timestampLo = Long.MIN_VALUE;
+        timestampHi = Long.MIN_VALUE;
+        rowLo = -1;
+        rowHi = -1;
+    }
 
     /**
      * @return numeric index of the current time frame.
      */
-    int getFrameIndex();
+    public int getFrameIndex() {
+        return frameIndex;
+    }
 
     /**
-     * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.
+     * Make sure to call {@link TimeFrameCursor#open()} prior to this method.
      * <p>
-     * Note: it's allowed to jump with the {@link TimeFrameRecordCursor} record
+     * Note: it's allowed to jump with the {@link TimeFrameCursor} record
      * to any row id in the [rowLo, rowHi) range. {@link Rows#toRowID(int, long)}
      * method should be used to obtain final row id.
      *
      * @return upper boundary for row number within the frame, exclusive
      */
-    long getRowHi();
+    public long getRowHi() {
+        return rowHi;
+    }
 
     /**
-     * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.
+     * Make sure to call {@link TimeFrameCursor#open()} prior to this method.
      * <p>
-     * Note: it's allowed to jump with the {@link TimeFrameRecordCursor} record
+     * Note: it's allowed to jump with the {@link TimeFrameCursor} record
      * to any row id in the [rowLo, rowHi) range. {@link Rows#toRowID(int, long)}
      * method should be used to obtain final row id.
      *
      * @return lower boundary for row number within the frame, inclusive
      */
-    long getRowLo();
+    public long getRowLo() {
+        return rowLo;
+    }
 
     /**
      * Unlike {@link #getTimestampHi()} this value is not precise, i.e. it may
@@ -65,7 +90,9 @@ public interface TimeFrame {
      *
      * @return upper range boundary of timestamps in the time frame, exclusive
      */
-    long getTimestampEstimateHi();
+    public long getTimestampEstimateHi() {
+        return estimateTimestampHi;
+    }
 
     /**
      * Unlike {@link #getTimestampLo()} this value is not precise, i.e. it may
@@ -77,24 +104,54 @@ public interface TimeFrame {
      *
      * @return lower range boundary of timestamps in the time frame, inclusive
      */
-    long getTimestampEstimateLo();
+    public long getTimestampEstimateLo() {
+        return estimateTimestampLo;
+    }
 
     /**
-     * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.
+     * Make sure to call {@link TimeFrameCursor#open()} prior to this method.
      *
      * @return upper boundary of timestamps present in the time frame, exclusive
      */
-    long getTimestampHi();
+    public long getTimestampHi() {
+        return timestampHi;
+    }
 
     /**
-     * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.
+     * Make sure to call {@link TimeFrameCursor#open()} prior to this method.
      *
      * @return lower boundary of timestamps present in the time frame, inclusive
      */
-    long getTimestampLo();
+    public long getTimestampLo() {
+        return timestampLo;
+    }
 
     /**
      * @return whether the frame was previously open
      */
-    boolean isOpen();
+    public boolean isOpen() {
+        return rowLo != -1 && rowHi != -1;
+    }
+
+    public void ofEstimate(int frameIndex, long estimateTimestampLo, long estimateTimestampHi) {
+        this.frameIndex = frameIndex;
+        this.estimateTimestampLo = estimateTimestampLo;
+        this.estimateTimestampHi = estimateTimestampHi;
+        timestampLo = Long.MIN_VALUE;
+        timestampHi = Long.MIN_VALUE;
+        rowLo = -1;
+        rowHi = -1;
+    }
+
+    public void ofOpen(
+            long timestampLo,
+            long timestampHi,
+            long rowLo,
+            long rowHi
+    ) {
+        this.timestampLo = timestampLo;
+        this.timestampHi = timestampHi;
+        this.rowLo = rowLo;
+        this.rowHi = rowHi;
+    }
 }

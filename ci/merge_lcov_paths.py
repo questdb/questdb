@@ -6,7 +6,6 @@ Normalizes paths and merges coverage data by taking maximum execution counts.
 
 import sys
 import re
-from collections import defaultdict
 
 
 class LcovMerger:
