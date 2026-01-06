@@ -121,6 +121,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE("cairo.sql.window.initial.range.buffer.size"),
     CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY("cairo.sql.analytic.column.pool.capacity"),
     CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY("cairo.sql.window.column.pool.capacity"),
+    CAIRO_SQL_PIVOT_COLUMN_POOL_CAPACITY("cairo.sql.pivot.column.pool.capacity"),
+    CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS("cairo.sql.pivot.max.produced.columns"),
     CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE("cairo.sql.create.table.model.batch.size"),
     CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY("cairo.sql.column.cast.model.pool.capacity"),
     CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY("cairo.create.table.column.model.pool.capacity"),
