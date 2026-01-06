@@ -42,10 +42,11 @@ public class TableMetadataPool extends AbstractMultiTenantPool<TableReaderMetada
     @Override
     protected TableReaderMetadataTenantImpl newTenant(
             TableToken tableToken,
+            Entry<TableReaderMetadataTenantImpl> rootEntry,
             Entry<TableReaderMetadataTenantImpl> entry,
             int index,
             @Nullable ResourcePoolSupervisor<TableReaderMetadataTenantImpl> supervisor
     ) {
-        return new TableReaderMetadataTenantImpl(this, entry, index, tableToken, false);
+        return new TableReaderMetadataTenantImpl(this, rootEntry, entry, index, tableToken, false);
     }
 }
