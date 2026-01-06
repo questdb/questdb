@@ -414,7 +414,7 @@ public class DecimalKnuthDivider {
         }
 
         if (increment) {
-            for (int i = 0; i < n; i++) {
+            for (int i = 0, s = q.length; i < s; i++) {
                 if (++q[i] != 0) {
                     break;
                 }
