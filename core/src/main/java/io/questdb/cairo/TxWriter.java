@@ -720,11 +720,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
         int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
         long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
-        // Clear the existing squash counter bits (bits 59-44)
-        partitionSizeMasked &= ~(0xFFFFL << 44);
-
+        // Clear the existing squash counter bits
+        partitionSizeMasked &= ~PARTITION_SQUASH_COUNTER_MASK;
         // Set the new squash counter value
-        partitionSizeMasked |= ((long) (partitionSquashCounter & PARTITION_SQUASH_COUNTER_MAX) << 44);
+        partitionSizeMasked |= ((long) (partitionSquashCounter & PARTITION_SQUASH_COUNTER_MAX) << PARTITION_SQUASH_COUNTER_BIT_OFFSET);
         attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
     }
 
