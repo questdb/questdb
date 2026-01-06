@@ -48,6 +48,10 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         sink = new DirectByteSink(initialCapacity, alloc, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
     }
 
+    public DirectUtf8Sink(long initialCapacity, boolean alloc, int memoryTag) {
+        sink = new DirectByteSink(initialCapacity, alloc, memoryTag);
+    }
+
     @Override
     public @NotNull CharSequence asAsciiCharSequence() {
         return asciiCharSequence.of(this);
