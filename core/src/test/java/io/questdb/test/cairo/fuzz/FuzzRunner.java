@@ -966,9 +966,7 @@ public class FuzzRunner {
                         walWriter = writers.get(writerIndex);
                     }
 
-                    if (!walWriter.goActive(transaction.structureVersion)) {
-                        throw CairoException.critical(0).put("cannot apply structure change");
-                    }
+                    walWriter.goActive(transaction.structureVersion);
                     if (walWriter.getMetadataVersion() != transaction.structureVersion) {
                         throw CairoException.critical(0)
                                 .put("cannot update wal writer to correct structure version");

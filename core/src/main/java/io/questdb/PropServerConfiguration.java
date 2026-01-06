@@ -380,6 +380,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
+    private final int poolSegmentSize;
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final int preferencesStringPoolCapacity;
@@ -466,6 +467,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelWindowJoinEnabled;
     private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
+    private final int sqlPivotForColumnPoolCapacity;
+    private final int sqlPivotMaxProducedColumns;
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final boolean sqlSampleByDefaultAlignment;
@@ -1420,6 +1423,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
+            this.poolSegmentSize = getIntSize(properties, env, PropertyKey.DEBUG_CAIRO_POOL_SEGMENT_SIZE, 32);
             this.walWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS, 10);
             this.spinLockTimeout = getMillis(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000);
             this.sqlCharacterStoreCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_CAPACITY, 1024);
@@ -1457,6 +1461,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, Integer.MAX_VALUE);
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
             this.sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, sqlWindowColumnPoolCapacity);
+            this.sqlPivotForColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_PIVOT_COLUMN_POOL_CAPACITY, 8);
+            this.sqlPivotMaxProducedColumns = getInt(properties, env, PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 5_000);
             this.sqlCreateTableModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE, 1_000_000);
             this.sqlCreateTableColumnModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY, 16);
             this.sqlRenameTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY, 16);
@@ -3636,6 +3642,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPivotColumnPoolCapacity() {
+            return sqlPivotForColumnPoolCapacity;
+        }
+
+        @Override
+        public int getPoolSegmentSize() {
+            return poolSegmentSize;
+        }
+
+        @Override
         public int getPreferencesStringPoolCapacity() {
             return preferencesStringPoolCapacity;
         }
@@ -3938,6 +3954,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlParquetFrameCacheCapacity() {
             return sqlParquetFrameCacheCapacity;
+        }
+
+        @Override
+        public int getSqlPivotMaxProducedColumns() {
+            return sqlPivotMaxProducedColumns;
         }
 
         @Override

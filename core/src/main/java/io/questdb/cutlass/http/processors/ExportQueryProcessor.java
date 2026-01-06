@@ -160,7 +160,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             circuitBreaker.setTimeout(timeout);
             circuitBreaker.resetTimer();
             state.recordCursorFactory = context.getSelectCache().poll(state.sqlText);
-            state.setQueryCacheable(true);
             sqlExecutionContext.with(
                     context.getSecurityContext(),
                     null,
@@ -179,9 +178,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         cc.closeAllButSelect();
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
+                    state.setQueryCacheable(cc.isCacheable());
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
                 }
             } else {
+                state.setQueryCacheable(true);
                 sqlExecutionContext.setCacheHit(true);
                 sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);
             }
@@ -221,7 +222,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
                 } catch (CairoException e) {
-                    state.setQueryCacheable(e.isCacheable());
+                    if (state.isQueryCacheable()) {
+                        state.setQueryCacheable(e.isCacheable());
+                    }
                     internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
                 } catch (CairoError e) {
                     internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);

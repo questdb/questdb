@@ -152,6 +152,10 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         return createParquetOp;
     }
 
+    public boolean isQueryCacheable() {
+        return queryCacheable;
+    }
+
     public void setParquetExportTableName(String tableName) {
         this.parquetExportTableName = tableName;
     }

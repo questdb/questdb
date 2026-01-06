@@ -1475,6 +1475,31 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 });
     }
 
+    @Test
+    public void testParquetExportWithPivot() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE monthly_sales (empid INT, amount INT, month SYMBOL)", sqlExecutionContext);
+                    engine.execute("INSERT INTO monthly_sales VALUES " +
+                            "(1, 10000, 'JAN'), (1, 400, 'JAN'), (2, 4500, 'JAN'), (2, 35000, 'JAN'), " +
+                            "(1, 5000, 'FEB'), (1, 3000, 'FEB'), (2, 200, 'FEB'), (2, 90500, 'FEB'), " +
+                            "(1, 6000, 'MAR'), (1, 5000, 'MAR'), (2, 2500, 'MAR'), (2, 9500, 'MAR')", sqlExecutionContext);
+                    testHttpClient.setKeepConnection(true);
+                    testHttpClient.assertGetParquet(
+                            "/exp",
+                            1177,
+                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                    );
+                    engine.execute("INSERT INTO monthly_sales VALUES (3, 9000, 'APRIL')", sqlExecutionContext);
+                    testHttpClient.setKeepConnection(false);
+                    testHttpClient.assertGetParquet(
+                            "/exp",
+                            1453,
+                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                    );
+                });
+    }
+
     private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         return new Thread(() -> {
             try {

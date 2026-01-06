@@ -1099,6 +1099,35 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryWithPivotToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table monthly_sales (empid int, amount int, month symbol)");
+            execute("insert into monthly_sales values " +
+                    "(1, 10000, 'JAN'), (1, 400, 'JAN'), (2, 4500, 'JAN'), (2, 35000, 'JAN'), " +
+                    "(1, 5000, 'FEB'), (1, 3000, 'FEB'), (2, 200, 'FEB'), (2, 90500, 'FEB'), " +
+                    "(1, 6000, 'MAR'), (1, 5000, 'MAR'), (2, 2500, 'MAR'), (2, 9500, 'MAR')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy (monthly_sales PIVOT (SUM(amount) FOR month IN ('JAN', 'FEB', 'MAR') GROUP BY empid) ORDER BY empid) to 'pivot_output' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(
+                            () -> {
+                                assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "pivot_output.parquet" + "\t1\tfinished\n", "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                assertSql("""
+                                        empid\tJAN\tFEB\tMAR
+                                        1\t10400\t8000\t11000
+                                        2\t39500\t90700\t12000
+                                        """, "select * from read_parquet('" + exportRoot + File.separator + "pivot_output" + ".parquet') order by empid");
+                            }
+                    );
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyTableToParquetBasicSyntax() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y long, z string)");

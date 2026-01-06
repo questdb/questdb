@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Long256;
@@ -106,7 +107,7 @@ public class SqlUtil {
     public static CharSequence createExprColumnAlias(
             CharacterStore store,
             CharSequence base,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
             int maxLength,
             boolean nonLiteral
     ) {
@@ -1141,7 +1142,7 @@ public class SqlUtil {
             CharacterStore store,
             CharSequence base,
             int indexOfDot,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
             boolean nonLiteral
     ) {
         final boolean disallowed = nonLiteral && disallowedAliases.contains(base);
