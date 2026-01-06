@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class ViewQueryTest extends AbstractViewTest {
@@ -1370,6 +1371,328 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t8\t100
                             """,
                     query, "ts", true, sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testDeclareSampleByInView() throws Exception {
+        // Test: DECLARE + SAMPLE BY - parameterized time-series sampling
+        assertMemoryLeak(() -> {
+            // Create table with more granular timestamps for SAMPLE BY testing
+            execute("CREATE TABLE samples (ts TIMESTAMP, sensor SYMBOL, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO samples VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 'A', 10.0), " +
+                    "('2024-01-01T00:00:30.000000Z', 'A', 20.0), " +
+                    "('2024-01-01T00:01:00.000000Z', 'A', 30.0), " +
+                    "('2024-01-01T00:01:30.000000Z', 'A', 40.0), " +
+                    "('2024-01-01T00:02:00.000000Z', 'A', 50.0), " +
+                    "('2024-01-01T00:02:30.000000Z', 'A', 60.0)");
+            drainWalQueue();
+
+            // VIEW with OVERRIDABLE filter threshold - SAMPLE BY groups by 1 minute
+            final String query1 = "DECLARE OVERRIDABLE @min_value := 15.0 " +
+                    "SELECT ts, sensor, avg(value) as avg_val FROM samples WHERE value > @min_value SAMPLE BY 1m";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // Default: value > 15, so excludes first row (10.0)
+            // Minute 0: avg(20) = 20, Minute 1: avg(30,40) = 35, Minute 2: avg(50,60) = 55
+            assertQueryNoLeakCheck("""
+                            ts\tsensor\tavg_val
+                            2024-01-01T00:00:00.000000Z\tA\t20.0
+                            2024-01-01T00:01:00.000000Z\tA\t35.0
+                            2024-01-01T00:02:00.000000Z\tA\t55.0
+                            """,
+                    VIEW1, "ts", true, true, true);
+
+            // Override: value > 35, excludes first 3 rows
+            // Minute 1: avg(40) = 40, Minute 2: avg(50,60) = 55
+            assertQueryNoLeakCheck("""
+                            ts\tsensor\tavg_val
+                            2024-01-01T00:01:00.000000Z\tA\t40.0
+                            2024-01-01T00:02:00.000000Z\tA\t55.0
+                            """,
+                    "DECLARE @min_value := 35.0 SELECT * FROM " + VIEW1, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testDeclareLatestByInView() throws Exception {
+        // Test: DECLARE + LATEST BY - parameterized latest record per symbol
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, symbol SYMBOL, price DOUBLE, qty INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 'AAPL', 150.0, 100), " +
+                    "('2024-01-01T00:01:00.000000Z', 'GOOG', 140.0, 50), " +
+                    "('2024-01-01T00:02:00.000000Z', 'AAPL', 151.0, 200), " +
+                    "('2024-01-01T00:03:00.000000Z', 'MSFT', 380.0, 75), " +
+                    "('2024-01-01T00:04:00.000000Z', 'GOOG', 141.0, 60), " +
+                    "('2024-01-01T00:05:00.000000Z', 'AAPL', 152.0, 150)");
+            drainWalQueue();
+
+            // VIEW with OVERRIDABLE minimum quantity filter
+            final String query1 = "DECLARE OVERRIDABLE @min_qty := 50 " +
+                    "SELECT ts, symbol, price, qty FROM trades WHERE qty >= @min_qty LATEST ON ts PARTITION BY symbol";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // Default: qty >= 50, latest per symbol
+            // AAPL: 152.0 (qty=150), GOOG: 141.0 (qty=60), MSFT: 380.0 (qty=75)
+            assertQueryNoLeakCheck("""
+                            ts\tsymbol\tprice\tqty
+                            2024-01-01T00:03:00.000000Z\tMSFT\t380.0\t75
+                            2024-01-01T00:04:00.000000Z\tGOOG\t141.0\t60
+                            2024-01-01T00:05:00.000000Z\tAAPL\t152.0\t150
+                            """,
+                    VIEW1, "ts", true, true, true);
+
+            // Override: qty >= 100, excludes GOOG and MSFT entirely
+            // AAPL: latest with qty >= 100 is 152.0 (qty=150) - LATEST BY returns only ONE row per symbol
+            assertQueryNoLeakCheck("""
+                            ts\tsymbol\tprice\tqty
+                            2024-01-01T00:05:00.000000Z\tAAPL\t152.0\t150
+                            """,
+                    "DECLARE @min_qty := 100 SELECT * FROM " + VIEW1, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testDeclareAsofJoinBetweenViews() throws Exception {
+        // Test: DECLARE + ASOF JOIN between two VIEWs with different parameters
+        assertMemoryLeak(() -> {
+            // Quotes table - bid/ask prices
+            execute("CREATE TABLE quotes (ts TIMESTAMP, symbol SYMBOL, bid DOUBLE, ask DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO quotes VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 'AAPL', 149.0, 150.0), " +
+                    "('2024-01-01T00:00:05.000000Z', 'AAPL', 149.5, 150.5), " +
+                    "('2024-01-01T00:00:10.000000Z', 'AAPL', 150.0, 151.0), " +
+                    "('2024-01-01T00:00:15.000000Z', 'AAPL', 150.5, 151.5)");
+            drainWalQueue();
+
+            // Trades table
+            execute("CREATE TABLE trade_log (ts TIMESTAMP, symbol SYMBOL, price DOUBLE, side SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trade_log VALUES " +
+                    "('2024-01-01T00:00:02.000000Z', 'AAPL', 149.8, 'BUY'), " +
+                    "('2024-01-01T00:00:08.000000Z', 'AAPL', 150.2, 'SELL'), " +
+                    "('2024-01-01T00:00:12.000000Z', 'AAPL', 150.8, 'BUY')");
+            drainWalQueue();
+
+            // VIEW1: Quotes with OVERRIDABLE spread filter
+            final String query1 = "DECLARE OVERRIDABLE @max_spread := 2.0 " +
+                    "SELECT ts, symbol, bid, ask FROM quotes WHERE (ask - bid) <= @max_spread";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // VIEW2: Trades with OVERRIDABLE side filter
+            final String query2 = "DECLARE OVERRIDABLE @side := 'BUY' " +
+                    "SELECT ts, symbol, price, side FROM trade_log WHERE side = @side";
+            execute("CREATE VIEW " + VIEW2 + " AS (" + query2 + ")");
+            drainWalAndViewQueues();
+
+            // ASOF JOIN: Get the most recent quote at the time of each trade
+            // Using both views with default parameters
+            assertQueryNoLeakCheck("""
+                            trade_ts\tsymbol\tprice\tside\tquote_ts\tbid\task
+                            2024-01-01T00:00:02.000000Z\tAAPL\t149.8\tBUY\t2024-01-01T00:00:00.000000Z\t149.0\t150.0
+                            2024-01-01T00:00:12.000000Z\tAAPL\t150.8\tBUY\t2024-01-01T00:00:10.000000Z\t150.0\t151.0
+                            """,
+                    "SELECT t.ts as trade_ts, t.symbol, t.price, t.side, q.ts as quote_ts, q.bid, q.ask " +
+                            "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)",
+                    "trade_ts", false, false, true);
+
+            // Override to get SELL trades instead
+            assertQueryNoLeakCheck("""
+                            trade_ts\tsymbol\tprice\tside\tquote_ts\tbid\task
+                            2024-01-01T00:00:08.000000Z\tAAPL\t150.2\tSELL\t2024-01-01T00:00:05.000000Z\t149.5\t150.5
+                            """,
+                    "DECLARE @side := 'SELL' " +
+                            "SELECT t.ts as trade_ts, t.symbol, t.price, t.side, q.ts as quote_ts, q.bid, q.ask " +
+                            "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)",
+                    "trade_ts", false, false, true);
+        });
+    }
+
+    @Test
+    public void testDeclareWithNullValues() throws Exception {
+        // Test: DECLARE with NULL values and NULL comparisons
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nullable_data (ts TIMESTAMP, category SYMBOL, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO nullable_data VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 'A', 10), " +
+                    "('2024-01-01T00:01:00.000000Z', 'B', NULL), " +
+                    "('2024-01-01T00:02:00.000000Z', 'A', 20), " +
+                    "('2024-01-01T00:03:00.000000Z', NULL, 30), " +
+                    "('2024-01-01T00:04:00.000000Z', 'B', 40)");
+            drainWalQueue();
+
+            // VIEW with OVERRIDABLE default value for NULL replacement
+            final String query1 = "DECLARE OVERRIDABLE @default_val := 0 " +
+                    "SELECT ts, category, coalesce(value, @default_val) as value FROM nullable_data";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // Default: NULL values replaced with 0
+            assertQueryNoLeakCheck("""
+                            ts\tcategory\tvalue
+                            2024-01-01T00:00:00.000000Z\tA\t10
+                            2024-01-01T00:01:00.000000Z\tB\t0
+                            2024-01-01T00:02:00.000000Z\tA\t20
+                            2024-01-01T00:03:00.000000Z\t\t30
+                            2024-01-01T00:04:00.000000Z\tB\t40
+                            """,
+                    VIEW1, "ts", true, true, true);
+
+            // Override: NULL values replaced with -1
+            assertQueryNoLeakCheck("""
+                            ts\tcategory\tvalue
+                            2024-01-01T00:00:00.000000Z\tA\t10
+                            2024-01-01T00:01:00.000000Z\tB\t-1
+                            2024-01-01T00:02:00.000000Z\tA\t20
+                            2024-01-01T00:03:00.000000Z\t\t30
+                            2024-01-01T00:04:00.000000Z\tB\t40
+                            """,
+                    "DECLARE @default_val := -1 SELECT * FROM " + VIEW1, "ts", true, true);
+        });
+    }
+
+    @Ignore("TODO: This looks like a bug in the DECLARE implementation, to be investigated")
+    @Test
+    // todo: investigate and fix
+    public void testDeclareInUnionInsideView() throws Exception {
+        // Test: DECLARE scoping across UNION branches inside a VIEW
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            // VIEW with DECLARE that applies to both UNION branches
+            final String query1 = "DECLARE OVERRIDABLE @threshold := 5 " +
+                    "SELECT ts, k as key, v FROM " + TABLE1 + " WHERE v > @threshold " +
+                    "UNION ALL " +
+                    "SELECT ts, k2 as key, v FROM " + TABLE2 + " WHERE v < @threshold";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // Default: v > 5 from TABLE1 (rows 6,7,8) UNION v < 5 from TABLE2 (rows 0,1,2,3,4)
+            assertQueryNoLeakCheck("""
+                            ts\tkey\tv
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            1970-01-01T00:00:00.000000Z\tk2_0\t0
+                            1970-01-01T00:00:10.000000Z\tk2_1\t1
+                            1970-01-01T00:00:20.000000Z\tk2_2\t2
+                            1970-01-01T00:00:30.000000Z\tk2_3\t3
+                            1970-01-01T00:00:40.000000Z\tk2_4\t4
+                            """,
+                    VIEW1, null, false, sqlExecutionContext);
+
+            // Override threshold to 3: v > 3 from TABLE1 (rows 4,5,6,7,8) UNION v < 3 from TABLE2 (rows 0,1,2)
+            assertQueryNoLeakCheck("""
+                            ts\tkey\tv
+                            1970-01-01T00:00:40.000000Z\tk4\t4
+                            1970-01-01T00:00:50.000000Z\tk5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            1970-01-01T00:00:00.000000Z\tk2_0\t0
+                            1970-01-01T00:00:10.000000Z\tk2_1\t1
+                            1970-01-01T00:00:20.000000Z\tk2_2\t2
+                            """,
+                    "DECLARE @threshold := 3 SELECT * FROM " + VIEW1, null, false, sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableReusedInSameExpression() throws Exception {
+        // Test: Same DECLARE variable used multiple times in one expression
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // VIEW using @x multiple times in various expressions
+            final String query1 = "DECLARE OVERRIDABLE @x := 2 " +
+                    "SELECT ts, v, " +
+                    "@x as x_val, " +
+                    "@x + @x as x_plus_x, " +
+                    "@x * @x as x_squared, " +
+                    "@x * @x * @x as x_cubed, " +
+                    "v + @x as v_plus_x, " +
+                    "v * @x + @x as complex_expr " +
+                    "FROM " + TABLE1 + " WHERE v <= @x + @x";  // v <= 4
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // Default @x = 2: filter v <= 4, expressions use 2
+            assertQueryNoLeakCheck("""
+                            ts\tv\tx_val\tx_plus_x\tx_squared\tx_cubed\tv_plus_x\tcomplex_expr
+                            1970-01-01T00:00:00.000000Z\t0\t2\t4\t4\t8\t2\t2
+                            1970-01-01T00:00:10.000000Z\t1\t2\t4\t4\t8\t3\t4
+                            1970-01-01T00:00:20.000000Z\t2\t2\t4\t4\t8\t4\t6
+                            1970-01-01T00:00:30.000000Z\t3\t2\t4\t4\t8\t5\t8
+                            1970-01-01T00:00:40.000000Z\t4\t2\t4\t4\t8\t6\t10
+                            """,
+                    VIEW1, "ts", true, sqlExecutionContext);
+
+            // Override @x = 3: filter v <= 6, expressions use 3
+            assertQueryNoLeakCheck("""
+                            ts\tv\tx_val\tx_plus_x\tx_squared\tx_cubed\tv_plus_x\tcomplex_expr
+                            1970-01-01T00:00:00.000000Z\t0\t3\t6\t9\t27\t3\t3
+                            1970-01-01T00:00:10.000000Z\t1\t3\t6\t9\t27\t4\t6
+                            1970-01-01T00:00:20.000000Z\t2\t3\t6\t9\t27\t5\t9
+                            1970-01-01T00:00:30.000000Z\t3\t3\t6\t9\t27\t6\t12
+                            1970-01-01T00:00:40.000000Z\t4\t3\t6\t9\t27\t7\t15
+                            1970-01-01T00:00:50.000000Z\t5\t3\t6\t9\t27\t8\t18
+                            1970-01-01T00:01:00.000000Z\t6\t3\t6\t9\t27\t9\t21
+                            """,
+                    "DECLARE @x := 3 SELECT * FROM " + VIEW1, "ts", true, sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testDeclareTypeCoercion() throws Exception {
+        // Test: Type coercion - string declared, used in numeric/other contexts
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // Test 1: Numeric string coerced to number in comparison
+            final String query1 = "DECLARE OVERRIDABLE @limit := '5' " +
+                    "SELECT ts, v FROM " + TABLE1 + " WHERE v > cast(@limit as int)";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            assertQueryNoLeakCheck("""
+                            ts\tv
+                            1970-01-01T00:01:00.000000Z\t6
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
+                    VIEW1, "ts", true, sqlExecutionContext);
+
+            // Override with different string value
+            assertQueryNoLeakCheck("""
+                            ts\tv
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
+                    "DECLARE @limit := '6' SELECT * FROM " + VIEW1, "ts", true, sqlExecutionContext);
+
+            // Test 2: Symbol/string parameter for filtering
+            final String query2 = "DECLARE OVERRIDABLE @key_filter := 'k5' " +
+                    "SELECT ts, k, v FROM " + TABLE1 + " WHERE k = @key_filter";
+            execute("CREATE VIEW " + VIEW2 + " AS (" + query2 + ")");
+            drainWalAndViewQueues();
+
+            assertQueryNoLeakCheck("""
+                            ts\tk\tv
+                            1970-01-01T00:00:50.000000Z\tk5\t5
+                            """,
+                    VIEW2, "ts", true, sqlExecutionContext);
+
+            // Override to different key
+            assertQueryNoLeakCheck("""
+                            ts\tk\tv
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            """,
+                    "DECLARE @key_filter := 'k7' SELECT * FROM " + VIEW2, "ts", true, sqlExecutionContext);
         });
     }
 }
