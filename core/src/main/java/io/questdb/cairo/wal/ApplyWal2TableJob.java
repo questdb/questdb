@@ -742,7 +742,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 // WAL-E files can be deleted by the purge job after a commit.
                 // Update the materialized view state before committing the transaction.
-                writer.setSeqTxn(seqTxn);
                 writer.markSeqTxnCommitted(seqTxn);
                 lastCommittedRows = 0;
                 return 1;
@@ -763,7 +762,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 // WAL-E files can be deleted by the purge job after a commit.
                 // Update the view state before committing the transaction.
-                writer.setSeqTxn(seqTxn);
                 writer.markSeqTxnCommitted(seqTxn);
                 lastCommittedRows = 0;
                 return 1;
