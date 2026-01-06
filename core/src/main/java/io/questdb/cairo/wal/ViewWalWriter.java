@@ -41,6 +41,16 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
+/**
+ * WAL writer specialized for views.
+ * <p>
+ * Views do not contain data and their schema is not persisted.
+ * This writer only manages WAL event files without creating column files or the _meta file.
+ * <p>
+ * This class extends {@link WalWriterBase} to reuse common WAL infrastructure (segment
+ * management, locking, sequencer integration) while providing view-specific operations
+ * through {@link #replaceViewDefinition(String, LowerCaseCharSequenceObjHashMap)}.
+ */
 public class ViewWalWriter extends WalWriterBase {
     private static final Log LOG = LogFactory.getLog(ViewWalWriter.class);
 
