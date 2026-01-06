@@ -804,7 +804,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     assertSql("ddl\n" +
                                     "CREATE TABLE 'x' ( \n" +
                                     "\ti INT,\n" +
-                                    "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
+                                    "\tsym SYMBOL,\n" +
                                     "\tamt DOUBLE,\n" +
                                     "\ttimestamp TIMESTAMP,\n" +
                                     "\tb BOOLEAN,\n" +
@@ -813,15 +813,14 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     "\te FLOAT,\n" +
                                     "\tf SHORT,\n" +
                                     "\tg DATE,\n" +
-                                    "\tik SYMBOL CAPACITY 128 CACHE,\n" +
+                                    "\tik SYMBOL,\n" +
                                     "\tj LONG,\n" +
                                     "\tk TIMESTAMP,\n" +
                                     "\tl BYTE,\n" +
                                     "\tm BINARY,\n" +
                                     "\tn STRING,\n" +
                                     "\tnscol TIMESTAMP_NS\n" +
-                                    ") timestamp(timestamp) PARTITION BY DAY " + (isWal ? "" : "BYPASS ") + "WAL\n" +
-                                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                                    ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n",
                             "show create table x;");
 
                     assertQueryNoLeakCheck(
@@ -947,7 +946,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             assertSql("ddl\n" +
                             "CREATE TABLE 'x' ( \n" +
                             "\ti INT,\n" +
-                            "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tsym SYMBOL,\n" +
                             "\tamt DOUBLE,\n" +
                             "\ttimestamp TIMESTAMP,\n" +
                             "\tb BOOLEAN,\n" +
@@ -956,15 +955,14 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\te FLOAT,\n" +
                             "\tf SHORT,\n" +
                             "\tg DATE,\n" +
-                            "\tik SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tik SYMBOL,\n" +
                             "\tj LONG,\n" +
                             "\tk TIMESTAMP,\n" +
                             "\tl BYTE,\n" +
                             "\tm BINARY,\n" +
                             "\tn STRING,\n" +
                             "\tarr DOUBLE[]\n" + // <-- array should be present
-                            ") timestamp(timestamp) PARTITION BY DAY " + (isWal ? "" : "BYPASS ") + "WAL\n" +
-                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                            ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n",
                     "show create table x;");
         });
     }

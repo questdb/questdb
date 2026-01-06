@@ -43,7 +43,7 @@ public class TtlTest extends AbstractCairoTest {
     private final String wal;
 
     public TtlTest(WalMode walMode) {
-        this.wal = walMode == WalMode.WITH_WAL ? " WAL" : " BYPASS WAL";
+        this.wal = walMode == WalMode.WITH_WAL ? ";" : " BYPASS WAL;";
     }
 
     @Parameterized.Parameters(name = "{0}")
@@ -192,9 +192,12 @@ public class TtlTest extends AbstractCairoTest {
     public void testCreateTableLike() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2 HOURS" + wal);
         execute("CREATE TABLE samba (LIKE tango)");
-        assertSql("ddl\n" +
-                        "CREATE TABLE 'samba' ( \n\tts TIMESTAMP\n) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS" + wal
-                        + "\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+        assertSql("""
+                        ddl
+                        CREATE TABLE 'samba' (\s
+                        \tts TIMESTAMP
+                        ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS BYPASS WAL;
+                        """,
                 "SHOW CREATE TABLE samba");
     }
 
