@@ -173,6 +173,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private Utf8String namedStatement;
     private Operation operation = null;
     private int outResendArrayFlatIndex = -1; // -1 indicates the array header has not been sent yet
+    private int outResendVarcharByteIndex = -1; // -1 indicates the varchar header has not been sent yet, 0+ is byte offset
     private int outResendColumnIndex = 0;
     private boolean outResendCursorRecord = false;
     private boolean outResendRecordHeader = true;
@@ -321,6 +322,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
         outResendArrayFlatIndex = -1;
+        outResendVarcharByteIndex = -1;
         outResendColumnIndex = 0;
         outResendCursorRecord = false;
         outResendRecordHeader = true;
@@ -1077,6 +1079,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // outResendArrayFlatIndex applies to the column we were sending before we ran out of space
             // all other array columns will be sent in full
             final int effectiveOutResendArrayFlatIndex = i == outResendColumnIndex ? outResendArrayFlatIndex : -1;
+            // outResendVarcharByteIndex applies to the column we were sending before we ran out of space
+            // all other varchar columns will be sent in full (-1 means header not sent = full size)
+            final int effectiveOutResendVarcharByteIndex = (i == outResendColumnIndex && typeTag == ColumnType.VARCHAR)
+                    ? outResendVarcharByteIndex : -1;
 
             final int columnValueSize = calculateColumnBinSize(
                     this,
@@ -1085,15 +1091,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     columnType,
                     geohashSize,
                     maxBlobSize,
-                    effectiveOutResendArrayFlatIndex
+                    effectiveOutResendArrayFlatIndex,
+                    effectiveOutResendVarcharByteIndex
             );
 
             if (columnValueSize < 0) {
                 return -1; // unsupported type
             }
 
-            if (columnValueSize >= sendBufferSize && !ColumnType.isArray(columnType)) {
-                // doesn't fit into send buffer
+            if (columnValueSize >= sendBufferSize && !ColumnType.isArray(columnType) && typeTag != ColumnType.VARCHAR) {
+                // doesn't fit into send buffer (arrays and varchars can be sent in multiple parts)
                 return -1;
             }
 
@@ -1294,7 +1301,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
                 columnValueSize = estimateColumnTxtSize(record, i, typeTag);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, 0);
+                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, 0, 0);
             }
 
             if (columnValueSize < 0) {
@@ -2315,14 +2322,32 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColVarchar(PGResponseSink responseUtf8Sink, Record record, int i) {
+    private void outColVarchar(PGResponseSink utf8Sink, Record record, int i) {
         final Utf8Sequence strValue = record.getVarcharA(i);
         if (strValue == null) {
-            responseUtf8Sink.setNullValue();
-        } else {
-            responseUtf8Sink.putNetworkInt(strValue.size());
-            responseUtf8Sink.put(strValue);
+            utf8Sink.setNullValue();
+            return;
         }
+        final int totalSize = strValue.size();
+        // Send header if this is the first chunk (-1 means header not sent yet)
+        if (outResendVarcharByteIndex == -1) {
+            utf8Sink.putNetworkInt(totalSize);
+            utf8Sink.bookmark();
+            outResendVarcharByteIndex = 0; // header sent, now at byte offset 0
+        }
+        // Send as many bytes as we can fit in the buffer
+        int remaining = totalSize - outResendVarcharByteIndex;
+        int written = utf8Sink.putPartial(strValue, outResendVarcharByteIndex, remaining);
+        outResendVarcharByteIndex += written;
+        utf8Sink.bookmark();
+
+        if (outResendVarcharByteIndex < totalSize) {
+            // Not done yet, need to flush buffer and retry
+            throw NoSpaceLeftInResponseBufferException.instance(
+                    totalSize - outResendVarcharByteIndex, 0, utf8Sink.getSendBufferSize());
+        }
+        // Done, reset for next column
+        outResendVarcharByteIndex = -1;
     }
 
     private void outCommandComplete(PGResponseSink utf8Sink, long rowCount) {

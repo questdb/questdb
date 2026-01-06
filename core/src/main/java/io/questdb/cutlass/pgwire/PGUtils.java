@@ -84,7 +84,8 @@ class PGUtils {
             int columnType,
             int geohashSize,
             long maxBlobSize,
-            int arrayResumePoint
+            int arrayResumePoint,
+            int varcharResumePoint
     ) throws PGMessageProcessingException {
         final short typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
@@ -136,7 +137,14 @@ class PGUtils {
                 return geoHashBytes(record.getGeoLong(columnIndex), geohashSize);
             case ColumnType.VARCHAR:
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
-                return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
+                if (vcValue == null) {
+                    return Integer.BYTES;
+                }
+                // varcharResumePoint == -1 means header not sent yet, include it
+                // varcharResumePoint >= 0 is the byte offset of already sent data
+                int vcResumePoint = Math.max(0, varcharResumePoint);
+                int vcRemaining = vcValue.size() - vcResumePoint;
+                return varcharResumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
             case ColumnType.STRING:
                 final CharSequence strValue = record.getStrA(columnIndex);
                 return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);

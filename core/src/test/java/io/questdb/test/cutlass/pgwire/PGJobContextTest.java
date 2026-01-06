@@ -183,7 +183,7 @@ public class PGJobContextTest extends BasePGTest {
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
     private static String stringTypeName;
-    private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
+    private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG, 635494967827205L, 1767721337806L);
     private final boolean walEnabled;
 
     public PGJobContextTest() {
@@ -7326,6 +7326,52 @@ nodejs code:
     }
 
     @Test
+    public void testLongVarchar() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            CallableStatement stmt = connection.prepareCall(
+                    "create table x as (select" +
+                            " timestamp_sequence(889001, 8890012) k," +
+                            " rnd_varchar(3,16,2) v" +
+                            " from long_sequence(15)) timestamp(k) partition by DAY"
+            );
+
+            stmt.execute();
+            mayDrainWalQueue();
+
+            try (PreparedStatement statement = connection.prepareStatement("x")) {
+                for (int i = 0; i < 50; i++) {
+                    sink.clear();
+                    try (ResultSet rs = statement.executeQuery()) {
+                        // dump metadata
+                        assertResultSet(
+                                """
+                                        k[TIMESTAMP],v[VARCHAR]
+                                        1970-01-01 00:00:00.889001,&򗺘|񙈄۲
+                                        1970-01-01 00:00:09.779013,null
+                                        1970-01-01 00:00:18.669025,Ȟ鼷G񴙾衞͛Ԉ龘и򲞤~2󁫓
+                                        1970-01-01 00:00:27.559037,BH뤻䰭}ѱʜ󳙎ᯤ\\篸{򅿥󊝆
+                                        1970-01-01 00:00:36.449049,FwH93r
+                                        1970-01-01 00:00:45.339061,null
+                                        1970-01-01 00:00:54.229073,)#T?hhV4|v\\
+                                        1970-01-01 00:01:03.119085,c⾩ᷚM䘣⟩Mqk㉳+ً󍘗q
+                                        1970-01-01 00:01:12.009097,LG -$}
+                                        1970-01-01 00:01:20.899109,񘷧-Ь򘽤m򜋠1W씌䒙񌪎>󉫣g
+                                        1970-01-01 00:01:29.789121,JܜߧE}$򠿰-㔍x钷Mͱ:
+                                        1970-01-01 00:01:38.679133,f@ץ;윦΂宏㔸
+                                        1970-01-01 00:01:47.569145,91g>)5{l5J\\d
+                                        1970-01-01 00:01:56.459157,uLQ+bOyf4zhx
+                                        1970-01-01 00:02:05.349169,9іa򭧔*󱽠
+                                        """,
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMalformedInitPropertyName() throws Exception {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -10075,6 +10121,101 @@ create table tab as (
                     forceSendFragmentationChunkSize = 10;
                 }
         );
+    }
+
+    @Test
+    public void testSendBufferOverflowVarchar() throws Exception {
+        // Similar to testSendBufferOverflowVanilla in PGArraysTest, but for VARCHAR.
+        // VARCHAR values larger than the send buffer should be sent in multiple parts.
+        final int sndBufSize = 512;
+        final int varcharSize = sndBufSize * 3; // VARCHAR larger than send buffer
+
+        StringSink expectedValue = new StringSink();
+        expectedValue.repeat("x", varcharSize);
+
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT x n, lpad('', " + varcharSize + ", 'x')::varchar v FROM long_sequence(3)")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    for (int i = 1; i <= 3; i++) {
+                        Assert.assertTrue("Expected row " + i, rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        String actualValue = rs.getString(2);
+                        Assert.assertEquals("VARCHAR length mismatch at row " + i, varcharSize, actualValue.length());
+                        TestUtils.assertContains("VARCHAR content mismatch at row " + i, expectedValue, actualValue);
+                    }
+                    Assert.assertFalse("Expected no more rows", rs.next());
+                }
+            }
+        }, () -> {
+            sendBufferSize = sndBufSize;
+            recvBufferSize = varcharSize * 2;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
+    public void testSendBufferOverflowVarcharExactBufferSize() throws Exception {
+        // Test VARCHAR that is exactly the buffer size
+        final int sndBufSize = 512;
+        // Account for message header (~7 bytes) and column header (4 bytes)
+        final int varcharSize = sndBufSize - 20;
+
+        StringSink expectedValue = new StringSink();
+        expectedValue.repeat("x", varcharSize);
+
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT x n, lpad('', " + varcharSize + ", 'x')::varchar v FROM long_sequence(5)")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    for (int i = 1; i <= 5; i++) {
+                        Assert.assertTrue("Expected row " + i, rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        Assert.assertEquals("VARCHAR length mismatch at row " + i, varcharSize, rs.getString(2).length());
+                        TestUtils.assertContains("VARCHAR content mismatch at row " + i, expectedValue, rs.getString(2));
+                    }
+                    Assert.assertFalse("Expected no more rows", rs.next());
+                }
+            }
+        }, () -> {
+            sendBufferSize = sndBufSize;
+            recvBufferSize = varcharSize * 4;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
+    public void testSendBufferOverflowVarcharMultipleColumns() throws Exception {
+        // Test with multiple large VARCHAR columns in the same row
+        final int sndBufSize = 512;
+        final int varcharSize = sndBufSize * 2;
+
+        StringSink expectedA = new StringSink();
+        StringSink expectedB = new StringSink();
+        expectedA.repeat("a", varcharSize);
+        expectedB.repeat("b", varcharSize);
+
+
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT x n, lpad('', " + varcharSize + ", 'a')::varchar v1, lpad('', " + varcharSize + ", 'b')::varchar v2 FROM long_sequence(2)")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    for (int i = 1; i <= 2; i++) {
+                        Assert.assertTrue("Expected row " + i, rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        Assert.assertEquals("v1 length mismatch at row " + i, varcharSize, rs.getString(2).length());
+                        TestUtils.assertContains("v1 content mismatch at row " + i, expectedA, rs.getString(2));
+                        Assert.assertEquals("v2 length mismatch at row " + i, varcharSize, rs.getString(3).length());
+                        TestUtils.assertContains("v2 content mismatch at row " + i, expectedB, rs.getString(3));
+                    }
+                    Assert.assertFalse("Expected no more rows", rs.next());
+                }
+            }
+        }, () -> {
+            sendBufferSize = sndBufSize;
+            recvBufferSize = varcharSize * 6;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
     }
 
     @Test
