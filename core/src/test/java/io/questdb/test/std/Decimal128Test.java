@@ -328,6 +328,16 @@ public class Decimal128Test {
         Assert.assertEquals(bdResult, result.toBigDecimal());
     }
 
+    @Test
+    public void testDivideIncrementOverflow() {
+        Decimal128 a = new Decimal128(0, -1, 19);
+        Decimal128 b = new Decimal128(0, 256, 14);
+
+        a.divide(b, 6, RoundingMode.HALF_UP);
+
+        Assert.assertEquals("720575940379.279360", a.toString());
+    }
+
     @Test(expected = NumericException.class)
     public void testDivideInvalidScale() {
         Decimal128 a = new Decimal128(0, 1, 0);
