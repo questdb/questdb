@@ -535,6 +535,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     public void testTopDownDiamondProjectionReferences() throws Exception {
         execute("CREATE TABLE data (x INT)");
         execute("INSERT INTO data VALUES (10), (20), (30)");
+
         assertQuery(
                 """
                         sum
