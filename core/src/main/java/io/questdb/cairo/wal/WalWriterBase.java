@@ -42,26 +42,26 @@ import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 abstract class WalWriterBase implements AutoCloseable {
     private static final Log LOG = LogFactory.getLog(WalWriterBase.class);
 
-    protected final CairoConfiguration configuration;
-    protected final WalEventWriter events;
-    protected final FilesFacade ff;
-    protected final int mkDirMode;
-    protected final Path path;
-    protected final int pathRootSize;
-    protected final int pathSize;
-    protected final TableSequencerAPI sequencer;
-    protected final WalDirectoryPolicy walDirectoryPolicy;
-    protected final int walId;
-    protected final String walName;
-    protected boolean distressed;
-    protected int lastSegmentTxn = -1;
-    protected long lastSeqTxn = NO_TXN;
-    protected boolean open;
-    protected boolean rollSegmentOnNextRow = false;
-    protected int segmentId = -1;
-    protected long segmentLockFd = -1;
-    protected TableToken tableToken;
-    protected long walLockFd = -1;
+    final CairoConfiguration configuration;
+    final WalEventWriter events;
+    final FilesFacade ff;
+    final int mkDirMode;
+    final Path path;
+    final int pathRootSize;
+    final int pathSize;
+    final TableSequencerAPI sequencer;
+    final WalDirectoryPolicy walDirectoryPolicy;
+    final int walId;
+    final String walName;
+    boolean distressed;
+    int lastSegmentTxn = -1;
+    long lastSeqTxn = NO_TXN;
+    boolean open;
+    boolean rollSegmentOnNextRow = false;
+    int segmentId = -1;
+    long segmentLockFd = -1;
+    TableToken tableToken;
+    long walLockFd = -1;
 
     WalWriterBase(
             CairoConfiguration configuration,
@@ -107,15 +107,6 @@ abstract class WalWriterBase implements AutoCloseable {
         return open;
     }
 
-    public void rollSegment() {
-        try {
-            openNewSegment();
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
-        }
-    }
-
     long acquireSegmentLock() {
         final int segmentPathLen = path.size();
         try {
@@ -131,19 +122,6 @@ abstract class WalWriterBase implements AutoCloseable {
         }
     }
 
-    abstract boolean breachedRolloverSizeThreshold();
-
-    void checkDistressed() {
-        if (!distressed) {
-            return;
-        }
-        throw CairoException.critical(0)
-                .put("WAL writer is distressed and cannot be used any more [table=").put(tableToken.getTableName())
-                .put(", wal=").put(walId).put(']');
-    }
-
-    abstract void commit();
-
     int createSegmentDir(int segmentId) {
         path.trimTo(pathSize);
         path.slash().put(segmentId);
@@ -155,12 +133,6 @@ abstract class WalWriterBase implements AutoCloseable {
         walDirectoryPolicy.initDirectory(path);
         path.trimTo(segmentPathLen);
         return segmentPathLen;
-    }
-
-    abstract long getSequencerTxn();
-
-    boolean isTruncateFilesOnClose() {
-        return walDirectoryPolicy.truncateFilesOnClose();
     }
 
     void lockWal() {
@@ -176,8 +148,6 @@ abstract class WalWriterBase implements AutoCloseable {
         }
     }
 
-    abstract void mayRollSegmentOnNextRow();
-
     void mkWalDir() {
         final int walDirLength = path.size();
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
@@ -185,8 +155,6 @@ abstract class WalWriterBase implements AutoCloseable {
         }
         path.trimTo(walDirLength);
     }
-
-    abstract void openNewSegment();
 
     void releaseSegmentLock(int segmentId, long segmentLockFd, long segmentTxn) {
         if (ff.close(segmentLockFd)) {
@@ -224,6 +192,4 @@ abstract class WalWriterBase implements AutoCloseable {
                     .$(", errno=").$(ff.errno()).I$();
         }
     }
-
-    abstract void rollback();
 }

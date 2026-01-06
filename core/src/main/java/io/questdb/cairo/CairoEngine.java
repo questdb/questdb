@@ -1629,14 +1629,8 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         final long seqTxn;
         try (ViewWalWriter walWriter = getViewWalWriter(viewToken)) {
-            try {
-                seqTxn = walWriter.replaceViewDefinition(viewSql, dependencies);
-                updateViewDefinition(viewToken, viewSql, dependencies, seqTxn, blockFileWriter, path);
-                walWriter.commit();
-            } catch (Throwable th) {
-                walWriter.rollback();
-                throw th;
-            }
+            seqTxn = walWriter.replaceViewDefinition(viewSql, dependencies);
+            updateViewDefinition(viewToken, viewSql, dependencies, seqTxn, blockFileWriter, path);
         }
     }
 

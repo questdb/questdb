@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalEventCursor;
@@ -35,7 +34,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -43,7 +42,7 @@ import static org.junit.Assert.*;
 public class ViewWalWriterTest extends AbstractCairoTest {
 
     @Test
-    public void testBasicViewDefinitionWrite() throws Exception {
+    public void testBasicViewDefinitionUpdate() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base_table (id int, name string)");
             execute("create view test_view as select * from base_table");
@@ -51,18 +50,13 @@ public class ViewWalWriterTest extends AbstractCairoTest {
             TableToken viewToken = engine.verifyTableName("test_view");
 
             String viewSql = "select * from base_table where id > 10";
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
-            columns.add("id");
-            columns.add("name");
-            dependencies.put("base_table", columns);
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = getDependencies();
 
             int walId;
             try (ViewWalWriter writer = engine.getViewWalWriter(viewToken)) {
                 walId = writer.getWalId();
                 long seqTxn = writer.replaceViewDefinition(viewSql, dependencies);
                 assertTrue(seqTxn >= 0);
-                writer.commit();
             }
 
             // Read back the view definition from WAL using WalEventReader
@@ -123,10 +117,38 @@ public class ViewWalWriterTest extends AbstractCairoTest {
             // Empty columns set
             dependencies.put("base_table", columns);
 
+            int walId;
             try (ViewWalWriter writer = engine.getViewWalWriter(viewToken)) {
+                walId = writer.getWalId();
                 long seqTxn = writer.replaceViewDefinition(viewSql, dependencies);
                 assertTrue(seqTxn >= 0);
-                writer.commit();
+            }
+
+            // Read back the WAL to verify empty column set is persisted correctly
+            try (Path path = new Path();
+                 WalEventReader walEventReader = new WalEventReader(configuration)) {
+                path.of(configuration.getDbRoot())
+                        .concat(viewToken)
+                        .concat("wal").put(walId)
+                        .slash().put(0); // segment 0
+
+                WalEventCursor eventCursor = walEventReader.of(path, 0);
+                assertEquals(0, eventCursor.getTxn());
+                assertEquals(WalTxnType.VIEW_DEFINITION, eventCursor.getType());
+
+                WalEventCursor.ViewDefinitionInfo viewDefInfo = eventCursor.getViewDefinitionInfo();
+                assertNotNull(viewDefInfo);
+                assertEquals(viewSql, viewDefInfo.getViewSql());
+
+                // Verify that dependency exists but with empty columns
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> readDependencies = viewDefInfo.getViewDependencies();
+                assertNotNull(readDependencies);
+                assertEquals(1, readDependencies.size());
+                assertTrue(readDependencies.contains("base_table"));
+
+                LowerCaseCharSequenceHashSet readColumns = readDependencies.get("base_table");
+                assertNotNull(readColumns);
+                assertEquals(0, readColumns.size());
             }
         });
     }
@@ -149,60 +171,6 @@ public class ViewWalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGetWalId() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_table (id int, name string)");
-            execute("create view test_view as select * from base_table");
-
-            TableToken viewToken = engine.verifyTableName("test_view");
-
-            try (ViewWalWriter writer = engine.getViewWalWriter(viewToken)) {
-                int walId = writer.getWalId();
-                assertTrue(walId >= 0);
-
-                String walName = writer.getWalName();
-                assertNotNull(walName);
-                assertTrue(walName.contains(String.valueOf(walId)));
-            }
-        });
-    }
-
-    @Test
-    public void testMultipleCommitsAndRollbacks() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_table (id int, name string)");
-            execute("create view test_view as select * from base_table");
-
-            TableToken viewToken = engine.verifyTableName("test_view");
-
-            String viewSql1 = "select * from base_table where id > 10";
-            String viewSql2 = "select * from base_table where id < 100";
-            String viewSql3 = "select * from base_table where id = 50";
-
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
-            columns.add("id");
-            dependencies.put("base_table", columns);
-
-            try (ViewWalWriter writer = engine.getViewWalWriter(viewToken)) {
-                // First commit
-                writer.replaceViewDefinition(viewSql1, dependencies);
-                writer.commit();
-
-                // Rollback second
-                writer.replaceViewDefinition(viewSql2, dependencies);
-                writer.rollback();
-
-                // Third commit
-                long seqTxn = writer.replaceViewDefinition(viewSql3, dependencies);
-                writer.commit();
-
-                assertTrue(seqTxn >= 0);
-            }
-        });
-    }
-
-    @Test
     public void testMultipleViewDefinitionUpdates() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base_table (id int, name string)");
@@ -213,20 +181,64 @@ public class ViewWalWriterTest extends AbstractCairoTest {
             String viewSql1 = "select * from base_table where id > 10";
             String viewSql2 = "select * from base_table where id < 100";
 
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
-            columns.add("id");
-            columns.add("name");
-            dependencies.put("base_table", columns);
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = getDependencies();
 
+            int walId;
             try (ViewWalWriter writer = engine.getViewWalWriter(viewToken)) {
+                walId = writer.getWalId();
                 long seqTxn1 = writer.replaceViewDefinition(viewSql1, dependencies);
-                writer.commit();
-
                 long seqTxn2 = writer.replaceViewDefinition(viewSql2, dependencies);
-                writer.commit();
+                assertEquals(1, seqTxn1);
+                assertEquals(2, seqTxn2);
+            }
 
-                assertTrue(seqTxn2 > seqTxn1);
+            // Read back both view definitions from WAL
+            try (Path path = new Path();
+                 WalEventReader walEventReader = new WalEventReader(configuration)) {
+                path.of(configuration.getDbRoot())
+                        .concat(viewToken)
+                        .concat("wal").put(walId)
+                        .slash().put(0); // segment 0
+
+                // First view definition
+                WalEventCursor eventCursor1 = walEventReader.of(path, 0);
+                assertEquals(0, eventCursor1.getTxn());
+                assertEquals(WalTxnType.VIEW_DEFINITION, eventCursor1.getType());
+
+                WalEventCursor.ViewDefinitionInfo viewDefInfo1 = eventCursor1.getViewDefinitionInfo();
+                assertNotNull(viewDefInfo1);
+                assertEquals(viewSql1, viewDefInfo1.getViewSql());
+
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> readDependencies1 = viewDefInfo1.getViewDependencies();
+                assertNotNull(readDependencies1);
+                assertEquals(1, readDependencies1.size());
+                assertTrue(readDependencies1.contains("base_table"));
+
+                LowerCaseCharSequenceHashSet readColumns1 = readDependencies1.get("base_table");
+                assertNotNull(readColumns1);
+                assertEquals(2, readColumns1.size());
+                assertTrue(readColumns1.contains("id"));
+                assertTrue(readColumns1.contains("name"));
+
+                // Second view definition
+                WalEventCursor eventCursor2 = walEventReader.of(path, 1);
+                assertEquals(1, eventCursor2.getTxn());
+                assertEquals(WalTxnType.VIEW_DEFINITION, eventCursor2.getType());
+
+                WalEventCursor.ViewDefinitionInfo viewDefInfo2 = eventCursor2.getViewDefinitionInfo();
+                assertNotNull(viewDefInfo2);
+                assertEquals(viewSql2, viewDefInfo2.getViewSql());
+
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> readDependencies2 = viewDefInfo2.getViewDependencies();
+                assertNotNull(readDependencies2);
+                assertEquals(1, readDependencies2.size());
+                assertTrue(readDependencies2.contains("base_table"));
+
+                LowerCaseCharSequenceHashSet readColumns2 = readDependencies2.get("base_table");
+                assertNotNull(readColumns2);
+                assertEquals(2, readColumns2.size());
+                assertTrue(readColumns2.contains("id"));
+                assertTrue(readColumns2.contains("name"));
             }
         });
     }
@@ -239,72 +251,92 @@ public class ViewWalWriterTest extends AbstractCairoTest {
 
             TableToken viewToken = engine.verifyTableName("view1");
 
-            String viewSql = "select * from base_table where id > 10";
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
-            columns.add("id");
-            columns.add("name");
-            dependencies.put("base_table", columns);
+            String viewSql1 = "select * from base_table where id > 10";
+            String viewSql2 = "select * from base_table where id > 20";
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = getDependencies();
 
+            int walId1, walId2;
             try (ViewWalWriter writer1 = engine.getViewWalWriter(viewToken);
                  ViewWalWriter writer2 = engine.getViewWalWriter(viewToken)) {
 
-                long seqTxn1 = writer1.replaceViewDefinition(viewSql, dependencies);
-                long seqTxn2 = writer2.replaceViewDefinition(viewSql, dependencies);
+                walId1 = writer1.getWalId();
+                walId2 = writer2.getWalId();
 
-                writer1.commit();
-                writer2.commit();
+                long seqTxn11 = writer1.replaceViewDefinition(viewSql1, dependencies);
+                long seqTxn21 = writer2.replaceViewDefinition(viewSql1, dependencies);
+                long seqTxn12 = writer1.replaceViewDefinition(viewSql2, dependencies);
+                long seqTxn22 = writer2.replaceViewDefinition(viewSql2, dependencies);
 
-                assertEquals(1, seqTxn1);
-                assertEquals(2, seqTxn2);
-            }
-        });
-    }
-
-    @Test
-    public void testReadViewWalAfterWrite() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_table (id int, name string)");
-            execute("create view test_view as select * from base_table");
-
-            TableToken viewToken = engine.verifyTableName("test_view");
-
-            String viewSql = "select * from base_table where id > 10";
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
-            columns.add("id");
-            columns.add("name");
-            dependencies.put("base_table", columns);
-
-            int walId;
-            try (ViewWalWriter writer = engine.getViewWalWriter(viewToken)) {
-                walId = writer.getWalId();
-                writer.replaceViewDefinition(viewSql, dependencies);
-                writer.commit();
+                assertEquals(1, seqTxn11);
+                assertEquals(2, seqTxn21);
+                assertEquals(3, seqTxn12);
+                assertEquals(4, seqTxn22);
             }
 
-            // Read back the WAL using WalEventReader
+            // Read back WAL events from writer1
             try (Path path = new Path();
                  WalEventReader walEventReader = new WalEventReader(configuration)) {
                 path.of(configuration.getDbRoot())
                         .concat(viewToken)
-                        .concat("wal").put(walId)
+                        .concat("wal").put(walId1)
                         .slash().put(0); // segment 0
 
-                WalEventCursor eventCursor = walEventReader.of(path, 0);
-                assertEquals(0, eventCursor.getTxn());
-                assertEquals(WalTxnType.VIEW_DEFINITION, eventCursor.getType());
+                // Writer1 wrote 2 view definitions
+                for (int i = 0; i < 2; i++) {
+                    WalEventCursor eventCursor = walEventReader.of(path, i);
+                    assertEquals(i, eventCursor.getTxn());
+                    assertEquals(WalTxnType.VIEW_DEFINITION, eventCursor.getType());
 
-                WalEventCursor.ViewDefinitionInfo viewDefInfo = eventCursor.getViewDefinitionInfo();
-                assertNotNull(viewDefInfo);
-                assertEquals(viewSql, viewDefInfo.getViewSql());
+                    WalEventCursor.ViewDefinitionInfo viewDefInfo = eventCursor.getViewDefinitionInfo();
+                    assertNotNull(viewDefInfo);
 
-                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> readDependencies = viewDefInfo.getViewDependencies();
-                assertNotNull(readDependencies);
-                LowerCaseCharSequenceHashSet readColumns = readDependencies.get("base_table");
-                assertNotNull(readColumns);
-                assertTrue(readColumns.contains("id"));
-                assertTrue(readColumns.contains("name"));
+                    String expectedViewSql = i == 0 ? viewSql1 : viewSql2;
+                    assertEquals(expectedViewSql, viewDefInfo.getViewSql());
+
+                    LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> readDependencies = viewDefInfo.getViewDependencies();
+                    assertNotNull(readDependencies);
+                    assertEquals(1, readDependencies.size());
+                    assertTrue(readDependencies.contains("base_table"));
+
+                    LowerCaseCharSequenceHashSet readColumns = readDependencies.get("base_table");
+                    assertNotNull(readColumns);
+                    assertEquals(2, readColumns.size());
+                    assertTrue(readColumns.contains("id"));
+                    assertTrue(readColumns.contains("name"));
+                }
+            }
+
+            // Read back WAL events from writer2
+            try (Path path = new Path();
+                 WalEventReader walEventReader = new WalEventReader(configuration)) {
+                path.of(configuration.getDbRoot())
+                        .concat(viewToken)
+                        .concat("wal").put(walId2)
+                        .slash().put(0); // segment 0
+
+                // Writer2 wrote 2 view definitions
+                for (int i = 0; i < 2; i++) {
+                    WalEventCursor eventCursor = walEventReader.of(path, i);
+                    assertEquals(i, eventCursor.getTxn());
+                    assertEquals(WalTxnType.VIEW_DEFINITION, eventCursor.getType());
+
+                    WalEventCursor.ViewDefinitionInfo viewDefInfo = eventCursor.getViewDefinitionInfo();
+                    assertNotNull(viewDefInfo);
+
+                    String expectedViewSql = i == 0 ? viewSql1 : viewSql2;
+                    assertEquals(expectedViewSql, viewDefInfo.getViewSql());
+
+                    LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> readDependencies = viewDefInfo.getViewDependencies();
+                    assertNotNull(readDependencies);
+                    assertEquals(1, readDependencies.size());
+                    assertTrue(readDependencies.contains("base_table"));
+
+                    LowerCaseCharSequenceHashSet readColumns = readDependencies.get("base_table");
+                    assertNotNull(readColumns);
+                    assertEquals(2, readColumns.size());
+                    assertTrue(readColumns.contains("id"));
+                    assertTrue(readColumns.contains("name"));
+                }
             }
         });
     }
@@ -328,11 +360,7 @@ public class ViewWalWriterTest extends AbstractCairoTest {
             }
             largeViewSql.append(")");
 
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
-            columns.add("id");
-            columns.add("name");
-            dependencies.put("base_table", columns);
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = getDependencies();
 
             int walId;
             try (ViewWalWriter writer = engine.getViewWalWriter(viewToken)) {
@@ -340,7 +368,6 @@ public class ViewWalWriterTest extends AbstractCairoTest {
                 // Write multiple large view definitions to trigger rollover
                 for (int i = 0; i < 3; i++) {
                     writer.replaceViewDefinition(largeViewSql.toString(), dependencies);
-                    writer.commit();
                 }
             }
 
@@ -373,8 +400,6 @@ public class ViewWalWriterTest extends AbstractCairoTest {
                 for (int i = 0; i < 10; i++) {
                     String viewSql = "select * from base_table where id > " + i;
                     long seqTxn = writer.replaceViewDefinition(viewSql, dependencies);
-                    writer.commit();
-
                     assertEquals(i + 1, seqTxn);
                 }
             }
@@ -417,84 +442,6 @@ public class ViewWalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testViewDefinitionRollback() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_table (id int, name string)");
-            execute("create view test_view as select * from base_table");
-
-            TableToken viewToken = engine.verifyTableName("test_view");
-
-            String viewSql = "select * from base_table where id > 10";
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
-            columns.add("id");
-            dependencies.put("base_table", columns);
-
-            int walId;
-            try (ViewWalWriter writer = engine.getViewWalWriter(viewToken)) {
-                walId = writer.getWalId();
-                writer.replaceViewDefinition(viewSql, dependencies);
-                writer.rollback();
-
-                // After rollback, we should be able to write again
-                long seqTxn = writer.replaceViewDefinition(viewSql, dependencies);
-                assertTrue(seqTxn >= 0);
-                writer.commit();
-            }
-
-            // Read back the WAL to verify only the committed data exists
-            try (Path path = new Path();
-                 WalEventReader walEventReader = new WalEventReader(configuration)) {
-
-                try {
-                    path.of(configuration.getDbRoot())
-                            .concat(viewToken)
-                            .concat("wal").put(walId)
-                            .slash().put(0); // segment 0
-
-                    // Only one event should exist - the one committed after rollback
-                    walEventReader.of(path, 0);
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "_event.i does not have txn with id 0");
-                }
-
-                path.of(configuration.getDbRoot())
-                        .concat(viewToken)
-                        .concat("wal").put(walId)
-                        .slash().put(1); // segment 1
-
-                // Only one event should exist - the one committed after rollback
-                WalEventCursor eventCursor = walEventReader.of(path, 0);
-                assertEquals(0, eventCursor.getTxn());
-                assertEquals(WalTxnType.VIEW_DEFINITION, eventCursor.getType());
-
-                WalEventCursor.ViewDefinitionInfo viewDefInfo = eventCursor.getViewDefinitionInfo();
-                assertNotNull(viewDefInfo);
-                assertEquals(viewSql, viewDefInfo.getViewSql());
-
-                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> readDependencies = viewDefInfo.getViewDependencies();
-                assertNotNull(readDependencies);
-                assertEquals(1, readDependencies.size());
-                assertTrue(readDependencies.contains("base_table"));
-
-                LowerCaseCharSequenceHashSet readColumns = readDependencies.get("base_table");
-                assertNotNull(readColumns);
-                assertEquals(1, readColumns.size());
-                assertTrue(readColumns.contains("id"));
-
-                // Verify no additional events exist (rolled back event should not be persisted)
-                // Try reading transaction 1 - should fail since only txn 0 was committed
-                try {
-                    walEventReader.of(path, 1);
-                    fail("Should not be able to read transaction 1 after rollback");
-                } catch (Exception e) {
-                    // Expected - transaction 1 was rolled back
-                }
-            }
-        });
-    }
-
-    @Test
     public void testViewDefinitionWithNoDependencies() throws Exception {
         assertMemoryLeak(() -> {
             execute("create view test_view as select 1 as x");
@@ -508,8 +455,7 @@ public class ViewWalWriterTest extends AbstractCairoTest {
             try (ViewWalWriter writer = engine.getViewWalWriter(viewToken)) {
                 walId = writer.getWalId();
                 long seqTxn = writer.replaceViewDefinition(viewSql, dependencies);
-                assertTrue(seqTxn >= 0);
-                writer.commit();
+                assertEquals(1, seqTxn);
             }
 
             // Read back the WAL to verify view with no dependencies using WalEventReader
@@ -546,25 +492,88 @@ public class ViewWalWriterTest extends AbstractCairoTest {
             TableToken viewToken1 = engine.verifyTableName("view1");
             TableToken viewToken2 = engine.verifyTableName("view2");
 
-            String viewSql = "select * from base_table where id > 10";
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-            LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
-            columns.add("id");
-            columns.add("name");
-            dependencies.put("base_table", columns);
+            String viewSql1 = "select * from base_table where id > 10";
+            String viewSql2 = "select * from base_table where id > 100";
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = getDependencies();
 
+            int walId1, walId2;
             try (ViewWalWriter writer1 = engine.getViewWalWriter(viewToken1);
                  ViewWalWriter writer2 = engine.getViewWalWriter(viewToken2)) {
 
-                long seqTxn1 = writer1.replaceViewDefinition(viewSql, dependencies);
-                long seqTxn2 = writer2.replaceViewDefinition(viewSql, dependencies);
+                walId1 = writer1.getWalId();
+                walId2 = writer2.getWalId();
 
-                writer1.commit();
-                writer2.commit();
+                long seqTxn1 = writer1.replaceViewDefinition(viewSql1, dependencies);
+                long seqTxn2 = writer2.replaceViewDefinition(viewSql2, dependencies);
 
                 assertEquals(1, seqTxn1);
                 assertEquals(1, seqTxn2);
             }
+
+            // Read back WAL from view1's writer
+            try (Path path = new Path();
+                 WalEventReader walEventReader = new WalEventReader(configuration)) {
+                path.of(configuration.getDbRoot())
+                        .concat(viewToken1)
+                        .concat("wal").put(walId1)
+                        .slash().put(0); // segment 0
+
+                WalEventCursor eventCursor = walEventReader.of(path, 0);
+                assertEquals(0, eventCursor.getTxn());
+                assertEquals(WalTxnType.VIEW_DEFINITION, eventCursor.getType());
+
+                WalEventCursor.ViewDefinitionInfo viewDefInfo = eventCursor.getViewDefinitionInfo();
+                assertNotNull(viewDefInfo);
+                assertEquals(viewSql1, viewDefInfo.getViewSql());
+
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> readDependencies = viewDefInfo.getViewDependencies();
+                assertNotNull(readDependencies);
+                assertEquals(1, readDependencies.size());
+                assertTrue(readDependencies.contains("base_table"));
+
+                LowerCaseCharSequenceHashSet readColumns = readDependencies.get("base_table");
+                assertNotNull(readColumns);
+                assertEquals(2, readColumns.size());
+                assertTrue(readColumns.contains("id"));
+                assertTrue(readColumns.contains("name"));
+            }
+
+            // Read back WAL from view2's writer
+            try (Path path = new Path();
+                 WalEventReader walEventReader = new WalEventReader(configuration)) {
+                path.of(configuration.getDbRoot())
+                        .concat(viewToken2)
+                        .concat("wal").put(walId2)
+                        .slash().put(0); // segment 0
+
+                WalEventCursor eventCursor = walEventReader.of(path, 0);
+                assertEquals(0, eventCursor.getTxn());
+                assertEquals(WalTxnType.VIEW_DEFINITION, eventCursor.getType());
+
+                WalEventCursor.ViewDefinitionInfo viewDefInfo = eventCursor.getViewDefinitionInfo();
+                assertNotNull(viewDefInfo);
+                assertEquals(viewSql2, viewDefInfo.getViewSql());
+
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> readDependencies = viewDefInfo.getViewDependencies();
+                assertNotNull(readDependencies);
+                assertEquals(1, readDependencies.size());
+                assertTrue(readDependencies.contains("base_table"));
+
+                LowerCaseCharSequenceHashSet readColumns = readDependencies.get("base_table");
+                assertNotNull(readColumns);
+                assertEquals(2, readColumns.size());
+                assertTrue(readColumns.contains("id"));
+                assertTrue(readColumns.contains("name"));
+            }
         });
+    }
+
+    private static @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> getDependencies() {
+        LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+        LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
+        columns.add("id");
+        columns.add("name");
+        dependencies.put("base_table", columns);
+        return dependencies;
     }
 }

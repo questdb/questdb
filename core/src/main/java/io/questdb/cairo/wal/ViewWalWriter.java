@@ -41,7 +41,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
-public class ViewWalWriter extends WalWriterBase implements AutoCloseable {
+public class ViewWalWriter extends WalWriterBase {
     private static final Log LOG = LogFactory.getLog(ViewWalWriter.class);
 
     public ViewWalWriter(
@@ -74,25 +74,6 @@ public class ViewWalWriter extends WalWriterBase implements AutoCloseable {
         }
     }
 
-    @Override
-    public void commit() {
-        checkDistressed();
-        try {
-            syncIfRequired();
-            LOG.info().$("commit [view wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                    .$(", segTxn=").$(lastSegmentTxn)
-                    .$(", seqTxn=").$(lastSeqTxn)
-                    .I$();
-            mayRollSegmentOnNextRow();
-        } catch (Throwable th) {
-            // If distressed, no need to rollback, WalWriter will not be used anymore
-            if (!isDistressed()) {
-                rollback();
-            }
-            throw th;
-        }
-    }
-
     public long replaceViewDefinition(
             @NotNull String viewSql,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
@@ -103,18 +84,28 @@ public class ViewWalWriter extends WalWriterBase implements AutoCloseable {
                 rollSegmentOnNextRow = false;
             }
             lastSegmentTxn = events.appendViewDefinition(viewSql, dependencies);
-            return getSequencerTxn();
+            syncIfRequired();
+
+            final long seqTxn = getSequencerTxn();
+            LOG.info().$("replaced view definition [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                    .$(", segTxn=").$(lastSegmentTxn)
+                    .$(", seqTxn=").$(lastSeqTxn)
+                    .I$();
+            mayRollSegmentOnNextRow();
+            return seqTxn;
         } catch (Throwable th) {
-            rollback();
+            distressed = true;
             throw th;
         }
     }
 
-    @Override
-    public void rollback() {
-        events.rollback();
-        events.sync();
-        rollSegment();
+    public void rollSegment() {
+        try {
+            openNewSegment();
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
     }
 
     @Override
@@ -123,6 +114,15 @@ public class ViewWalWriter extends WalWriterBase implements AutoCloseable {
                 "name=" + walName +
                 ", view=" + tableToken.getTableName() +
                 '}';
+    }
+
+    private boolean breachedRolloverSizeThreshold() {
+        final long threshold = configuration.getWalSegmentRolloverSize();
+        if (threshold == 0) {
+            return false;
+        }
+
+        return events.size() > threshold;
     }
 
     private void doClose(boolean truncate) {
@@ -143,40 +143,20 @@ public class ViewWalWriter extends WalWriterBase implements AutoCloseable {
         }
     }
 
-    private void syncIfRequired() {
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
-            events.sync();
-        }
-    }
-
-    @Override
-    boolean breachedRolloverSizeThreshold() {
-        final long threshold = configuration.getWalSegmentRolloverSize();
-        if (threshold == 0) {
-            return false;
-        }
-
-        return events.size() > threshold;
-    }
-
-    @Override
-    long getSequencerTxn() {
+    private long getSequencerTxn() {
         long seqTxn = sequencer.nextTxn(tableToken, walId, 0L, segmentId, lastSegmentTxn, Long.MAX_VALUE, -1L, 0L);
         assert seqTxn != NO_TXN;
         return lastSeqTxn = seqTxn;
     }
 
-    @Override
-    void mayRollSegmentOnNextRow() {
+    private void mayRollSegmentOnNextRow() {
         if (rollSegmentOnNextRow) {
             return;
         }
         rollSegmentOnNextRow = breachedRolloverSizeThreshold() || (lastSegmentTxn > Integer.MAX_VALUE - 2);
     }
 
-    @Override
-    void openNewSegment() {
+    private void openNewSegment() {
         final int oldSegmentId = segmentId;
         final int newSegmentId = segmentId + 1;
         final long oldSegmentLockFd = segmentLockFd;
@@ -193,10 +173,8 @@ public class ViewWalWriter extends WalWriterBase implements AutoCloseable {
                 dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
             }
 
-            events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
-            if (commitMode != CommitMode.NOSYNC) {
-                events.sync();
-            }
+            events.openEventFile(path, segmentPathLen, walDirectoryPolicy.truncateFilesOnClose(), tableToken.isSystem());
+            syncIfRequired();
 
             if (dirFd != -1) {
                 ff.fsyncAndClose(dirFd);
@@ -208,6 +186,13 @@ public class ViewWalWriter extends WalWriterBase implements AutoCloseable {
                 releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
             }
             path.trimTo(pathSize);
+        }
+    }
+
+    private void syncIfRequired() {
+        final int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            events.sync();
         }
     }
 }

@@ -479,6 +479,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    public void rollSegment() {
+        try {
+            openNewSegment();
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
     @Override
     public void rollback() {
         try {
@@ -743,6 +752,46 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             throw th;
         }
         return lastSeqTxn = txn;
+    }
+
+    private boolean breachedRolloverSizeThreshold() {
+        final long threshold = configuration.getWalSegmentRolloverSize();
+        if (threshold == 0) {
+            return false;
+        }
+
+        if (avgRecordSize != 0) {
+            return (segmentRowCount * avgRecordSize) > threshold;
+        }
+
+        long tally = 0;
+        for (int colIndex = 0, colCount = columns.size(); colIndex < colCount; ++colIndex) {
+            final MemoryMA column = columns.getQuick(colIndex);
+            if ((column != null) && !(column instanceof NullMemory)) {
+                final long columnSize = column.getAppendOffset();
+                tally += columnSize;
+            }
+        }
+
+        // The events file will also contain the symbols.
+        tally += events.size();
+
+        // If we have many columns it can be a bit expensive, we can optimise the check
+        // by calculating the average record size.
+        if ((totalSegmentsRowCount + segmentRowCount) > 1000) {
+            avgRecordSize = (totalSegmentsSize + tally) / (totalSegmentsRowCount + segmentRowCount);
+        }
+
+        return tally > threshold;
+    }
+
+    private void checkDistressed() {
+        if (!distressed) {
+            return;
+        }
+        throw CairoException.critical(0)
+                .put("WAL writer is distressed and cannot be used any more [table=").put(tableToken.getTableName())
+                .put(", wal=").put(walId).put(']');
     }
 
     private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles) {
@@ -1144,6 +1193,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return columns.getQuick(getDataColumnOffset(column));
     }
 
+    private long getSequencerTxn() {
+        long seqTxn;
+        do {
+            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
+            if (seqTxn == NO_TXN) {
+                applyMetadataChangeLog(Long.MAX_VALUE);
+            }
+        } while (seqTxn == NO_TXN);
+        return lastSeqTxn = seqTxn;
+    }
+
     private boolean hasDirtyColumns(long currentTxnStartRowNum) {
         for (int i = 0; i < columnCount; i++) {
             long writtenCount = rowValueIsNotNull.getQuick(i);
@@ -1158,6 +1218,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
+    private boolean isTruncateFilesOnClose() {
+        return walDirectoryPolicy.truncateFilesOnClose();
+    }
+
     private void markColumnRemoved(int columnIndex, int columnType) {
         if (ColumnType.isSymbol(columnType)) {
             removeSymbolMapReader(columnIndex);
@@ -1167,6 +1231,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         freeNullSetter(nullSetters, columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);
         rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
+    }
+
+    private void mayRollSegmentOnNextRow() {
+        if (rollSegmentOnNextRow) {
+            return;
+        }
+        rollSegmentOnNextRow = (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())
+                || breachedRolloverSizeThreshold()
+                || (lastSegmentTxn > Integer.MAX_VALUE - 2);
     }
 
     private void openColumnFiles(CharSequence columnName, int columnType, int columnIndex, int pathTrimToLen) {
@@ -1201,6 +1274,66 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
         } finally {
             path.trimTo(pathTrimToLen);
+        }
+    }
+
+    private void openNewSegment() {
+        final int oldSegmentId = segmentId;
+        final int newSegmentId = segmentId + 1;
+        final long oldSegmentLockFd = segmentLockFd;
+        segmentLockFd = -1;
+        final long oldLastSegmentTxn = lastSegmentTxn;
+        try {
+            totalSegmentsRowCount += Math.max(0, segmentRowCount);
+            currentTxnStartRowNum = 0;
+            rowValueIsNotNull.fill(0, columnCount, -1);
+            final int segmentPathLen = createSegmentDir(newSegmentId);
+            segmentId = newSegmentId;
+            final long dirFd;
+            final int commitMode = configuration.getCommitMode();
+            if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
+                dirFd = -1;
+            } else {
+                dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+            }
+
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
+                    final CharSequence columnName = metadata.getColumnName(i);
+                    openColumnFiles(columnName, columnType, i, segmentPathLen);
+
+                    if (columnType == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
+                        final SymbolMapReader reader = symbolMapReaders.getQuick(i);
+                        initialSymbolCounts.set(i, reader.getSymbolCount());
+                        localSymbolIds.set(i, 0);
+                        symbolMapNullFlags.set(i, reader.containsNullValue());
+                        symbolMaps.getQuick(i).clear();
+                        utf8SymbolMaps.getQuick(i).clear();
+                    }
+                } else {
+                    rowValueIsNotNull.setQuick(i, COLUMN_DELETED_NULL_FLAG);
+                }
+            }
+
+            segmentRowCount = 0;
+            metadata.switchTo(path, segmentPathLen, isTruncateFilesOnClose());
+            totalSegmentsSize += events.size();
+            events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
+            if (commitMode != CommitMode.NOSYNC) {
+                events.sync();
+            }
+
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
+            lastSegmentTxn = -1;
+            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
+        } finally {
+            if (oldSegmentLockFd > -1) {
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+            }
+            path.trimTo(pathSize);
         }
     }
 
@@ -1605,121 +1738,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
             events.sync();
-        }
-    }
-
-    @Override
-    boolean breachedRolloverSizeThreshold() {
-        final long threshold = configuration.getWalSegmentRolloverSize();
-        if (threshold == 0) {
-            return false;
-        }
-
-        if (avgRecordSize != 0) {
-            return (segmentRowCount * avgRecordSize) > threshold;
-        }
-
-        long tally = 0;
-        for (int colIndex = 0, colCount = columns.size(); colIndex < colCount; ++colIndex) {
-            final MemoryMA column = columns.getQuick(colIndex);
-            if ((column != null) && !(column instanceof NullMemory)) {
-                final long columnSize = column.getAppendOffset();
-                tally += columnSize;
-            }
-        }
-
-        // The events file will also contain the symbols.
-        tally += events.size();
-
-        // If we have many columns it can be a bit expensive, we can optimise the check
-        // by calculating the average record size.
-        if ((totalSegmentsRowCount + segmentRowCount) > 1000) {
-            avgRecordSize = (totalSegmentsSize + tally) / (totalSegmentsRowCount + segmentRowCount);
-        }
-
-        return tally > threshold;
-    }
-
-    @Override
-    long getSequencerTxn() {
-        long seqTxn;
-        do {
-            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
-            if (seqTxn == NO_TXN) {
-                applyMetadataChangeLog(Long.MAX_VALUE);
-            }
-        } while (seqTxn == NO_TXN);
-        return lastSeqTxn = seqTxn;
-    }
-
-    @Override
-    void mayRollSegmentOnNextRow() {
-        if (rollSegmentOnNextRow) {
-            return;
-        }
-        rollSegmentOnNextRow = (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())
-                || breachedRolloverSizeThreshold()
-                || (lastSegmentTxn > Integer.MAX_VALUE - 2);
-    }
-
-    @Override
-    void openNewSegment() {
-        final int oldSegmentId = segmentId;
-        final int newSegmentId = segmentId + 1;
-        final long oldSegmentLockFd = segmentLockFd;
-        segmentLockFd = -1;
-        final long oldLastSegmentTxn = lastSegmentTxn;
-        try {
-            totalSegmentsRowCount += Math.max(0, segmentRowCount);
-            currentTxnStartRowNum = 0;
-            rowValueIsNotNull.fill(0, columnCount, -1);
-            final int segmentPathLen = createSegmentDir(newSegmentId);
-            segmentId = newSegmentId;
-            final long dirFd;
-            final int commitMode = configuration.getCommitMode();
-            if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
-                dirFd = -1;
-            } else {
-                dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
-            }
-
-            for (int i = 0; i < columnCount; i++) {
-                int columnType = metadata.getColumnType(i);
-                if (columnType > 0) {
-                    final CharSequence columnName = metadata.getColumnName(i);
-                    openColumnFiles(columnName, columnType, i, segmentPathLen);
-
-                    if (columnType == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
-                        final SymbolMapReader reader = symbolMapReaders.getQuick(i);
-                        initialSymbolCounts.set(i, reader.getSymbolCount());
-                        localSymbolIds.set(i, 0);
-                        symbolMapNullFlags.set(i, reader.containsNullValue());
-                        symbolMaps.getQuick(i).clear();
-                        utf8SymbolMaps.getQuick(i).clear();
-                    }
-                } else {
-                    rowValueIsNotNull.setQuick(i, COLUMN_DELETED_NULL_FLAG);
-                }
-            }
-
-            segmentRowCount = 0;
-            metadata.switchTo(path, segmentPathLen, isTruncateFilesOnClose());
-            totalSegmentsSize += events.size();
-            events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
-            if (commitMode != CommitMode.NOSYNC) {
-                events.sync();
-            }
-
-            if (dirFd != -1) {
-                ff.fsyncAndClose(dirFd);
-            }
-            lastSegmentTxn = -1;
-            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
-        } finally {
-            if (oldSegmentLockFd > -1) {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
-            }
-            path.trimTo(pathSize);
         }
     }
 
