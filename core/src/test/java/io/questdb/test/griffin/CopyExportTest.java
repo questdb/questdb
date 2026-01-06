@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
@@ -1869,6 +1870,52 @@ public class CopyExportTest extends AbstractCairoTest {
                     });
 
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testParquetExportDoesNotCommitPerRow() throws Exception {
+        // Regression test: Parquet export was committing after every row due to
+        // batchSize defaulting to 0 instead of -1 in CreateTableOperationImpl constructor.
+        // This caused massive performance degradation - 31 million commits for 31 million rows.
+        assertMemoryLeak(() -> {
+            final int rowCount = 10000;
+
+            // Get initial commit count
+            TableWriterMetrics writerMetrics = engine.getMetrics().tableWriterMetrics();
+            long commitsBefore = writerMetrics.getCommitCount();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "copy (select * from generate_series('2025-01-01', '2025-01-01T02:46:39', '1s')) to 'batch_test' with format parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "batch_test.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+
+                        // Verify the file was created with correct row count
+                        assertSql("count\n" + rowCount + "\n",
+                                "select count() from read_parquet('" + exportRoot + File.separator + "batch_test.parquet')");
+                    });
+
+            testCopyExport(stmt, test);
+
+            // Check commits after export
+            long commitsAfter = writerMetrics.getCommitCount();
+            long newCommits = commitsAfter - commitsBefore;
+
+            // The bug would cause ~10000 commits (one per row).
+            // With the fix, we should have at most a handful of commits (for the temp table creation,
+            // status log updates, etc.) - certainly less than 100.
+            Assert.assertTrue(
+                    "Expected fewer than 100 commits for " + rowCount + " rows, but got " + newCommits +
+                            ". This suggests per-row commits are happening (regression of batchSize bug).",
+                    newCommits < 100
+            );
         });
     }
 

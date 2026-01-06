@@ -108,10 +108,21 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns the base column name at the given index.
+     *
+     * @param idx the column index
+     * @return the column name
+     */
     default String getBaseColumnName(int idx) {
         return getBaseFactory().getMetadata().getColumnName(idx);
     }
 
+    /**
+     * Returns the base factory, if any.
+     *
+     * @return the base factory, or null if none
+     */
     default RecordCursorFactory getBaseFactory() {
         return null;
     }
@@ -176,6 +187,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Note: tables with designated timestamp keep rows in timestamp order, so:
      * - forward scan produces rows in ascending ts order
      * - backward scan produces rows in descending ts order
+     *
+     * @return the scan direction
      */
     default int getScanDirection() {
         return SCAN_DIRECTION_FORWARD;
@@ -206,6 +219,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     /**
      * Returns time frame cursor or null if time frames aren't supported by the factory.
+     *
+     * @param executionContext the SQL execution context
+     * @return the time frame cursor, or null if not supported
+     * @throws SqlException if an error occurs
      */
     default TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         return null;
@@ -221,6 +238,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Returns true if this factory handles {@code limit(M, N)} clause.
      * If true, then a separate limit cursor factory is not needed (and could actually cause problem
      * by re-applying limit logic).
+     *
+     * @return true if limit is implemented
      */
     default boolean implementsLimit() {
         return false;
@@ -247,6 +266,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * <p>
      * Unlike with {@link #getTimeFrameCursor(SqlExecutionContext)}, the returned cursor has to be
      * initialized before usage.
+     *
+     * @return a new concurrent time frame cursor, or null if not supported
      */
     default ConcurrentTimeFrameCursor newTimeFrameCursor() {
         return null;
@@ -263,6 +284,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns true if the record cursor supports random access.
+     *
+     * @return true if random access is supported
+     */
     boolean recordCursorSupportsRandomAccess();
 
     default void revertFromSampleByIndexPageFrameCursorFactory() {
@@ -271,11 +297,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     /**
      * Returns true if the factory stands for nothing more but a filter, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
+     *
+     * @return true if filter stealing is supported
      */
     default boolean supportsFilterStealing() {
         return false;
     }
 
+    /**
+     * Returns true if the factory supports page frame cursor.
+     *
+     * @return true if page frame cursor is supported
+     */
     default boolean supportsPageFrameCursor() {
         return false;
     }
@@ -291,6 +324,12 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns true if the factory supports UPDATE row ID for the given table.
+     *
+     * @param tableName the table token
+     * @return true if UPDATE row ID is supported
+     */
     default boolean supportsUpdateRowId(TableToken tableName) {
         return false;
     }
@@ -316,6 +355,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     /**
      * Returns true if the factory uses index-based access.
+     *
+     * @return true if the factory uses index-based access
      */
     default boolean usesIndex() {
         return false;

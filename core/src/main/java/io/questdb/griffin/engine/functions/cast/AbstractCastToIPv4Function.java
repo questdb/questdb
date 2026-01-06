@@ -29,10 +29,21 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
+/**
+ * Abstract base class for functions that cast values to IPv4.
+ */
 public abstract class AbstractCastToIPv4Function extends IPv4Function implements UnaryFunction {
 
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to IPv4 function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToIPv4Function(Function arg) {
         this.arg = arg;
     }

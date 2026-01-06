@@ -1007,7 +1007,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, engine)) {
+            try (WriterPool pool = new WriterPool(configuration, engine, null)) {
                 code.run(pool);
             }
         });

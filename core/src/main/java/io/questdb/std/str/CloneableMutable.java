@@ -24,6 +24,15 @@
 
 package io.questdb.std.str;
 
+/**
+ * Interface for objects that can be cloned to create a mutable copy.
+ */
 public interface CloneableMutable {
+    /**
+     * Creates a copy of this object.
+     *
+     * @param <T> the type of the copy
+     * @return a copy of this object
+     */
     <T> T copy();
 }

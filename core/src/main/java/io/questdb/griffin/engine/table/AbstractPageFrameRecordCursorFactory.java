@@ -41,12 +41,36 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
+/**
+ * Abstract base class for page frame record cursor factories.
+ */
 abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+    /**
+     * The column indexes.
+     */
     protected final IntList columnIndexes;
+    /**
+     * The column size shifts.
+     */
     protected final IntList columnSizeShifts;
+    /**
+     * The partition frame cursor factory.
+     */
     protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
+    /**
+     * The page frame cursor.
+     */
     protected TablePageFrameCursor pageFrameCursor;
 
+    /**
+     * Constructs a new page frame record cursor factory.
+     *
+     * @param configuration               the Cairo configuration
+     * @param metadata                    the record metadata
+     * @param partitionFrameCursorFactory the partition frame cursor factory
+     * @param columnIndexes               the column indexes
+     * @param columnSizeShifts            the column size shifts
+     */
     public AbstractPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
@@ -92,6 +116,13 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         Misc.free(partitionFrameCursorFactory);
     }
 
+    /**
+     * Initializes the page frame cursor.
+     *
+     * @param executionContext the SQL execution context
+     * @return the initialized page frame cursor
+     * @throws SqlException if initialization fails
+     */
     protected TablePageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = partitionFrameCursorFactory.getOrder();
         PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
@@ -113,6 +144,14 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         return pageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
+    /**
+     * Initializes the record cursor from the page frame cursor.
+     *
+     * @param frameCursor      the page frame cursor
+     * @param executionContext the SQL execution context
+     * @return the initialized record cursor
+     * @throws SqlException if initialization fails
+     */
     protected abstract RecordCursor initRecordCursor(
             PageFrameCursor frameCursor,
             SqlExecutionContext executionContext

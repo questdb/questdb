@@ -24,12 +24,15 @@
 
 package io.questdb.cutlass.http.client;
 
+/**
+ * Interface for receiving HTTP response data.
+ */
+
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
 
 public interface Response {
-
     default void copyTextTo(Utf8Sink sink) {
         Fragment fragment;
         while ((fragment = recv()) != null) {
@@ -50,7 +53,18 @@ public interface Response {
         }
     }
 
-    Fragment recv(int timeout);
-
+    /**
+     * Receives the next fragment of response data using the default timeout.
+     *
+     * @return the received fragment
+     */
     Fragment recv();
+
+    /**
+     * Receives the next fragment of response data with the specified timeout.
+     *
+     * @param timeout the timeout in milliseconds
+     * @return the received fragment
+     */
+    Fragment recv(int timeout);
 }

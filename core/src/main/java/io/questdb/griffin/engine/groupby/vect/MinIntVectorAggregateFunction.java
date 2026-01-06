@@ -40,7 +40,6 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class MinIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
-
     public static final LongBinaryOperator MIN = (long l1, long l2) -> {
         if (l1 == Numbers.INT_NULL) {
             return l2;
@@ -58,7 +57,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MinIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public MinIntVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             this.distinctFunc = Rosti::keyedMicroHourDistinct;
