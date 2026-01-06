@@ -188,6 +188,14 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getConfRoot(); // same as root/../conf
 
+    /**
+     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
+     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
+     */
+    default int getCopierType() {
+        return 0; // COPIER_TYPE_DEFAULT
+    }
+
     @NotNull
     LongSupplier getCopyIDSupplier();
 
@@ -447,6 +455,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getPivotColumnPoolCapacity();
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
@@ -597,6 +607,8 @@ public interface CairoConfiguration {
     int getSqlParallelWorkStealingThreshold();
 
     int getSqlParquetFrameCacheCapacity();
+
+    int getSqlPivotMaxProducedColumns();
 
     int getSqlSmallMapKeyCapacity();
 
@@ -753,14 +765,6 @@ public interface CairoConfiguration {
     boolean isColumnAliasExpressionEnabled();
 
     boolean isCopierChunkedEnabled();
-
-    /**
-     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
-     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
-     */
-    default int getCopierType() {
-        return 0; // COPIER_TYPE_DEFAULT
-    }
 
     boolean isDevModeEnabled();
 

@@ -586,7 +586,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.setCompilerNanos(0);
         sqlExecutionContext.setCacheHit(true);
-        executeSelect(state, factory);
+        executeSelect0(state, factory, true);
     }
 
     private void executeDdl(
@@ -636,7 +636,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        executeSelect(state, cq.getRecordCursorFactory());
+        executeSelect0(state, cq.getRecordCursorFactory(), cq.isCacheable());
     }
 
     private void executePseudoSelect(
@@ -652,17 +652,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
         // new import case
         executeSelect0(state, factory, false);
-    }
-
-    private void executeSelect(
-            JsonQueryProcessorState state,
-            RecordCursorFactory factory
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        executeSelect0(
-                state,
-                factory,
-                true
-        );
     }
 
     private void executeSelect0(JsonQueryProcessorState state, RecordCursorFactory factory, boolean queryCacheable)
