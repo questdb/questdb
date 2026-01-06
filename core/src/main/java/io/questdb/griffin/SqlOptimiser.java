@@ -154,7 +154,6 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
     private final int maxRecursion;
-    private final CharSequenceHashSet missingDependentTokens = new CharSequenceHashSet();
     private final AtomicInteger nonAggSelectCount = new AtomicInteger(0);
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntSortedList orderingStack = new IntSortedList();
@@ -168,6 +167,7 @@ public class SqlOptimiser implements Mutable {
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final BoolList tempBoolList = new BoolList();
+    private final CharSequenceHashSet tempCharSequenceHashSet = new CharSequenceHashSet();
     private final ObjList<QueryColumn> tempColumns = new ObjList<>();
     private final ObjList<QueryColumn> tempColumns2 = new ObjList<>();
     private final IntList tempCrossIndexes = new IntList();
@@ -816,13 +816,17 @@ public class SqlOptimiser implements Mutable {
             final QueryModel m = joinModels.getQuick(i);
             final QueryColumn column = m.getAliasToColumnMap().get(columnName);
             if (column != null) {
-                if (m.getSelectModelType() == QueryModel.SELECT_MODEL_NONE) {
-                    m.addTopDownColumn(
-                            queryColumnPool.next().of(columnName, nextLiteral(columnName)),
-                            columnName
-                    );
-                } else {
-                    m.addTopDownColumn(column, columnName);
+                switch (m.getSelectModelType()) {
+                    case QueryModel.SELECT_MODEL_NONE:
+                        m.addTopDownColumn(queryColumnPool.next().of(columnName, nextLiteral(columnName)), columnName);
+                        break;
+                    case QueryModel.SELECT_MODEL_VIRTUAL:
+                        tempCharSequenceHashSet.clear();
+                        collectSameModelProjectionColumns(column.getAst(), m);
+                        m.addTopDownColumn(column, columnName);
+                        break;
+                    default:
+                        m.addTopDownColumn(column, columnName);
                 }
                 break;
             }
@@ -1413,6 +1417,30 @@ public class SqlOptimiser implements Mutable {
         // it's only a duplicate if its being applied to a different model.
         if (parent != model) {
             throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
+        }
+    }
+
+    private void collectSameModelProjectionColumns(ExpressionNode node, QueryModel model) {
+        if (node == null) {
+            return;
+        }
+
+        if (node.type == LITERAL) {
+            final QueryColumn dep = model.getAliasToColumnMap().get(node.token);
+            if (dep != null && model.isTopDownNameMissing(node.token) && tempCharSequenceHashSet.add(node.token)) {
+                collectSameModelProjectionColumns(dep.getAst(), model);
+                model.addTopDownColumn(dep, node.token);
+            }
+            return;
+        }
+
+        if (node.paramCount < 3) {
+            collectSameModelProjectionColumns(node.lhs, model);
+            collectSameModelProjectionColumns(node.rhs, model);
+        } else {
+            for (int i = 0, k = node.paramCount; i < k; i++) {
+                collectSameModelProjectionColumns(node.args.getQuick(i), model);
+            }
         }
     }
 
@@ -5326,7 +5354,7 @@ public class SqlOptimiser implements Mutable {
                             // Replace aggregate functions with aliases and add the functions to the group by model.
                             // E.g. `select ts, count() / ts::long` -> `select ts, count / ts::long from (select count(), ...`
                             // If other key columns are also present in the expression, they'll be dealt with later,
-                            // when we collect missingDependentTokens.
+                            // when we collect tempCharSequenceHashSet.
                             needRemoveColumns += rewriteTimestampMixedWithAggregates(qc.getAst(), model);
                         }
 
@@ -5437,12 +5465,12 @@ public class SqlOptimiser implements Mutable {
                 nested.setSampleByFromTo(null, null);
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
-                    missingDependentTokens.clear();
+                    tempCharSequenceHashSet.clear();
                     for (int i = 0, n = tempColumns.size(); i < n; i++) {
-                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, timestampAlias, missingDependentTokens);
+                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, timestampAlias, tempCharSequenceHashSet);
                     }
-                    for (int i = 0, size = missingDependentTokens.size(); i < size; i++) {
-                        final CharSequence dependentToken = missingDependentTokens.get(i);
+                    for (int i = 0, size = tempCharSequenceHashSet.size(); i < size; i++) {
+                        final CharSequence dependentToken = tempCharSequenceHashSet.get(i);
                         if (model.getAliasToColumnMap().excludes(dependentToken)) {
                             model.addBottomUpColumn(nextColumn(dependentToken));
                             needRemoveColumns++;
