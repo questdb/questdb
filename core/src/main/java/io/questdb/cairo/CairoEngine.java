@@ -75,6 +75,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
+import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalListener;
@@ -192,8 +193,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
-    private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private volatile Runnable recentWriteTrackerHydrationCallback;
+    private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
@@ -1139,6 +1140,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return viewStateStore;
     }
 
+    public @NotNull ViewWalWriter getViewWalWriter(TableToken tableToken) {
+        verifyTableToken(tableToken);
+        // todo: add a pool
+        return new ViewWalWriter(
+                getConfiguration(),
+                tableToken,
+                getTableSequencerAPI(),
+                getWalDirectoryPolicy()
+        );
+    }
+
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
         return walDirectoryPolicy;
     }
@@ -1616,7 +1628,7 @@ public class CairoEngine implements Closeable, WriterSource {
             Path path
     ) {
         final long seqTxn;
-        try (WalWriter walWriter = getWalWriter(viewToken)) {
+        try (ViewWalWriter walWriter = getViewWalWriter(viewToken)) {
             try {
                 seqTxn = walWriter.replaceViewDefinition(viewSql, dependencies);
                 updateViewDefinition(viewToken, viewSql, dependencies, seqTxn, blockFileWriter, path);

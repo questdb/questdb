@@ -1,0 +1,213 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
+
+public class ViewWalWriter extends WalWriterBase implements AutoCloseable {
+    private static final Log LOG = LogFactory.getLog(ViewWalWriter.class);
+
+    public ViewWalWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            TableSequencerAPI tableSequencerAPI,
+            WalDirectoryPolicy walDirectoryPolicy
+    ) {
+        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy);
+
+        LOG.info().$("open [table=").$(tableToken).I$();
+
+        try {
+            lockWal();
+            mkWalDir();
+
+            events.of(null, null, null);
+
+            openNewSegment();
+        } catch (Throwable e) {
+            doClose(false);
+            throw e;
+        }
+    }
+
+    @Override
+    public void close() {
+        if (open) {
+            doClose(walDirectoryPolicy.truncateFilesOnClose());
+        }
+    }
+
+    @Override
+    public void commit() {
+        checkDistressed();
+        try {
+            syncIfRequired();
+            LOG.info().$("commit [view wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                    .$(", segTxn=").$(lastSegmentTxn)
+                    .$(", seqTxn=").$(lastSeqTxn)
+                    .I$();
+            mayRollSegmentOnNextRow();
+        } catch (Throwable th) {
+            // If distressed, no need to rollback, WalWriter will not be used anymore
+            if (!isDistressed()) {
+                rollback();
+            }
+            throw th;
+        }
+    }
+
+    public long replaceViewDefinition(
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) {
+        try {
+            if (rollSegmentOnNextRow) {
+                rollSegment();
+                rollSegmentOnNextRow = false;
+            }
+            lastSegmentTxn = events.appendViewDefinition(viewSql, dependencies);
+            return getSequencerTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
+    }
+
+    @Override
+    public void rollback() {
+        events.rollback();
+        events.sync();
+        rollSegment();
+    }
+
+    @Override
+    public String toString() {
+        return "ViewWalWriter{" +
+                "name=" + walName +
+                ", view=" + tableToken.getTableName() +
+                '}';
+    }
+
+    private void doClose(boolean truncate) {
+        if (open) {
+            open = false;
+            if (events != null) {
+                events.close(truncate, Vm.TRUNCATE_TO_POINTER);
+            }
+
+            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
+
+            try {
+                releaseWalLock();
+            } finally {
+                Misc.free(path);
+                LOG.info().$("closed [view=").$(tableToken).I$();
+            }
+        }
+    }
+
+    private void syncIfRequired() {
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            events.sync();
+        }
+    }
+
+    @Override
+    boolean breachedRolloverSizeThreshold() {
+        final long threshold = configuration.getWalSegmentRolloverSize();
+        if (threshold == 0) {
+            return false;
+        }
+
+        return events.size() > threshold;
+    }
+
+    @Override
+    long getSequencerTxn() {
+        long seqTxn = sequencer.nextTxn(tableToken, walId, 0L, segmentId, lastSegmentTxn, Long.MAX_VALUE, -1L, 0L);
+        assert seqTxn != NO_TXN;
+        return lastSeqTxn = seqTxn;
+    }
+
+    @Override
+    void mayRollSegmentOnNextRow() {
+        if (rollSegmentOnNextRow) {
+            return;
+        }
+        rollSegmentOnNextRow = breachedRolloverSizeThreshold() || (lastSegmentTxn > Integer.MAX_VALUE - 2);
+    }
+
+    @Override
+    void openNewSegment() {
+        final int oldSegmentId = segmentId;
+        final int newSegmentId = segmentId + 1;
+        final long oldSegmentLockFd = segmentLockFd;
+        segmentLockFd = -1;
+        final long oldLastSegmentTxn = lastSegmentTxn;
+        try {
+            final int segmentPathLen = createSegmentDir(newSegmentId);
+            segmentId = newSegmentId;
+            final long dirFd;
+            final int commitMode = configuration.getCommitMode();
+            if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
+                dirFd = -1;
+            } else {
+                dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+            }
+
+            events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
+            if (commitMode != CommitMode.NOSYNC) {
+                events.sync();
+            }
+
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
+            lastSegmentTxn = -1;
+            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
+        } finally {
+            if (oldSegmentLockFd > -1) {
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+            }
+            path.trimTo(pathSize);
+        }
+    }
+}

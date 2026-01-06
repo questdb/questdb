@@ -128,6 +128,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
             return index;
         }
 
+        @Override
         public void goodbye() {
             entry = null;
             pool = null;
@@ -146,6 +147,11 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void toSink(@NotNull CharSink<?> sink) {
             sink.put("WalWriterTenant{index=").put(index).put(", tableToken=").put(getTableToken()).put('}');
+        }
+
+        @Override
+        public void updateTableToken(TableToken ignoredTableToken) {
+            // goActive() will update table token
         }
     }
 }
