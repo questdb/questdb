@@ -5526,15 +5526,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final RecordMetadata metadata = isCountKeyword(columnName)
                             ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
                             new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), LONG));
-                    final RecordCursorFactory baseFactory = generateSubQuery(model, executionContext);
-                    if (baseFactory.supportsFilterStealing() && baseFactory.usesCompiledFilter()) {
-                        // count JIT-filtered tasks are lightweight, so it's fine to use larger frame sizes
-                        baseFactory.changePageFrameSizes(
-                                Math.min(2 * configuration.getSqlPageFrameMinRows(), configuration.getSqlPageFrameMaxRows()),
-                                configuration.getSqlPageFrameMaxRows()
-                        );
-                    }
-                    return new CountRecordCursorFactory(metadata, baseFactory);
+                    return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
                 }
             }
 
@@ -5667,11 +5659,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 if (tempKeyIndexesInBase.size() == 0) {
-                    // vectorized non-keyed tasks are lightweight, so it's fine to use larger frame sizes
-                    factory.changePageFrameSizes(
-                            Math.min(2 * configuration.getSqlPageFrameMinRows(), configuration.getSqlPageFrameMaxRows()),
-                            configuration.getSqlPageFrameMaxRows()
-                    );
                     return new GroupByNotKeyedVectorRecordCursorFactory(
                             executionContext.getCairoEngine(),
                             configuration,
