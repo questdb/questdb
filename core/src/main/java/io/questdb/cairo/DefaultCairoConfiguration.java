@@ -580,11 +580,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getRecentWriteTrackerCapacity() {
-        return 1000;
-    }
-
-    @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
     }
@@ -773,6 +768,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getReaderPoolMaxSegments() {
         return 5;
+    }
+
+    @Override
+    public int getRecentWriteTrackerCapacity() {
+        return 1000;
     }
 
     @Override
@@ -1045,6 +1045,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public double getSqlParallelFilterPreTouchThreshold() {
         return 0.05;
+    }
+
+    @Override
+    public long getSqlParallelWorkStealingSpinTimeout() {
+        return 50_000; // 50us
     }
 
     @Override

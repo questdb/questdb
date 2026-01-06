@@ -596,6 +596,8 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
+    long getSqlParallelWorkStealingSpinTimeout();
+
     int getSqlParquetFrameCacheCapacity();
 
     int getSqlSmallMapKeyCapacity();
