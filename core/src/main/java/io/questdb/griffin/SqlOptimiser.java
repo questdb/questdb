@@ -1427,7 +1427,8 @@ public class SqlOptimiser implements Mutable {
 
         if (node.type == LITERAL) {
             final QueryColumn dep = model.getAliasToColumnMap().get(node.token);
-            if (dep != null && model.isTopDownNameMissing(node.token) && tempCharSequenceHashSet.add(node.token)) {
+            QueryModel nested = model.getNestedModel();
+            if (dep != null && (nested == null || !nested.getAliasToColumnMap().contains(node.token)) && model.isTopDownNameMissing(node.token) && tempCharSequenceHashSet.add(node.token)) {
                 collectSameModelProjectionColumns(dep.getAst(), model);
                 model.addTopDownColumn(dep, node.token);
             }

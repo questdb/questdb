@@ -348,7 +348,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         Sort light
                           keys: [address]
                             VirtualRecord
-                              functions: [timestamp_floor('minute',ts),address,concat([address,workspace])]
+                              functions: [timestamp_floor('minute',ts),concat([address,workspace]),address]
                                 SelectedRecord
                                     Async JIT Filter workers: 1
                                       filter: (workspace='a' and method_id='d')
@@ -395,7 +395,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         Sort light
                           keys: [ts, month, method_id]
                             VirtualRecord
-                              functions: [ts,timestamp_floor('minute',ts),concat([address,workspace]),method_id]
+                              functions: [timestamp_floor('minute',ts),concat([address,workspace]),ts,method_id]
                                 Async JIT Filter workers: 1
                                   filter: (workspace='a' and method_id='d')
                                     PageFrame
@@ -442,7 +442,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         Sort
                           keys: [ts desc]
                             VirtualRecord
-                              functions: [ts,timestamp_floor('minute',ts),ts1,concat([address,workspace])]
+                              functions: [timestamp_floor('minute',ts),ts1,concat([address,workspace]),ts]
                                 SelectedRecord
                                     Hash Join Light
                                       condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace
