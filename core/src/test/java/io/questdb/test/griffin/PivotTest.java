@@ -673,6 +673,54 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotSubqueryWithArrayType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat DOUBLE[], val INT);");
+            execute("CREATE TABLE cats (c DOUBLE[]);");
+            execute("INSERT INTO cats VALUES (array[1, 2]), (array[3, 4]);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', array[1, 2], 10),
+                        ('A', array[3, 4], 20),
+                        ('B', array[1, 2], 30),
+                        ('B', array[3, 4], 40);
+                    """);
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 56, "unsupported PIVOT FOR column type: DOUBLE[]");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithBinaryType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat BINARY, val INT);");
+            execute("CREATE TABLE cats (c BINARY);");
+            execute("INSERT INTO cats VALUES ('A'::binary), ('B'::binary);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'A'::binary, 10),
+                        ('A', 'B'::binary, 20),
+                        ('B', 'A'::binary, 30),
+                        ('B', 'B'::binary, 40);
+                    """);
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 56, "unsupported PIVOT FOR column type: BINARY");
+        });
+    }
+
+    @Test
     public void testPivotSubqueryWithBooleanType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (grp SYMBOL, cat BOOLEAN, val INT);");
@@ -795,6 +843,285 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotSubqueryWithDecimal128Type() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat DECIMAL(20, 2), val INT);");
+            execute("CREATE TABLE cats (c DECIMAL(20, 2));");
+            execute("INSERT INTO cats VALUES (1.50m), (2.75m);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1.50m, 10),
+                        ('A', 2.75m, 20),
+                        ('B', 1.50m, 30),
+                        ('B', 2.75m, 40);
+                    """);
+
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(20,2)");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithDecimal16Type() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat DECIMAL(4, 2), val INT);");
+            execute("CREATE TABLE cats (c DECIMAL(4, 2));");
+            execute("INSERT INTO cats VALUES (1.50m), (2.75m);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1.50m, 10),
+                        ('A', 2.75m, 20),
+                        ('B', 1.50m, 30),
+                        ('B', 2.75m, 40);
+                    """);
+
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(4,2)");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithDecimal256Type() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat DECIMAL(40, 2), val INT);");
+            execute("CREATE TABLE cats (c DECIMAL(40, 2));");
+            execute("INSERT INTO cats VALUES (1.50m), (2.75m);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1.50m, 10),
+                        ('A', 2.75m, 20),
+                        ('B', 1.50m, 30),
+                        ('B', 2.75m, 40);
+                    """);
+
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(40,2)");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithDecimal32Type() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat DECIMAL(9, 2), val INT);");
+            execute("CREATE TABLE cats (c DECIMAL(9, 2));");
+            execute("INSERT INTO cats VALUES (1.50m), (2.75m);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1.50m, 10),
+                        ('A', 2.75m, 20),
+                        ('B', 1.50m, 30),
+                        ('B', 2.75m, 40);
+                    """);
+
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(9,2)");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithDecimal64Type() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat DECIMAL(10, 2), val INT);");
+            execute("CREATE TABLE cats (c DECIMAL(10, 2));");
+            execute("INSERT INTO cats VALUES (1.50m), (2.75m);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1.50m, 10),
+                        ('A', 2.75m, 20),
+                        ('B', 1.50m, 30),
+                        ('B', 2.75m, 40);
+                    """);
+
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(10,2)");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithDecimal8Type() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat DECIMAL(2, 1), val INT);");
+            execute("CREATE TABLE cats (c DECIMAL(2, 1));");
+            execute("INSERT INTO cats VALUES (1.5m), (2.5m);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1.5m, 10),
+                        ('A', 2.5m, 20),
+                        ('B', 1.5m, 30),
+                        ('B', 2.5m, 40);
+                    """);
+
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(2,1)");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithDoubleType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat DOUBLE, val INT);");
+            execute("CREATE TABLE cats (c DOUBLE);");
+            execute("INSERT INTO cats VALUES (1.5), (2.5);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1.5, 10),
+                        ('A', 2.5, 20),
+                        ('B', 1.5, 30),
+                        ('B', 2.5, 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp	"1.5"	"2.5"
+                            A	10	20
+                            B	30	40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithFewDistinctValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT);");
+            execute("CREATE TABLE cats AS (SELECT 'cat_' || (x%10)::string as c FROM long_sequence(2000000));");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'cat_1', 10),
+                        ('A', 'cat_2', 20),
+                        ('B', 'cat_1', 30),
+                        ('B', 'cat_2', 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp	cat_1	cat_2	cat_3	cat_4	cat_5	cat_6	cat_7	cat_8	cat_9	cat_0
+                            A	10	20	null	null	null	null	null	null	null	null
+                            B	30	40	null	null	null	null	null	null	null	null
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithFloatType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat FLOAT, val INT);");
+            execute("CREATE TABLE cats (c FLOAT);");
+            execute("INSERT INTO cats VALUES (1.5), (2.5);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 1.5, 10),
+                        ('A', 2.5, 20),
+                        ('B', 1.5, 30),
+                        ('B', 2.5, 40);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            grp	"1.5"	"2.5"
+                            A	10	20
+                            B	30	40
+                            """,
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithGeoHashType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat GEOHASH(4c), val INT);");
+            execute("CREATE TABLE cats (c GEOHASH(4c));");
+            execute("INSERT INTO cats VALUES (#u09t), (#u09v);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', #u09t, 10),
+                        ('A', #u09v, 20),
+                        ('B', #u09t, 30),
+                        ('B', #u09v, 40);
+                    """);
+
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """, 48, "there is no matching operator `IN` with the argument type: GEOHASH(4c)");
+        });
+    }
+
+    @Test
     public void testPivotSubqueryWithIPv4Type() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (grp SYMBOL, cat IPv4, val INT);");
@@ -859,6 +1186,60 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotSubqueryWithLong128Type() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat LONG128, val INT);");
+            execute("CREATE TABLE cats (c LONG128);");
+            execute("INSERT INTO cats VALUES (to_long128(1, 1)), (to_long128(2, 2));");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', to_long128(1, 1), 10),
+                        ('A', to_long128(2, 2), 20),
+                        ('B', to_long128(1, 1), 30),
+                        ('B', to_long128(2, 2), 40);
+                    """);
+
+            assertException(
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """, 48, "there is no matching operator `IN` with the argument type: LONG128");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithLong256Type() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat LONG256, val INT);");
+            execute("CREATE TABLE cats (c LONG256);");
+            execute("INSERT INTO cats VALUES " +
+                    "(to_long256(1, 1, 1, 1)), " +
+                    "(to_long256(2, 2, 2, 2));");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', to_long256(1, 1, 1, 1), 10),
+                        ('A', to_long256(2, 2, 2, 2), 20),
+                        ('B', to_long256(1, 1, 1, 1), 30),
+                        ('B', to_long256(2, 2, 2, 2), 40);
+                    """);
+
+            assertException(
+                    """
+                            SELECT * FROM data
+                            PIVOT (
+                                SUM(val)
+                                FOR cat IN (SELECT c FROM cats)
+                                GROUP BY grp
+                            ) ORDER BY grp
+                            """, 48, "there is no matching operator `IN` with the argument type: LONG256");
+        });
+    }
+
+    @Test
     public void testPivotSubqueryWithLongType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (grp SYMBOL, cat LONG, val INT);");
@@ -885,6 +1266,62 @@ public class PivotTest extends AbstractSqlParserTest {
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithManyDistinctValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT);");
+            execute("CREATE TABLE cats AS (SELECT 'cat_' || x::string as c FROM long_sequence(100000));");
+            assertException("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    )
+                    """, 56, "PIVOT produces too many columns: 5001, limit is 5000");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithMultipleForColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sales (region SYMBOL, product SYMBOL, quarter SYMBOL, amount INT);");
+            execute("CREATE TABLE products AS (SELECT 'prod_' || x::string as p FROM long_sequence(3));");
+            execute("CREATE TABLE quarters AS (SELECT 'Q' || x::string as q FROM long_sequence(2));");
+            execute("""
+                    INSERT INTO sales VALUES
+                        ('East', 'prod_1', 'Q1', 100),
+                        ('East', 'prod_1', 'Q2', 150),
+                        ('East', 'prod_2', 'Q1', 200),
+                        ('East', 'prod_2', 'Q2', 250),
+                        ('West', 'prod_1', 'Q1', 300),
+                        ('West', 'prod_1', 'Q2', 350),
+                        ('West', 'prod_2', 'Q1', 400),
+                        ('West', 'prod_2', 'Q2', 450);
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            region\tprod_1_Q1\tprod_1_Q2\tprod_2_Q1\tprod_2_Q2\tprod_3_Q1\tprod_3_Q2
+                            East\t100\t150\t200\t250\tnull\tnull
+                            West\t300\t350\t400\t450\tnull\tnull
+                            """,
+                    """
+                            SELECT * FROM sales
+                            PIVOT (
+                                SUM(amount)
+                                FOR product IN (SELECT p FROM products)
+                                    quarter IN (SELECT q FROM quarters)
+                                GROUP BY region
+                            ) ORDER BY region
                             """,
                     null,
                     true,

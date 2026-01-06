@@ -33,9 +33,6 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.arr.ArrayTypeDriver;
-import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -68,7 +65,6 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WindowJoinContext;
-import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
@@ -78,7 +74,6 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
-import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -404,7 +399,7 @@ public class SqlOptimiser implements Mutable {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
     }
 
-    private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink) {
+    private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
         final int columnType = metadata.getColumnType(0);
         sink.clear();
         switch (ColumnType.tagOf(columnType)) {
@@ -467,7 +462,7 @@ public class SqlOptimiser implements Mutable {
             }
             case ColumnType.DOUBLE: {
                 final double val = record.getDouble(0);
-                if (Numbers.isFinite(val)) {
+                if (!Numbers.isFinite(val)) {
                     sink.put("NULL");
                     return true;
                 }
@@ -476,7 +471,7 @@ public class SqlOptimiser implements Mutable {
             }
             case ColumnType.FLOAT: {
                 final float val = record.getFloat(0);
-                if (Numbers.isFinite(val)) {
+                if (!Numbers.isFinite(val)) {
                     sink.put("NULL");
                     return true;
                 }
@@ -554,15 +549,6 @@ public class SqlOptimiser implements Mutable {
                 sink.put(val);
                 return false;
             }
-            case ColumnType.INTERVAL: {
-                final Interval val = record.getInterval(0);
-                if (Interval.NULL.equals(val)) {
-                    sink.put("NULL");
-                    return true;
-                }
-                val.toSink(sink, columnType);
-                return false;
-            }
             case ColumnType.LONG256: {
                 final Long256 val = record.getLong256A(0);
                 if (isNull(val)) {
@@ -592,24 +578,6 @@ public class SqlOptimiser implements Mutable {
                     return true;
                 }
                 Numbers.intToIPv4Sink(sink, val);
-                return false;
-            }
-            case ColumnType.BINARY: {
-                final BinarySequence bin = record.getBin(0);
-                if (bin == null) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Chars.toSink(bin, sink);
-                return false;
-            }
-            case ColumnType.ARRAY: {
-                final ArrayView arr = record.getArray(0, columnType);
-                if (arr == null || arr.isNull()) {
-                    sink.put("NULL");
-                    return true;
-                }
-                ArrayTypeDriver.arrayToJson(arr, sink, NoopArrayWriteState.INSTANCE);
                 return false;
             }
             case ColumnType.DECIMAL8: {
@@ -669,7 +637,7 @@ public class SqlOptimiser implements Mutable {
                 return false;
             }
             default:
-                return false;
+                throw SqlException.$(position, "unsupported PIVOT FOR column type: ").put(ColumnType.nameOf(columnType));
         }
     }
 
@@ -798,8 +766,8 @@ public class SqlOptimiser implements Mutable {
             final QueryColumn crossColumn = queryColumnPool.next().of(baseAlias, node);
 
             final QueryModel cross = queryModelPool.next();
-            cross.setJoinType(QueryModel.JOIN_CROSS);
-            cross.setSelectModelType(QueryModel.SELECT_MODEL_CURSOR);
+            cross.setJoinType(JOIN_CROSS);
+            cross.setSelectModelType(SELECT_MODEL_CURSOR);
             cross.setAlias(makeJoinAlias());
 
             final QueryModel crossInner = queryModelPool.next();
@@ -1218,7 +1186,7 @@ public class SqlOptimiser implements Mutable {
             final QueryModel m = joinModels.getQuick(i);
             final QueryColumn column = m.getAliasToColumnMap().get(columnName);
             if (column != null) {
-                if (m.getSelectModelType() == QueryModel.SELECT_MODEL_NONE) {
+                if (m.getSelectModelType() == SELECT_MODEL_NONE) {
                     m.addTopDownColumn(
                             queryColumnPool.next().of(columnName, nextLiteral(columnName)),
                             columnName
@@ -1784,9 +1752,9 @@ public class SqlOptimiser implements Mutable {
 
         QueryModel nested = model.getNestedModel();
         if (
-                model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                model.getSelectModelType() == SELECT_MODEL_CHOOSE
                         && nested != null
-                        && nested.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                        && nested.getSelectModelType() == SELECT_MODEL_CHOOSE
                         && nested.getBottomUpColumns().size() <= model.getBottomUpColumns().size()
         ) {
             QueryModel nn = nested.getNestedModel();
@@ -2194,7 +2162,7 @@ public class SqlOptimiser implements Mutable {
 
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel q = joinModels.getQuick(i);
-            if (q.getJoinType() == QueryModel.JOIN_CROSS || q.getJoinContext() == null || q.getJoinContext().parents.size() == 0) {
+            if (q.getJoinType() == JOIN_CROSS || q.getJoinContext() == null || q.getJoinContext().parents.size() == 0) {
                 if (q.getDependencies().size() > 0) {
                     orderingStack.add(i);
                 } else {
@@ -2213,7 +2181,7 @@ public class SqlOptimiser implements Mutable {
 
             QueryModel m = joinModels.getQuick(index);
 
-            if (m.getJoinType() == QueryModel.JOIN_CROSS) {
+            if (m.getJoinType() == JOIN_CROSS) {
                 cost += 10;
             } else {
                 cost += 5;
@@ -2678,8 +2646,8 @@ public class SqlOptimiser implements Mutable {
         // we have plain tables and possibly joins
         // a deal with _this_ model first, it will always be the first element in the join model list
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
-        if (tableNameExpr != null || model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
-            if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
+        if (tableNameExpr != null || model.getSelectModelType() == SELECT_MODEL_SHOW) {
+            if (model.getSelectModelType() == SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
                 parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
             } else {
                 openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
@@ -2944,27 +2912,27 @@ public class SqlOptimiser implements Mutable {
             QueryModel m = joinModels.getQuick(i);
             JoinContext c = m.getJoinContext();
 
-            if (m.getJoinType() == QueryModel.JOIN_CROSS) {
+            if (m.getJoinType() == JOIN_CROSS) {
                 if (c != null && c.parents.size() > 0) {
-                    m.setJoinType(QueryModel.JOIN_INNER);
+                    m.setJoinType(JOIN_INNER);
                 }
-            } else if (m.getJoinType() == QueryModel.JOIN_LEFT_OUTER &&
+            } else if (m.getJoinType() == JOIN_LEFT_OUTER &&
                     c == null &&
                     m.getJoinCriteria() != null) {
-                m.setJoinType(QueryModel.JOIN_CROSS_LEFT);
-            } else if (m.getJoinType() == QueryModel.JOIN_RIGHT_OUTER &&
+                m.setJoinType(JOIN_CROSS_LEFT);
+            } else if (m.getJoinType() == JOIN_RIGHT_OUTER &&
                     c == null &&
                     m.getJoinCriteria() != null) {
-                m.setJoinType(QueryModel.JOIN_CROSS_RIGHT);
-            } else if (m.getJoinType() == QueryModel.JOIN_FULL_OUTER &&
+                m.setJoinType(JOIN_CROSS_RIGHT);
+            } else if (m.getJoinType() == JOIN_FULL_OUTER &&
                     c == null &&
                     m.getJoinCriteria() != null) {
-                m.setJoinType(QueryModel.JOIN_CROSS_FULL);
-            } else if (m.getJoinType() != QueryModel.JOIN_ASOF &&
-                    m.getJoinType() != QueryModel.JOIN_SPLICE &&
+                m.setJoinType(JOIN_CROSS_FULL);
+            } else if (m.getJoinType() != JOIN_ASOF &&
+                    m.getJoinType() != JOIN_SPLICE &&
                     (c == null || c.parents.size() == 0)
             ) {
-                m.setJoinType(QueryModel.JOIN_CROSS);
+                m.setJoinType(JOIN_CROSS);
             }
         }
     }
@@ -3040,7 +3008,7 @@ public class SqlOptimiser implements Mutable {
 
     private ExpressionNode makeJoinAlias() {
         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-        characterStoreEntry.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
+        characterStoreEntry.put(SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
         return nextLiteral(characterStoreEntry.toImmutable());
     }
 
@@ -3273,7 +3241,7 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode timestamp = nested.getTimestamp();
             if (
                     timestamp != null
-                            && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                            && nested.getSelectModelType() == SELECT_MODEL_NONE
                             && nested.getTableName() == null
                             && nested.getTableNameFunction() == null
                             && nested.getLatestBy().size() == 0
@@ -3300,9 +3268,9 @@ public class SqlOptimiser implements Mutable {
 
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
         if (
-                model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT
+                model.getSelectModelType() != SELECT_MODEL_DISTINCT
                         // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
-                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW
+                        && model.getSelectModelType() != SELECT_MODEL_WINDOW
         ) {
             model.getParsedWhere().clear();
             final ObjList<ExpressionNode> nodes = model.parseWhereClause();
@@ -3499,8 +3467,8 @@ public class SqlOptimiser implements Mutable {
 
         int lo = 0;
         int hi = tableName.length();
-        if (Chars.startsWith(tableName, QueryModel.NO_ROWID_MARKER)) {
-            lo += QueryModel.NO_ROWID_MARKER.length();
+        if (Chars.startsWith(tableName, NO_ROWID_MARKER)) {
+            lo += NO_ROWID_MARKER.length();
         }
 
         if (lo == hi) {
@@ -3752,7 +3720,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         // keep order by on model with window functions to speed up query (especially when it matches window order by)
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW && model.getOrderBy().size() > 0) {
+        if (model.getSelectModelType() == SELECT_MODEL_WINDOW && model.getOrderBy().size() > 0) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
         }
 
@@ -3809,7 +3777,7 @@ public class SqlOptimiser implements Mutable {
         final IntList orderByDirectionAdvice = getOrderByAdviceDirection(model, orderByMnemonic);
 
         if (
-                model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW
+                model.getSelectModelType() == SELECT_MODEL_WINDOW
                         && model.getOrderBy().size() > 0
                         && model.getOrderByAdvice().size() > 0
                         && model.getLimitLo() == null
@@ -3853,19 +3821,19 @@ public class SqlOptimiser implements Mutable {
     ) throws SqlException {
         final RecordCursorFactory tableFactory;
         TableToken tableToken;
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
+        if (model.getSelectModelType() == SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
-                case QueryModel.SHOW_TABLES:
+                case SHOW_TABLES:
                     tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
                     break;
-                case QueryModel.SHOW_COLUMNS:
+                case SHOW_COLUMNS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
                     if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
                         throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
                     }
                     tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position);
                     break;
-                case QueryModel.SHOW_PARTITIONS:
+                case SHOW_PARTITIONS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
                     if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
                         throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
@@ -3877,41 +3845,41 @@ public class SqlOptimiser implements Mutable {
                     }
                     tableFactory = new ShowPartitionsRecordCursorFactory(tableToken, timestampType);
                     break;
-                case QueryModel.SHOW_TRANSACTION:
-                case QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
+                case SHOW_TRANSACTION:
+                case SHOW_TRANSACTION_ISOLATION_LEVEL:
                     tableFactory = new ShowTransactionIsolationLevelCursorFactory();
                     break;
-                case QueryModel.SHOW_DEFAULT_TRANSACTION_READ_ONLY:
+                case SHOW_DEFAULT_TRANSACTION_READ_ONLY:
                     tableFactory = new ShowDefaultTransactionReadOnlyCursorFactory();
                     break;
-                case QueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
+                case SHOW_MAX_IDENTIFIER_LENGTH:
                     tableFactory = new ShowMaxIdentifierLengthCursorFactory();
                     break;
-                case QueryModel.SHOW_STANDARD_CONFORMING_STRINGS:
+                case SHOW_STANDARD_CONFORMING_STRINGS:
                     tableFactory = new ShowStandardConformingStringsCursorFactory();
                     break;
-                case QueryModel.SHOW_SEARCH_PATH:
+                case SHOW_SEARCH_PATH:
                     tableFactory = new ShowSearchPathCursorFactory();
                     break;
-                case QueryModel.SHOW_DATE_STYLE:
+                case SHOW_DATE_STYLE:
                     tableFactory = new ShowDateStyleCursorFactory();
                     break;
-                case QueryModel.SHOW_TIME_ZONE:
+                case SHOW_TIME_ZONE:
                     tableFactory = new ShowTimeZoneFactory();
                     break;
-                case QueryModel.SHOW_PARAMETERS:
+                case SHOW_PARAMETERS:
                     tableFactory = new ShowParametersCursorFactory();
                     break;
-                case QueryModel.SHOW_SERVER_VERSION:
+                case SHOW_SERVER_VERSION:
                     tableFactory = new ShowServerVersionCursorFactory();
                     break;
-                case QueryModel.SHOW_SERVER_VERSION_NUM:
+                case SHOW_SERVER_VERSION_NUM:
                     tableFactory = new ShowServerVersionNumCursorFactory();
                     break;
-                case QueryModel.SHOW_CREATE_TABLE:
+                case SHOW_CREATE_TABLE:
                     tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
                     break;
-                case QueryModel.SHOW_CREATE_MAT_VIEW:
+                case SHOW_CREATE_MAT_VIEW:
                     tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
                     break;
                 default:
@@ -3944,14 +3912,22 @@ public class SqlOptimiser implements Mutable {
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         int forValueCombinations = 1;
         int maxPivotProducedColumns = engine.getConfiguration().getSqlPivotMaxProducedColumns();
+        SqlCompiler compiler = null;
+        try {
+            for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
+                if (!pivotForColumns.getQuick(i).isValueList()) {
+                    compiler = engine.getSqlCompiler();
+                    break;
+                }
+            }
 
-        for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
-            PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
-            if (!pivotForColumn.isValueList()) {
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
+                PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
+                if (!pivotForColumn.isValueList()) {
                     ExpressionNode subQueryNode = pivotForColumn.getSelectSubqueryExpr();
                     assert subQueryNode != null;
-                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithRetries(subQueryNode.queryModel, null, sqlExecutionContext, false)) {
+                    assert compiler != null;
+                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithRetries(subQueryNode.queryModel, null, sqlExecutionContext, true)) {
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
                         if (columnCount != 1) {
@@ -3973,7 +3949,7 @@ public class SqlOptimiser implements Mutable {
                         try (RecordCursor cursor = inListFactory.getCursor(sqlExecutionContext)) {
                             while (cursor.hasNext()) {
                                 final Record record = cursor.getRecord();
-                                boolean isNull = printRecordColumnOrNull(record, inListMetadata, tmpStringSink);
+                                boolean isNull = printRecordColumnOrNull(record, inListMetadata, tmpStringSink, subQueryNode.position);
                                 if (!tempCharSequenceSet.add(tmpStringSink)) {
                                     continue;
                                 }
@@ -3997,6 +3973,13 @@ public class SqlOptimiser implements Mutable {
                                 pivotAliasMap.add(alias);
                                 pivotForColumn.addValue(expressionNodePool.next().of(CONSTANT, token, 0, subQueryNode.position), alias);
                                 valueCount++;
+                                if (forValueCombinations * valueCount > maxPivotProducedColumns) {
+                                    throw SqlException
+                                            .$(subQueryNode.position, "PIVOT produces too many columns: ")
+                                            .put(forValueCombinations * valueCount)
+                                            .put(", limit is ")
+                                            .put(maxPivotProducedColumns);
+                                }
                             }
                         }
                         if (valueCount == 0) {
@@ -4007,26 +3990,28 @@ public class SqlOptimiser implements Mutable {
                     pivotForColumn.setIsValueList(true);
                     outerModel.setCacheable(false);
                 }
+                forValueCombinations *= pivotForColumn.getValueList().size();
+                if (forValueCombinations > maxPivotProducedColumns) {
+                    throw SqlException
+                            .$(pivotForColumn.getInExpr().position, "PIVOT produces too many columns: ")
+                            .put(forValueCombinations)
+                            .put(", limit is ")
+                            .put(maxPivotProducedColumns);
+                }
             }
-            forValueCombinations *= pivotForColumn.getValueList().size();
-            if (forValueCombinations > maxPivotProducedColumns) {
+
+            int totalColumnCount = forValueCombinations * model.getPivotGroupByColumns().size();
+            if (totalColumnCount > maxPivotProducedColumns) {
                 throw SqlException
-                        .$(pivotForColumn.getInExpr().position, "PIVOT produces too many columns: ")
-                        .put(forValueCombinations)
+                        .$(model.getModelPosition(), "PIVOT produces too many columns: ")
+                        .put(totalColumnCount)
                         .put(", limit is ")
                         .put(maxPivotProducedColumns);
             }
+            return forValueCombinations;
+        } finally {
+            Misc.free(compiler);
         }
-
-        int totalColumnCount = forValueCombinations * model.getPivotGroupByColumns().size();
-        if (totalColumnCount > maxPivotProducedColumns) {
-            throw SqlException
-                    .$(model.getModelPosition(), "PIVOT produces too many columns: ")
-                    .put(totalColumnCount)
-                    .put(", limit is ")
-                    .put(maxPivotProducedColumns);
-        }
-        return forValueCombinations;
     }
 
     private void processEmittedJoinClauses(QueryModel model) {
@@ -4204,7 +4189,7 @@ public class SqlOptimiser implements Mutable {
 
         // If this is group by model we need to add all non-selected keys, only if this is sub-query
         // For top level models top-down column list will be empty
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
+        if (model.getSelectModelType() == SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
             final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
             for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
                 QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -4316,7 +4301,7 @@ public class SqlOptimiser implements Mutable {
         // don't propagate though group by, sample by, distinct or some window functions
         if (model.getGroupBy().size() != 0
                 || model.getSampleBy() != null
-                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT
+                || model.getSelectModelType() == SELECT_MODEL_DISTINCT
                 || model.windowStopPropagate()) {
             jm1.setAllowPropagationOfOrderByAdvice(false);
             if (jm2 != null) {
@@ -4886,7 +4871,7 @@ public class SqlOptimiser implements Mutable {
             return;
         }
 
-        if (model.getModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
+        if (model.getModelType() == SELECT_MODEL_CHOOSE) {
             final ObjList<QueryColumn> columns = model.getBottomUpColumns();
             int columnCount = columns.size();
 
@@ -4944,7 +4929,7 @@ public class SqlOptimiser implements Mutable {
 
             QueryModel middle = queryModelPool.next();
             middle.setNestedModel(nested);
-            middle.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
+            middle.setSelectModelType(SELECT_MODEL_GROUP_BY);
             model.setNestedModel(middle);
 
             CharSequence innerAlias = createColumnAlias(distinctExpr.token, middle, true);
@@ -5167,9 +5152,9 @@ public class SqlOptimiser implements Mutable {
     private void rewriteMultipleTermLimitedOrderByPart1(QueryModel model) {
         if (model != null) {
             if (
-                    model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                    model.getSelectModelType() == SELECT_MODEL_CHOOSE
                             && model.getNestedModel() != null
-                            && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                            && model.getNestedModel().getSelectModelType() == SELECT_MODEL_NONE
                             && model.getNestedModel().getOrderBy() != null
                             && model.getNestedModel().getOrderBy().size() > 1
                             && model.getNestedModel().getTimestamp() != null
@@ -5326,8 +5311,8 @@ public class SqlOptimiser implements Mutable {
             }
             final int selectModelType = baseParent.getSelectModelType();
             groupByOrDistinct = groupByOrDistinct
-                    || selectModelType == QueryModel.SELECT_MODEL_GROUP_BY
-                    || selectModelType == QueryModel.SELECT_MODEL_DISTINCT;
+                    || selectModelType == SELECT_MODEL_GROUP_BY
+                    || selectModelType == SELECT_MODEL_DISTINCT;
         }
 
         // find out how "order by" columns are referenced
@@ -5398,7 +5383,7 @@ public class SqlOptimiser implements Mutable {
                                     // if necessary, add external model to maintain output
                                     if (limitModel == model && wrapper == null) {
                                         wrapper = queryModelPool.next();
-                                        wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                                        wrapper.setSelectModelType(SELECT_MODEL_CHOOSE);
                                         for (int j = 0; j < modelColumnCount; j++) {
                                             QueryColumn qc = model.getBottomUpColumns().getQuick(j);
                                             wrapper.addBottomUpColumn(nextColumn(qc.getAlias()));
@@ -5430,9 +5415,9 @@ public class SqlOptimiser implements Mutable {
                                     dot = -1;
                                 }
 
-                                if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE && baseParent.getSelectModelType() != SELECT_MODEL_WINDOW_JOIN) {
+                                if (baseParent.getSelectModelType() != SELECT_MODEL_CHOOSE && baseParent.getSelectModelType() != SELECT_MODEL_WINDOW_JOIN) {
                                     QueryModel synthetic = queryModelPool.next();
-                                    synthetic.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                                    synthetic.setSelectModelType(SELECT_MODEL_CHOOSE);
                                     for (int j = 0, z = baseParent.getBottomUpColumns().size(); j < z; j++) {
                                         QueryColumn qc = baseParent.getBottomUpColumns().getQuick(j);
                                         if (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION) {
@@ -5471,7 +5456,7 @@ public class SqlOptimiser implements Mutable {
 
                                 if (wrapper == null) {
                                     wrapper = queryModelPool.next();
-                                    wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                                    wrapper.setSelectModelType(SELECT_MODEL_CHOOSE);
                                     for (int j = 0; j < modelColumnCount; j++) {
                                         QueryColumn qc = model.getBottomUpColumns().getQuick(j);
                                         wrapper.addBottomUpColumn(nextColumn(qc.getAlias()));
@@ -5546,19 +5531,19 @@ public class SqlOptimiser implements Mutable {
                 baseParent = base;
             }
             switch (base.getSelectModelType()) {
-                case QueryModel.SELECT_MODEL_DISTINCT:
+                case SELECT_MODEL_DISTINCT:
                     baseDistinct = base;
                     break;
-                case QueryModel.SELECT_MODEL_GROUP_BY:
+                case SELECT_MODEL_GROUP_BY:
                     baseGroupBy = base;
                     break;
-                case QueryModel.SELECT_MODEL_WINDOW_JOIN:
+                case SELECT_MODEL_WINDOW_JOIN:
                     baseWindowJoin = base;
                     break;
-                case QueryModel.SELECT_MODEL_VIRTUAL:
-                case QueryModel.SELECT_MODEL_CHOOSE:
+                case SELECT_MODEL_VIRTUAL:
+                case SELECT_MODEL_CHOOSE:
                     QueryModel nested = base.getNestedModel();
-                    if (nested != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
+                    if (nested != null && nested.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
                         baseOuter = base;
                     }
                     break;
@@ -5775,7 +5760,7 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(groupBy.getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");
             }
 
-            if (sampleBy != null && QueryModel.isWindowJoin(nested)) {
+            if (sampleBy != null && isWindowJoin(nested)) {
                 throw SqlException.$(sampleBy.position, "SAMPLE BY cannot be used with WINDOW JOIN");
             }
 
@@ -6101,7 +6086,7 @@ public class SqlOptimiser implements Mutable {
                 // Inject an intermediate model with to_utc() function in place of the timestamp.
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0) {
                     model = wrapWithSelectModel(model, model.getBottomUpColumns().size());
-                    model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                    model.setSelectModelType(SELECT_MODEL_CHOOSE);
                     orderByModel = model.getNestedModel();
                     orderByTimestamp = timestampAlias;
 
@@ -6663,19 +6648,19 @@ public class SqlOptimiser implements Mutable {
         groupByNodes.clear();
 
         final QueryModel groupByModel = queryModelPool.next();
-        groupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
+        groupByModel.setSelectModelType(SELECT_MODEL_GROUP_BY);
         final QueryModel distinctModel = queryModelPool.next();
-        distinctModel.setSelectModelType(QueryModel.SELECT_MODEL_DISTINCT);
+        distinctModel.setSelectModelType(SELECT_MODEL_DISTINCT);
         final QueryModel outerVirtualModel = queryModelPool.next();
-        outerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
+        outerVirtualModel.setSelectModelType(SELECT_MODEL_VIRTUAL);
         final QueryModel innerVirtualModel = queryModelPool.next();
-        innerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
+        innerVirtualModel.setSelectModelType(SELECT_MODEL_VIRTUAL);
         final QueryModel windowModel = queryModelPool.next();
-        windowModel.setSelectModelType(QueryModel.SELECT_MODEL_WINDOW);
+        windowModel.setSelectModelType(SELECT_MODEL_WINDOW);
         final QueryModel translatingModel = queryModelPool.next();
-        translatingModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        translatingModel.setSelectModelType(SELECT_MODEL_CHOOSE);
         final QueryModel windowJoinModel = queryModelPool.next();
-        windowJoinModel.setSelectModelType(QueryModel.SELECT_MODEL_WINDOW_JOIN);
+        windowJoinModel.setSelectModelType(SELECT_MODEL_WINDOW_JOIN);
         // this is a dangling model, which isn't chained with any other
         // we use it to ensure expression and alias uniqueness
         final QueryModel cursorModel = queryModelPool.next();
@@ -6687,7 +6672,7 @@ public class SqlOptimiser implements Mutable {
         final QueryModel baseModel = model.getNestedModel();
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
-        final boolean isWindowJoin = QueryModel.isWindowJoin(baseModel);
+        final boolean isWindowJoin = isWindowJoin(baseModel);
         if (isWindowJoin) {
             rewriteStatus |= REWRITE_STATUS_USE_WINDOWS_JOIN_MODE;
         }
@@ -7230,7 +7215,7 @@ public class SqlOptimiser implements Mutable {
             final ObjList<QueryModel> jms = root.getJoinModels();
             for (int i = 1, n = jms.size(); i < n; i++) {
                 QueryModel jm = jms.getQuick(i);
-                if (jm.getJoinType() == QueryModel.JOIN_WINDOW) {
+                if (jm.getJoinType() == JOIN_WINDOW) {
                     jm.getWindowJoinContext().setParentModel(windowJoinModel);
                 }
             }
@@ -7254,7 +7239,7 @@ public class SqlOptimiser implements Mutable {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
             outerVirtualModel.moveJoinAliasFrom(limitSource);
-            outerVirtualModel.setSelectModelType((rewriteStatus & REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE) != 0 ? QueryModel.SELECT_MODEL_CHOOSE : QueryModel.SELECT_MODEL_VIRTUAL);
+            outerVirtualModel.setSelectModelType((rewriteStatus & REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE) != 0 ? SELECT_MODEL_CHOOSE : SELECT_MODEL_VIRTUAL);
             outerVirtualModel.copyHints(model.getHints());
             root = outerVirtualModel;
         }
@@ -7341,7 +7326,7 @@ public class SqlOptimiser implements Mutable {
                 lowerLimitNode.type = CONSTANT;
                 model.setLimit(lowerLimitNode, null);
 
-                model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                model.setSelectModelType(SELECT_MODEL_CHOOSE);
 
                 ast.token = rhs;
                 ast.paramCount = 0;
@@ -7350,7 +7335,7 @@ public class SqlOptimiser implements Mutable {
                 final ExpressionNode newTimestampNode = expressionNodePool.next();
                 newTimestampNode.token = timestampColumn;
                 if (optimisationType == 1) {
-                    newNested.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
+                    newNested.addOrderBy(newTimestampNode, ORDER_DIRECTION_DESCENDING);
                 }
                 newNested.setTableNameExpr(nested.getTableNameExpr());
                 newNested.setModelType(nested.getModelType());
@@ -7499,8 +7484,8 @@ public class SqlOptimiser implements Mutable {
         // First we want to see if this is an appropriate model to make this transformation.
         final QueryModel nestedModel = model.getNestedModel();
         if (nestedModel != null
-                && model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
-                && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY
+                && model.getSelectModelType() == SELECT_MODEL_VIRTUAL
+                && nestedModel.getSelectModelType() == SELECT_MODEL_GROUP_BY
                 && nestedModel.getJoinModels().size() == 1
                 && nestedModel.getUnionModel() == null
                 && nestedModel.getSampleBy() == null) {
@@ -7624,7 +7609,7 @@ public class SqlOptimiser implements Mutable {
     private QueryModel skipNoneTypeModels(QueryModel model) {
         while (
                 model != null
-                        && model.getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                        && model.getSelectModelType() == SELECT_MODEL_NONE
                         && model.getTableName() == null
                         && model.getTableNameFunction() == null
                         && model.getJoinModels().size() == 1
@@ -7678,8 +7663,8 @@ public class SqlOptimiser implements Mutable {
             }
             jc.slaveIndex = to;
             jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
-            if (target.getJoinType() == QueryModel.JOIN_CROSS) {
-                target.setJoinType(QueryModel.JOIN_INNER);
+            if (target.getJoinType() == JOIN_CROSS) {
+                target.setJoinType(JOIN_INNER);
             }
         }
     }
@@ -7871,7 +7856,7 @@ public class SqlOptimiser implements Mutable {
             throw SqlException.$(0, "SQL model is too complex to evaluate");
         }
 
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW) {
+        if (model.getSelectModelType() == SELECT_MODEL_WINDOW) {
             final ObjList<QueryColumn> queryColumns = model.getColumns();
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 QueryColumn qc = queryColumns.getQuick(i);
@@ -7933,10 +7918,10 @@ public class SqlOptimiser implements Mutable {
             throw SqlException.$(0, "SQL model is too complex to evaluate");
         }
 
-        if (QueryModel.isWindowJoin(model)) {
+        if (isWindowJoin(model)) {
             for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
                 QueryModel windowJoinModel = model.getJoinModels().get(i);
-                if (windowJoinModel.getJoinType() != QueryModel.JOIN_WINDOW) {
+                if (windowJoinModel.getJoinType() != JOIN_WINDOW) {
                     continue;
                 }
                 WindowJoinContext context = windowJoinModel.getWindowJoinContext();
@@ -8421,16 +8406,16 @@ public class SqlOptimiser implements Mutable {
         notOps.put("<>", NOT_OP_NOT_EQ);
 
         joinBarriers = new IntHashSet();
-        joinBarriers.add(QueryModel.JOIN_LEFT_OUTER);
-        joinBarriers.add(QueryModel.JOIN_RIGHT_OUTER);
-        joinBarriers.add(QueryModel.JOIN_FULL_OUTER);
-        joinBarriers.add(QueryModel.JOIN_CROSS_LEFT);
-        joinBarriers.add(QueryModel.JOIN_CROSS_RIGHT);
-        joinBarriers.add(QueryModel.JOIN_CROSS_FULL);
-        joinBarriers.add(QueryModel.JOIN_ASOF);
-        joinBarriers.add(QueryModel.JOIN_SPLICE);
-        joinBarriers.add(QueryModel.JOIN_LT);
-        joinBarriers.add(QueryModel.JOIN_WINDOW);
+        joinBarriers.add(JOIN_LEFT_OUTER);
+        joinBarriers.add(JOIN_RIGHT_OUTER);
+        joinBarriers.add(JOIN_FULL_OUTER);
+        joinBarriers.add(JOIN_CROSS_LEFT);
+        joinBarriers.add(JOIN_CROSS_RIGHT);
+        joinBarriers.add(JOIN_CROSS_FULL);
+        joinBarriers.add(JOIN_ASOF);
+        joinBarriers.add(JOIN_SPLICE);
+        joinBarriers.add(JOIN_LT);
+        joinBarriers.add(JOIN_WINDOW);
 
         nullConstants.add("null");
         nullConstants.add("NaN");
@@ -8440,13 +8425,13 @@ public class SqlOptimiser implements Mutable {
         joinOps.put("or", JOIN_OP_OR);
         joinOps.put("~", JOIN_OP_REGEX);
 
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_CHOOSE);
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_NONE);
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_DISTINCT);
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_VIRTUAL);
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_WINDOW);
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_GROUP_BY);
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_WINDOW_JOIN);
+        flexColumnModelTypes.add(SELECT_MODEL_CHOOSE);
+        flexColumnModelTypes.add(SELECT_MODEL_NONE);
+        flexColumnModelTypes.add(SELECT_MODEL_DISTINCT);
+        flexColumnModelTypes.add(SELECT_MODEL_VIRTUAL);
+        flexColumnModelTypes.add(SELECT_MODEL_WINDOW);
+        flexColumnModelTypes.add(SELECT_MODEL_GROUP_BY);
+        flexColumnModelTypes.add(SELECT_MODEL_WINDOW_JOIN);
     }
 
     static {
