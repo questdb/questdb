@@ -3027,7 +3027,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
                             .$(", ex=").$safe(ex.getFlyweightMessage())
-                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                            .$(", fd=").$(executionContext.getRequestFd())
+                            .I$();
                 } catch (Throwable t) {
                     // other errors are fatal -> rethrow them
                     Misc.free(compiledFilter);
@@ -4725,7 +4726,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (!supportsParallelism) {
-                LOG.debug().$("markout_curve: master factory doesn't support page frames, falling back to standard GROUP BY").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
                 return null;
@@ -4737,7 +4737,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // The factory must support TimeFrameCursor for parallel cursor creation
             slaveFactory = generateQuery(curveInfo.asofSlaveModel, executionContext, true);
             if (!slaveFactory.supportsTimeFrameCursor()) {
-                LOG.debug().$("markout_curve: slave factory doesn't support time frame cursor, falling back to standard GROUP BY").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
                 Misc.free(slaveFactory);
@@ -4752,7 +4751,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
             RecordMetadata sequenceMetadata = sequenceFactory.getMetadata();
             if (masterTimestampColumnIndex == -1) {
-                LOG.debug().$("markout_curve: master has no designated timestamp, falling back to standard GROUP BY").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
                 Misc.free(slaveFactory);
@@ -4802,7 +4800,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Check if parallel execution is supported
             ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
             if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
-                LOG.debug().$("markout_curve: parallelism not supported for GROUP BY functions, falling back").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
                 Misc.free(slaveFactory);
@@ -4910,7 +4907,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 sequenceColumnIndex = findSequenceColumnIndex(sequenceMetadata);
             }
             if (sequenceColumnIndex == -1) {
-                LOG.debug().$("markout_curve: could not find offset sequence column, falling back to standard GROUP BY").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
                 Misc.free(slaveFactory);

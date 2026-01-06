@@ -82,7 +82,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final RecordSink masterKeyCopier;
     private final int masterTimestampColumnIndex;
     private final GroupByAllocator ownerAllocator;
-    private final Map ownerAsofJoinMap;
+    private final Map ownerAsOfJoinMap;
     private final CombinedRecord ownerCombinedRecord;
     private final Function ownerFilter;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
@@ -91,7 +91,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final ConcurrentTimeFrameCursor ownerSlaveTimeFrameCursor;
     private final MarkoutTimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
-    private final ObjList<Map> perWorkerAsofJoinMaps;
+    private final ObjList<Map> perWorkerAsOfJoinMaps;
     private final ObjList<CombinedRecord> perWorkerCombinedRecords;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
@@ -169,19 +169,19 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             }
 
             // Per-worker ASOF maps
-            this.perWorkerAsofJoinMaps = new ObjList<>(slotCount);
+            this.perWorkerAsOfJoinMaps = new ObjList<>(slotCount);
             if (asOfJoinKeyTypes != null) {
-                ArrayColumnTypes asofValueTypes = new ArrayColumnTypes();
-                asofValueTypes.add(ColumnType.LONG);
+                ArrayColumnTypes asOfValueTypes = new ArrayColumnTypes();
+                asOfValueTypes.add(ColumnType.LONG);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerAsofJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asofValueTypes));
+                    perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes));
                 }
-                this.ownerAsofJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asofValueTypes);
+                this.ownerAsOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
             } else {
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerAsofJoinMaps.add(null);
+                    perWorkerAsOfJoinMaps.add(null);
                 }
-                this.ownerAsofJoinMap = null;
+                this.ownerAsOfJoinMap = null;
             }
 
             // Per-worker aggregation maps
@@ -258,10 +258,10 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         Misc.freeObjListAndKeepObjects(perWorkerAllocators);
 
         // Clear ASOF join maps
-        if (ownerAsofJoinMap != null) {
-            Misc.free(ownerAsofJoinMap);
+        if (ownerAsOfJoinMap != null) {
+            Misc.free(ownerAsOfJoinMap);
         }
-        Misc.freeObjListAndKeepObjects(perWorkerAsofJoinMaps);
+        Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
 
         // Clear time frame cursors
         Misc.free(ownerSlaveTimeFrameCursor);
@@ -280,8 +280,8 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-        Misc.free(ownerAsofJoinMap);
-        Misc.freeObjList(perWorkerAsofJoinMaps);
+        Misc.free(ownerAsOfJoinMap);
+        Misc.freeObjList(perWorkerAsOfJoinMaps);
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
         // Filter resources
@@ -292,12 +292,12 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         Misc.freeObjList(perWorkerFilters);
     }
 
-    public Map getAsofJoinMap(int slotId) {
+    public Map getAsOfJoinMap(int slotId) {
         Map map;
         if (slotId == -1) {
-            map = ownerAsofJoinMap;
+            map = ownerAsOfJoinMap;
         } else {
-            map = perWorkerAsofJoinMaps.getQuick(slotId);
+            map = perWorkerAsOfJoinMaps.getQuick(slotId);
         }
         if (map != null && !map.isOpen()) {
             map.reopen();
@@ -477,11 +477,11 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         }
 
         // Reopen ASOF maps
-        if (ownerAsofJoinMap != null) {
-            ownerAsofJoinMap.reopen();
+        if (ownerAsOfJoinMap != null) {
+            ownerAsOfJoinMap.reopen();
         }
-        for (int i = 0, n = perWorkerAsofJoinMaps.size(); i < n; i++) {
-            Map map = perWorkerAsofJoinMaps.getQuick(i);
+        for (int i = 0, n = perWorkerAsOfJoinMaps.size(); i < n; i++) {
+            Map map = perWorkerAsOfJoinMaps.getQuick(i);
             if (map != null) {
                 map.reopen();
             }

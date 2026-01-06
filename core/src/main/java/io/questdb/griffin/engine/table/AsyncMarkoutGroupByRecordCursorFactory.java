@@ -268,13 +268,11 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                 return;
             }
 
-            // Get ASOF join resources via time frame helper
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
-            final Map asofJoinMap = atom.getAsofJoinMap(slotId);
+            final Map asofJoinMap = atom.getAsOfJoinMap(slotId);
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
 
-            // Reset time frame helper for this page frame
             slaveTimeFrameHelper.toTop();
             if (asofJoinMap != null) {
                 asofJoinMap.clear();
@@ -386,16 +384,14 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
             final CombinedRecord combinedRecord = atom.getCombinedRecord(slotId);
 
-            // Get ASOF join resources via time frame helper
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
-            final Map asofJoinMap = atom.getAsofJoinMap(slotId);
+            final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
 
-            // Reset time frame helper for this page frame
             slaveTimeFrameHelper.toTop();
-            if (asofJoinMap != null) {
-                asofJoinMap.clear();
+            if (asOfJoinMap != null) {
+                asOfJoinMap.clear();
             }
 
             // Get slave record from time frame helper
@@ -413,12 +409,13 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                 for (int seqIdx = 0; seqIdx < sequenceRowCount; seqIdx++) {
                     // sec_offs is stored, compute usec_offs dynamically (sec_offs * 1_000_000)
                     long secOffsValue = atom.getSequenceOffsetValue(seqIdx);
+                    // TODO(puzpuzpuz): support nanos
                     long usecOffsValue = secOffsValue * 1_000_000L;
                     long horizonTimestamp = masterTimestamp + usecOffsValue;
 
                     // ASOF JOIN lookup using time frame helper
                     Record matchedSlaveRecord = null;
-                    if (asofJoinMap != null && masterKeyCopier != null) {
+                    if (asOfJoinMap != null && masterKeyCopier != null) {
                         // Find the ASOF row (last row with timestamp <= horizonTimestamp)
                         long slaveRowIndex = slaveTimeFrameHelper.findAsOfRow(horizonTimestamp);
                         if (slaveRowIndex != Long.MIN_VALUE) {
@@ -427,14 +424,14 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                             slaveTimeFrameHelper.recordAt(slaveRowId);
 
                             // Update ASOF map with this slave's key -> rowId
-                            MapKey joinKey = asofJoinMap.withKey();
+                            MapKey joinKey = asOfJoinMap.withKey();
                             joinKey.put(slaveRecord, slaveKeyCopier);
                             MapValue joinValue = joinKey.createValue();
                             joinValue.putLong(0, slaveRowId);
                         }
 
                         // Look up master's join key in the ASOF map
-                        MapKey lookupKey = asofJoinMap.withKey();
+                        MapKey lookupKey = asOfJoinMap.withKey();
                         lookupKey.put(record, masterKeyCopier);
                         MapValue lookupValue = lookupKey.findValue();
 

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -330,33 +331,41 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testMarkoutCurveHintExecution() throws Exception {
         assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE prices (
-                        price_ts TIMESTAMP,
-                        sym SYMBOL,
-                        price DOUBLE)
-                    TIMESTAMP(price_ts) PARTITION BY HOUR
-                    """);
-            execute("""
-                    INSERT INTO prices VALUES
-                        (0_000_000, 'AX', 2),
-                        (1_100_000, 'AX', 4),
-                        (3_100_000, 'AX', 8)
-                    """);
+            execute(
+                    """
+                            CREATE TABLE prices (
+                                price_ts TIMESTAMP,
+                                sym SYMBOL,
+                                price DOUBLE)
+                            TIMESTAMP(price_ts) PARTITION BY HOUR
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                (0_000_000, 'AX', 2),
+                                (1_100_000, 'AX', 4),
+                                (3_100_000, 'AX', 8)
+                            """
+            );
 
-            execute("""
-                    CREATE TABLE orders (
-                        order_ts TIMESTAMP,
-                        sym SYMBOL,
-                        qty DOUBLE
-                    ) TIMESTAMP(order_ts)
-                    """);
-            execute("""
-                    INSERT INTO orders VALUES
-                        (0_000_000, 'AX', 100),
-                        (1_000_000, 'AX', 200),
-                        (2_000_000, 'AX', 300)
-                    """);
+            execute(
+                    """
+                            CREATE TABLE orders (
+                                order_ts TIMESTAMP,
+                                sym SYMBOL,
+                                qty DOUBLE
+                            ) TIMESTAMP(order_ts)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                (0_000_000, 'AX', 100),
+                                (1_000_000, 'AX', 200),
+                                (2_000_000, 'AX', 300)
+                            """
+            );
 
             // Query without hint (baseline)
             String sqlWithoutHint = """
@@ -485,6 +494,9 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
      */
     @Test
     public void testMarkoutCurveParallelExecution() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
+
         final int workerCount = 4;
         WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
@@ -493,66 +505,91 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     String symbolGen = "rnd_symbol_zipf(1000, 2.0)";
 
                     // Create prices table with enough data points
-                    engine.execute("""
-                            CREATE TABLE prices (
-                                price_ts TIMESTAMP,
-                                sym SYMBOL,
-                                price DOUBLE)
-                            TIMESTAMP(price_ts) PARTITION BY HOUR
-                            """, sqlExecutionContext);
+                    engine.execute(
+                            """
+                                    CREATE TABLE prices (
+                                        price_ts TIMESTAMP,
+                                        sym SYMBOL,
+                                        price DOUBLE)
+                                    TIMESTAMP(price_ts) PARTITION BY HOUR
+                                    """,
+                            sqlExecutionContext
+                    );
 
-                    engine.execute(String.format("""
-                            INSERT INTO prices SELECT
-                                generate_series,
-                                %s,
-                                9.0 + 2.0 * rnd_double()
-                            FROM generate_series('2025-12-01', '2025-12-01T02', '200u');
-                            """, symbolGen), sqlExecutionContext);
+                    engine.execute(
+                            String.format(
+                                    """
+                                            INSERT INTO prices SELECT
+                                                generate_series,
+                                                %s,
+                                                9.0 + 2.0 * rnd_double()
+                                            FROM generate_series('2025-12-01', '2025-12-01T02', '200u');
+                                            """,
+                                    symbolGen
+                            ),
+                            sqlExecutionContext
+                    );
 
                     // Create orders table with integer amount to avoid floating-point precision issues
-                    engine.execute("""
-                            CREATE TABLE orders (
-                                order_ts TIMESTAMP,
-                                sym SYMBOL,
-                                amount LONG
-                            ) TIMESTAMP(order_ts);
-                            """, sqlExecutionContext);
+                    engine.execute(
+                            """
+                                    CREATE TABLE orders (
+                                        order_ts TIMESTAMP,
+                                        sym SYMBOL,
+                                        amount LONG
+                                    ) TIMESTAMP(order_ts);
+                                    """,
+                            sqlExecutionContext
+                    );
 
-                    engine.execute(String.format("""
-                            INSERT INTO orders SELECT
-                              generate_series,
-                              %s,
-                              90 + rnd_long(0, 20, 0)
-                            FROM generate_series('2025-12-01', '2025-12-01T01', '1s');
-                            """, symbolGen), sqlExecutionContext);
+                    engine.execute(
+                            String.format(
+                                    """
+                                            INSERT INTO orders SELECT
+                                              generate_series,
+                                              %s,
+                                              90 + rnd_long(0, 20, 0)
+                                            FROM generate_series('2025-12-01', '2025-12-01T00:05', '1s');
+                                            """,
+                                    symbolGen
+                            ),
+                            sqlExecutionContext
+                    );
 
                     final int offsetCount = 1201;
                     final int offsetDelta = (offsetCount - 1) / 2 + 1;
-                    final String sqlWithHint = String.format("""
-                            WITH
-                            offsets AS (
-                                SELECT x-%2$d AS sec_offs, 1_000_000 * (x-%2$d) AS usec_offs
-                                FROM long_sequence(%1$d)
-                            ),
-                            horizon AS (SELECT * FROM (
-                                SELECT /*+ markout_horizon(orders offsets) */ sec_offs, sym, amount, order_ts, order_ts + usec_offs AS horizon_ts
-                                FROM (orders limit 1_000, 2_000) orders CROSS JOIN offsets
-                                ORDER BY order_ts + usec_offs
-                            ) TIMESTAMP(horizon_ts))
-                            SELECT /*+ markout_curve */
-                                sec_offs,
-                                sum(amount),
-                                count(*)
-                            FROM horizon l ASOF JOIN prices p ON (l.sym = p.sym)
-                            GROUP BY sec_offs
-                            ORDER BY sec_offs
-                            """, offsetCount, offsetDelta);
+                    final String sqlWithHint = String.format(
+                            """
+                                    WITH
+                                    offsets AS (
+                                        SELECT x-%2$d AS sec_offs, 1_000_000 * (x-%2$d) AS usec_offs
+                                        FROM long_sequence(%1$d)
+                                    ),
+                                    horizon AS (SELECT * FROM (
+                                        SELECT /*+ markout_horizon(orders offsets) */
+                                            sym, amount, sec_offs,
+                                            order_ts + usec_offs AS horizon_ts
+                                        FROM orders CROSS JOIN offsets
+                                        ORDER BY order_ts + usec_offs
+                                    ) TIMESTAMP(horizon_ts))
+                                    SELECT /*+ markout_curve */
+                                        sec_offs,
+                                        sum(amount),
+                                        count(*)
+                                    FROM horizon l ASOF JOIN prices p ON (l.sym = p.sym)
+                                    GROUP BY sec_offs
+                                    ORDER BY sec_offs
+                                    """,
+                            offsetCount,
+                            offsetDelta
+                    );
 
                     final String sqlWithoutHint = sqlWithHint.replace("markout_curve", "XXX");
 
                     StringSink planSink = new StringSink();
-                    try (RecordCursorFactory planFactory = engine.select("EXPLAIN " + sqlWithHint, sqlExecutionContext);
-                         RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
+                    try (
+                            RecordCursorFactory planFactory = engine.select("EXPLAIN " + sqlWithHint, sqlExecutionContext);
+                            RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
                     ) {
                         CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
                     }
