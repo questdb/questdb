@@ -115,7 +115,6 @@ public class SqlParser {
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
-    private final CairoEngine engine;
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -487,7 +486,7 @@ public class SqlParser {
         // Check if we already have this view definition (ensures consistent snapshot during compilation)
         ViewDefinition viewDefinition = recordedViews.get(viewName);
         if (viewDefinition == null) {
-            viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+            viewDefinition = cairoEngine.getViewGraph().getViewDefinition(viewToken);
             if (viewDefinition == null) {
                 throw SqlException.viewDoesNotExist(viewPosition, viewName);
             }
@@ -866,7 +865,7 @@ public class SqlParser {
         expectTok(lexer, "view");
 
         CharSequence tok = tok(lexer, "view name");
-        final TableToken tt = engine.getTableTokenIfExists(tok);
+        final TableToken tt = cairoEngine.getTableTokenIfExists(tok);
         if (tt == null) {
             throw SqlException.viewDoesNotExist(lexer.lastTokenPosition(), tok);
         }
@@ -1335,7 +1334,7 @@ public class SqlParser {
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
             if (!tableNames.contains(baseTableNameStr)) {
-                if (engine.getTableTokenIfExists(baseTableNameStr).isView()) {
+                if (cairoEngine.getTableTokenIfExists(baseTableNameStr).isView()) {
                     throw SqlException.position(baseTableNamePos)
                             .put("base table should be a physical table, cannot be a view: ").put(baseTableName);
                 }
@@ -1997,7 +1996,7 @@ public class SqlParser {
         tableOpBuilder.setSelectText(viewSql, startOfQuery);
         tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
-        SqlUtil.collectTableAndColumnReferences(engine, queryModel, vOpBuilder.getDependencies());
+        SqlUtil.collectTableAndColumnReferences(cairoEngine, queryModel, vOpBuilder.getDependencies());
 
         if (enclosedInParentheses) {
             expectTok(lexer, ')');
@@ -2506,7 +2505,7 @@ public class SqlParser {
             proposedNested = variableExpr.rhs.queryModel;
         }
 
-        final TableToken tt = engine.getTableTokenIfExists(tok);
+        final TableToken tt = cairoEngine.getTableTokenIfExists(tok);
         if (tt != null && tt.isView()) {
             compileViewQuery(model, tt, lexer.lastTokenPosition());
             tok = setModelAliasAndTimestamp(lexer, model);
@@ -3054,7 +3053,7 @@ public class SqlParser {
 
         tok = expectTableNameOrSubQuery(lexer);
 
-        final TableToken tt = engine.getTableTokenIfExists(tok);
+        final TableToken tt = cairoEngine.getTableTokenIfExists(tok);
         if (tt != null && tt.isView()) {
             compileViewQuery(joinModel, tt, lexer.lastTokenPosition());
         } else if (Chars.equals(tok, '(')) {

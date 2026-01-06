@@ -3688,7 +3688,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
 
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false));
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
