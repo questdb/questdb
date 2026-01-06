@@ -185,6 +185,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
+    private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
     // fetch all rows at once, or in batches. In case of full fetch, this is the
@@ -233,8 +234,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             @NotNull AssociativeCache<TypesAndSelect> tasCache,
             @NotNull SimpleAssociativeCache<TypesAndInsert> taiCache
     ) {
-        if (isPortal() || isPreparedStatement()) {
-            // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
+        if (isPortal()) {
+            return;
+        }
+
+        // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
+        if (isPreparedStatement()) {
+            if (!selectIsCacheable) {
+                factory = Misc.free(factory);
+            }
+            return;
+        }
+
+        if (!selectIsCacheable) {
             return;
         }
 
@@ -341,6 +353,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         arrayViewPool.clear();
         varcharArrayViewPool.clear();
         utf8StringSink.clear();
+        selectIsCacheable = true;
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
@@ -1435,7 +1448,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             sqlExecutionContext.setCacheHit(cacheHit);
             // if the current execution is in the execute stage of prepare-execute mode, we always set the `cacheHit` to true after the first execution.
             // (The execute stage always does not compile the query, while the first execution corresponds to the prepare stage's cacheHit flag.)
-            if (isPreparedStatement()) {
+            if (isPreparedStatement() && selectIsCacheable) {
                 cacheHit = true;
             }
 
@@ -3150,6 +3163,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     ) {
         sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
         this.sqlType = cq.getType();
+        selectIsCacheable = true;
         switch (sqlType) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
                 // fall-through
@@ -3171,6 +3185,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         msgParseParameterTypeOIDs,
                         outParameterTypeDescriptionTypes
                 );
+                selectIsCacheable = cq.isCacheable();
                 break;
             case CompiledQuery.SELECT:
                 sqlTag = TAG_SELECT;
@@ -3182,6 +3197,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         msgParseParameterTypeOIDs,
                         outParameterTypeDescriptionTypes
                 );
+                selectIsCacheable = cq.isCacheable();
                 break;
             case CompiledQuery.PSEUDO_SELECT:
                 // the PSEUDO_SELECT comes from a "copy" SQL, which is why

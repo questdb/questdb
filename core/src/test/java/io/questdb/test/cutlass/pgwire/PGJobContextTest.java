@@ -3010,6 +3010,51 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCancelRunningQueryWithPivotInSubquery() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            execute("create table if not exists pivot_data (grp symbol, cat symbol, val int)");
+            execute("create table if not exists pivot_cats as " +
+                    "(select ('sym' || x) as sym from long_sequence(10))");
+            mayDrainWalQueue();
+            String query = """
+                    select * from pivot_data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT distinct sym FROM pivot_cats WHERE sleep(120000))
+                        GROUP BY grp
+                    )
+                    """;
+
+            AtomicBoolean isCancelled = new AtomicBoolean(false);
+            CountDownLatch finished = new CountDownLatch(1);
+
+            try (final PreparedStatement stmt = connection.prepareStatement(query)) {
+                new Thread(() -> {
+                    PGConnection pgCon = (PGConnection) connection;
+                    try {
+                        while (!isCancelled.get()) {
+                            Os.sleep(1);
+                            pgCon.cancelQuery();
+                        }
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
+                    } finally {
+                        finished.countDown();
+                    }
+                }, "cancellation thread").start();
+                try {
+                    stmt.execute();
+                    Assert.fail("expected PSQLException with cancel message for PIVOT IN subquery");
+                } catch (PSQLException e) {
+                    isCancelled.set(true);
+                    finished.await();
+                    assertContains(e.getMessage(), "cancelled by user");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCharIntLongDoubleBooleanParametersWithoutExplicitParameterTypeHex() throws Exception {
         String script = """
                 >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
