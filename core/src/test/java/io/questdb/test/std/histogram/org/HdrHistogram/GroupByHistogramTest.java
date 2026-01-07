@@ -705,4 +705,50 @@ public class GroupByHistogramTest extends AbstractCairoTest {
             Assert.assertTrue(dest.getMaxValue() >= 1000000);
         }
     }
+
+    @Test
+    public void testRepointingAfterResize() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogram h1 = new GroupByHistogram(3);
+            h1.setAllocator(allocator);
+
+            h1.recordValue(100);
+            h1.recordValue(200);
+            Assert.assertEquals(2, h1.getTotalCount());
+
+            long ptr1 = h1.ptr();
+            Assert.assertNotEquals(0, ptr1);
+
+            h1.recordValue(10000000);
+            Assert.assertEquals(3, h1.getTotalCount());
+
+            long ptr2 = h1.ptr();
+            Assert.assertNotEquals(0, ptr2);
+
+            GroupByHistogram h2 = new GroupByHistogram(3);
+            h2.setAllocator(allocator);
+            h2.of(ptr2);
+
+            Assert.assertEquals(3, h2.getTotalCount());
+            Assert.assertEquals(100, h2.getMinValue());
+            Assert.assertTrue(h2.getMaxValue() >= 10000000);
+
+            h2.recordValue(100000000);
+            Assert.assertEquals(4, h2.getTotalCount());
+
+            long ptr3 = h2.ptr();
+            Assert.assertNotEquals(0, ptr3);
+
+            GroupByHistogram h3 = new GroupByHistogram(3);
+            h3.setAllocator(allocator);
+            h3.of(ptr3);
+
+            Assert.assertEquals(4, h3.getTotalCount());
+            Assert.assertEquals(100, h3.getMinValue());
+            Assert.assertTrue(h3.getMaxValue() >= 100000000);
+
+            h3.recordValue(500);
+            Assert.assertEquals(5, h3.getTotalCount());
+        }
+    }
 }
