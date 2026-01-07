@@ -49,11 +49,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 class MockErrorSettingsProcessor implements HttpRequestProcessor, HttpRequestHandler {
-    private final String error;
-
-    public MockErrorSettingsProcessor(String error) {
-        this.error = error;
-    }
 
     @Override
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
