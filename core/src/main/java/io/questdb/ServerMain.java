@@ -150,6 +150,22 @@ public class ServerMain implements Closeable {
         return "QDB_" + propertyPath.replace('.', '_').toUpperCase();
     }
 
+    /**
+     * Waits for startup background tasks to complete, including metadata cache
+     * and recent write tracker hydration. This should be called after {@link #start()}
+     * if immediate DDL operations (like DROP TABLE) are planned, to avoid conflicts
+     * with background hydration threads that may hold table metadata locks.
+     */
+    public void awaitStartup() {
+        if (hydrateMetadataThread != null) {
+            try {
+                hydrateMetadataThread.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
     public void awaitTable(String tableName) {
         getEngine().awaitTable(tableName, 30, TimeUnit.SECONDS);
     }
@@ -444,8 +460,11 @@ public class ServerMain implements Closeable {
             ));
         }
 
-        // metadata hydration
-        hydrateMetadataThread = new Thread(engine.getMetadataCache()::onStartupAsyncHydrator);
+        // metadata and write tracker hydration
+        hydrateMetadataThread = new Thread(() -> {
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.hydrateRecentWriteTracker();
+        });
         hydrateMetadataThread.start();
 
         System.gc(); // GC 1

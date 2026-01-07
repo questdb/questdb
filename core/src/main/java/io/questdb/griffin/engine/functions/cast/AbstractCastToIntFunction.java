@@ -29,9 +29,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
+/**
+ * Abstract base class for functions that cast values to int.
+ */
 public abstract class AbstractCastToIntFunction extends IntFunction implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to int function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToIntFunction(Function arg) {
         this.arg = arg;
     }

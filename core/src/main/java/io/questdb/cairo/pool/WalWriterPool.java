@@ -65,8 +65,15 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 tableToken,
                 engine.getTableSequencerAPI(),
                 engine.getDdlListener(tableToken),
-                engine.getWalDirectoryPolicy()
+                engine.getWalDirectoryPolicy(),
+                engine.getRecentWriteTracker()
         );
+    }
+
+    @Override
+    protected boolean returnToPool(WalWriterTenant tenant) {
+        // WAL writes are now tracked on each commit in WalWriter.commit0()
+        return super.returnToPool(tenant);
     }
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant<WalWriterTenant> {
@@ -83,9 +90,10 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
                 DdlListener ddlListener,
-                WalDirectoryPolicy walDirectoryPolicy
+                WalDirectoryPolicy walDirectoryPolicy,
+                RecentWriteTracker recentWriteTracker
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy);
+            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy, recentWriteTracker);
             this.pool = pool;
             this.rootEntry = rootEntry;
             this.entry = entry;

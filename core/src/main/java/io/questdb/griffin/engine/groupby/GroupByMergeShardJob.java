@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
+import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -37,6 +38,11 @@ import io.questdb.tasks.GroupByMergeShardTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Handles parallel merge map shard tasks.
+ *
+ * @see AsyncGroupByRecordCursorFactory
+ */
 public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeShardTask> {
     private static final Log LOG = LogFactory.getLog(GroupByMergeShardJob.class);
 
