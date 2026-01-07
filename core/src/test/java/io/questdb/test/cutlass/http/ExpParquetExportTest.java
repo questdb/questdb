@@ -1487,14 +1487,14 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     testHttpClient.setKeepConnection(true);
                     testHttpClient.assertGetParquet(
                             "/exp",
-                            1177,
+                            1152,
                             "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
                     );
                     engine.execute("INSERT INTO monthly_sales VALUES (3, 9000, 'APRIL')", sqlExecutionContext);
                     testHttpClient.setKeepConnection(false);
                     testHttpClient.assertGetParquet(
                             "/exp",
-                            1453,
+                            1428,
                             "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
                     );
                 });
