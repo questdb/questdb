@@ -449,6 +449,10 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getPivotColumnPoolCapacity();
+
+    int getPoolSegmentSize();
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
@@ -601,6 +605,8 @@ public interface CairoConfiguration {
     int getSqlParallelWorkStealingThreshold();
 
     int getSqlParquetFrameCacheCapacity();
+
+    int getSqlPivotMaxProducedColumns();
 
     int getSqlSmallMapKeyCapacity();
 

@@ -192,6 +192,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getCopierType() {
+        return getDelegate().getCopierType();
+    }
+
+    @Override
     public @NotNull LongSupplier getCopyIDSupplier() {
         return getDelegate().getCopyIDSupplier();
     }
@@ -527,11 +532,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getRecentWriteTrackerCapacity() {
-        return getDelegate().getRecentWriteTrackerCapacity();
-    }
-
-    @Override
     public int getMetadataPoolCapacity() {
         return getDelegate().getMetadataPoolCapacity();
     }
@@ -712,6 +712,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPivotColumnPoolCapacity() {
+        return getDelegate().getPivotColumnPoolCapacity();
+    }
+
+    @Override
+    public int getPoolSegmentSize() {
+        return getDelegate().getPoolSegmentSize();
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return getDelegate().getPreferencesStringPoolCapacity();
     }
@@ -729,6 +739,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getReaderPoolMaxSegments() {
         return getDelegate().getReaderPoolMaxSegments();
+    }
+
+    @Override
+    public int getRecentWriteTrackerCapacity() {
+        return getDelegate().getRecentWriteTrackerCapacity();
     }
 
     @Override
@@ -1009,6 +1024,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlParquetFrameCacheCapacity() {
         return getDelegate().getSqlParquetFrameCacheCapacity();
+    }
+
+    @Override
+    public int getSqlPivotMaxProducedColumns() {
+        return getDelegate().getSqlPivotMaxProducedColumns();
     }
 
     @Override
@@ -1334,11 +1354,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isCopierChunkedEnabled() {
         return getDelegate().isCopierChunkedEnabled();
-    }
-
-    @Override
-    public int getCopierType() {
-        return getDelegate().getCopierType();
     }
 
     @Override

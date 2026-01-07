@@ -119,6 +119,8 @@ public interface CompiledQuery {
 
     UpdateOperation getUpdateOperation();
 
+    boolean isCacheable();
+
     /**
      * Returns and move ownership of the current insertion operation.
      * After invocation, the lifecycle management becomes the caller's responsibility.

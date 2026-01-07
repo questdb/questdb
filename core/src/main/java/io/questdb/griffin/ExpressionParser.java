@@ -41,6 +41,7 @@ import io.questdb.std.ObjectPool;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.OperatorExpression.Operator.In;
 import static io.questdb.griffin.OperatorExpression.UNARY;
 
 public class ExpressionParser {
@@ -84,6 +85,7 @@ public class ExpressionParser {
     private final ObjStack<Scope> scopeStack = new ObjStack<>();
     private final OperatorRegistry shadowRegistry;
     private final SqlParser sqlParser;
+    private boolean stopOnTopINOperator = false;
 
     ExpressionParser(
             OperatorRegistry activeRegistry,
@@ -136,6 +138,10 @@ public class ExpressionParser {
         // however, '/dd' does not exist, tok is just the potential geohash chars constant, with leading '#'
         final int len = tok.length();
         return len <= 1 || tok.charAt(1) != '#';
+    }
+
+    public void setStopOnTopINOperator(boolean stopOnTop) {
+        this.stopOnTopINOperator = stopOnTop;
     }
 
     private static boolean cannotCastTo(int targetTag, boolean isFromNull) {
@@ -1405,7 +1411,7 @@ public class ExpressionParser {
 
                 if (processDefaultBranch) {
                     OperatorExpression op;
-                    if ((op = activeRegistry.map.get(tok)) != null) {
+                    if ((op = activeRegistry.map.get(tok)) != null && !(stopOnTopINOperator && op.operator == In && scopeStack.size() == 0)) {
 
                         thisBranch = BRANCH_OPERATOR;
 
