@@ -84,8 +84,7 @@ class PGUtils {
             int columnType,
             int geohashSize,
             long maxBlobSize,
-            int arrayResumePoint,
-            int varcharResumePoint
+            int resumePoint
     ) throws PGMessageProcessingException {
         final short typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
@@ -140,11 +139,11 @@ class PGUtils {
                 if (vcValue == null) {
                     return Integer.BYTES;
                 }
-                // varcharResumePoint == -1 means header not sent yet, include it
-                // varcharResumePoint >= 0 is the byte offset of already sent data
-                int vcResumePoint = Math.max(0, varcharResumePoint);
+                // resumePoint == -1 means header not sent yet, include it
+                // resumePoint >= 0 is the byte offset of already sent data
+                int vcResumePoint = Math.max(0, resumePoint);
                 int vcRemaining = vcValue.size() - vcResumePoint;
-                return varcharResumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
+                return resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
             case ColumnType.STRING:
                 final CharSequence strValue = record.getStrA(columnIndex);
                 return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
@@ -176,12 +175,12 @@ class PGUtils {
                         ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
                         : "implemented only for DOUBLE and LONG";
 
-                int actualResumePoint = Math.max(0, arrayResumePoint);
+                int actualResumePoint = Math.max(0, resumePoint);
                 int remainingElements = array.getCardinality() - actualResumePoint; // includes nulls
                 int notNullCount = PGUtils.countNotNull(array, actualResumePoint);
 
                 // -1 = array header was not written yet -> we have to include it in our calculation
-                int size = arrayResumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
+                int size = resumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
 
                 // add remaining elements
                 size += calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);

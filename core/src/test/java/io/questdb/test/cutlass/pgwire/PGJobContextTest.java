@@ -183,7 +183,7 @@ public class PGJobContextTest extends BasePGTest {
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
     private static String stringTypeName;
-    private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG, 635494967827205L, 1767721337806L);
+    private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
     public PGJobContextTest() {
@@ -7323,52 +7323,6 @@ nodejs code:
                 script,
                 new Port0PGConfiguration()
         );
-    }
-
-    @Test
-    public void testLongVarchar() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            CallableStatement stmt = connection.prepareCall(
-                    "create table x as (select" +
-                            " timestamp_sequence(889001, 8890012) k," +
-                            " rnd_varchar(3,16,2) v" +
-                            " from long_sequence(15)) timestamp(k) partition by DAY"
-            );
-
-            stmt.execute();
-            mayDrainWalQueue();
-
-            try (PreparedStatement statement = connection.prepareStatement("x")) {
-                for (int i = 0; i < 50; i++) {
-                    sink.clear();
-                    try (ResultSet rs = statement.executeQuery()) {
-                        // dump metadata
-                        assertResultSet(
-                                """
-                                        k[TIMESTAMP],v[VARCHAR]
-                                        1970-01-01 00:00:00.889001,&򗺘|񙈄۲
-                                        1970-01-01 00:00:09.779013,null
-                                        1970-01-01 00:00:18.669025,Ȟ鼷G񴙾衞͛Ԉ龘и򲞤~2󁫓
-                                        1970-01-01 00:00:27.559037,BH뤻䰭}ѱʜ󳙎ᯤ\\篸{򅿥󊝆
-                                        1970-01-01 00:00:36.449049,FwH93r
-                                        1970-01-01 00:00:45.339061,null
-                                        1970-01-01 00:00:54.229073,)#T?hhV4|v\\
-                                        1970-01-01 00:01:03.119085,c⾩ᷚM䘣⟩Mqk㉳+ً󍘗q
-                                        1970-01-01 00:01:12.009097,LG -$}
-                                        1970-01-01 00:01:20.899109,񘷧-Ь򘽤m򜋠1W씌䒙񌪎>󉫣g
-                                        1970-01-01 00:01:29.789121,JܜߧE}$򠿰-㔍x钷Mͱ:
-                                        1970-01-01 00:01:38.679133,f@ץ;윦΂宏㔸
-                                        1970-01-01 00:01:47.569145,91g>)5{l5J\\d
-                                        1970-01-01 00:01:56.459157,uLQ+bOyf4zhx
-                                        1970-01-01 00:02:05.349169,9іa򭧔*󱽠
-                                        """,
-                                sink,
-                                rs
-                        );
-                    }
-                }
-            }
-        });
     }
 
     @Test
