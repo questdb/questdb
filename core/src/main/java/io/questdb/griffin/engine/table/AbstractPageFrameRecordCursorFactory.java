@@ -125,7 +125,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
      */
     protected TablePageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = partitionFrameCursorFactory.getOrder();
-        PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
+        PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, ORDER_ANY);
         if (pageFrameCursor == null) {
             if (order == ORDER_ASC || order == ORDER_ANY) {
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(

@@ -269,6 +269,14 @@ public class TestHttpClient implements QuietCloseable {
     public void assertGetContains(
             CharSequence url,
             CharSequence expectedResponse,
+            @Nullable CharSequenceObjHashMap<String> queryParams
+    ) {
+        assertGetContains(url, expectedResponse, queryParams, null, null, 9001);
+    }
+
+    public void assertGetContains(
+            CharSequence url,
+            CharSequence expectedResponse,
             @Nullable CharSequenceObjHashMap<String> queryParams,
             @Nullable CharSequence username,
             @Nullable CharSequence password,

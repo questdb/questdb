@@ -774,7 +774,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
 
         for (int i = 0; i < inserts; i++) {
-            long fromTs = minTs + rnd.nextLong(maxTs - minTs);
+            // maxTs > minTs condition prevents arithmetic exception thrown from rnd.nextLong() when maxTs = minTs
+            long fromTs = minTs + (maxTs > minTs ? rnd.nextLong(maxTs - minTs) : 0);
             long toTs = (long) (fromTs + Micros.DAY_MICROS * Math.pow(1.2, rnd.nextDouble()));
 
             String insertSql = "insert into " + tableNameDedup +

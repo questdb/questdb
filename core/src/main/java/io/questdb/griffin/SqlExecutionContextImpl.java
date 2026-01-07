@@ -46,6 +46,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntStack;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -411,7 +412,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void resetFlags() {
+    public void reset() {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
@@ -420,6 +421,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();
+        Misc.clear(securityContext);
     }
 
     @Override
@@ -521,13 +523,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        resetFlags();
+        reset();
         return this;
     }
 
     public void with(long requestFd) {
         this.requestFd = requestFd;
-        resetFlags();
+        reset();
     }
 
     public void with(BindVariableService bindVariableService) {
@@ -561,7 +563,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
-        resetFlags();
+        reset();
         return this;
     }
 

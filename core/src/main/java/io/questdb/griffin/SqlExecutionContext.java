@@ -250,7 +250,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
-    void resetFlags();
+    void reset();
 
     void restoreToDefaultPageFrameSizes();
 
