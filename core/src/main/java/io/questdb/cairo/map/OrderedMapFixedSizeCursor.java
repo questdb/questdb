@@ -99,6 +99,12 @@ class OrderedMapFixedSizeCursor implements OrderedMapCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        // no pre-calculated state
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         ((OrderedMapFixedSizeRecord) record).of(atRowId);
     }
@@ -106,12 +112,6 @@ class OrderedMapFixedSizeCursor implements OrderedMapCursor {
     @Override
     public long size() {
         return size;
-    }
-
-    @Override
-    public long preComputedStateSize() {
-        // no pre-calculated state
-        return 0;
     }
 
     @Override

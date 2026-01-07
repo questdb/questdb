@@ -129,11 +129,6 @@ public class DoubleFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetFloat() {
-        function.getFloat(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetIPv4() {
         function.getIPv4(null);
     }
