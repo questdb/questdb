@@ -552,11 +552,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getRecentWriteTrackerCapacity() {
-        return getDelegate().getRecentWriteTrackerCapacity();
-    }
-
-    @Override
     public int getMetadataPoolCapacity() {
         return getDelegate().getMetadataPoolCapacity();
     }
@@ -742,6 +737,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPoolSegmentSize() {
+        return getDelegate().getPoolSegmentSize();
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return getDelegate().getPreferencesStringPoolCapacity();
     }
@@ -759,6 +759,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getReaderPoolMaxSegments() {
         return getDelegate().getReaderPoolMaxSegments();
+    }
+
+    @Override
+    public int getRecentWriteTrackerCapacity() {
+        return getDelegate().getRecentWriteTrackerCapacity();
     }
 
     @Override

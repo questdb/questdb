@@ -620,7 +620,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_FILE_ASYNC_MUNMAP_ENABLED("cairo.file.async.munmap.enabled"),
     CAIRO_RMDIR_MAX_DEPTH("cairo.rmdir.max.depth"),
     CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled"),
-    CAIRO_TTL_USE_WALL_CLOCK("cairo.ttl.use.wall.clock");
+    CAIRO_TTL_USE_WALL_CLOCK("cairo.ttl.use.wall.clock"),
+    DEBUG_CAIRO_POOL_SEGMENT_SIZE("debug.cairo.pool.segment.size", false, true);
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
