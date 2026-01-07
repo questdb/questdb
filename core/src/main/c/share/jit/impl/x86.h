@@ -34,7 +34,7 @@ namespace questdb::x86 {
     inline Gpd int32_not(Compiler &c, const Gpd &b) {
         Gp r = c.newInt32();
         c.mov(r, b);
-        c.xor_(r, 1);
+        c.not_(r);
         return r.as<Gpd>();
     }
 
