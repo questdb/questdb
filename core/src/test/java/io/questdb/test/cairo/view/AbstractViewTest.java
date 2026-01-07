@@ -161,7 +161,7 @@ class AbstractViewTest extends AbstractCairoTest {
         }
         assertViewDefinition(VIEW1, sqlBefore, TABLE1);
     }
-    
+
     void alterView(String viewQuery, String... expectedDependencies) throws SqlException {
         execute("ALTER VIEW " + VIEW1 + " AS (" + viewQuery + ")");
         drainWalAndViewQueues();
