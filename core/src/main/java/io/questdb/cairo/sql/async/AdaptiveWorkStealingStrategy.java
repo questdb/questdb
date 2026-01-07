@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.sql.async;
 
+import io.questdb.std.Os;
+
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -53,13 +55,21 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
         // The spin duration is time-based to ensure consistent behavior
         // across different CPU architectures (Intel vs AMD have very different
         // PAUSE instruction latencies).
+        final int initialStartedCount = startedCounter.get();
+        if (initialStartedCount - finishedCount >= noStealingThreshold) {
+            // A sufficient number of tasks is taken by other workers,
+            // so let's spin while those workers are doing their job.
+            return false;
+        }
+
+        // Give the OS scheduler a chance to kick in.
+        Os.pause();
+
         final long deadline = System.nanoTime() + spinTimeoutNanos;
         do {
             Thread.onSpinWait();
-            // Check if the number of picked up tasks is more than the threshold.
-            if (startedCounter.get() - finishedCount >= noStealingThreshold) {
-                // A sufficient number of tasks is taken by other workers,
-                // so let's spin while those workers are doing their job.
+            // Check if someone picked up a task.
+            if (startedCounter.get() > initialStartedCount) {
                 return false;
             }
         } while (System.nanoTime() < deadline);
