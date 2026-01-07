@@ -172,10 +172,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private Utf8String namedPortal;
     private Utf8String namedStatement;
     private Operation operation = null;
-    private int outResendArrayFlatIndex = -1; // -1 indicates the array header has not been sent yet
     private int outResendColumnIndex = 0;
     private boolean outResendCursorRecord = false;
     private boolean outResendRecordHeader = true;
+    private int outResendResumePoint = -1; // -1 indicates header not sent yet, 0+ is byte/element offset
     private long parameterValueArenaHi;
     private long parameterValueArenaLo;
     private long parameterValueArenaPtr = 0;
@@ -320,7 +320,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         factory = Misc.free(factory);
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
-        outResendArrayFlatIndex = -1;
+        outResendResumePoint = -1;
         outResendColumnIndex = 0;
         outResendCursorRecord = false;
         outResendRecordHeader = true;
@@ -1074,9 +1074,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // number of bits or chars for geohash
             final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
 
-            // outResendArrayFlatIndex applies to the column we were sending before we ran out of space
-            // all other array columns will be sent in full
-            final int effectiveOutResendArrayFlatIndex = i == outResendColumnIndex ? outResendArrayFlatIndex : -1;
+            // outResendValueOffset applies to the column we were sending before we ran out of space
+            // all other columns will be sent in full (-1 means header not sent = full size)
+            final int effectiveResumeOffset = (i == outResendColumnIndex) ? outResendResumePoint : -1;
 
             final int columnValueSize = calculateColumnBinSize(
                     this,
@@ -1085,15 +1085,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     columnType,
                     geohashSize,
                     maxBlobSize,
-                    effectiveOutResendArrayFlatIndex
+                    effectiveResumeOffset
             );
 
             if (columnValueSize < 0) {
                 return -1; // unsupported type
             }
 
-            if (columnValueSize >= sendBufferSize && !ColumnType.isArray(columnType)) {
-                // doesn't fit into send buffer
+            if (columnValueSize >= sendBufferSize && !ColumnType.isArray(columnType) && typeTag != ColumnType.VARCHAR) {
+                // doesn't fit into send buffer (arrays and varchars can be sent in multiple parts)
                 return -1;
             }
 
@@ -1294,7 +1294,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
                 columnValueSize = estimateColumnTxtSize(record, i, typeTag);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, 0);
+                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, -1);
             }
 
             if (columnValueSize < 0) {
@@ -1588,7 +1588,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
         short elemType = array.getElemType();
-        if (outResendArrayFlatIndex == -1) {
+        if (outResendResumePoint == -1) {
             int nDims = array.getDimCount();
             int componentTypeOid = getTypeOid(elemType);
             int notNullCount = PGUtils.countNotNull(array, 0);
@@ -1605,14 +1605,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 utf8Sink.putNetworkInt(1); // lower bound, always 1 in QuestDB
             }
             utf8Sink.bookmark();
-            outResendArrayFlatIndex = 0;
+            outResendResumePoint = 0;
         }
         try {
             if (array.isVanilla()) {
                 int len = array.getFlatViewLength();
                 // Note that we rely on a HotSpot optimization: Loop-invariant code motion.
                 // It moves the switch outside the loop.
-                for (int i = outResendArrayFlatIndex; i < len; i++) {
+                for (int i = outResendResumePoint; i < len; i++) {
                     switch (elemType) {
                         case ColumnType.LONG:
                             utf8Sink.putNetworkInt(Long.BYTES);
@@ -1629,12 +1629,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             break;
                     }
                     utf8Sink.bookmark();
-                    outResendArrayFlatIndex = i + 1;
+                    outResendResumePoint = i + 1;
                 }
             } else {
                 outColBinArrRecursive(utf8Sink, array, elemType, 0, 0, 0);
             }
-            outResendArrayFlatIndex = -1;
+            outResendResumePoint = -1;
         } catch (NoSpaceLeftInResponseBufferException e) {
             utf8Sink.resetToBookmark();
             throw e;
@@ -1653,7 +1653,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
         } else {
             for (int i = 0; i < count; i++) {
-                if (outFlatIndex == outResendArrayFlatIndex) {
+                if (outFlatIndex == outResendResumePoint) {
                     switch (elemType) {
                         case ColumnType.LONG: {
                             long val = array.getLong(flatIndex);
@@ -1677,7 +1677,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         }
                     }
                     utf8Sink.bookmark();
-                    outResendArrayFlatIndex++;
+                    outResendResumePoint++;
                 }
                 outFlatIndex++;
                 flatIndex += stride;
@@ -2315,14 +2315,32 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColVarchar(PGResponseSink responseUtf8Sink, Record record, int i) {
+    private void outColVarchar(PGResponseSink utf8Sink, Record record, int i) {
         final Utf8Sequence strValue = record.getVarcharA(i);
         if (strValue == null) {
-            responseUtf8Sink.setNullValue();
-        } else {
-            responseUtf8Sink.putNetworkInt(strValue.size());
-            responseUtf8Sink.put(strValue);
+            utf8Sink.setNullValue();
+            return;
         }
+        final int totalSize = strValue.size();
+        // Send header if this is the first chunk (-1 means header not sent yet)
+        if (outResendResumePoint == -1) {
+            utf8Sink.putNetworkInt(totalSize);
+            utf8Sink.bookmark();
+            outResendResumePoint = 0; // header sent, now at byte offset 0
+        }
+        // Send as many bytes as we can fit in the buffer
+        int remaining = totalSize - outResendResumePoint;
+        int written = utf8Sink.putPartial(strValue, outResendResumePoint, remaining);
+        outResendResumePoint += written;
+        utf8Sink.bookmark();
+
+        if (outResendResumePoint < totalSize) {
+            // Not done yet, need to flush buffer and retry
+            throw NoSpaceLeftInResponseBufferException.instance(
+                    totalSize - outResendResumePoint, 0, utf8Sink.getSendBufferSize());
+        }
+        // Done, reset for next column
+        outResendResumePoint = -1;
     }
 
     private void outCommandComplete(PGResponseSink utf8Sink, long rowCount) {
@@ -2830,8 +2848,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outResendRecordHeader = true;
     }
 
+    /**
+     * Resets state to abandon a partially-written row and restart from scratch.
+     * Called when we run out of buffer space and cannot continue the row
+     * (e.g., text format rows, or binary rows that exceed protocol limits).
+     * <p>
+     * This resets all partial-send state (column index, value offset)
+     * so the next attempt will re-send the row header and all columns from the beginning.
+     */
     private void resetIncompleteRecord(PGResponseSink utf8Sink, long messageLengthAddress) {
         outResendColumnIndex = 0;
+        outResendResumePoint = -1;
         outResendRecordHeader = true;
         // reset to the message start
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);

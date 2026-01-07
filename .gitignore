@@ -3,7 +3,6 @@
 *.log
 .idea
 .ignore
-CLAUDE.md
 out
 benchmarks/target
 core/target
