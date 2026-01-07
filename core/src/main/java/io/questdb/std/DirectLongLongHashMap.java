@@ -28,20 +28,20 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 
 
-public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable {
+public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenable {
     private static final int MIN_INITIAL_CAPACITY = 4;
     private final int initialCapacity;
     private final double loadFactor;
     private final int memoryTag;
-    private final int noEntryKey;
-    private final int noEntryValue;
+    private final long noEntryKey;
+    private final long noEntryValue;
     private int capacity;
     private int free;
     private long mask;
     private long ptr;
     private int size;
 
-    public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag) {
+    public DirectLongLongHashMap(int initialCapacity, double loadFactor, long noEntryKey, long noEntryValue, int memoryTag) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -53,7 +53,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         this.size = 0;
         this.free = (int) (capacity * loadFactor);
         this.mask = capacity - 1;
-        this.ptr = Unsafe.malloc(8L * capacity, memoryTag);
+        this.ptr = Unsafe.malloc(16L * capacity, memoryTag);
         zero();
     }
 
@@ -71,29 +71,29 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     @Override
     public void close() {
         if (ptr != 0) {
-            ptr = Unsafe.free(ptr, 8L * capacity, memoryTag);
+            ptr = Unsafe.free(ptr, 16L * capacity, memoryTag);
             capacity = 0;
             free = 0;
             size = 0;
         }
     }
 
-    public boolean excludes(int key) {
+    public boolean excludes(long key) {
         return keyIndex(key) > -1;
     }
 
-    public int get(int key) {
+    public long get(long key) {
         return valueAt(keyIndex(key));
     }
 
-    public int keyAt(long index) {
-        return Unsafe.getUnsafe().getInt(ptr + (index << 3));
+    public long keyAtRaw(long index) {
+        return Unsafe.getUnsafe().getLong(ptr + 16 * index);
     }
 
-    public long keyIndex(int key) {
-        long hashCode = Hash.fastHashInt64(key);
+    public long keyIndex(long key) {
+        long hashCode = Hash.fastHashLong64(key);
         long index = hashCode & mask;
-        int k = keyAt(index);
+        long k = keyAtRaw(index);
         if (k == noEntryKey) {
             return index;
         }
@@ -103,18 +103,62 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         return probe(key, index);
     }
 
-    public void put(int key, int value) {
+    public void put(long key, long value) {
         putAt(keyIndex(key), key, value);
     }
 
-    public void putAt(long index, int key, int value) {
+    public void putAt(long index, long key, long value) {
         if (index < 0) {
-            Unsafe.getUnsafe().putInt(ptr + ((-index - 1) << 3) + 4, value);
+            Unsafe.getUnsafe().putLong(ptr + 16 * (-index - 1) + 8, value);
         } else {
             putAt0(index, key, value);
             size++;
             if (--free == 0) {
                 rehash(capacity() << 1);
+            }
+        }
+    }
+
+    public boolean putIfAbsent(long key, long value) {
+        long index = keyIndex(key);
+        if (index > -1) {
+            putAt(index, key, value);
+            return true;
+        }
+        return false;
+    }
+
+    public void removeAt(long index) {
+        if (index < 0) {
+            long from = -index - 1;
+            erase(from);
+            free++;
+            size--;
+
+            // After we have freed up a slot, consider non-empty keys directly below.
+            // They may have been a direct hit but because directly hit slot wasn't
+            // empty these keys would have moved.
+            // After slot is freed these keys require re-hash.
+            from = (from + 1) & mask;
+            for (
+                    long key = keyAtRaw(from);
+                    key != noEntryKey;
+                    from = (from + 1) & mask, key = keyAtRaw(from)
+            ) {
+                long hashCode = Hash.fastHashLong64(key);
+                long idealHit = hashCode & mask;
+                if (idealHit != from) {
+                    long to;
+                    if (keyAtRaw(idealHit) != noEntryKey) {
+                        to = probe(key, idealHit);
+                    } else {
+                        to = idealHit;
+                    }
+
+                    if (to > -1) {
+                        move(from, to);
+                    }
+                }
             }
         }
     }
@@ -132,9 +176,9 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             capacity = initialCapacity;
             mask = capacity - 1;
             if (ptr == 0) {
-                ptr = Unsafe.malloc(8L * capacity, memoryTag);
+                ptr = Unsafe.malloc(16L * capacity, memoryTag);
             } else {
-                ptr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * capacity, memoryTag);
+                ptr = Unsafe.realloc(ptr, 16L * oldCapacity, 16L * capacity, memoryTag);
             }
         }
 
@@ -145,15 +189,31 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         return size;
     }
 
-    public int valueAt(long index) {
-        return index < 0 ? Unsafe.getUnsafe().getInt(ptr + ((-index - 1) << 3) + 4) : noEntryValue;
+    public long valueAt(long index) {
+        return index < 0 ? Unsafe.getUnsafe().getLong(ptr + 16 * (-index - 1) + 8) : noEntryValue;
     }
 
-    private long probe(int key, long index) {
+    public long valueAtRaw(long index) {
+        return Unsafe.getUnsafe().getLong(ptr + 16 * index + 8);
+    }
+
+    private void erase(long index) {
+        Unsafe.getUnsafe().putLong(ptr + 16 * index, noEntryKey);
+    }
+
+    private void move(long from, long to) {
+        final long fromPtr = ptr + 16 * from;
+        final long toPtr = ptr + 16 * to;
+        Unsafe.getUnsafe().putLong(toPtr, Unsafe.getUnsafe().getLong(fromPtr));
+        Unsafe.getUnsafe().putLong(toPtr + 8, Unsafe.getUnsafe().getLong(fromPtr + 8));
+        erase(from);
+    }
+
+    private long probe(long key, long index) {
         final long index0 = index;
         do {
             index = (index + 1) & mask;
-            int k = keyAt(index);
+            long k = keyAtRaw(index);
             if (k == noEntryKey) {
                 return index;
             }
@@ -162,18 +222,18 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             }
         } while (index != index0);
 
-        throw CairoException.critical(0).put("corrupt int-int hash table");
+        throw CairoException.critical(0).put("corrupt long-long hash table");
     }
 
-    private void putAt0(long index, int key, int value) {
-        final long p = ptr + (index << 3);
-        Unsafe.getUnsafe().putInt(p, key);
-        Unsafe.getUnsafe().putInt(p + 4, value);
+    private void putAt0(long index, long key, long value) {
+        final long p = ptr + 16 * index;
+        Unsafe.getUnsafe().putLong(p, key);
+        Unsafe.getUnsafe().putLong(p + 8, value);
     }
 
     private void rehash(int newCapacity) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("int-int hash table capacity overflow");
+            throw CairoException.nonCritical().put("long-long hash table capacity overflow");
         }
 
         final int oldCapacity = capacity;
@@ -182,34 +242,34 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         mask = newCapacity - 1;
         free += (int) ((newCapacity - oldCapacity) * loadFactor);
         long oldPtr = ptr;
-        ptr = Unsafe.malloc(8L * newCapacity, memoryTag);
+        ptr = Unsafe.malloc(16L * newCapacity, memoryTag);
         zero();
 
-        for (long p = oldPtr, lim = oldPtr + 8L * oldCapacity; p < lim; p += 8L) {
-            int key = Unsafe.getUnsafe().getInt(p);
+        for (long p = oldPtr, lim = oldPtr + 16L * oldCapacity; p < lim; p += 16L) {
+            long key = Unsafe.getUnsafe().getInt(p);
             if (key != noEntryKey) {
-                long hashCode = Hash.fastHashInt64(key);
+                long hashCode = Hash.fastHashLong64(key);
                 long index = hashCode & mask;
-                while (keyAt(index) != noEntryKey) {
+                while (keyAtRaw(index) != noEntryKey) {
                     index = (index + 1) & mask;
                 }
 
-                int value = Unsafe.getUnsafe().getInt(p + 4);
+                long value = Unsafe.getUnsafe().getLong(p + 8);
                 putAt0(index, key, value);
             }
         }
 
-        Unsafe.free(oldPtr, 8L * oldCapacity, memoryTag);
+        Unsafe.free(oldPtr, 16L * oldCapacity, memoryTag);
     }
 
     private void zero() {
         if (noEntryKey == 0) {
             // Vectorized fast path for zero default value.
-            Vect.memset(ptr, 8L * capacity, 0);
+            Vect.memset(ptr, 16L * capacity, 0);
         } else {
             // Otherwise, clean up only keys.
-            for (long p = ptr, lim = ptr + 8L * capacity; p < lim; p += 8L) {
-                Unsafe.getUnsafe().putInt(p, noEntryKey);
+            for (long p = ptr, lim = ptr + 16L * capacity; p < lim; p += 16L) {
+                Unsafe.getUnsafe().putLong(p, noEntryKey);
             }
         }
     }

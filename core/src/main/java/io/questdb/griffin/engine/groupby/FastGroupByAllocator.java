@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.LongLongHashMap;
+import io.questdb.std.DirectLongLongHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -44,7 +44,7 @@ import io.questdb.std.bytes.Bytes;
 public class FastGroupByAllocator implements GroupByAllocator {
     private final boolean aligned;
     // Holds <ptr, size> pairs.
-    private final LongLongHashMap chunks = new LongLongHashMap();
+    private final DirectLongLongHashMap chunks;
     private final long defaultChunkSize;
     private final long maxChunkSize;
     private long allocated;
@@ -59,6 +59,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
         this.defaultChunkSize = defaultChunkSize;
         this.maxChunkSize = maxChunkSize;
         this.aligned = aligned;
+        this.chunks = new DirectLongLongHashMap(8, 0.5, -1, 0, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
     }
 
     // Allocated chunks total (bytes).
@@ -87,7 +88,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
             // We don't free small allocations.
             return;
         }
-        int index = chunks.keyIndex(ptr);
+        long index = chunks.keyIndex(ptr);
         if (index < 0) {
             long chunkSize = chunks.valueAt(index);
             if (size == chunkSize) {
@@ -145,7 +146,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
         if (oldSize >= defaultChunkSize) {
             // Check another potential fast path:
             // maybe we can reallocate the whole chunk?
-            int index = chunks.keyIndex(ptr);
+            long index = chunks.keyIndex(ptr);
             if (index < 0) {
                 long chunkSize = chunks.valueAt(index);
                 if (chunkSize == oldSize) {
