@@ -50,7 +50,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     private final MemoryMARW metaMem;
     private final MemoryMR roMetaMem;
     private long structureVersion = -1;
-    private boolean suspended;
     private int tableId;
     private TableToken tableToken;
 
@@ -74,7 +73,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int columnCount,
             int timestampIndex,
             int tableId,
-            boolean suspended,
             RecordMetadata metadata
     ) {
         final boolean firstWrite = metaMem.getAppendOffset() == 0;
@@ -99,7 +97,9 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         }
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
-        metaMem.putBool(suspended);
+        // we do not persist suspended flag anymore, suspended flag is in SeqTxnTracker
+        // field is kept for backwards compatibility only, the value is irrelevant
+        metaMem.putBool(false);
         for (int i = 0; i < columnCount; i++) {
             final int columnType = metadata.getColumnType(i);
             metaMem.putInt(columnType);
@@ -234,7 +234,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int tableId,
             int timestampIndex,
             int compressedTimestampIndex,
-            boolean suspended,
             long structureVersion,
             int columnCount,
             @Transient IntList readColumnOrder
@@ -242,7 +241,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;
-        this.suspended = suspended;
         this.structureVersion = structureVersion;
     }
 
@@ -271,7 +269,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             metaMem.close(truncate, Vm.TRUNCATE_TO_POINTER);
         }
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-        syncToMetaFile(metaMem, structureVersion, columnCount, timestampIndex, tableId, suspended, this);
+        syncToMetaFile(metaMem, structureVersion, columnCount, timestampIndex, tableId, this);
     }
 
     private void addColumn0(
@@ -313,7 +311,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         timestampIndex = -1;
         tableToken = null;
         tableId = -1;
-        suspended = false;
     }
 
     protected void clear(boolean truncate, byte truncateMode) {

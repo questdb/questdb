@@ -5108,7 +5108,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     metadata.getColumnCount(),
                                     metadata.getTimestampIndex(),
                                     metadata.getTableId(),
-                                    false,
                                     metadata
                             );
                             mem.close(true, Vm.TRUNCATE_TO_POINTER);
