@@ -31,41 +31,39 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 /**
- * Specialized off-heap histogram sink used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
+ * Specialized off-heap histogram used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
  * <p>
  * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
  * <p>
  * Buffer layout is the following:
  * <pre>
- * | totalCount | normalizingIndexOffset | maxValue | minNonZeroValue | histogram counts array |
- * +------------+------------------------+----------+-----------------+------------------------+
- * |  8 bytes   |        4 bytes         | 8 bytes  |    8 bytes      | countsArrayLength * 8  |
- * +------------+------------------------+----------+-----------------+------------------------+
+ * | totalCount | normalizingIndexOffset | maxValue | minNonZeroValue | countsArrayLength | bucketCount | highestTrackableValue | histogram counts array |
+ * +------------+------------------------+----------+-----------------+-------------------+-------------+-----------------------+------------------------+
+ * |  8 bytes   |        4 bytes         | 8 bytes  |    8 bytes      |     4 bytes       |   4 bytes   |       8 bytes         | countsArrayLength * 8  |
+ * +------------+------------------------+----------+-----------------+-------------------+-------------+-----------------------+------------------------+
  * </pre>
  */
-public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
+public class GroupByHistogram extends AbstractHistogram implements Mutable {
 
     private static final long normalizingIndexOffsetPosition = Long.BYTES;
     private static final long maxValuePosition = normalizingIndexOffsetPosition + Integer.BYTES;
     private static final long minNonZeroValuePosition = maxValuePosition + Long.BYTES;
-    private static final long headerSize = minNonZeroValuePosition + Long.BYTES;
+    private static final long countsArrayLengthPosition = minNonZeroValuePosition + Long.BYTES;
+    private static final long bucketCountPosition = countsArrayLengthPosition + Integer.BYTES;
+    private static final long highestTrackableValuePosition = bucketCountPosition + Integer.BYTES;
+    private static final long headerSize = highestTrackableValuePosition + Long.BYTES;
 
     private GroupByAllocator allocator;
     private long ptr;
     private long allocatedSize;
 
-    public GroupByHistogramSink(int numberOfSignificantValueDigits) {
+    public GroupByHistogram(int numberOfSignificantValueDigits) {
         this(1, 2, numberOfSignificantValueDigits);
         setAutoResize(true);
     }
 
-    public GroupByHistogramSink(long lowestDiscernibleValue, long highestTrackableValue, int numberOfSignificantValueDigits) {
+    public GroupByHistogram(long lowestDiscernibleValue, long highestTrackableValue, int numberOfSignificantValueDigits) {
         super(lowestDiscernibleValue, highestTrackableValue, numberOfSignificantValueDigits);
-        wordSizeInBytes = 8;
-    }
-
-    GroupByHistogramSink(AbstractHistogram source) {
-        super(source);
         wordSizeInBytes = 8;
     }
 
@@ -77,13 +75,22 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         return ptr;
     }
 
-    public GroupByHistogramSink of(long ptr) {
+    public GroupByHistogram of(long ptr) {
         this.ptr = ptr;
-        this.allocatedSize = (ptr != 0) ? headerSize + (countsArrayLength * 8L) : 0;
+
+        if (ptr != 0) {
+            this.countsArrayLength = Unsafe.getUnsafe().getInt(ptr + countsArrayLengthPosition);
+            this.bucketCount = Unsafe.getUnsafe().getInt(ptr + bucketCountPosition);
+            this.highestTrackableValue = Unsafe.getUnsafe().getLong(ptr + highestTrackableValuePosition);
+            this.allocatedSize = headerSize + (countsArrayLength * 8L);
+        } else {
+            this.allocatedSize = 0;
+        }
+
         return this;
     }
 
-    public void merge(GroupByHistogramSink other) {
+    public void merge(GroupByHistogram other) {
         if (other.ptr == 0 || other.getTotalCount() == 0) {
             return;
         }
@@ -106,19 +113,13 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     }
 
     @Override
-    public GroupByHistogramSink copy() {
-        GroupByHistogramSink copy = new GroupByHistogramSink(this);
-        copy.setAllocator(allocator);
-        copy.add(this);
-        return copy;
+    public GroupByHistogram copy() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public GroupByHistogramSink copyCorrectedForCoordinatedOmission(long expectedIntervalBetweenValueSamples) {
-        GroupByHistogramSink copy = new GroupByHistogramSink(this);
-        copy.setAllocator(allocator);
-        copy.addWhileCorrectingForCoordinatedOmission(this, expectedIntervalBetweenValueSamples);
-        return copy;
+    public GroupByHistogram copyCorrectedForCoordinatedOmission(long expectedIntervalBetweenValueSamples) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -233,6 +234,7 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
         if (hadPreviousAllocation) {
             reallocate(newCapacity, oldNormalizedZeroIndex, oldCountsArrayLength);
+            writeSizeFieldsToHeader();
         } else {
             allocate(newCapacity);
         }
@@ -260,6 +262,9 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         Unsafe.getUnsafe().putInt(ptr + normalizingIndexOffsetPosition, 0);
         Unsafe.getUnsafe().putLong(ptr + maxValuePosition, 0);
         Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE);
+        Unsafe.getUnsafe().putInt(ptr + countsArrayLengthPosition, countsArrayLength);
+        Unsafe.getUnsafe().putInt(ptr + bucketCountPosition, bucketCount);
+        Unsafe.getUnsafe().putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
 
         Vect.memset(ptr + headerSize, countsArrayLength * 8L, 0);
     }
@@ -359,15 +364,16 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
     private void ensureCapacity() {
         if (ptr == 0) {
-            allocatedSize = headerSize + (countsArrayLength * 8L);
-            ptr = allocator.malloc(allocatedSize);
+            long newCapacity = headerSize + (countsArrayLength * 8L);
+            allocate(newCapacity);
+        }
+    }
 
-            Unsafe.getUnsafe().putLong(ptr, 0);
-            Unsafe.getUnsafe().putInt(ptr + normalizingIndexOffsetPosition, 0);
-            Unsafe.getUnsafe().putLong(ptr + maxValuePosition, 0);
-            Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE);
-
-            Vect.memset(ptr + headerSize, countsArrayLength * 8L, 0);
+    private void writeSizeFieldsToHeader() {
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putInt(ptr + countsArrayLengthPosition, countsArrayLength);
+            Unsafe.getUnsafe().putInt(ptr + bucketCountPosition, bucketCount);
+            Unsafe.getUnsafe().putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
         }
     }
 

@@ -27,19 +27,19 @@ package io.questdb.test.std.histogram.org.HdrHistogram;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.std.Rnd;
-import io.questdb.std.histogram.org.HdrHistogram.GroupByHistogramSink;
+import io.questdb.std.histogram.org.HdrHistogram.GroupByHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GroupByHistogramSinkTest extends AbstractCairoTest {
+public class GroupByHistogramTest extends AbstractCairoTest {
 
     @Test
     public void testBasicRecording() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeap = new Histogram(1, 1000, 3);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram offHeap = new GroupByHistogram(1, 1000, 3);
             offHeap.setAllocator(allocator);
 
             for (long i = 1; i <= 100; i++) {
@@ -59,7 +59,7 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     public void testPercentiles() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeap = new Histogram(1, 3600000, 3);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(1, 3600000, 3);
+            GroupByHistogram offHeap = new GroupByHistogram(1, 3600000, 3);
             offHeap.setAllocator(allocator);
 
             Rnd rnd1 = new Rnd();
@@ -85,7 +85,7 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     public void testRecordValueWithCount() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeap = new Histogram(1, 10000, 2);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(1, 10000, 2);
+            GroupByHistogram offHeap = new GroupByHistogram(1, 10000, 2);
             offHeap.setAllocator(allocator);
 
             onHeap.recordValueWithCount(100, 50);
@@ -108,7 +108,7 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     public void testReset() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeap = new Histogram(3);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(3);
+            GroupByHistogram offHeap = new GroupByHistogram(3);
             offHeap.setAllocator(allocator);
 
             for (int i = 1; i <= 100; i++) {
@@ -134,7 +134,7 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     public void testAutoResize() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeap = new Histogram(3);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(3);
+            GroupByHistogram offHeap = new GroupByHistogram(3);
             offHeap.setAllocator(allocator);
 
             long[] values = {1, 10, 100, 1000, 10000, 100000, 1000000};
@@ -154,8 +154,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeap1 = new Histogram(1, 10000, 2);
             Histogram onHeap2 = new Histogram(1, 10000, 2);
-            GroupByHistogramSink offHeap1 = new GroupByHistogramSink(1, 10000, 2);
-            GroupByHistogramSink offHeap2 = new GroupByHistogramSink(1, 10000, 2);
+            GroupByHistogram offHeap1 = new GroupByHistogram(1, 10000, 2);
+            GroupByHistogram offHeap2 = new GroupByHistogram(1, 10000, 2);
             offHeap1.setAllocator(allocator);
             offHeap2.setAllocator(allocator);
 
@@ -180,33 +180,11 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopy() {
-        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            Histogram onHeap = new Histogram(1, 1000, 3);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(1, 1000, 3);
-            offHeap.setAllocator(allocator);
-
-            for (int i = 1; i <= 100; i++) {
-                onHeap.recordValue(i);
-                offHeap.recordValue(i);
-            }
-
-            Histogram onHeapCopy = onHeap.copy();
-            GroupByHistogramSink offHeapCopy = offHeap.copy();
-
-            Assert.assertEquals(onHeapCopy.getTotalCount(), offHeapCopy.getTotalCount());
-            Assert.assertEquals(onHeapCopy.getMean(), offHeapCopy.getMean(), 0.0);
-            Assert.assertEquals(onHeapCopy.getMinValue(), offHeapCopy.getMinValue());
-            Assert.assertEquals(onHeapCopy.getMaxValue(), offHeapCopy.getMaxValue());
-        }
-    }
-
-    @Test
     public void testLargeValues() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             long highest = 3600000000L;
             Histogram onHeap = new Histogram(1, highest, 3);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(1, highest, 3);
+            GroupByHistogram offHeap = new GroupByHistogram(1, highest, 3);
             offHeap.setAllocator(allocator);
 
             Rnd rnd1 = new Rnd();
@@ -230,7 +208,7 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     public void testGetCountAtValue() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeap = new Histogram(1, 1000, 2);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(1, 1000, 2);
+            GroupByHistogram offHeap = new GroupByHistogram(1, 1000, 2);
             offHeap.setAllocator(allocator);
 
             for (int i = 0; i < 10; i++) {
@@ -250,7 +228,7 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     public void testEquivalentValues() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeap = new Histogram(1, 100000, 2);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(1, 100000, 2);
+            GroupByHistogram offHeap = new GroupByHistogram(1, 100000, 2);
             offHeap.setAllocator(allocator);
 
             long testValue = 12345;
@@ -268,7 +246,7 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testEmptyHistogramQueries() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink histogram = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram histogram = new GroupByHistogram(1, 1000, 3);
             histogram.setAllocator(allocator);
 
             Assert.assertEquals(0, histogram.getTotalCount());
@@ -283,8 +261,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeapSmall = new Histogram(3);
             Histogram onHeapLarge = new Histogram(3);
-            GroupByHistogramSink offHeapSmall = new GroupByHistogramSink(3);
-            GroupByHistogramSink offHeapLarge = new GroupByHistogramSink(3);
+            GroupByHistogram offHeapSmall = new GroupByHistogram(3);
+            GroupByHistogram offHeapLarge = new GroupByHistogram(3);
             offHeapSmall.setAllocator(allocator);
             offHeapLarge.setAllocator(allocator);
 
@@ -306,7 +284,7 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     public void testMultipleOperations() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeap = new Histogram(3);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(3);
+            GroupByHistogram offHeap = new GroupByHistogram(3);
             offHeap.setAllocator(allocator);
 
             for (int i = 0; i < 1000; i++) {
@@ -333,18 +311,18 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testRepointingToExistingOffHeapData() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink sink = new GroupByHistogramSink(1, 1000, 3);
-            sink.setAllocator(allocator);
+            GroupByHistogram histogram = new GroupByHistogram(1, 1000, 3);
+            histogram.setAllocator(allocator);
 
-            sink.recordValue(100);
-            sink.recordValue(200);
-            sink.recordValue(300);
+            histogram.recordValue(100);
+            histogram.recordValue(200);
+            histogram.recordValue(300);
 
-            long addr1 = sink.ptr();
+            long addr1 = histogram.ptr();
             Assert.assertNotEquals(0, addr1);
-            Assert.assertEquals(3, sink.getTotalCount());
+            Assert.assertEquals(3, histogram.getTotalCount());
 
-            GroupByHistogramSink other = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram other = new GroupByHistogram(1, 1000, 3);
             other.setAllocator(allocator);
             other.recordValue(500);
             other.recordValue(600);
@@ -352,28 +330,28 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
             Assert.assertNotEquals(0, addr2);
             Assert.assertNotEquals(addr1, addr2);
 
-            sink.of(addr2);
-            Assert.assertEquals(addr2, sink.ptr());
+            histogram.of(addr2);
+            Assert.assertEquals(addr2, histogram.ptr());
 
-            Assert.assertEquals(2, sink.getTotalCount());
-            Assert.assertEquals(500, sink.getMinValue());
-            Assert.assertEquals(600, sink.getMaxValue());
+            Assert.assertEquals(2, histogram.getTotalCount());
+            Assert.assertEquals(500, histogram.getMinValue());
+            Assert.assertEquals(600, histogram.getMaxValue());
 
-            sink.of(addr1);
-            Assert.assertEquals(addr1, sink.ptr());
-            Assert.assertEquals(3, sink.getTotalCount());
+            histogram.of(addr1);
+            Assert.assertEquals(addr1, histogram.ptr());
+            Assert.assertEquals(3, histogram.getTotalCount());
 
-            sink.of(0);
-            Assert.assertEquals(0, sink.ptr());
-            Assert.assertEquals(0, sink.getTotalCount());
+            histogram.of(0);
+            Assert.assertEquals(0, histogram.ptr());
+            Assert.assertEquals(0, histogram.getTotalCount());
         }
     }
 
     @Test
     public void testMerge() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 10000, 2);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 10000, 2);
+            GroupByHistogram dest = new GroupByHistogram(1, 10000, 2);
+            GroupByHistogram src = new GroupByHistogram(1, 10000, 2);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -397,8 +375,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeEmptySource() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram dest = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram src = new GroupByHistogram(1, 1000, 3);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -421,8 +399,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeEmptyDestination() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram dest = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram src = new GroupByHistogram(1, 1000, 3);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -441,9 +419,9 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergePreservesPercentiles() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 10000, 2);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 10000, 2);
-            GroupByHistogramSink combined = new GroupByHistogramSink(1, 10000, 2);
+            GroupByHistogram dest = new GroupByHistogram(1, 10000, 2);
+            GroupByHistogram src = new GroupByHistogram(1, 10000, 2);
+            GroupByHistogram combined = new GroupByHistogram(1, 10000, 2);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
             combined.setAllocator(allocator);
@@ -474,8 +452,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeWithOverlappingValues() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 2);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 2);
+            GroupByHistogram dest = new GroupByHistogram(1, 1000, 2);
+            GroupByHistogram src = new GroupByHistogram(1, 1000, 2);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -495,10 +473,10 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeEmptyDestinationWithLargeValues() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(3);
+            GroupByHistogram dest = new GroupByHistogram(3);
             dest.setAllocator(allocator);
 
-            GroupByHistogramSink src = new GroupByHistogramSink(3);
+            GroupByHistogram src = new GroupByHistogram(3);
             src.setAllocator(allocator);
             src.recordValue(1000000);
             src.recordValue(2000000);
@@ -520,8 +498,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeAfterClear() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram dest = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram src = new GroupByHistogram(1, 1000, 3);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -549,8 +527,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeSourceWithZeroTotalCount() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram dest = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram src = new GroupByHistogram(1, 1000, 3);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -575,8 +553,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeBothEmpty() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram dest = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram src = new GroupByHistogram(1, 1000, 3);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -593,9 +571,9 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeChain() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink h1 = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink h2 = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink h3 = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram h1 = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram h2 = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram h3 = new GroupByHistogram(1, 1000, 3);
             h1.setAllocator(allocator);
             h2.setAllocator(allocator);
             h3.setAllocator(allocator);
@@ -622,9 +600,9 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeWithRepointedHistogram() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink h1 = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink h2 = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink flyweight = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram h1 = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram h2 = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram flyweight = new GroupByHistogram(1, 1000, 3);
             h1.setAllocator(allocator);
             h2.setAllocator(allocator);
             flyweight.setAllocator(allocator);
@@ -648,8 +626,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeExtremeValueRange() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(3);
-            GroupByHistogramSink src = new GroupByHistogramSink(3);
+            GroupByHistogram dest = new GroupByHistogram(3);
+            GroupByHistogram src = new GroupByHistogram(3);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -670,8 +648,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergePreservesCountsAccurately() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 10000, 2);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 10000, 2);
+            GroupByHistogram dest = new GroupByHistogram(1, 10000, 2);
+            GroupByHistogram src = new GroupByHistogram(1, 10000, 2);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -689,8 +667,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeEmptyIntoPopulatedThenClear() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
-            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogram dest = new GroupByHistogram(1, 1000, 3);
+            GroupByHistogram src = new GroupByHistogram(1, 1000, 3);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
@@ -713,8 +691,8 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     @Test
     public void testMergeWithDifferentPrecision() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogramSink dest = new GroupByHistogramSink(2);
-            GroupByHistogramSink src = new GroupByHistogramSink(2);
+            GroupByHistogram dest = new GroupByHistogram(2);
+            GroupByHistogram src = new GroupByHistogram(2);
             dest.setAllocator(allocator);
             src.setAllocator(allocator);
 
