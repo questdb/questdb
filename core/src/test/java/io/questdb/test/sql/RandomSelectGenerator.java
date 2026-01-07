@@ -71,9 +71,6 @@ public class RandomSelectGenerator {
     private double joinProbability = 0.3;
     // SAMPLE BY probability: orderByProbability * limitProbability
     private double limitProbability = 0.6;
-    private int maxColumnsInSelect = 5;
-    private int maxConditionsInWhere = 3;
-    private int maxLimit = 100;
     private double orderByProbability = 0.4;
     // SAMPLE BY probability: aggregationProbability * sampleByProbability
     // GROUP BY probability: aggregationProbability * (1 - sampleByProbability)
@@ -175,7 +172,7 @@ public class RandomSelectGenerator {
                 // be non-deterministic if it is not ordered and LIMIT is present
                 if (rnd.nextDouble() < limitProbability) {
                     sql.put(" LIMIT ");
-                    sql.put(1 + rnd.nextInt(maxLimit));
+                    sql.put(1 + rnd.nextInt(100));
                 }
             }
 
@@ -214,21 +211,6 @@ public class RandomSelectGenerator {
 
     public RandomSelectGenerator setLimitProbability(double probability) {
         this.limitProbability = probability;
-        return this;
-    }
-
-    public RandomSelectGenerator setMaxColumnsInSelect(int maxColumns) {
-        this.maxColumnsInSelect = maxColumns;
-        return this;
-    }
-
-    public RandomSelectGenerator setMaxConditionsInWhere(int maxConditions) {
-        this.maxConditionsInWhere = maxConditions;
-        return this;
-    }
-
-    public RandomSelectGenerator setMaxLimit(int maxLimit) {
-        this.maxLimit = maxLimit;
         return this;
     }
 
@@ -568,7 +550,7 @@ public class RandomSelectGenerator {
             return;
         }
 
-        int numColumnsToSelect = 1 + rnd.nextInt(Math.min(maxColumnsInSelect, columnCount));
+        int numColumnsToSelect = 1 + rnd.nextInt(Math.min(5, columnCount));
 
         // Generate random column indices (ensure we get unique columns)
         IntList selectedColumns = new IntList();
@@ -612,7 +594,7 @@ public class RandomSelectGenerator {
             return;
         }
 
-        int numConditions = 1 + rnd.nextInt(Math.min(maxConditionsInWhere, columnCount));
+        int numConditions = 1 + rnd.nextInt(Math.min(3, columnCount));
         for (int i = 0; i < numConditions; i++) {
             if (i > 0) {
                 sql.put(rnd.nextBoolean() ? " AND " : " OR ");

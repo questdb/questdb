@@ -194,7 +194,8 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
                     .setWhereClauseProbability(1.0)
                     .setOrderByProbability(1.0)
                     .setLimitProbability(0.0)
-                    .setAggregationProbability(0.0);
+                    .setAggregationProbability(0.0)
+                    .setSampleByProbability(0.0);
 
             String query1 = gen1.generate();
             LOG.info().$("Query with WHERE+ORDER BY: ").$(query1).$();
@@ -211,7 +212,8 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
                     .setWhereClauseProbability(0.0)
                     .setOrderByProbability(1.0)
                     .setLimitProbability(1.0)
-                    .setAggregationProbability(0.0);
+                    .setAggregationProbability(0.0)
+                    .setSampleByProbability(0.0);
 
             String query2 = gen2.generate();
             LOG.info().$("Query with LIMIT: ").$(query2).$();
