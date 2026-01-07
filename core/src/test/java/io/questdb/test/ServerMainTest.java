@@ -26,17 +26,29 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
+import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.RecentWriteTracker;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.ConcurrentIntHashMap;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -48,6 +60,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static java.util.Arrays.asList;
@@ -100,6 +114,150 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAwaitStartupBeforeDropTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // First server: create tables
+            try (
+                    final ServerMain serverMain = new ServerMain(new Bootstrap(new PropBootstrapConfiguration() {
+                        @Override
+                        public boolean useSite() {
+                            return false;
+                        }
+                    }, getServerMainArgs()));
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                serverMain.start();
+
+                // Create a non-WAL table (like data_temp in ReplicationFuzzTest)
+                serverMain.getEngine().execute("CREATE TABLE test_temp (x INT, ts TIMESTAMP) TIMESTAMP(ts)", sqlExecutionContext);
+                serverMain.getEngine().execute("INSERT INTO test_temp VALUES (1, '2024-01-01T00:00:00.000000Z')", sqlExecutionContext);
+            }
+
+            // Second server: restart and immediately drop table after awaitStartup()
+            try (
+                    final ServerMain serverMain = new ServerMain(getServerMainArgs());
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                serverMain.start();
+                // awaitStartup() ensures background hydration thread completes before we attempt DDL
+                // Without this, DROP TABLE can fail with "busyTableReaderMetaPool" if the hydration
+                // thread is still holding a TableMetadataPool lock on the table
+                serverMain.awaitStartup();
+
+                // This should succeed without "could not lock" error
+                serverMain.getEngine().execute("DROP TABLE test_temp", sqlExecutionContext);
+
+                // Verify table is dropped
+                try {
+                    serverMain.getEngine().verifyTableName("test_temp");
+                    Assert.fail("Table should have been dropped");
+                } catch (CairoException e) {
+                    assertContains(e.getFlyweightMessage(), "does not exist");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentTableDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            int tableCount = 20;
+
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.DEBUG_CAIRO_POOL_SEGMENT_SIZE.getEnvVarName(), "2",
+                    PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS.getEnvVarName(), "30",
+                    PropertyKey.CAIRO_WAL_PURGE_INTERVAL.getEnvVarName(), "1",
+                    // Increase HTTP workers to get enough SQL compiler pool segments
+                    PropertyKey.HTTP_WORKER_COUNT.getEnvVarName(), String.valueOf(tableCount)
+            )) {
+                serverMain.start();
+
+                AtomicInteger errorCount = new AtomicInteger(0);
+                ObjList<Thread> threads = new ObjList<>();
+                ConcurrentIntHashMap<Boolean> tableMap = new ConcurrentIntHashMap<>();
+                var configuration = serverMain.getConfiguration();
+
+                int insertThreadCount = 5;
+                CyclicBarrier latch = new CyclicBarrier(tableCount * (1 + insertThreadCount));
+
+                Rnd rnd = TestUtils.generateRandom(LOG);
+                for (int i = 0; i < tableCount; i++) {
+                    serverMain.getEngine().execute("create table test" + i + " (ts timestamp, x int) timestamp(ts) partition by day WAL");
+                    tableMap.put(i, true);
+                    int threadId = i;
+
+                    Thread dropThread = new Thread(() -> {
+                        try (SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1)
+                                .with(
+                                        configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                        null,
+                                        null,
+                                        -1,
+                                        null
+                                )) {
+                            latch.await();
+                            serverMain.getEngine().execute("drop table test" + threadId, sqlExecutionContext);
+                            tableMap.remove(threadId);
+                        } catch (Throwable e) {
+                            errorCount.incrementAndGet();
+                            LOG.error().$(e).$();
+                            throw new RuntimeException(e);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+
+                    Rnd rndForInserts = new Rnd(rnd.nextLong(), rnd.nextLong());
+                    for (int t = 0; t < insertThreadCount; t++) {
+                        Thread insertThread = new Thread(() -> {
+                            ObjList<WalWriter> writerObjList = new ObjList<>();
+                            try {
+                                latch.await();
+                                TableToken tableToken = serverMain.getEngine().getTableTokenIfExists("test" + threadId);
+                                if (tableToken != null) {
+                                    for (int in = 0; in < insertThreadCount; in++) {
+                                        WalWriter ww = commitRow(serverMain, tableToken, in);
+                                        if (rndForInserts.nextBoolean()) {
+                                            ww.close();
+                                        } else {
+                                            writerObjList.add(ww);
+                                        }
+                                    }
+                                }
+                            } catch (CairoException ex) {
+                                if (ex.isTableDropped() || ex.isTableDoesNotExist()) {
+                                    // expected
+                                    return;
+                                }
+                                errorCount.incrementAndGet();
+                                LOG.error().$((Throwable) ex).$();
+                            } catch (Throwable e) {
+                                errorCount.incrementAndGet();
+                                LOG.error().$(e).$();
+                                throw new RuntimeException(e);
+                            } finally {
+                                Misc.freeObjList(writerObjList);
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        insertThread.start();
+                        threads.add(insertThread);
+                    }
+
+                    dropThread.start();
+                    threads.add(dropThread);
+                }
+
+                for (int i = 0; i < threads.size(); i++) {
+                    threads.get(i).join();
+                }
+
+                Assert.assertEquals(0, errorCount.get());
+            }
+        });
+    }
+
+    @Test
     public void testPgWirePort() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
@@ -114,6 +272,83 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = serverMain.getPgWireServerPort();
                 Assert.assertTrue(port > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testRecentWriteTrackerHydrationOnRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            // First server: create tables and write data
+            try (
+                    final ServerMain serverMain = new ServerMain(new Bootstrap(new PropBootstrapConfiguration() {
+                        @Override
+                        public boolean useSite() {
+                            return false;
+                        }
+                    }, getServerMainArgs()));
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                serverMain.start();
+
+                // Create WAL tables and write data
+                serverMain.getEngine().execute("CREATE TABLE tracker_test1 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+                serverMain.getEngine().execute("CREATE TABLE tracker_test2 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+
+                serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES ('2024-01-01T00:00:00.000000Z', 1)", sqlExecutionContext);
+                serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES ('2024-01-01T00:00:01.000000Z', 2)", sqlExecutionContext);
+                serverMain.getEngine().execute("INSERT INTO tracker_test2 VALUES ('2024-01-01T00:00:02.000000Z', 3)", sqlExecutionContext);
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                // Wait for WAL transactions to be applied
+                StringSink sink = new StringSink();
+                TestUtils.assertSql(
+                        serverMain.getEngine(),
+                        sqlExecutionContext,
+                        "select wait_wal_table('tracker_test1')",
+                        sink,
+                        "wait_wal_table('tracker_test1')\ntrue\n"
+                );
+                TestUtils.assertSql(
+                        serverMain.getEngine(),
+                        sqlExecutionContext,
+                        "select wait_wal_table('tracker_test2')",
+                        sink,
+                        "wait_wal_table('tracker_test2')\ntrue\n"
+                );
+            }
+
+            // Second server: verify tracker is hydrated from existing tables
+            try (
+                    final ServerMain serverMain = new ServerMain(getServerMainArgs())
+            ) {
+                // Set up latch to wait for hydration to complete
+                SOCountDownLatch hydrationLatch = new SOCountDownLatch(1);
+                serverMain.getEngine().setRecentWriteTrackerHydrationCallback(hydrationLatch::countDown);
+
+                serverMain.start();
+
+                // Wait for hydration to complete (deterministic via callback)
+                hydrationLatch.await();
+
+                RecentWriteTracker tracker = serverMain.getEngine().getRecentWriteTracker();
+                Assert.assertNotNull("Tracker should be available", tracker);
+
+                // Verify tables were hydrated with correct row counts
+                TableToken token1 = serverMain.getEngine().verifyTableName("tracker_test1");
+                TableToken token2 = serverMain.getEngine().verifyTableName("tracker_test2");
+
+                Assert.assertEquals("tracker_test1 should have 2 rows", 2L, tracker.getRowCount(token1));
+                Assert.assertEquals("tracker_test2 should have 1 row", 1L, tracker.getRowCount(token2));
+
+                // Verify timestamps are populated
+                Assert.assertTrue("tracker_test1 should have timestamp", tracker.getWriteTimestamp(token1) > 0);
+                Assert.assertTrue("tracker_test2 should have timestamp", tracker.getWriteTimestamp(token2) > 0);
+
+                // Verify tables appear in recent list
+                ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
+                Assert.assertTrue("Should have at least 2 tables", recent.size() >= 2);
             }
         });
     }
@@ -328,6 +563,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.parallel.indexing.enabled\tQDB_CAIRO_PARALLEL_INDEXING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.query.cache.event.queue.capacity\tQDB_CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.reader.pool.max.segments\tQDB_CAIRO_READER_POOL_MAX_SEGMENTS\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.recent.write.tracker.capacity\tQDB_CAIRO_RECENT_WRITE_TRACKER_CAPACITY\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.repeat.migration.from.version\tQDB_CAIRO_REPEAT_MIGRATION_FROM_VERSION\t426\tdefault\tfalse\tfalse\n" +
                                     "cairo.rnd.memory.max.pages\tQDB_CAIRO_RND_MEMORY_MAX_PAGES\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.rnd.memory.page.size\tQDB_CAIRO_RND_MEMORY_PAGE_SIZE\t8192\tdefault\tfalse\tfalse\n" +
@@ -430,6 +666,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.sort.value.page.size\tQDB_CAIRO_SQL_SORT_VALUE_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.string.function.buffer.max.size\tQDB_CAIRO_SQL_STRING_FUNCTION_BUFFER_MAX_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.column.pool.capacity\tQDB_CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.pivot.column.pool.capacity\tQDB_CAIRO_SQL_PIVOT_COLUMN_POOL_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.pivot.max.produced.columns\tQDB_CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS\t5000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.max.recursion\tQDB_CAIRO_SQL_WINDOW_MAX_RECURSION\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.rowid.max.pages\tQDB_CAIRO_SQL_WINDOW_ROWID_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.rowid.page.size\tQDB_CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE\t524288\tdefault\tfalse\tfalse\n" +
@@ -820,5 +1058,19 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    private static @NotNull WalWriter commitRow(TestServerMain serverMain, TableToken tableToken, int in) {
+        WalWriter ww = serverMain.getEngine().getWalWriter(tableToken);
+        try {
+            var row = ww.newRow(1234567890L);
+            row.putInt(1, in + 1);
+            row.append();
+            ww.commit();
+            return ww;
+        } catch (Throwable e) {
+            Misc.free(ww);
+            throw e;
+        }
     }
 }
