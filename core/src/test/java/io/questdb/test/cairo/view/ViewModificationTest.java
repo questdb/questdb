@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo.view;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -103,11 +102,13 @@ public class ViewModificationTest extends AbstractViewTest {
                 Assert.assertNotNull(select);
                 try (RecordCursor cursor = select.getCursor(sqlExecutionContext)) {
                     // sanity check - we can read from the view
+                    cursor.hasNext();
                 }
 
                 execute("alter view v as select sym, last(price) as price, ts from prices sample by 30m");
 
                 try (RecordCursor cursor = select.getCursor(sqlExecutionContext)) {
+                    cursor.hasNext();
                     Assert.fail("should not be able to read from an altered view");
                 } catch (TableReferenceOutOfDateException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed");
@@ -131,11 +132,13 @@ public class ViewModificationTest extends AbstractViewTest {
                 Assert.assertNotNull(select);
                 try (RecordCursor cursor = select.getCursor(sqlExecutionContext)) {
                     // sanity check - we can read from the view
+                    cursor.hasNext();
                 }
 
                 engine.execute("drop view v");
 
                 try (RecordCursor cursor = select.getCursor(sqlExecutionContext)) {
+                    cursor.hasNext();
                     Assert.fail("should not be able to read from a dropped view");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
