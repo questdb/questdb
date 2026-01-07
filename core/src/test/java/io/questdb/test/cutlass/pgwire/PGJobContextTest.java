@@ -10096,7 +10096,7 @@ create table tab as (
                         Assert.assertEquals(i, rs.getLong(1));
                         String actualValue = rs.getString(2);
                         Assert.assertEquals("VARCHAR length mismatch at row " + i, varcharSize, actualValue.length());
-                        TestUtils.assertContains("VARCHAR content mismatch at row " + i, expectedValue, actualValue);
+                        TestUtils.assertEquals("VARCHAR content mismatch at row " + i, expectedValue, actualValue);
                     }
                     Assert.assertFalse("Expected no more rows", rs.next());
                 }
