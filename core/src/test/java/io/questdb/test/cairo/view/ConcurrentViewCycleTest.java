@@ -25,8 +25,6 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -39,8 +37,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-
-import static org.junit.Assert.assertTrue;
 
 public class ConcurrentViewCycleTest extends AbstractViewTest {
 
@@ -174,11 +170,13 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
 
             // Verify views are still queryable (no corrupted state)
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "k2\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "v\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
+                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            k2\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            v\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            """,
                     "SHOW COLUMNS FROM " + VIEW1
             );
 
