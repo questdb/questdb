@@ -10725,8 +10725,9 @@ create table tab as (
         final int sndBufSize = 256 + bufferSizeRnd.nextInt(256);
 
         // varchar, string, binary
+        // only string and binary can be oversized (varchar supports fragmented sending)
         int[] sizes = {sndBufSize / 4, sndBufSize / 2, sndBufSize - 4 - 1};
-        sizes[bufferSizeRnd.nextInt(sizes.length)] = 2 * sndBufSize;
+        sizes[1 + bufferSizeRnd.nextInt(2)] = 2 * sndBufSize;
 
         final int varcharSize = sizes[0];
         final int stringSize = sizes[1];
