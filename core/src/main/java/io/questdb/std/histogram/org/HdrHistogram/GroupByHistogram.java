@@ -105,7 +105,15 @@ public class GroupByHistogram extends AbstractHistogram implements Mutable {
             resize(other.getMaxValue());
         }
 
+        long thisStartTime = this.getStartTimeStamp();
+        long thisEndTime = this.getEndTimeStamp();
+        long otherStartTime = other.getStartTimeStamp();
+        long otherEndTime = other.getEndTimeStamp();
+
         this.add(other);
+
+        this.setStartTimeStamp(Math.min(thisStartTime, otherStartTime));
+        this.setEndTimeStamp(Math.max(thisEndTime, otherEndTime));
     }
 
     @Override
