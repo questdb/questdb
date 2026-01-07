@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.Bootstrap;
+import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.BitmapIndexUtils;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
@@ -40,6 +44,7 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -51,6 +56,8 @@ import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -61,6 +68,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -71,8 +79,15 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static io.questdb.PropertyKey.CAIRO_CHECKPOINT_RECOVERY_ENABLED;
-import static io.questdb.PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.HashMap;
+import java.util.Map;
+
+import static io.questdb.PropertyKey.*;
 
 public class CheckpointTest extends AbstractCairoTest {
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
@@ -550,6 +565,26 @@ public class CheckpointTest extends AbstractCairoTest {
             }
             engine.checkpointRelease();
         });
+    }
+
+    @Test
+    public void testCheckpointRecoveryTornKeyEntry_rebuildFalse() throws Exception {
+        testCheckpointRecoveryTornKeyEntry(false);
+    }
+
+    @Test
+    public void testCheckpointRecoveryTornKeyEntry_rebuildTrue() throws Exception {
+        testCheckpointRecoveryTornKeyEntry(true);
+    }
+
+    @Test
+    public void testCheckpointRecoveryWithStaleIndex_rebuildFalse() throws Exception {
+        testCheckpointRecoveryWithStaleIndex(false);
+    }
+
+    @Test
+    public void testCheckpointRecoveryWithStaleIndex_rebuildTrue() throws Exception {
+        testCheckpointRecoveryWithStaleIndex(true);
     }
 
     @Test
@@ -1698,8 +1733,95 @@ public class CheckpointTest extends AbstractCairoTest {
         };
     }
 
+    private static void copyDirectory(File source, File target) throws IOException {
+        java.nio.file.Files.walkFileTree(source.toPath(), new SimpleFileVisitor<java.nio.file.Path>() {
+            @Override
+            public FileVisitResult preVisitDirectory(java.nio.file.Path dir, BasicFileAttributes attrs) throws IOException {
+                java.nio.file.Path targetDir = target.toPath().resolve(source.toPath().relativize(dir));
+                java.nio.file.Files.createDirectories(targetDir);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes attrs) throws IOException {
+                java.nio.file.Files.copy(file, target.toPath().resolve(source.toPath().relativize(file)),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private static void corruptIndexKeyEntry(String dbRoot, String tableDirName,
+                                             String partitionName, String columnName) {
+        File tableDir = new File(dbRoot, "db/" + tableDirName);
+        File partDir = new File(tableDir, partitionName);
+        File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith(columnName + ".k"));
+        if (keyFiles == null || keyFiles.length == 0) {
+            throw new IllegalStateException("No key file found for column: " + columnName);
+        }
+        File keyFile = keyFiles[0];
+
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        try (
+                Path keyPath = new Path().of(keyFile.getAbsolutePath());
+                MemoryCMARW mem = Vm.getCMARWInstance()
+        ) {
+            mem.of(ff, keyPath.$(), ff.getMapPageSize(), keyFile.length(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+
+            // Key 1 entry starts at offset 64 (header) + 32 (key 0) = 96
+            long keyEntryOffset = BitmapIndexUtils.KEY_FILE_RESERVED + BitmapIndexUtils.KEY_ENTRY_SIZE;
+
+            // Read current valueCount (at offset 0 within key entry)
+            long valueCount = mem.getLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+
+            // Increment valueCount but NOT countCheck - creates inconsistency
+            mem.putLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, valueCount + 1);
+
+            // countCheck at offset +24 remains unchanged
+            // This creates: valueCount=11, countCheck=10 (torn write simulation)
+        }
+    }
+
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    private static LongList longList(long... values) {
+        LongList list = new LongList(values.length);
+        for (long v : values) {
+            list.add(v);
+        }
+        return list;
+    }
+
+    private static TestServerMain startServerMain(String root, String... envKeyValues) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        for (int i = 0; i < envKeyValues.length; i += 2) {
+            env.put(envKeyValues[i], envKeyValues[i + 1]);
+        }
+        env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
+        // Disable HTTP and PG servers to avoid port conflicts
+        env.put(PropertyKey.HTTP_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.PG_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false");
+
+        TestServerMain serverMain = new TestServerMain(new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+                },
+                Bootstrap.getServerMainArgs(root)
+        ));
+        try {
+            serverMain.start();
+            return serverMain;
+        } catch (Throwable th) {
+            serverMain.close();
+            throw th;
+        }
     }
 
     private String getTestTableName() {
@@ -1874,6 +1996,227 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
+    private void testCheckpointRecoveryTornKeyEntry(boolean rebuildColumnIndexes) throws Exception {
+        // Test that checkpoint recovery correctly handles corrupted (torn) index key entries.
+        //
+        // Scenario: Simulate a torn write by corrupting the .k index file such that
+        // valueCount != countCheck for a key entry. This represents an incomplete write
+        // that could occur during a crash.
+        //
+        // - When rebuildColumnIndexes=TRUE: Index is rebuilt from scratch, corruption fixed
+        // - When rebuildColumnIndexes=FALSE: Corrupted index is preserved
+
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        File dir1 = temp.newFolder("server1_torn_" + rebuildColumnIndexes);
+        File dir2 = temp.newFolder("server2_torn_" + rebuildColumnIndexes);
+        String tableDirName;
+
+        // Server 1: Create data + checkpoint
+        try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+            server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY YEAR WAL");
+            server1.execute("INSERT INTO t SELECT 'SYM', x, timestamp_sequence(0, 100000000000) " +
+                    "FROM long_sequence(10)");
+
+            // Wait for WAL to flush
+            TestUtils.assertEventually(() -> server1.assertSql(
+                    "SELECT sym, x FROM t ORDER BY x",
+                    "sym\tx\n" +
+                            "SYM\t1\n" +
+                            "SYM\t2\n" +
+                            "SYM\t3\n" +
+                            "SYM\t4\n" +
+                            "SYM\t5\n" +
+                            "SYM\t6\n" +
+                            "SYM\t7\n" +
+                            "SYM\t8\n" +
+                            "SYM\t9\n" +
+                            "SYM\t10\n"
+            ));
+
+            server1.execute("CHECKPOINT CREATE");
+            tableDirName = server1.getEngine().verifyTableName("t").getDirName();
+            copyDirectory(dir1, dir2);
+            server1.execute("CHECKPOINT RELEASE");
+        }
+
+        // Verify index is valid before corruption
+        IndexSnapshot beforeCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+        Assert.assertEquals("Index should have 10 entries", 10, beforeCorruption.getRowIds(1).size());
+        TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), beforeCorruption.getRowIds(1));
+
+        // Corrupt the index in dir2: make valueCount != countCheck
+        corruptIndexKeyEntry(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+
+        // Verify corruption was applied - IndexSnapshot reads valueCount, which we incremented to 11
+        IndexSnapshot afterCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+        Assert.assertEquals("Corrupted index should show 11 entries (valueCount)", 11,
+                afterCorruption.getRowIds(1).size());
+
+        // Create trigger file to force checkpoint recovery
+        try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+            Files.touch(triggerPath.$());
+        }
+
+        // Server 2: Start with corrupted index
+        try (TestServerMain server2 = startServerMain(
+                dir2.getAbsolutePath(),
+                CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES.getEnvVarName(), String.valueOf(rebuildColumnIndexes)
+        )) {
+            IndexSnapshot afterRecovery = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+
+            if (rebuildColumnIndexes) {
+                // With rebuild=true, index is rebuilt from data files, corruption fixed
+                Assert.assertEquals("Rebuilt index should have 10 entries", 10, afterRecovery.getRowIds(1).size());
+                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecovery.getRowIds(1));
+
+                // Queries should work correctly
+                server2.assertSql(
+                        "SELECT count() FROM t WHERE sym = 'SYM'",
+                        "count\n10\n"
+                );
+            } else {
+                // With rebuild=false, corrupted index is preserved
+                // valueCount=11 but countCheck=10 - the index file still has the corruption
+                Assert.assertEquals("Corrupted index should still show 11 entries", 11,
+                        afterRecovery.getRowIds(1).size());
+
+                // Query using the corrupted index throws CairoException due to consistency check
+                try {
+                    server2.assertSql(
+                            "SELECT count() FROM t WHERE sym = 'SYM'",
+                            "count\n10\n"
+                    );
+                    Assert.fail("Expected CairoException due to corrupted index");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "cursor could not consistently read index header [corrupt?]");
+                }
+            }
+        }
+    }
+
+    private void testCheckpointRecoveryWithStaleIndex(boolean rebuildColumnIndexes) throws Exception {
+        // Test that checkpoint recovery correctly handles stale index entries.
+        //
+        // Scenario: User creates checkpoint, then more data is written to the db.
+        // User copies the ENTIRE db directory (with stale index files that contain
+        // entries beyond the checkpoint's row_count). On restore, the index state
+        // depends on the CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES setting:
+        //
+        // - When rebuildColumnIndexes=TRUE: Checkpoint recovery rebuilds the index
+        //   from scratch, so the index immediately has only 10 entries (correct state).
+        //
+        // - When rebuildColumnIndexes=FALSE: The index file on disk retains the stale
+        //   15 entries. However, TableWriter.rollbackIndexes() will clean them up when
+        //   the table is first opened for writing (triggered by the lock file presence).
+        //
+        // This test verifies the index state BEFORE any writes to show the difference.
+
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        File dir1 = temp.newFolder("server1_" + rebuildColumnIndexes);
+        File dir2 = temp.newFolder("server2_" + rebuildColumnIndexes);
+        String tableDirName;
+
+        // Server 1: Create data + checkpoint + more data
+        try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+            server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY YEAR WAL");
+            server1.execute("INSERT INTO t SELECT 'OLD_SYM', x, timestamp_sequence(0, 100000000000) " +
+                    "FROM long_sequence(10)");
+
+            // Wait for WAL to flush and assert full data
+            TestUtils.assertEventually(() -> server1.assertSql(
+                    "SELECT sym, x FROM t ORDER BY x",
+                    "sym\tx\n" +
+                            "OLD_SYM\t1\n" +
+                            "OLD_SYM\t2\n" +
+                            "OLD_SYM\t3\n" +
+                            "OLD_SYM\t4\n" +
+                            "OLD_SYM\t5\n" +
+                            "OLD_SYM\t6\n" +
+                            "OLD_SYM\t7\n" +
+                            "OLD_SYM\t8\n" +
+                            "OLD_SYM\t9\n" +
+                            "OLD_SYM\t10\n"
+            ));
+
+            server1.execute("CHECKPOINT CREATE");
+
+            // Insert MORE of the SAME symbol - this updates the live index
+            // The index now has entries for OLD_SYM pointing to row IDs 0-14
+            server1.execute("INSERT INTO t SELECT 'OLD_SYM', x + 10, timestamp_sequence(1000000000000, 100000000000) " +
+                    "FROM long_sequence(5)");
+
+            // Wait for WAL to flush the new data
+            TestUtils.assertEventually(() -> server1.assertSql(
+                    "SELECT sym, x FROM t ORDER BY x",
+                    "sym\tx\n" +
+                            "OLD_SYM\t1\n" +
+                            "OLD_SYM\t2\n" +
+                            "OLD_SYM\t3\n" +
+                            "OLD_SYM\t4\n" +
+                            "OLD_SYM\t5\n" +
+                            "OLD_SYM\t6\n" +
+                            "OLD_SYM\t7\n" +
+                            "OLD_SYM\t8\n" +
+                            "OLD_SYM\t9\n" +
+                            "OLD_SYM\t10\n" +
+                            "OLD_SYM\t11\n" +
+                            "OLD_SYM\t12\n" +
+                            "OLD_SYM\t13\n" +
+                            "OLD_SYM\t14\n" +
+                            "OLD_SYM\t15\n"
+            ));
+
+            // Get the table directory name for later index reading
+            tableDirName = server1.getEngine().verifyTableName("t").getDirName();
+
+            // Copy entire dir1 to dir2 - this simulates a backup AFTER more writes
+            // The copied db has:
+            // - _txn metadata that says row_count=10 (from checkpoint)
+            // - Index files that have entries for OLD_SYM pointing to row IDs 0-14
+            copyDirectory(dir1, dir2);
+
+            server1.execute("CHECKPOINT RELEASE");
+        }
+
+        // Verify the STALE index state before server2 starts
+        // Key 0 is null symbol, Key 1 is OLD_SYM
+        IndexSnapshot staleIndex = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+        Assert.assertEquals("Stale index should have maxValue=14 (row IDs 0-14)", 14, staleIndex.maxValue);
+        Assert.assertEquals("Stale index should have 2 keys", 2, staleIndex.keyCount);
+        TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), staleIndex.getRowIds(1));
+
+        // Create the trigger file in dir2 to force checkpoint recovery on startup
+        try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+            Files.touch(triggerPath.$());
+        }
+
+        // Server 2: Start with the specified rebuild setting
+        try (TestServerMain server2 = startServerMain(
+                dir2.getAbsolutePath(),
+                CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES.getEnvVarName(), String.valueOf(rebuildColumnIndexes)
+        )) {
+            // Read the index AFTER checkpoint recovery but BEFORE any writes.
+            // This shows the difference between rebuild=true and rebuild=false.
+            IndexSnapshot afterRecoveryIndex = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+
+            if (rebuildColumnIndexes) {
+                // With rebuild=true, checkpoint recovery rebuilt the index from scratch.
+                // It should have exactly 10 entries (matching the checkpoint row count) and maxValue=9.
+                Assert.assertEquals("With rebuild=true, maxValue should be 9", 9, afterRecoveryIndex.maxValue);
+                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecoveryIndex.getRowIds(1));
+            } else {
+                // With rebuild=false, the index file on disk STILL has the stale 15 entries.
+                // They will be cleaned up by TableWriter.rollbackIndexes() on first write.
+                Assert.assertEquals("With rebuild=false, maxValue still stale at 14", 14, afterRecoveryIndex.maxValue);
+                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), afterRecoveryIndex.getRowIds(1));
+            }
+        }
+    }
+
     private void testRecoverCheckpoint(
             String snapshotId,
             String restartedId,
@@ -1964,6 +2307,126 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.checkpointRelease();
         });
+    }
+
+    /**
+     * Snapshot of a bitmap index file contents for testing purposes.
+     * Reads the .k and .v files and extracts all key entries with their row IDs.
+     */
+    private static class IndexSnapshot {
+        private static final long MAX_VALUE_OFFSET = 37L;
+
+        final IntObjHashMap<LongList> entries;
+        final int keyCount;
+        final long maxValue;
+        final long sequence;
+
+        private IndexSnapshot(IntObjHashMap<LongList> entries, int keyCount, long sequence, long maxValue) {
+            this.entries = entries;
+            this.keyCount = keyCount;
+            this.sequence = sequence;
+            this.maxValue = maxValue;
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("IndexSnapshot{keyCount=").append(keyCount)
+                    .append(", sequence=").append(sequence)
+                    .append(", maxValue=").append(maxValue)
+                    .append(", entries={\n");
+            for (int i = 0; i < keyCount; i++) {
+                LongList rowIds = entries.get(i);
+                sb.append("  key ").append(i).append(": ").append(rowIds != null ? rowIds.size() : 0).append(" entries");
+                if (rowIds != null && rowIds.size() > 0) {
+                    sb.append(" [");
+                    for (int j = 0; j < Math.min(rowIds.size(), 20); j++) {
+                        if (j > 0) sb.append(", ");
+                        sb.append(rowIds.get(j));
+                    }
+                    if (rowIds.size() > 20) sb.append(", ...");
+                    sb.append("]");
+                }
+                sb.append("\n");
+            }
+            sb.append("}}");
+            return sb.toString();
+        }
+
+        /**
+         * Reads index from the standard location in a QuestDB data directory.
+         */
+        static IndexSnapshot read(String dbRoot, String tableDirName, String partitionName, String columnName) {
+            File tableDir = new File(dbRoot, "db/" + tableDirName);
+            File partDir = new File(tableDir, partitionName);
+
+            // Find .k file (may have txn suffix)
+            File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith(columnName + ".k"));
+            if (keyFiles == null || keyFiles.length == 0) {
+                throw new IllegalStateException("No key file found for column: " + columnName + " in " + partDir);
+            }
+            File keyFile = keyFiles[0];
+            String vFileName = keyFile.getName().replace(".k", ".v");
+            File valueFile = new File(partDir, vFileName);
+
+            try (
+                    MemoryMR keyMem = Vm.getCMRInstance();
+                    MemoryMR valueMem = Vm.getCMRInstance()
+            ) {
+                FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+
+                try (Path keyPath = new Path().of(keyFile.getAbsolutePath())) {
+                    keyMem.of(ff, keyPath.$(), ff.getMapPageSize(), keyFile.length(),
+                            MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                }
+
+                long sequence = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+                int blockValueCount = keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT);
+                int keyCount = keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                long maxValue = keyMem.getLong(MAX_VALUE_OFFSET);
+
+                try (Path valuePath = new Path().of(valueFile.getAbsolutePath())) {
+                    valueMem.of(ff, valuePath.$(), valueFile.length(), valueFile.length(), MemoryTag.MMAP_DEFAULT);
+                }
+
+                IntObjHashMap<LongList> entries = new IntObjHashMap<>();
+
+                // Read each key entry
+                for (int key = 0; key < keyCount; key++) {
+                    long keyEntryOffset = BitmapIndexUtils.getKeyEntryOffset(key);
+                    long valueCount = keyMem.getLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+                    long firstBlockOffset = keyMem.getLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET);
+
+                    LongList rowIds = new LongList();
+                    if (valueCount > 0 && firstBlockOffset < valueMem.size()) {
+                        long remaining = valueCount;
+                        long blockOffset = firstBlockOffset;
+                        int blockValueCountMod = blockValueCount - 1;
+
+                        while (remaining > 0 && blockOffset < valueMem.size()) {
+                            long cellCount = Math.min(remaining, blockValueCount);
+                            for (int i = 0; i < cellCount; i++) {
+                                long rowId = valueMem.getLong(blockOffset + i * 8L);
+                                rowIds.add(rowId);
+                            }
+                            remaining -= cellCount;
+                            if (remaining > 0) {
+                                // Next block pointer is after the values
+                                long nextBlockPtrOffset = (blockValueCountMod + 1) * 8L + 8;
+                                blockOffset = valueMem.getLong(blockOffset + nextBlockPtrOffset);
+                            }
+                        }
+                    }
+                    entries.put(key, rowIds);
+                }
+
+                return new IndexSnapshot(entries, keyCount, sequence, maxValue);
+            }
+        }
+
+        LongList getRowIds(int key) {
+            return entries.get(key);
+        }
     }
 
     private static class TestFilesFacade extends TestFilesFacadeImpl {

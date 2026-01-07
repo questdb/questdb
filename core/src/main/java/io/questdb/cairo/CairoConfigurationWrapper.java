@@ -1322,6 +1322,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+        return getDelegate().getCheckpointRecoveryRebuildColumnIndexes();
+    }
+
+    @Override
     public boolean isColumnAliasExpressionEnabled() {
         return getDelegate().isColumnAliasExpressionEnabled();
     }

@@ -36,6 +36,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
     CAIRO_CHECKPOINT_RECOVERY_ENABLED("cairo.checkpoint.recovery.enabled"),
+    CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES("cairo.checkpoint.recovery.rebuild.column.indexes"),
     CAIRO_MKDIR_MODE("cairo.mkdir.mode"),
     CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT("cairo.writer.alter.busy.wait.timeout"),
     CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT("cairo.writer.alter.max.wait.timeout"),

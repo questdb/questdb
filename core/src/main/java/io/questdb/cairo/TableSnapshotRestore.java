@@ -70,12 +70,12 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
  * Used by both DatabaseCheckpointAgent and BackupRestoreAgent.
  */
 public class TableSnapshotRestore implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(TableSnapshotRestore.class);
     private static final int BITMAP_INDEX_RESTORE_THREAD_COUNT = Math.max(4, Math.min(16, Runtime.getRuntime().availableProcessors()));
-    private final ExecutorService executor = Executors.newFixedThreadPool(BITMAP_INDEX_RESTORE_THREAD_COUNT);
-    private final ObjList<Future<?>> futures = new ObjList<>();
+    private static final Log LOG = LogFactory.getLog(TableSnapshotRestore.class);
     private final CairoConfiguration configuration;
+    private final ExecutorService executor = Executors.newFixedThreadPool(BITMAP_INDEX_RESTORE_THREAD_COUNT);
     private final FilesFacade ff;
+    private final ObjList<Future<?>> futures = new ObjList<>();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
@@ -240,12 +240,14 @@ public class TableSnapshotRestore implements QuietCloseable {
     /**
      * Rebuilds table files including symbol maps and optionally purges non-attached partitions.
      *
-     * @param tablePath            path to the table directory
-     * @param recoveredSymbolFiles counter for recovered symbol files
+     * @param tablePath                     path to the table directory
+     * @param recoveredSymbolFiles          counter for recovered symbol files
+     * @param rebuildPartitionColumnIndexes whether to rebuild bitmap indexes for symbol columns in partitions
      */
     public void rebuildTableFiles(
             Path tablePath,
-            AtomicInteger recoveredSymbolFiles
+            AtomicInteger recoveredSymbolFiles,
+            boolean rebuildPartitionColumnIndexes
     ) {
         pathTableLen = tablePath.size();
         try {
@@ -272,7 +274,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
 
             // Recreate the bitmap indexes for each indexed column in each partition
-            rebuildBitmapIndexes(tablePath, pathTableLen);
+            if (rebuildPartitionColumnIndexes) {
+                rebuildBitmapIndexes(tablePath, pathTableLen);
+            }
 
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)
@@ -317,7 +321,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             AtomicInteger recoveredTxnFiles,
             AtomicInteger recoveredCVFiles,
             AtomicInteger recoveredWalFiles,
-            AtomicInteger symbolFilesCount
+            AtomicInteger symbolFilesCount,
+            boolean rebuildPartitionColumnIndexes
     ) {
         int srcPathLen = srcPath.size();
         int dstPathLen = dstPath.size();
@@ -329,7 +334,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
 
         // Rebuild symbol files and other table-specific processing
-        rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
+        rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount, rebuildPartitionColumnIndexes);
 
         // Handle WAL-specific processing
         processWalSequencerMetadata(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredWalFiles, -1);
@@ -411,105 +416,110 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
-    /**
-     * Rebuilds symbol files for all symbol columns in the table.
-     *
-     * @param tablePath            path to the table directory
-     * @param recoveredSymbolFiles counter for recovered symbol files
-     * @param pathTableLen         length to trim tablePath to
-     */
-    private void rebuildSymbolFiles(
-            Path tablePath,
-            AtomicInteger recoveredSymbolFiles,
-            int pathTableLen
-    ) {
-        tablePath.trimTo(pathTableLen);
-        final String tablePathStr = tablePath.toString();
-
-        for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
-            final int columnType = tableMetadata.getColumnType(i);
-            if (ColumnType.isSymbol(columnType)) {
-                final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
-                final String columnName = tableMetadata.getColumnName(i);
-                final int writerIndex = tableMetadata.getWriterIndex(i);
-                final int indexKeyBlockCapacity = tableMetadata.getIndexBlockCapacity(i);
-                final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
-
-                futures.add(executor.submit(() -> {
-                    LOG.info().$("rebuilding symbol files [table=").$(tablePathStr)
-                            .$(", column=").$safe(columnName)
-                            .$(", count=").$(cleanSymbolCount)
-                            .I$();
-
-                    SymbolMapUtil localSymbolMapUtil = new SymbolMapUtil();
-                    try (Path localPath = new Path().of(tablePathStr)) {
-                        localSymbolMapUtil.rebuildSymbolFiles(
-                                configuration,
-                                localPath,
-                                columnName,
-                                columnNameTxn,
-                                cleanSymbolCount,
-                                -1,
-                                indexKeyBlockCapacity
-                        );
-                    }
-                    recoveredSymbolFiles.incrementAndGet();
-                }));
-            }
-        }
-    }
-
-    private void rebuildBitmapIndexes(Path tablePath, int pathTableLen) {
-        tablePath.trimTo(pathTableLen);
-
-        final int partitionBy = tableMetadata.getPartitionBy();
-        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
-        final int timestampType = tableMetadata.getTimestampType();
-        final int columnCount = tableMetadata.getColumnCount();
-        final String tablePathStr = tablePath.toString();
-
-        // Iterate through partitions (or single default partition for non-partitioned tables)
-        int partitionCount = isPartitioned ? txWriter.getPartitionCount() : 1;
-
-        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            long partitionTimestamp;
-            long partitionRowCount;
-            long partitionNameTxn;
-
-            if (isPartitioned) {
-                partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
-                partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
-            } else {
-                partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                partitionRowCount = txWriter.getTransientRowCount();
-                partitionNameTxn = -1L;
-            }
-
-            if (partitionRowCount <= 0) {
+    private void rebuildBitmapIndexForNativePartition(int pathTableLen, int columnCount, long partitionTimestamp, long partitionRowCount, long partitionNameTxn, String tablePathStr, int partitionBy, int timestampType) {
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            if (!tableMetadata.isColumnIndexed(colIdx)) {
                 continue;
             }
 
-            if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
-                final long fPartitionTimestamp = partitionTimestamp;
-                final long fPartitionRowCount = partitionRowCount;
-                final long fPartitionNameTxn = partitionNameTxn;
+            // Currently only symbol columns can be indexed
+            assert ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))
+                    : "Only symbol columns can be indexed, found: " + ColumnType.nameOf(tableMetadata.getColumnType(colIdx));
 
-                futures.add(executor.submit(() -> rebuildBitmapIndexForParquetPartition(
-                        tablePathStr,
-                        pathTableLen,
-                        columnCount,
-                        fPartitionTimestamp,
-                        fPartitionRowCount,
-                        fPartitionNameTxn,
-                        parquetSize,
-                        partitionBy,
-                        timestampType
-                )));
-            } else {
-                rebuildBitmapIndexForNativePartition(pathTableLen, columnCount, partitionTimestamp, partitionRowCount, partitionNameTxn, tablePathStr, partitionBy, timestampType);
+            int writerIndex = tableMetadata.getWriterIndex(colIdx);
+            long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+            long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+
+            // Skip if column doesn't exist in this partition (columnTopRaw = -1)
+            if (columnTopRaw < 0 || columnTopRaw >= partitionRowCount) {
+                continue;
             }
+
+            long columnTop = columnTopRaw;
+
+            // Capture variables for lambda
+            final String columnName = tableMetadata.getColumnName(colIdx);
+            final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
+            final long fPartitionTimestamp = partitionTimestamp;
+            final long fPartitionNameTxn = partitionNameTxn;
+            final long fPartitionRowCount = partitionRowCount;
+            final long fColumnTop = columnTop;
+
+            futures.add(executor.submit(() -> rebuildBitmapIndexForNativePartitionColumn(
+                    tablePathStr,
+                    pathTableLen,
+                    columnName,
+                    columnNameTxn,
+                    indexBlockCapacity,
+                    fPartitionTimestamp,
+                    fPartitionNameTxn,
+                    fPartitionRowCount,
+                    fColumnTop,
+                    partitionBy,
+                    timestampType
+            )));
+        }
+    }
+
+    private void rebuildBitmapIndexForNativePartitionColumn(
+            String tablePathStr,
+            int pathTableLen,
+            String columnName,
+            long columnNameTxn,
+            int indexBlockCapacity,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionRowCount,
+            long columnTop,
+            int partitionBy,
+            int timestampType
+    ) {
+        // Since we're using an executor, we can't use Path thread locals.
+        try (
+                Path path = new Path().put(tablePathStr);
+                SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration)
+        ) {
+            path.trimTo(pathTableLen);
+
+            // Set path to partition directory
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            int partitionPathLen = path.size();
+
+            // Check if partition exists
+            if (!ff.exists(path.$())) {
+                LOG.info().$("partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
+                return;
+            }
+
+            LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$(columnName).I$();
+
+            // Remove existing index files if they exist
+            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
+
+            // Create new index files
+            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity);
+
+            // Open the .d file and rebuild the index
+            TableUtils.dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn);
+            long columnDataFd = TableUtils.openRO(ff, path.$(), LOG);
+            try {
+                indexer.configureWriter(path.trimTo(partitionPathLen), columnName, columnNameTxn, columnTop);
+                indexer.index(ff, columnDataFd, columnTop, partitionRowCount);
+            } catch (CairoException e) {
+                LOG.error().$("could not rebuild bitmap index [path=").$(path.trimTo(partitionPathLen))
+                        .$(", column=").$(columnName)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", msg=").$safe(e.getFlyweightMessage())
+                        .I$();
+                throw e;
+            } finally {
+                ff.close(columnDataFd);
+            }
+
+            LOG.info().$("rebuilt bitmap index [path=").$(path.trimTo(partitionPathLen))
+                    .$(", column=").$(columnName)
+                    .$(", rowCount=").$(partitionRowCount - columnTop)
+                    .I$();
         }
     }
 
@@ -574,6 +584,173 @@ public class TableSnapshotRestore implements QuietCloseable {
             } finally {
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
+        }
+    }
+
+    private void rebuildBitmapIndexes(Path tablePath, int pathTableLen) {
+        tablePath.trimTo(pathTableLen);
+
+        final int partitionBy = tableMetadata.getPartitionBy();
+        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
+        final int timestampType = tableMetadata.getTimestampType();
+        final int columnCount = tableMetadata.getColumnCount();
+        final String tablePathStr = tablePath.toString();
+
+        // Iterate through partitions (or single default partition for non-partitioned tables)
+        int partitionCount = isPartitioned ? txWriter.getPartitionCount() : 1;
+
+        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            long partitionTimestamp;
+            long partitionRowCount;
+            long partitionNameTxn;
+
+            if (isPartitioned) {
+                partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+                partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+            } else {
+                partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                partitionRowCount = txWriter.getTransientRowCount();
+                partitionNameTxn = -1L;
+            }
+
+            if (partitionRowCount <= 0) {
+                continue;
+            }
+
+            if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
+                final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+                final long fPartitionTimestamp = partitionTimestamp;
+                final long fPartitionRowCount = partitionRowCount;
+                final long fPartitionNameTxn = partitionNameTxn;
+
+                futures.add(executor.submit(() -> rebuildBitmapIndexForParquetPartition(
+                        tablePathStr,
+                        pathTableLen,
+                        columnCount,
+                        fPartitionTimestamp,
+                        fPartitionRowCount,
+                        fPartitionNameTxn,
+                        parquetSize,
+                        partitionBy,
+                        timestampType
+                )));
+            } else {
+                rebuildBitmapIndexForNativePartition(pathTableLen, columnCount, partitionTimestamp, partitionRowCount, partitionNameTxn, tablePathStr, partitionBy, timestampType);
+            }
+        }
+    }
+
+    /**
+     * Rebuilds symbol files for all symbol columns in the table.
+     *
+     * @param tablePath            path to the table directory
+     * @param recoveredSymbolFiles counter for recovered symbol files
+     * @param pathTableLen         length to trim tablePath to
+     */
+    private void rebuildSymbolFiles(
+            Path tablePath,
+            AtomicInteger recoveredSymbolFiles,
+            int pathTableLen
+    ) {
+        tablePath.trimTo(pathTableLen);
+        final String tablePathStr = tablePath.toString();
+
+        for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
+            final int columnType = tableMetadata.getColumnType(i);
+            if (ColumnType.isSymbol(columnType)) {
+                final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
+                final String columnName = tableMetadata.getColumnName(i);
+                final int writerIndex = tableMetadata.getWriterIndex(i);
+                final int indexKeyBlockCapacity = tableMetadata.getIndexBlockCapacity(i);
+                final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
+
+                futures.add(executor.submit(() -> {
+                    LOG.info().$("rebuilding symbol files [table=").$(tablePathStr)
+                            .$(", column=").$safe(columnName)
+                            .$(", count=").$(cleanSymbolCount)
+                            .I$();
+
+                    SymbolMapUtil localSymbolMapUtil = new SymbolMapUtil();
+                    try (Path localPath = new Path().of(tablePathStr)) {
+                        localSymbolMapUtil.rebuildSymbolFiles(
+                                configuration,
+                                localPath,
+                                columnName,
+                                columnNameTxn,
+                                cleanSymbolCount,
+                                -1,
+                                indexKeyBlockCapacity
+                        );
+                    }
+                    recoveredSymbolFiles.incrementAndGet();
+                }));
+            }
+        }
+    }
+
+    private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
+        // Do not remove detached partitions, they are probably about to be attached
+        // Do not remove wal and sequencer directories either
+        int checkedType = ff.typeDirOrSoftLinkDirNoDots(partitionCleanPath, pathTableLen, pUtf8NameZ, type, utf8Sink);
+        if (checkedType != Files.DT_UNKNOWN &&
+                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
+                !CairoKeywords.isWal(pUtf8NameZ) &&
+                !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
+                !CairoKeywords.isSeq(pUtf8NameZ) &&
+                !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
+        ) {
+            try {
+                long txn;
+                int txnSep = Utf8s.indexOfAscii(utf8Sink, '.');
+                if (txnSep < 0) {
+                    txnSep = utf8Sink.size();
+                    txn = -1;
+                } else {
+                    txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
+                }
+                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
+                if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
+                    return;
+                }
+                if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
+                    LOG.info()
+                            .$("failed to purge unused partition version [path=").$(partitionCleanPath)
+                            .$(", errno=").$(ff.errno())
+                            .I$();
+                } else {
+                    LOG.info().$("purged unused partition version [path=").$(partitionCleanPath).I$();
+                }
+                partitionCleanPath.trimTo(pathTableLen).$();
+            } catch (NumericException ignore) {
+                // not a date?
+                // ignore exception and leave the directory
+                partitionCleanPath.trimTo(pathTableLen);
+                partitionCleanPath.concat(pUtf8NameZ).$();
+                LOG.error().$("invalid partition directory inside table folder: ").$(partitionCleanPath).$();
+            } finally {
+                partitionCleanPath.trimTo(pathTableLen);
+            }
+        }
+    }
+
+    static void createIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, int indexBlockCapacity) {
+        // Create .k file with proper header
+        try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+            LPSZ keyFileName = BitmapIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
+            mem.smallFile(ff, keyFileName, MemoryTag.MMAP_INDEX_WRITER);
+            BitmapIndexWriter.initKeyMemory(mem, indexBlockCapacity);
+        } catch (CairoException e) {
+            LOG.error().$("could not create index key file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(e.getErrno()).I$();
+            throw e;
+        }
+
+        // Create empty .v file
+        LPSZ valueFileName = BitmapIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
+        if (!ff.touch(valueFileName)) {
+            int errno = ff.errno();
+            LOG.error().$("could not create index value file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(errno).I$();
+            throw CairoException.critical(errno).put("could not create index value file [path=").put(path).put(']');
         }
     }
 
@@ -821,121 +998,6 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
-    private void rebuildBitmapIndexForNativePartition(int pathTableLen, int columnCount, long partitionTimestamp, long partitionRowCount, long partitionNameTxn, String tablePathStr, int partitionBy, int timestampType) {
-        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            if (!tableMetadata.isColumnIndexed(colIdx)) {
-                continue;
-            }
-
-            // Currently only symbol columns can be indexed
-            assert ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))
-                    : "Only symbol columns can be indexed, found: " + ColumnType.nameOf(tableMetadata.getColumnType(colIdx));
-
-            int writerIndex = tableMetadata.getWriterIndex(colIdx);
-            long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
-            long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-
-            // Skip if column doesn't exist in this partition (columnTopRaw = -1)
-            if (columnTopRaw < 0 || columnTopRaw >= partitionRowCount) {
-                continue;
-            }
-
-            long columnTop = columnTopRaw;
-
-            // Capture variables for lambda
-            final String columnName = tableMetadata.getColumnName(colIdx);
-            final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
-            final long fPartitionTimestamp = partitionTimestamp;
-            final long fPartitionNameTxn = partitionNameTxn;
-            final long fPartitionRowCount = partitionRowCount;
-            final long fColumnTop = columnTop;
-
-            futures.add(executor.submit(() -> rebuildBitmapIndexForNativePartitionColumn(
-                    tablePathStr,
-                    pathTableLen,
-                    columnName,
-                    columnNameTxn,
-                    indexBlockCapacity,
-                    fPartitionTimestamp,
-                    fPartitionNameTxn,
-                    fPartitionRowCount,
-                    fColumnTop,
-                    partitionBy,
-                    timestampType
-            )));
-        }
-    }
-
-    private void rebuildBitmapIndexForNativePartitionColumn(
-            String tablePathStr,
-            int pathTableLen,
-            String columnName,
-            long columnNameTxn,
-            int indexBlockCapacity,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            long partitionRowCount,
-            long columnTop,
-            int partitionBy,
-            int timestampType
-    ) {
-        // Since we're using an executor, we can't use Path thread locals.
-        try (
-                Path path = new Path().put(tablePathStr);
-                SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration)
-        ) {
-            path.trimTo(pathTableLen);
-
-            // Set path to partition directory
-            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            int partitionPathLen = path.size();
-
-            // Check if partition exists
-            if (!ff.exists(path.$())) {
-                LOG.info().$("partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
-                return;
-            }
-
-            LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$(columnName).I$();
-
-            // Remove existing index files if they exist
-            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
-
-            // Create new index files
-            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity);
-
-            // Open the .d file and rebuild the index
-            TableUtils.dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn);
-            long columnDataFd = TableUtils.openRO(ff, path.$(), LOG);
-            try {
-                indexer.configureWriter(path.trimTo(partitionPathLen), columnName, columnNameTxn, columnTop);
-                indexer.index(ff, columnDataFd, columnTop, partitionRowCount);
-            } catch (CairoException e) {
-                LOG.error().$("could not rebuild bitmap index [path=").$(path.trimTo(partitionPathLen))
-                        .$(", column=").$(columnName)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", msg=").$safe(e.getFlyweightMessage())
-                        .I$();
-                throw e;
-            } finally {
-                ff.close(columnDataFd);
-            }
-
-            LOG.info().$("rebuilt bitmap index [path=").$(path.trimTo(partitionPathLen))
-                    .$(", column=").$(columnName)
-                    .$(", rowCount=").$(partitionRowCount - columnTop)
-                    .I$();
-        }
-    }
-
-    static void removeIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn) {
-        // Remove .k file
-        removeFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
-
-        // Remove .v file
-        removeFile(ff, BitmapIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
-    }
-
     static void removeFile(FilesFacade ff, LPSZ path) {
         if (!ff.removeQuiet(path)) {
             int errno = ff.errno();
@@ -947,68 +1009,11 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
-    static void createIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, int indexBlockCapacity) {
-        // Create .k file with proper header
-        try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-            LPSZ keyFileName = BitmapIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
-            mem.smallFile(ff, keyFileName, MemoryTag.MMAP_INDEX_WRITER);
-            BitmapIndexWriter.initKeyMemory(mem, indexBlockCapacity);
-        } catch (CairoException e) {
-            LOG.error().$("could not create index key file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(e.getErrno()).I$();
-            throw e;
-        }
+    static void removeIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn) {
+        // Remove .k file
+        removeFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
 
-        // Create empty .v file
-        LPSZ valueFileName = BitmapIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
-        if (!ff.touch(valueFileName)) {
-            int errno = ff.errno();
-            LOG.error().$("could not create index value file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(errno).I$();
-            throw CairoException.critical(errno).put("could not create index value file [path=").put(path).put(']');
-        }
-    }
-
-    private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
-        // Do not remove detached partitions, they are probably about to be attached
-        // Do not remove wal and sequencer directories either
-        int checkedType = ff.typeDirOrSoftLinkDirNoDots(partitionCleanPath, pathTableLen, pUtf8NameZ, type, utf8Sink);
-        if (checkedType != Files.DT_UNKNOWN &&
-                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
-                !CairoKeywords.isWal(pUtf8NameZ) &&
-                !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
-                !CairoKeywords.isSeq(pUtf8NameZ) &&
-                !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
-        ) {
-            try {
-                long txn;
-                int txnSep = Utf8s.indexOfAscii(utf8Sink, '.');
-                if (txnSep < 0) {
-                    txnSep = utf8Sink.size();
-                    txn = -1;
-                } else {
-                    txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
-                }
-                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
-                if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
-                    return;
-                }
-                if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
-                    LOG.info()
-                            .$("failed to purge unused partition version [path=").$(partitionCleanPath)
-                            .$(", errno=").$(ff.errno())
-                            .I$();
-                } else {
-                    LOG.info().$("purged unused partition version [path=").$(partitionCleanPath).I$();
-                }
-                partitionCleanPath.trimTo(pathTableLen).$();
-            } catch (NumericException ignore) {
-                // not a date?
-                // ignore exception and leave the directory
-                partitionCleanPath.trimTo(pathTableLen);
-                partitionCleanPath.concat(pUtf8NameZ).$();
-                LOG.error().$("invalid partition directory inside table folder: ").$(partitionCleanPath).$();
-            } finally {
-                partitionCleanPath.trimTo(pathTableLen);
-            }
-        }
+        // Remove .v file
+        removeFile(ff, BitmapIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
     }
 }

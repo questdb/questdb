@@ -734,7 +734,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     recoveredTxnFiles,
                                     recoveredCVFiles,
                                     recoveredWalFiles,
-                                    symbolFilesCount
+                                    symbolFilesCount,
+                                    configuration.getCheckpointRecoveryRebuildColumnIndexes()
                             );
                         }
                     }
