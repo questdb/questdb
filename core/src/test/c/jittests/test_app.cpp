@@ -42,19 +42,19 @@
 
 using namespace asmjit;
 
-static const char *archAsString(uint32_t arch)
+static const char *archAsString(Arch arch)
 {
     switch (arch)
     {
-    case Environment::kArchX86:
+    case Arch::kX86:
         return "X86";
-    case Environment::kArchX64:
+    case Arch::kX64:
         return "X64";
-    case Environment::kArchARM:
+    case Arch::kARM:
         return "A32";
-    case Environment::kArchThumb:
+    case Arch::kThumb:
         return "T32";
-    case Environment::kArchAArch64:
+    case Arch::kAArch64:
         return "A64";
     default:
         return "Unknown";
@@ -65,11 +65,11 @@ int TestApp::handleArgs(int argc, const char *const *argv)
 {
     CmdLine cmd(argc, argv);
 
-    if (cmd.hasArg("--verbose"))
+    if (cmd.has_arg("--verbose"))
         _verbose = true;
-    if (cmd.hasArg("--dump-asm"))
+    if (cmd.has_arg("--dump-asm"))
         _dumpAsm = true;
-    if (cmd.hasArg("--dump-hex"))
+    if (cmd.has_arg("--dump-hex"))
         _dumpHex = true;
 
     return 0;
@@ -81,7 +81,7 @@ void TestApp::showInfo()
            unsigned((ASMJIT_LIBRARY_VERSION >> 16)),
            unsigned((ASMJIT_LIBRARY_VERSION >> 8) & 0xFF),
            unsigned((ASMJIT_LIBRARY_VERSION) & 0xFF),
-           archAsString(Environment::kArchHost));
+           archAsString(Environment::host().arch()));
     printf("  [%s] Verbose (use --verbose to turn verbose output ON)\n", _verbose ? "x" : " ");
     printf("  [%s] DumpAsm (use --dump-asm to turn assembler dumps ON)\n", _dumpAsm ? "x" : " ");
     printf("  [%s] DumpHex (use --dump-hex to dump binary in hexadecimal)\n", _dumpHex ? "x" : " ");
@@ -90,18 +90,16 @@ void TestApp::showInfo()
 
 int TestApp::run()
 {
-    uint32_t kFormatFlags = FormatFlags::kMachineCode |
-                            FormatFlags::kExplainImms |
-                            FormatFlags::kRegCasts |
-                            FormatFlags::kAnnotations |
-                            FormatFlags::kDebugPasses |
-                            FormatFlags::kDebugRA;
+    FormatFlags kFormatFlags = FormatFlags::kMachineCode |
+                               FormatFlags::kExplainImms |
+                               FormatFlags::kRegCasts |
+                               FormatFlags::kPositions;
 
     FileLogger fileLogger(stdout);
-    fileLogger.addFlags(kFormatFlags);
+    fileLogger.add_flags(kFormatFlags);
 
     StringLogger stringLogger;
-    stringLogger.addFlags(kFormatFlags);
+    stringLogger.add_flags(kFormatFlags);
 
     double compileTime = 0;
     double finalizeTime = 0;
@@ -115,16 +113,16 @@ int TestApp::run()
         PerformanceTimer perfTimer;
 
         code.init(runtime.environment());
-        code.setErrorHandler(&errorHandler);
+        code.set_error_handler(&errorHandler);
 
         if (_verbose)
         {
-            code.setLogger(&fileLogger);
+            code.set_logger(&fileLogger);
         }
         else
         {
             stringLogger.clear();
-            code.setLogger(&stringLogger);
+            code.set_logger(&stringLogger);
         }
 
         printf("[Test] %s", test->name());
@@ -142,7 +140,7 @@ int TestApp::run()
         void *func = nullptr;
         Error err = errorHandler._err;
 
-        if (!err)
+        if (err == Error::kOk)
         {
             perfTimer.start();
             err = cc.finalize();
@@ -156,26 +154,28 @@ int TestApp::run()
                 printf("\n");
 
             String sb;
-            Formatter::formatNodeList(sb, kFormatFlags, &cc);
+            FormatOptions formatOptions;
+            formatOptions.set_flags(kFormatFlags);
+            Formatter::format_node_list(sb, formatOptions, &cc);
             printf("%s", sb.data());
         }
 
-        if (err == kErrorOk)
+        if (err == Error::kOk)
             err = runtime.add(&func, &code);
 
-        if (err == kErrorOk && _dumpHex)
+        if (err == Error::kOk && _dumpHex)
         {
             String sb;
-            sb.appendHex((void *)func, code.codeSize());
+            sb.append_hex((void *)func, code.code_size());
             printf("\n (HEX: %s)\n", sb.data());
         }
 
         if (_verbose)
             fflush(stdout);
 
-        if (err == kErrorOk)
+        if (err == Error::kOk)
         {
-            _outputSize += code.codeSize();
+            _outputSize += code.code_size();
 
             StringTmp<128> result;
             StringTmp<128> expect;
@@ -249,12 +249,12 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
 
-        x86::Gp r = questdb::x86::int32_not(cc, a.as<x86::Gpd>());
+        x86::Gp r = questdb::x86::int32_not(cc, a);
         cc.ret(r);
         cc.end_func();
     }
@@ -270,24 +270,24 @@ public:
         resultRet = func(0);
         expectRet = ~0;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(1);
         expectRet = ~1;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(42);
         expectRet = ~42;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -308,14 +308,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int32("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp32("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int32_and(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>());
+        x86::Gp r = questdb::x86::int32_and(cc, a, b);
 
         cc.ret(r);
         cc.end_func();
@@ -332,32 +332,32 @@ public:
         resultRet = func(0, 0);
         expectRet = 0 & 0;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(0, 1);
         expectRet = 0 & 1;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(1, 1);
         expectRet = 1 & 1;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(42, 24);
         expectRet = 42 & 24;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -378,14 +378,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int32("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp32("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int32_or(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>());
+        x86::Gp r = questdb::x86::int32_or(cc, a, b);
         cc.ret(r);
         cc.end_func();
     }
@@ -401,32 +401,32 @@ public:
         resultRet = func(0, 0);
         expectRet = 0 | 0;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(0, 1);
         expectRet = 0 | 1;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(1, 1);
         expectRet = 1 | 1;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(42, 24);
         expectRet = 42 | 24;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -447,12 +447,12 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int64_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int64_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
 
-        x86::Gp r = questdb::x86::int32_to_int64(cc, a.as<x86::Gpd>(), true);
+        x86::Gp r = questdb::x86::int32_to_int64(cc, a, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -474,8 +474,8 @@ public:
         int64_t e4 = std::numeric_limits<int32_t>::max();
         int64_t e5 = std::numeric_limits<int64_t>::min();
 
-        result.assignFormat("ret={%d}, {%d}, {%d}, {%d}, {%lld}", r1, r2, r3, r4, r5);
-        expect.assignFormat("eet={%d}, {%d}, {%d}, {%d}, {%lld}", e1, e2, e3, e4, e5);
+        result.assign_format("ret={%d}, {%d}, {%d}, {%d}, {%lld}", r1, r2, r3, r4, r5);
+        expect.assign_format("eet={%d}, {%d}, {%d}, {%d}, {%lld}", e1, e2, e3, e4, e5);
 
         return (r1 == e1) && (r2 == e2) && (r3 == e3) && (r4 == e4) && (r5 == e5);
     }
@@ -494,12 +494,12 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<float, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<float, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
 
-        x86::Xmm r = questdb::x86::int32_to_float(cc, a.as<x86::Gpd>(), true);
+        x86::Vec r = questdb::x86::int32_to_float(cc, a, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -521,10 +521,10 @@ public:
         float e4 = (float)std::numeric_limits<int32_t>::max();
         float e5 = std::numeric_limits<float>::quiet_NaN();
 
-        result.assignFormat("ret={%g}, {%g}, {%g}, {%g}, {%g}", r1, r2, r3, r4, r5);
-        expect.assignFormat("eet={%g}, {%g}, {%g}, {%g}, {%g}", e1, e2, e3, e4, e5);
+        result.assign_format("ret={%g}, {%g}, {%g}, {%g}, {%g}", r1, r2, r3, r4, r5);
+        expect.assign_format("eet={%g}, {%g}, {%g}, {%g}, {%g}", e1, e2, e3, e4, e5);
 
-        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (r4 == e4) && (isnan(r5) && isnan(e5));
+        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (r4 == e4) && (std::isnan(r5) && std::isnan(e5));
     }
 };
 
@@ -541,12 +541,12 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<double, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<double, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
 
-        x86::Xmm r = questdb::x86::int32_to_double(cc, a.as<x86::Gpd>(), true);
+        x86::Vec r = questdb::x86::int32_to_double(cc, a, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -568,10 +568,10 @@ public:
         double e4 = (double)std::numeric_limits<int32_t>::max();
         double e5 = std::numeric_limits<double>::quiet_NaN();
 
-        result.assignFormat("ret={%g}, {%g}, {%g}, {%g}, {%g}", r1, r2, r3, r4, r5);
-        expect.assignFormat("eet={%g}, {%g}, {%g}, {%g}, {%g}", e1, e2, e3, e4, e5);
+        result.assign_format("ret={%g}, {%g}, {%g}, {%g}, {%g}", r1, r2, r3, r4, r5);
+        expect.assign_format("eet={%g}, {%g}, {%g}, {%g}, {%g}", e1, e2, e3, e4, e5);
 
-        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (r4 == e4) && (isnan(r5) && isnan(e5));
+        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (r4 == e4) && (std::isnan(r5) && std::isnan(e5));
     }
 };
 
@@ -588,12 +588,12 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<float, int64_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<float, int64_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int64("a");
-        cc.set_arg(0, a);
+        x86::Gp a = cc.new_gp64("a");
+        func->set_arg(0, a);
 
-        x86::Xmm r = questdb::x86::int64_to_float(cc, a.as<x86::Gpq>(), true);
+        x86::Vec r = questdb::x86::int64_to_float(cc, a, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -615,10 +615,10 @@ public:
         float e4 = (float)std::numeric_limits<int64_t>::max();
         double e5 = std::numeric_limits<double>::quiet_NaN();
 
-        result.assignFormat("ret={%g}, {%g}, {%g}, {%g}, {%g}", r1, r2, r3, r4, r5);
-        expect.assignFormat("eet={%g}, {%g}, {%g}, {%g}, {%g}", e1, e2, e3, e4, e5);
+        result.assign_format("ret={%g}, {%g}, {%g}, {%g}, {%g}", r1, r2, r3, r4, r5);
+        expect.assign_format("eet={%g}, {%g}, {%g}, {%g}, {%g}", e1, e2, e3, e4, e5);
 
-        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (r4 == e4) && (isnan(r5) && isnan(e5));
+        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (r4 == e4) && (std::isnan(r5) && std::isnan(e5));
     }
 };
 
@@ -635,12 +635,12 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<double, int64_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<double, int64_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int64("a");
-        cc.set_arg(0, a);
+        x86::Gp a = cc.new_gp64("a");
+        func->set_arg(0, a);
 
-        x86::Xmm r = questdb::x86::int64_to_double(cc, a.as<x86::Gpq>(), true);
+        x86::Vec r = questdb::x86::int64_to_double(cc, a, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -662,10 +662,10 @@ public:
         double e4 = std::numeric_limits<int64_t>::max();
         double e5 = std::numeric_limits<double>::quiet_NaN();
 
-        result.assignFormat("ret={%g}, {%g}, {%g}, {%lf}, {%g}", r1, r2, r3, r4, r5);
-        expect.assignFormat("eet={%g}, {%g}, {%g}, {%lf}, {%g}", e1, e2, e3, e4, e5);
+        result.assign_format("ret={%g}, {%g}, {%g}, {%lf}, {%g}", r1, r2, r3, r4, r5);
+        expect.assign_format("eet={%g}, {%g}, {%g}, {%lf}, {%g}", e1, e2, e3, e4, e5);
 
-        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (r4 == e4) && (isnan(r5) && isnan(e5));
+        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (r4 == e4) && (std::isnan(r5) && std::isnan(e5));
     }
 };
 
@@ -682,12 +682,12 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<double, float>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<double, float>(CallConvId::kCDecl));
 
-        x86::Xmm a = cc.newXmmSs("a");
-        cc.set_arg(0, a);
+        x86::Vec a = cc.new_xmm_ss("a");
+        func->set_arg(0, a);
 
-        x86::Xmm r = questdb::x86::float_to_double(cc, a);
+        x86::Vec r = questdb::x86::float_to_double(cc, a);
         cc.ret(r);
         cc.end_func();
     }
@@ -707,10 +707,10 @@ public:
         double e3 = 0;
         double e4 = std::numeric_limits<float>::quiet_NaN();
 
-        result.assignFormat("ret={%g}, {%g}, {%g}, {%lf}, {%g}", r1, r2, r3, r4);
-        expect.assignFormat("eet={%g}, {%g}, {%g}, {%lf}, {%g}", e1, e2, e3, e4);
+        result.assign_format("ret={%g}, {%g}, {%g}, {%lf}, {%g}", r1, r2, r3, r4);
+        expect.assign_format("eet={%g}, {%g}, {%g}, {%lf}, {%g}", e1, e2, e3, e4);
 
-        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (isnan(r4) && isnan(e4));
+        return (r1 == e1) && (r2 == e2) && (r3 == e3) && (std::isnan(r4) && std::isnan(e4));
     }
 };
 
@@ -727,12 +727,12 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int64_t, int64_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int64_t, int64_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int64("a");
-        cc.set_arg(0, a);
+        x86::Gp a = cc.new_gp64("a");
+        func->set_arg(0, a);
 
-        x86::Gp r = questdb::x86::int64_neg(cc, a.as<x86::Gpq>(), true);
+        x86::Gp r = questdb::x86::int64_neg(cc, a, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -748,16 +748,16 @@ public:
         resultRet = func(0);
         expectRet = 0;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(42);
         expectRet = -42;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -765,16 +765,16 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = -LONG_NULL;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(std::numeric_limits<int64_t>::max());
         expectRet = -std::numeric_limits<int64_t>::max();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -795,14 +795,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int64_t, int64_t, int64_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int64("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int64("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp64("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp64("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int64_add(cc, a.as<x86::Gpq>(), b.as<x86::Gpq>(), true);
+        x86::Gp r = questdb::x86::int64_add(cc, a, b, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -818,8 +818,8 @@ public:
         resultRet = func(42, -13);
         expectRet = 42 + -13;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -827,8 +827,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = 42 + LONG_NULL;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -836,8 +836,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = LONG_NULL + 42;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -845,8 +845,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = std::numeric_limits<int64_t>::min() + std::numeric_limits<int64_t>::min();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -854,8 +854,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = std::numeric_limits<int64_t>::min() + std::numeric_limits<int64_t>::max();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -863,8 +863,8 @@ public:
         // overflow test
         expectRet = std::numeric_limits<int64_t>::max() + std::numeric_limits<int64_t>::max();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -885,14 +885,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int64_t, int64_t, int64_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int64("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int64("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp64("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp64("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int64_sub(cc, a.as<x86::Gpq>(), b.as<x86::Gpq>(), true);
+        x86::Gp r = questdb::x86::int64_sub(cc, a, b, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -908,8 +908,8 @@ public:
         resultRet = func(42, -13);
         expectRet = 42 - -13;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -917,8 +917,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = 42 - LONG_NULL;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -926,8 +926,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = LONG_NULL - 42;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -935,8 +935,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = std::numeric_limits<int64_t>::min() - std::numeric_limits<int64_t>::min();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -944,16 +944,16 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = std::numeric_limits<int64_t>::min() - std::numeric_limits<int64_t>::max();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::max());
         expectRet = std::numeric_limits<int64_t>::max() - std::numeric_limits<int64_t>::max();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -974,14 +974,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int64_t, int64_t, int64_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int64("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int64("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp64("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp64("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int64_mul(cc, a.as<x86::Gpq>(), b.as<x86::Gpq>(), true);
+        x86::Gp r = questdb::x86::int64_mul(cc, a, b, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -998,16 +998,16 @@ public:
         // overflow test
         expectRet = -3985256597569472057ll * 3;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(42, -13);
         expectRet = 42 * -13;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1015,8 +1015,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = 42 * LONG_NULL;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1024,8 +1024,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = LONG_NULL * 42;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1033,8 +1033,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = std::numeric_limits<int64_t>::min() * std::numeric_limits<int64_t>::min();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1042,8 +1042,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = std::numeric_limits<int64_t>::min() * std::numeric_limits<int64_t>::max();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1051,8 +1051,8 @@ public:
         // overflow test
         expectRet = std::numeric_limits<int64_t>::max() * std::numeric_limits<int64_t>::max();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1073,14 +1073,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int64_t, int64_t, int64_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int64_t, int64_t, int64_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int64("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int64("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp64("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp64("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int64_div(cc, a.as<x86::Gpq>(), b.as<x86::Gpq>(), true);
+        x86::Gp r = questdb::x86::int64_div(cc, a, b, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -1096,8 +1096,8 @@ public:
         resultRet = func(42, -13);
         expectRet = 42 / -13;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1105,8 +1105,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = 42 / LONG_NULL;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1114,8 +1114,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = LONG_NULL / 42;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1123,8 +1123,8 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = LONG_NULL / LONG_NULL;
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1132,16 +1132,16 @@ public:
         expectRet = LONG_NULL;
         //        expectRet = std::numeric_limits<int64_t>::min() / std::numeric_limits<int64_t>::max();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::max());
         expectRet = std::numeric_limits<int64_t>::max() / std::numeric_limits<int64_t>::max();
 
-        result.assignFormat("ret={%lld}", resultRet);
-        expect.assignFormat("ret={%lld}", expectRet);
+        result.assign_format("ret={%lld}", resultRet);
+        expect.assign_format("ret={%lld}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1162,12 +1162,12 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
 
-        x86::Gp r = questdb::x86::int32_neg(cc, a.as<x86::Gpd>(), true);
+        x86::Gp r = questdb::x86::int32_neg(cc, a, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -1183,16 +1183,16 @@ public:
         resultRet = func(0);
         expectRet = 0;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(42);
         expectRet = -42;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1200,16 +1200,16 @@ public:
         expectRet = INT_NULL;
         //        expectRet = -INT_NULL;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(std::numeric_limits<int32_t>::max());
         expectRet = -std::numeric_limits<int32_t>::max();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1230,14 +1230,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int32("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp32("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int32_add(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>(), true);
+        x86::Gp r = questdb::x86::int32_add(cc, a, b, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -1253,8 +1253,8 @@ public:
         resultRet = func(42, -13);
         expectRet = 42 + -13;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1262,8 +1262,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = 42 + INT_NULL;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1271,8 +1271,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = INT_NULL + 42;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1280,8 +1280,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = std::numeric_limits<int32_t>::min() + std::numeric_limits<int32_t>::min();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1289,16 +1289,16 @@ public:
         expectRet = INT_NULL;
         //                expectRet = std::numeric_limits<int32_t>::min() + std::numeric_limits<int32_t>::max();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max());
         expectRet = std::numeric_limits<int32_t>::max() + std::numeric_limits<int32_t>::max();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1319,14 +1319,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int32("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp32("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int32_sub(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>(), true);
+        x86::Gp r = questdb::x86::int32_sub(cc, a, b, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -1342,8 +1342,8 @@ public:
         resultRet = func(42, -13);
         expectRet = 42 - -13;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1351,8 +1351,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = 42 - INT_NULL;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1360,8 +1360,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = INT_NULL - 42;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1369,8 +1369,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = std::numeric_limits<int32_t>::min() - std::numeric_limits<int32_t>::min();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1378,16 +1378,16 @@ public:
         expectRet = INT_NULL;
         //                expectRet = std::numeric_limits<int32_t>::min() - std::numeric_limits<int32_t>::max();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max());
         expectRet = std::numeric_limits<int32_t>::max() - std::numeric_limits<int32_t>::max();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1408,14 +1408,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int32("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp32("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int32_mul(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>(), true);
+        x86::Gp r = questdb::x86::int32_mul(cc, a, b, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -1431,16 +1431,16 @@ public:
         resultRet = func(-847531048, 3);
         expectRet = static_cast<int32_t>(-847531048 * 3ll);
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(42, -13);
         expectRet = 42 * -13;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1448,8 +1448,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = 42 * INT_NULL;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1457,8 +1457,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = INT_NULL * 42;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1466,8 +1466,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = std::numeric_limits<int32_t>::min() * std::numeric_limits<int32_t>::min();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1475,8 +1475,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = std::numeric_limits<int32_t>::min() * std::numeric_limits<int32_t>::max();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1485,8 +1485,8 @@ public:
         // overflow test
         expectRet = std::numeric_limits<int32_t>::max() * std::numeric_limits<int32_t>::max();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1507,14 +1507,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int32("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp32("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int32_div(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>(), true);
+        x86::Gp r = questdb::x86::int32_div(cc, a, b, true);
         cc.ret(r);
         cc.end_func();
     }
@@ -1530,8 +1530,8 @@ public:
         resultRet = func(42, -13);
         expectRet = 42 / -13;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1539,8 +1539,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = 42 / INT_NULL;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1548,8 +1548,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = INT_NULL / 42;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1557,8 +1557,8 @@ public:
         expectRet = INT_NULL;
         //                expectRet = INT_NULL / INT_NULL;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1566,16 +1566,16 @@ public:
         expectRet = INT_NULL;
         //                expectRet = std::numeric_limits<int32_t>::min() / std::numeric_limits<int32_t>::max();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max());
         expectRet = std::numeric_limits<int32_t>::max() / std::numeric_limits<int32_t>::max();
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1596,14 +1596,14 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t, int32_t>(CallConvId::kCDecl));
 
-        x86::Gp a = cc.new_int32("a");
-        cc.set_arg(0, a);
-        x86::Gp b = cc.new_int32("b");
-        cc.set_arg(1, b);
+        x86::Gp a = cc.new_gp32("a");
+        func->set_arg(0, a);
+        x86::Gp b = cc.new_gp32("b");
+        func->set_arg(1, b);
 
-        x86::Gp r = questdb::x86::int32_eq(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>());
+        x86::Gp r = questdb::x86::int32_eq(cc, a, b);
         cc.ret(r);
         cc.end_func();
     }
@@ -1619,32 +1619,32 @@ public:
         resultRet = func(42, -13);
         expectRet = 0;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(42, INT_NULL);
         expectRet = 0;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(INT_NULL, 42);
         expectRet = 0;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
         resultRet = func(INT_NULL, INT_NULL);
         expectRet = 1;
 
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
+        result.assign_format("ret={%d}", resultRet);
+        expect.assign_format("ret={%d}", expectRet);
         if (resultRet != expectRet)
             return false;
 
@@ -1665,27 +1665,27 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<void, float *, float *, int32_t *>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<void, float *, float *, int32_t *>(CallConvId::kCDecl));
 
-        x86::Gp a_ptr = cc.new_int64("a_ptr");
-        cc.set_arg(0, a_ptr);
-        x86::Gp b_ptr = cc.new_int64("b_ptr");
-        cc.set_arg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_gp64("a_ptr");
+        func->set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_gp64("b_ptr");
+        func->set_arg(1, b_ptr);
 
-        x86::Gp c_ptr = cc.new_int64("c_ptr");
-        cc.set_arg(2, c_ptr);
+        x86::Gp c_ptr = cc.new_gp64("c_ptr");
+        func->set_arg(2, c_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
         x86::Mem cm = ymmword_ptr(c_ptr);
 
-        x86::Ymm adata = cc.newYmm();
-        x86::Ymm bdata = cc.newYmm();
+        x86::Vec adata = cc.new_ymm();
+        x86::Vec bdata = cc.new_ymm();
 
         cc.vmovupd(adata, am);
         cc.vmovupd(bdata, bm);
 
-        x86::Ymm r = questdb::avx2::cmp_eq(cc, data_type_t::f32, adata, bdata);
+        x86::Vec r = questdb::avx2::cmp_eq(cc, data_type_t::f32, adata, bdata);
         cc.vmovdqu(cm, r);
         cc.ret();
 
@@ -1705,8 +1705,8 @@ public:
 
         func(reinterpret_cast<float *>(&a), reinterpret_cast<float *>(&b), reinterpret_cast<int32_t *>(&c));
 
-        result.assignFormat("ret=[{%d}, {%d}, {%d}, {%d}]", c[0], c[1], c[2], c[3]);
-        expect.assignFormat("ret=[{%d}, {%d}, {%d}, {%d}]", e[0], e[1], e[2], e[3]);
+        result.assign_format("ret=[{%d}, {%d}, {%d}, {%d}]", c[0], c[1], c[2], c[3]);
+        expect.assign_format("ret=[{%d}, {%d}, {%d}, {%d}]", e[0], e[1], e[2], e[3]);
 
         for (int i = 0; i < 4; ++i)
         {
@@ -1730,27 +1730,27 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<void, double *, double *, int64_t *>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<void, double *, double *, int64_t *>(CallConvId::kCDecl));
 
-        x86::Gp a_ptr = cc.new_int64("a_ptr");
-        cc.set_arg(0, a_ptr);
-        x86::Gp b_ptr = cc.new_int64("b_ptr");
-        cc.set_arg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_gp64("a_ptr");
+        func->set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_gp64("b_ptr");
+        func->set_arg(1, b_ptr);
 
-        x86::Gp c_ptr = cc.new_int64("c_ptr");
-        cc.set_arg(2, c_ptr);
+        x86::Gp c_ptr = cc.new_gp64("c_ptr");
+        func->set_arg(2, c_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
         x86::Mem cm = ymmword_ptr(c_ptr);
 
-        x86::Ymm adata = cc.newYmm();
-        x86::Ymm bdata = cc.newYmm();
+        x86::Vec adata = cc.new_ymm();
+        x86::Vec bdata = cc.new_ymm();
 
         cc.vmovupd(adata, am);
         cc.vmovupd(bdata, bm);
 
-        x86::Ymm r = questdb::avx2::cmp_eq(cc, data_type_t::f64, adata, bdata);
+        x86::Vec r = questdb::avx2::cmp_eq(cc, data_type_t::f64, adata, bdata);
         cc.vmovdqu(cm, r);
         cc.ret();
 
@@ -1770,8 +1770,8 @@ public:
 
         func(reinterpret_cast<double *>(&a), reinterpret_cast<double *>(&b), reinterpret_cast<int64_t *>(&c));
 
-        result.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
-        expect.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
+        result.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
+        expect.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
 
         for (int i = 0; i < 4; ++i)
         {
@@ -1795,26 +1795,26 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<void, double *, double *, double *>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<void, double *, double *, double *>(CallConvId::kCDecl));
 
-        x86::Gp a_ptr = cc.new_int64("a_ptr");
-        cc.set_arg(0, a_ptr);
-        x86::Gp b_ptr = cc.new_int64("b_ptr");
-        cc.set_arg(1, b_ptr);
-        x86::Gp c_ptr = cc.new_int64("c_ptr");
-        cc.set_arg(2, c_ptr);
+        x86::Gp a_ptr = cc.new_gp64("a_ptr");
+        func->set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_gp64("b_ptr");
+        func->set_arg(1, b_ptr);
+        x86::Gp c_ptr = cc.new_gp64("c_ptr");
+        func->set_arg(2, c_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
         x86::Mem cm = ymmword_ptr(c_ptr);
 
-        x86::Ymm adata = cc.newYmm();
-        x86::Ymm bdata = cc.newYmm();
+        x86::Vec adata = cc.new_ymm();
+        x86::Vec bdata = cc.new_ymm();
 
         cc.vmovupd(adata, am);
         cc.vmovupd(bdata, bm);
 
-        x86::Ymm r = questdb::avx2::div(cc, data_type_t::f64, adata, bdata, false);
+        x86::Vec r = questdb::avx2::div(cc, data_type_t::f64, adata, bdata, false);
         cc.vmovupd(cm, r);
 
         cc.ret();
@@ -1833,12 +1833,12 @@ public:
 
         func(reinterpret_cast<double *>(&a), reinterpret_cast<double *>(&b), reinterpret_cast<double *>(&c));
 
-        result.assignFormat("ret=[{%f}, {%f}, {%f}, {%f}]", c[0], c[1], c[2], c[3]);
-        expect.assignFormat("ret=[{%f}, {%f}, {%f}, {%f}]", e[0], e[1], e[2], e[3]);
+        result.assign_format("ret=[{%f}, {%f}, {%f}, {%f}]", c[0], c[1], c[2], c[3]);
+        expect.assign_format("ret=[{%f}, {%f}, {%f}, {%f}]", e[0], e[1], e[2], e[3]);
 
         for (int i = 0; i < 4; ++i)
         {
-            if (c[i] != e[i] && !isnan(c[i]))
+            if (c[i] != e[i] && !std::isnan(c[i]))
                 return false;
         }
 
@@ -1859,20 +1859,20 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<void, int64_t *, double *>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<void, int64_t *, double *>(CallConvId::kCDecl));
 
-        x86::Gp a_ptr = cc.new_int64("a_ptr");
-        cc.set_arg(0, a_ptr);
-        x86::Gp b_ptr = cc.new_int64("b_ptr");
-        cc.set_arg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_gp64("a_ptr");
+        func->set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_gp64("b_ptr");
+        func->set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
 
-        x86::Ymm adata = cc.newYmm();
+        x86::Vec adata = cc.new_ymm();
 
         cc.vmovdqu(adata, am);
-        x86::Ymm r = questdb::avx2::cvt_ltod(cc, adata, true);
+        x86::Vec r = questdb::avx2::cvt_ltod(cc, adata, true);
         cc.vmovupd(bm, r);
 
         cc.ret();
@@ -1890,12 +1890,12 @@ public:
 
         func(reinterpret_cast<int64_t *>(&a), reinterpret_cast<double *>(&c));
 
-        result.assignFormat("ret=[{%f}, {%f}, {%f}, {%f}]", c[0], c[1], c[2], c[3]);
-        expect.assignFormat("ret=[{%f}, {%f}, {%f}, {%f}]", e[0], e[1], e[2], e[3]);
+        result.assign_format("ret=[{%f}, {%f}, {%f}, {%f}]", c[0], c[1], c[2], c[3]);
+        expect.assign_format("ret=[{%f}, {%f}, {%f}, {%f}]", e[0], e[1], e[2], e[3]);
 
         for (int i = 0; i < 4; ++i)
         {
-            if (c[i] != e[i] && !isnan(c[i]))
+            if (c[i] != e[i] && !std::isnan(c[i]))
                 return false;
         }
         return true;
@@ -1915,22 +1915,22 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<void, int64_t *, int64_t *>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<void, int64_t *, int64_t *>(CallConvId::kCDecl));
 
-        x86::Gp a_ptr = cc.new_int64("a_ptr");
-        cc.set_arg(0, a_ptr);
-        x86::Gp b_ptr = cc.new_int64("b_ptr");
-        cc.set_arg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_gp64("a_ptr");
+        func->set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_gp64("b_ptr");
+        func->set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
 
-        x86::Ymm adata = cc.newYmm();
-        x86::Ymm bdata = cc.newYmm();
+        x86::Vec adata = cc.new_ymm();
+        x86::Vec bdata = cc.new_ymm();
 
         cc.vmovdqu(adata, am);
         cc.vmovdqu(bdata, bm);
-        x86::Ymm r = questdb::avx2::add(cc, data_type_t::i64, adata, bdata, true);
+        x86::Vec r = questdb::avx2::add(cc, data_type_t::i64, adata, bdata, true);
         cc.vmovdqu(bm, r);
 
         cc.ret();
@@ -1948,8 +1948,8 @@ public:
 
         func(reinterpret_cast<int64_t *>(&a), reinterpret_cast<int64_t *>(&c));
 
-        result.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
-        expect.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
+        result.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
+        expect.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
 
         for (int i = 0; i < 4; ++i)
         {
@@ -1973,22 +1973,22 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<void, int64_t *, int64_t *>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<void, int64_t *, int64_t *>(CallConvId::kCDecl));
 
-        x86::Gp a_ptr = cc.new_int64("a_ptr");
-        cc.set_arg(0, a_ptr);
-        x86::Gp b_ptr = cc.new_int64("b_ptr");
-        cc.set_arg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_gp64("a_ptr");
+        func->set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_gp64("b_ptr");
+        func->set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
 
-        x86::Ymm adata = cc.newYmm();
-        x86::Ymm bdata = cc.newYmm();
+        x86::Vec adata = cc.new_ymm();
+        x86::Vec bdata = cc.new_ymm();
 
         cc.vmovdqu(adata, am);
         cc.vmovdqu(bdata, bm);
-        x86::Ymm r = questdb::avx2::cmp_ge(cc, data_type_t::i64, adata, bdata, true);
+        x86::Vec r = questdb::avx2::cmp_ge(cc, data_type_t::i64, adata, bdata, true);
         cc.vmovdqu(bm, r);
 
         cc.ret();
@@ -2006,8 +2006,8 @@ public:
 
         func(reinterpret_cast<int64_t *>(&a), reinterpret_cast<int64_t *>(&c));
 
-        result.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
-        expect.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
+        result.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
+        expect.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
 
         for (int i = 0; i < 4; ++i)
         {
@@ -2031,22 +2031,22 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<void, int64_t *, int64_t *>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<void, int64_t *, int64_t *>(CallConvId::kCDecl));
 
-        x86::Gp a_ptr = cc.new_int64("a_ptr");
-        cc.set_arg(0, a_ptr);
-        x86::Gp b_ptr = cc.new_int64("b_ptr");
-        cc.set_arg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_gp64("a_ptr");
+        func->set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_gp64("b_ptr");
+        func->set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
 
-        x86::Ymm adata = cc.newYmm();
-        x86::Ymm bdata = cc.newYmm();
+        x86::Vec adata = cc.new_ymm();
+        x86::Vec bdata = cc.new_ymm();
 
         cc.vmovdqu(adata, am);
         cc.vmovdqu(bdata, bm);
-        x86::Ymm r = questdb::avx2::cmp_le(cc, data_type_t::i64, adata, bdata, true);
+        x86::Vec r = questdb::avx2::cmp_le(cc, data_type_t::i64, adata, bdata, true);
         cc.vmovdqu(bm, r);
 
         cc.ret();
@@ -2064,8 +2064,8 @@ public:
 
         func(reinterpret_cast<int64_t *>(&a), reinterpret_cast<int64_t *>(&c));
 
-        result.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
-        expect.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
+        result.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
+        expect.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
 
         for (int i = 0; i < 4; ++i)
         {
@@ -2089,23 +2089,23 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int64_t *, int64_t *>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int64_t *, int64_t *>(CallConvId::kCDecl));
 
-        x86::Gp a_ptr = cc.new_int64("a_ptr");
-        cc.set_arg(0, a_ptr);
-        x86::Gp b_ptr = cc.new_int64("b_ptr");
-        cc.set_arg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_gp64("a_ptr");
+        func->set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_gp64("b_ptr");
+        func->set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
 
-        x86::Ymm adata = cc.newYmm();
-        x86::Ymm bdata = cc.newYmm();
+        x86::Vec adata = cc.new_ymm();
+        x86::Vec bdata = cc.new_ymm();
 
         cc.vmovdqu(adata, am);
         cc.vmovdqu(bdata, bm);
 
-        x86::Ymm r = questdb::avx2::cmp_eq(cc, data_type_t::i64, adata, bdata);
+        x86::Vec r = questdb::avx2::cmp_eq(cc, data_type_t::i64, adata, bdata);
         adata = questdb::avx2::compress_register(cc, adata, r);
 
         cc.vmovdqu(bm, adata);
@@ -2126,8 +2126,8 @@ public:
 
         int32_t mask = func(reinterpret_cast<int64_t *>(&a), reinterpret_cast<int64_t *>(&c));
 
-        result.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
-        expect.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
+        result.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
+        expect.assign_format("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
         // i < 2 coz garbage in the rest positions
         for (int i = 0; i < 2; ++i)
         {
@@ -2151,25 +2151,25 @@ public:
     void compile(BaseCompiler &c) override
     {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.add_func(FuncSignatureT<int32_t, int32_t *, int32_t *>(CallConv::kIdHost));
+        auto* func = cc.add_func(FuncSignature::build<int32_t, int32_t *, int32_t *>(CallConvId::kCDecl));
 
-        x86::Gp a_ptr = cc.new_int64("a_ptr");
-        cc.set_arg(0, a_ptr);
-        x86::Gp b_ptr = cc.new_int64("b_ptr");
-        cc.set_arg(1, b_ptr);
+        x86::Gp a_ptr = cc.new_gp64("a_ptr");
+        func->set_arg(0, a_ptr);
+        x86::Gp b_ptr = cc.new_gp64("b_ptr");
+        func->set_arg(1, b_ptr);
 
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
 
-        x86::Ymm adata = cc.newYmm();
-        x86::Ymm bdata = cc.newYmm();
+        x86::Vec adata = cc.new_ymm();
+        x86::Vec bdata = cc.new_ymm();
 
         cc.vmovdqu(adata, am);
         cc.vmovdqu(bdata, bm);
 
-        x86::Ymm r = questdb::avx2::cmp_eq(cc, data_type_t::i32, adata, bdata);
+        x86::Vec r = questdb::avx2::cmp_eq(cc, data_type_t::i32, adata, bdata);
         x86::Gp bits = questdb::avx2::to_bits8(cc, r);
-        x86::Ymm res = questdb::avx2::compress_register(cc, adata, r);
+        x86::Vec res = questdb::avx2::compress_register(cc, adata, r);
 
         cc.vmovdqu(bm, res);
         cc.ret(bits.r32());
@@ -2188,8 +2188,8 @@ public:
 
         int32_t mask = func(reinterpret_cast<int32_t *>(&a), reinterpret_cast<int32_t *>(&c));
 
-        result.assignFormat("ret=[{%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}]", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
-        expect.assignFormat("ret=[{%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}]", e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
+        result.assign_format("ret=[{%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}]", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
+        expect.assign_format("ret=[{%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}]", e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
 
         for (int i = 0; i < 8; ++i)
         {
