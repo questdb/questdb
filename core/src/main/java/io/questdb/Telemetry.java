@@ -128,10 +128,16 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
         }
         String tableName = telemetryType.getTableName();
         boolean shouldDropTable = false;
+        boolean shouldAlterTtl = false;
         try {
             TableToken tableToken = engine.verifyTableName(tableName);
             try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
-                shouldDropTable = (meta.getTtlHoursOrMonths() == 0);
+                int ttl = meta.getTtlHoursOrMonths();
+                if (ttl == 0) {
+                    shouldDropTable = true;
+                } else if (telemetryType.shouldAlterTtl(ttl)) {
+                    shouldAlterTtl = true;
+                }
             }
         } catch (CairoException e) {
             if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
@@ -143,6 +149,11 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                     .compile(sqlExecutionContext)
                     .getOperation()
                     .execute(sqlExecutionContext, null)
+                    .await();
+        } else if (shouldAlterTtl) {
+            compiler.query().$("ALTER TABLE '").$(tableName).$("' SET TTL 4 WEEKS")
+                    .compile(sqlExecutionContext)
+                    .execute(null)
                     .await();
         }
         telemetryType.getCreateSql(compiler.query()).createTable(sqlExecutionContext);
@@ -336,6 +347,10 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
         TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration);
 
         default void logStatus(TableWriter writer, short systemStatus, long micros) {
+        }
+
+        default boolean shouldAlterTtl(int ttl) {
+            return false;
         }
 
         default boolean shouldLogClasses() {

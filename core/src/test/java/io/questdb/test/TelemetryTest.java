@@ -277,6 +277,32 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTelemetryTableUpgrade1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE " + TelemetryTask.TABLE_NAME + " (" +
+                    "created TIMESTAMP, " +
+                    "event SHORT, " +
+                    "origin SHORT" +
+                    ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK");
+
+            String showCreateTable = "SHOW CREATE TABLE " + TelemetryTask.TABLE_NAME;
+            String start = "ddl\n" +
+                    "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
+                    "\tcreated TIMESTAMP,\n" +
+                    "\tevent SHORT,\n" +
+                    "\torigin SHORT\n" +
+                    ") timestamp(created)";
+            String middle = " PARTITION BY DAY TTL 1 WEEK";
+            String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
+
+            assertSql(start + middle + end, showCreateTable);
+            try (TelemetryJob ignore = new TelemetryJob(engine)) {
+                assertSql(start + " PARTITION BY DAY TTL 4 WEEKS" + end, showCreateTable);
+            }
+        });
+    }
+
+    @Test
     public void testTelemetryUpdatesVersion() throws Exception {
         final AtomicReference<String> refVersion = new AtomicReference<>();
         final CairoConfiguration configuration = getCairoConfiguration(refVersion);
@@ -343,7 +369,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     "\tlatency FLOAT\n" +
                     ") timestamp(created)";
             String midOld = " PARTITION BY MONTH";
-            String midNew = " PARTITION BY DAY TTL 4 WEEKS";
+            String midNew = " PARTITION BY DAY TTL 1 WEEK";
             String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
 
             assertSql(start + midOld + end, showCreateTable);
