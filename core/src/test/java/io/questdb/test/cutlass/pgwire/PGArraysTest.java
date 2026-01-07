@@ -771,6 +771,44 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testSendBufferOverflowVarcharWithArray() throws Exception {
+        // Test with large VARCHAR and large array in the same row
+        int elemCount = 100 + bufferSizeRnd.nextInt(900);
+        int varcharSize = 500 + bufferSizeRnd.nextInt(500);
+
+        String arrayLiteral = buildArrayLiteral1d(elemCount);
+        String arrayResult = buildArrayResult1d(elemCount);
+
+        String varcharGenerator = "lpad('', " + varcharSize + ", 'x')::varchar";
+
+        String expectedVarchar = "x".repeat(varcharSize);
+
+        String result = expectedVarchar + "," + arrayResult + '\n';
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            //noinspection SqlSourceToSinkFlow
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + varcharGenerator + " v, " + arrayLiteral + " arr FROM long_sequence(9)")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("n[BIGINT],v[VARCHAR],arr[ARRAY]\n" +
+                                    "1," + result +
+                                    "2," + result +
+                                    "3," + result +
+                                    "4," + result +
+                                    "5," + result +
+                                    "6," + result +
+                                    "7," + result +
+                                    "8," + result +
+                                    "9," + result,
+                            sink, rs);
+                }
+            }
+        }, () -> {
+            recvBufferSize = 4 * (elemCount + varcharSize);
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
     public void testSliceArray() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");

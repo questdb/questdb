@@ -1820,6 +1820,23 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
+        public int putPartial(Utf8Sequence us, int offset, int length) {
+            if (length <= 0) {
+                return 0;
+            }
+            // Write as much as we can fit in the buffer
+            long available = sendBufferLimit - sendBufferPtr - 1; // -1 because checkCapacity uses < not <=
+            int toWrite = (int) Math.min(length, Math.max(0, available));
+            if (toWrite > 0) {
+                for (int i = 0; i < toWrite; i++) {
+                    Unsafe.getUnsafe().putByte(sendBufferPtr + i, us.byteAt(offset + i));
+                }
+                sendBufferPtr += toWrite;
+            }
+            return toWrite;
+        }
+
+        @Override
         public void putZ(CharSequence value) {
             put(value);
             checkCapacity(Byte.BYTES);
