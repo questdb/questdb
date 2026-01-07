@@ -358,10 +358,14 @@ public class GroupByHistogramTest extends AbstractCairoTest {
             for (int i = 1; i <= 50; i++) {
                 dest.recordValue(i);
             }
+            dest.setStartTimeStamp(1000);
+            dest.setEndTimeStamp(2000);
 
             for (int i = 51; i <= 100; i++) {
                 src.recordValue(i);
             }
+            src.setStartTimeStamp(1500);
+            src.setEndTimeStamp(2500);
 
             dest.merge(src);
 
@@ -369,6 +373,8 @@ public class GroupByHistogramTest extends AbstractCairoTest {
             Assert.assertEquals(1, dest.getMinValue());
             Assert.assertEquals(100, dest.getMaxValue());
             Assert.assertEquals(50.5, dest.getMean(), 0.0);
+            Assert.assertEquals(1000, dest.getStartTimeStamp());
+            Assert.assertEquals(2500, dest.getEndTimeStamp());
         }
     }
 
