@@ -24,10 +24,8 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.model.ExecutionModel;
-import org.junit.Before;
 import org.junit.Test;
 
 public class DeclareTest extends AbstractSqlParserTest {
