@@ -25,13 +25,16 @@
 package io.questdb.tasks;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryConfiguration;
 import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.NotNull;
 
 public class TelemetryTask implements AbstractTelemetryTask {
     public static final String NAME = "TABLE TELEMETRY";
@@ -50,7 +53,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
                             "created TIMESTAMP, " +
                             "event SHORT, " +
                             "origin SHORT" +
-                            ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
+                            ") TIMESTAMP(created) PARTITION BY DAY TTL 4 WEEKS BYPASS WAL"
                     );
         }
 
@@ -67,6 +70,11 @@ public class TelemetryTask implements AbstractTelemetryTask {
         @Override
         public ObjectFactory<TelemetryTask> getTaskFactory() {
             return TelemetryTask::new;
+        }
+
+        @Override
+        public TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
+            return configuration.getTelemetryConfiguration();
         }
 
         @Override

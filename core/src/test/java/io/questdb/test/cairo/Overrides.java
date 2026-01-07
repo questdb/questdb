@@ -284,6 +284,8 @@ public class Overrides {
         properties.setProperty(PropertyKey.HTTP_TEXT_ROLL_BUFFER_LIMIT.getPropertyPath(), "16384");
         properties.setProperty(PropertyKey.HTTP_TEXT_MAX_REQUIRED_DELIMITER_STDDEV.getPropertyPath(), "0.35");
         properties.setProperty(PropertyKey.TELEMETRY_QUEUE_CAPACITY.getPropertyPath(), "16");
+        properties.setProperty(PropertyKey.TELEMETRY_WAL_QUEUE_CAPACITY.getPropertyPath(), "16");
+        properties.setProperty(PropertyKey.TELEMETRY_MAT_VIEW_QUEUE_CAPACITY.getPropertyPath(), "16");
         properties.setProperty(PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD.getPropertyPath(), "0");
         properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE.getPropertyPath(), "4096");
         properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath(), "1024");

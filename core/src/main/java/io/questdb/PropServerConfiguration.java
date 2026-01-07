@@ -505,12 +505,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long systemWalWriterEventAppendPageSize;
     private final long systemWriterDataAppendPageSize;
     private final boolean tableTypeConversionEnabled;
-    private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
+    private final TelemetryConfiguration telemetryConfiguration;
     private final long telemetryDbSizeEstimateTimeout;
     private final boolean telemetryDisableCompletely;
-    private final boolean telemetryEnabled;
-    private final boolean telemetryHideTables;
-    private final int telemetryQueueCapacity;
+    private final TelemetryConfiguration telemetryMatViewConfiguration;
+    private final TelemetryConfiguration telemetryWalConfiguration;
     private final CharSequence tempRenamePendingTablePrefix;
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
@@ -1624,11 +1623,25 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATEST_ON_QUEUE_CAPACITY, 32));
-            this.telemetryEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_ENABLED, true);
+
+            // telemetry config
+            boolean telemetryEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_ENABLED, true);
             this.telemetryDisableCompletely = getBoolean(properties, env, PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
-            this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
-            this.telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
+            int telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
+            boolean telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
             this.telemetryDbSizeEstimateTimeout = getMillis(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Micros.SECOND_MILLIS);
+            this.telemetryConfiguration = new PropTelemetryConfiguration(telemetryEnabled, telemetryQueueCapacity, telemetryHideTables);
+
+            boolean telemetryWalEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_WAL_ENABLED, telemetryEnabled);
+            int telemetryWalQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_WAL_QUEUE_CAPACITY, telemetryQueueCapacity));
+            boolean telemetryWalHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_WAL_HIDE_TABLES, telemetryHideTables);
+            this.telemetryWalConfiguration = new PropTelemetryConfiguration(telemetryWalEnabled, telemetryWalQueueCapacity, telemetryWalHideTables);
+
+            boolean telemetryMatViewEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_ENABLED, telemetryEnabled);
+            int telemetryMatViewQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_QUEUE_CAPACITY, telemetryQueueCapacity));
+            boolean telemetryMatViewHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_HIDE_TABLES, telemetryHideTables);
+            this.telemetryMatViewConfiguration = new PropTelemetryConfiguration(telemetryMatViewEnabled, telemetryMatViewQueueCapacity, telemetryMatViewHideTables);
+
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
@@ -3437,6 +3450,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull TelemetryConfiguration getMatViewTelemetryConfiguration() {
+            return telemetryMatViewConfiguration;
+        }
+
+        @Override
         public int getMaxCrashFiles() {
             return cairoMaxCrashFiles;
         }
@@ -4204,6 +4222,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverSize() {
             return walSegmentRolloverSize;
+        }
+
+        @Override
+        public @NotNull TelemetryConfiguration getWalTelemetryConfiguration() {
+            return telemetryWalConfiguration;
         }
 
         @Override
@@ -6084,6 +6107,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropTelemetryConfiguration implements TelemetryConfiguration {
+        private final Boolean enabled;
+        private final boolean hideTable;
+        private final int queueCapacity;
+
+        PropTelemetryConfiguration(boolean enabled, int queueCapacity, boolean hideTable) {
+            this.enabled = enabled;
+            this.queueCapacity = queueCapacity;
+            this.hideTable = hideTable;
+        }
 
         @Override
         public long getDbSizeEstimateTimeout() {
@@ -6097,17 +6129,17 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean getEnabled() {
-            return telemetryEnabled;
+            return enabled;
         }
 
         @Override
         public int getQueueCapacity() {
-            return telemetryQueueCapacity;
+            return queueCapacity;
         }
 
         @Override
         public boolean hideTables() {
-            return telemetryHideTables;
+            return hideTable;
         }
     }
 

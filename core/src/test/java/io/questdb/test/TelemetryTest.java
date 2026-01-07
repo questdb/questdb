@@ -69,6 +69,47 @@ public class TelemetryTest extends AbstractCairoTest {
     private static final String TELEMETRY = TelemetryTask.TABLE_NAME;
 
     @Test
+    public void testPerTypeTelemetryConfiguration() throws Exception {
+        final TelemetryConfiguration walDisabledConfig = new DefaultTelemetryConfiguration() {
+            @Override
+            public boolean getEnabled() {
+                return false;
+            }
+
+            @Override
+            public int getQueueCapacity() {
+                return 32;
+            }
+        };
+
+        final TelemetryConfiguration matViewCustomQueueConfig = new DefaultTelemetryConfiguration() {
+            @Override
+            public int getQueueCapacity() {
+                return 64;
+            }
+        };
+
+        CairoConfiguration testConfig = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull TelemetryConfiguration getMatViewTelemetryConfiguration() {
+                return matViewCustomQueueConfig;
+            }
+
+            @Override
+            public @NotNull TelemetryConfiguration getWalTelemetryConfiguration() {
+                return walDisabledConfig;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(testConfig)) {
+                Assert.assertFalse(engine.getTelemetryWal().isEnabled());
+                Assert.assertTrue(engine.getTelemetryMatView().isEnabled());
+            }
+        });
+    }
+
+    @Test
     public void testTelemetryConfigUpgrade() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)");
@@ -230,7 +271,7 @@ public class TelemetryTest extends AbstractCairoTest {
 
             assertSql(start + middle + end, showCreateTable);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                assertSql(start + " PARTITION BY DAY TTL 1 WEEK" + end, showCreateTable);
+                assertSql(start + " PARTITION BY DAY TTL 4 WEEKS" + end, showCreateTable);
             }
         });
     }
@@ -302,7 +343,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     "\tlatency FLOAT\n" +
                     ") timestamp(created)";
             String midOld = " PARTITION BY MONTH";
-            String midNew = " PARTITION BY DAY TTL 1 WEEK";
+            String midNew = " PARTITION BY DAY TTL 4 WEEKS";
             String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
 
             assertSql(start + midOld + end, showCreateTable);

@@ -25,6 +25,8 @@
 package io.questdb.tasks;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryConfiguration;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.QueryBuilder;
@@ -52,7 +54,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
                                 "rowCount LONG, " +
                                 "physicalRowCount LONG, " +
                                 "latency FLOAT " +
-                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
+                                ") TIMESTAMP(created) PARTITION BY DAY TTL 4 WEEKS BYPASS WAL"
                         );
             }
 
@@ -69,6 +71,11 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             @Override
             public ObjectFactory<TelemetryWalTask> getTaskFactory() {
                 return TelemetryWalTask::new;
+            }
+
+            @Override
+            public TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
+                return configuration.getWalTelemetryConfiguration();
             }
         };
     };

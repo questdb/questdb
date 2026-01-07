@@ -46,7 +46,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.tasks.TelemetryMatViewTask;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.tasks.TelemetryWalTask;
 
 import static io.questdb.TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME;
 
@@ -81,7 +83,9 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
     public static class InformationSchemaTablesCursorFactory extends AbstractRecordCursorFactory {
         private final TableListRecordCursor cursor = new TableListRecordCursor();
-        private final boolean hideTelemetryTables;
+        private final boolean hideMatViewTelemetryTable;
+        private final boolean hideTelemetryTable;
+        private final boolean hideWalTelemetryTable;
         private final CharSequence sysTablePrefix;
         private final CharSequence tempPendingRenameTablePrefix;
         private CairoEngine engine;
@@ -91,7 +95,9 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
             super(metadata);
             tempPendingRenameTablePrefix = configuration.getTempRenamePendingTablePrefix();
             sysTablePrefix = configuration.getSystemTableNamePrefix();
-            hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
+            hideTelemetryTable = configuration.getTelemetryConfiguration().hideTables();
+            hideWalTelemetryTable = configuration.getWalTelemetryConfiguration().hideTables();
+            hideMatViewTelemetryTable = configuration.getMatViewTelemetryConfiguration().hideTables();
         }
 
         @Override
@@ -167,9 +173,11 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
             private boolean isSystemTable(TableToken tableToken) {
                 String tableName = tableToken.getTableName();
-                return (hideTelemetryTables &&
+                return (hideTelemetryTable &&
                         (Chars.equals(tableName, TelemetryTask.TABLE_NAME) ||
                                 Chars.equals(tableName, TELEMETRY_CONFIG_TABLE_NAME)))
+                        || (hideWalTelemetryTable && Chars.equals(tableName, TelemetryWalTask.TABLE_NAME))
+                        || (hideMatViewTelemetryTable && Chars.equals(tableName, TelemetryMatViewTask.TABLE_NAME))
                         || Chars.startsWith(tableName, sysTablePrefix)
                         || Chars.equals(tableName, QueryTracingJob.TABLE_NAME);
             }

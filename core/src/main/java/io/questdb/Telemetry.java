@@ -214,14 +214,14 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     }
 
     private static short getOSClass() {
-        if (Os.isLinux()) {          // 0 - Linux
+        if (Os.isLinux()) {          // -10 - Linux
             return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE;
-        } else if (Os.isOSX()) {     // 1 - OS X
+        } else if (Os.isOSX()) {     // -11 - OS X
             return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 1;
-        } else if (Os.isWindows()) { // 2 - Windows
+        } else if (Os.isWindows()) { // -12 - Windows
             return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 2;
         }
-        // 3 - BSD
+        // -13 - BSD
         return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 3;
     }
 
@@ -333,11 +333,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
 
         ObjectFactory<T> getTaskFactory();
 
-        // TODO(glasstiger): we could tailor the config for each telemetry type
-        //                   we could set different queue sizes or disable telemetry per type, for example
-        default TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
-            return configuration.getTelemetryConfiguration();
-        }
+        TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration);
 
         default void logStatus(TableWriter writer, short systemStatus, long micros) {
         }

@@ -522,6 +522,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull TelemetryConfiguration getMatViewTelemetryConfiguration() {
+        return getDelegate().getMatViewTelemetryConfiguration();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -1294,6 +1299,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverSize() {
         return getDelegate().getWalSegmentRolloverSize();
+    }
+
+    @Override
+    public @NotNull TelemetryConfiguration getWalTelemetryConfiguration() {
+        return getDelegate().getWalTelemetryConfiguration();
     }
 
     @Override

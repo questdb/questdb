@@ -339,6 +339,9 @@ public interface CairoConfiguration {
 
     long getMatViewRowsPerQueryEstimate();
 
+    @NotNull
+    TelemetryConfiguration getMatViewTelemetryConfiguration();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -727,6 +730,9 @@ public interface CairoConfiguration {
      * @see #getWalSegmentRolloverRowCount()
      */
     long getWalSegmentRolloverSize();
+
+    @NotNull
+    TelemetryConfiguration getWalTelemetryConfiguration();
 
     int getWalTxnNotificationQueueCapacity();
 
