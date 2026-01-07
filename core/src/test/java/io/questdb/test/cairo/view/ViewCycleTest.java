@@ -293,12 +293,7 @@ public class ViewCycleTest extends AbstractViewTest {
 
             String sqlBefore = getViewDefinition(VIEW1).getViewSql();
 
-            try {
-                execute("ALTER VIEW " + VIEW1 + " AS (select * from " + VIEW2 + ")");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected: 'view1' cannot depend on 'view2' because 'view2' already depends on 'view1'");
-            }
-
+            assertExceptionNoLeakCheck("ALTER VIEW " + VIEW1 + " AS (select * from " + VIEW2 + ")", 20, "circular dependency detected: 'view1' cannot depend on 'view2' because 'view2' already depends on 'view1'", sqlExecutionContext);
             assertEquals("View definition should remain unchanged after failed ALTER", sqlBefore, getViewDefinition(VIEW1).getViewSql());
 
             String expected = """
