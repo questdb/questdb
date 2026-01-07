@@ -70,7 +70,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "}");
 
             final String query2 = "select ts, k, min(v) as v_min from " + TABLE1 + " where v > 6";
-            alterView(VIEW1, query2, TABLE1);
+            alterView(query2, TABLE1);
 
             assertQueryAndPlan(
                     """
@@ -103,7 +103,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "}");
 
             final String query3 = "select t1.ts, t2.v from " + TABLE1 + " t1 join " + TABLE2 + " t2 on k where t2.ts > '1970-01-01T00:01:00'";
-            alterView(VIEW1, query3, TABLE1, TABLE2);
+            alterView(query3, TABLE1, TABLE2);
 
             assertQueryAndPlan(
                     """
@@ -169,7 +169,7 @@ public class AlterViewTest extends AbstractViewTest {
             createTable(TABLE2);
 
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
-            createOrReplaceView(VIEW1, query1, TABLE1);
+            createOrReplaceView(query1, TABLE1);
 
             assertQueryAndPlan(
                     """
@@ -203,7 +203,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "}");
 
             final String query2 = "select ts, k, min(v) as v_min from " + TABLE1 + " where v > 6";
-            createOrReplaceView(VIEW1, query2, TABLE1);
+            createOrReplaceView(query2, TABLE1);
 
             assertQueryAndPlan(
                     """
@@ -236,7 +236,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "}");
 
             final String query3 = "select t1.ts, t2.v from " + TABLE1 + " t1 join " + TABLE2 + " t2 on k where t2.ts > '1970-01-01T00:01:00'";
-            createOrReplaceView(VIEW1, query3, TABLE1, TABLE2);
+            createOrReplaceView(query3, TABLE1, TABLE2);
 
             assertQueryAndPlan(
                     """

@@ -61,7 +61,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private final boolean readonly;
     private final MemoryMR roMetaMem;
     private final AtomicLong structureVersion = new AtomicLong(-1);
-    private volatile boolean suspended;
     private int tableId;
     private TableToken tableToken;
 
@@ -227,7 +226,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnCount = columnMetadata.size();
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
-        suspended = roMetaMem.getBool(SEQ_META_SUSPENDED);
         this.tableToken = tableToken;
 
         if (readonly) {
@@ -298,7 +296,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         this.tableToken = tableToken;
         this.timestampIndex = tableStruct.getTimestampIndex();
         this.tableId = tableId;
-        this.suspended = false;
 
         for (int i = 0, n = tableStruct.getColumnCount(); i < n; i++) {
             addColumn0(
@@ -392,25 +389,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         timestampIndex = -1;
         tableToken = null;
         tableId = -1;
-        suspended = false;
     }
 
     private void switchTo(Path path, int pathLen) {
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-        syncToMetaFile();
-    }
-
-    boolean isSuspended() {
-        return suspended;
-    }
-
-    void resumeTable() {
-        suspended = false;
-        syncToMetaFile();
-    }
-
-    void suspendTable() {
-        suspended = true;
         syncToMetaFile();
     }
 
@@ -423,7 +405,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
-        metaMem.putBool(suspended);
+        // we do not persist suspended flag anymore, suspended flag is in SeqTxnTracker
+        // field is kept for backwards compatibility only, the value is irrelevant
+        metaMem.putBool(false);
         long checkSum = columnCount;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = getColumnType(i);
