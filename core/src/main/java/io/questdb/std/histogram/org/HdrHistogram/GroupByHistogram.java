@@ -37,10 +37,10 @@ import io.questdb.std.Vect;
  * <p>
  * Buffer layout is the following:
  * <pre>
- * | totalCount | normalizingIndexOffset | maxValue | minNonZeroValue | countsArrayLength | bucketCount | highestTrackableValue | histogram counts array |
- * +------------+------------------------+----------+-----------------+-------------------+-------------+-----------------------+------------------------+
- * |  8 bytes   |        4 bytes         | 8 bytes  |    8 bytes      |     4 bytes       |   4 bytes   |       8 bytes         | countsArrayLength * 8  |
- * +------------+------------------------+----------+-----------------+-------------------+-------------+-----------------------+------------------------+
+ * | totalCount | normalizingIndexOffset | maxValue | minNonZeroValue | countsArrayLength | bucketCount | highestTrackableValue | startTimeStampMsec | endTimeStampMsec | histogram counts array |
+ * +------------+------------------------+----------+-----------------+-------------------+-------------+-----------------------+--------------------+------------------+------------------------+
+ * |  8 bytes   |        4 bytes         | 8 bytes  |    8 bytes      |     4 bytes       |   4 bytes   |       8 bytes         |      8 bytes       |     8 bytes      | countsArrayLength * 8  |
+ * +------------+------------------------+----------+-----------------+-------------------+-------------+-----------------------+--------------------+------------------+------------------------+
  * </pre>
  */
 public class GroupByHistogram extends AbstractHistogram implements Mutable {
@@ -51,7 +51,9 @@ public class GroupByHistogram extends AbstractHistogram implements Mutable {
     private static final long countsArrayLengthPosition = minNonZeroValuePosition + Long.BYTES;
     private static final long bucketCountPosition = countsArrayLengthPosition + Integer.BYTES;
     private static final long highestTrackableValuePosition = bucketCountPosition + Integer.BYTES;
-    private static final long headerSize = highestTrackableValuePosition + Long.BYTES;
+    private static final long startTimeStampMsecPosition = highestTrackableValuePosition + Long.BYTES;
+    private static final long endTimeStampMsecPosition = startTimeStampMsecPosition + Long.BYTES;
+    private static final long headerSize = endTimeStampMsecPosition + Long.BYTES;
 
     private GroupByAllocator allocator;
     private long ptr;
@@ -155,8 +157,32 @@ public class GroupByHistogram extends AbstractHistogram implements Mutable {
     }
 
     @Override
+    public long getStartTimeStamp() {
+        return (ptr != 0) ? Unsafe.getUnsafe().getLong(ptr + startTimeStampMsecPosition) : Long.MAX_VALUE;
+    }
+
+    @Override
+    public void setStartTimeStamp(long timeStampMsec) {
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putLong(ptr + startTimeStampMsecPosition, timeStampMsec);
+        }
+    }
+
+    @Override
+    public long getEndTimeStamp() {
+        return (ptr != 0) ? Unsafe.getUnsafe().getLong(ptr + endTimeStampMsecPosition) : 0;
+    }
+
+    @Override
+    public void setEndTimeStamp(long timeStampMsec) {
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putLong(ptr + endTimeStampMsecPosition, timeStampMsec);
+        }
+    }
+
+    @Override
     public void setIntegerToDoubleValueConversionRatio(double ratio) {
-        nonConcurrentSetIntegerToDoubleValueConversionRatio(ratio);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -265,6 +291,8 @@ public class GroupByHistogram extends AbstractHistogram implements Mutable {
         Unsafe.getUnsafe().putInt(ptr + countsArrayLengthPosition, countsArrayLength);
         Unsafe.getUnsafe().putInt(ptr + bucketCountPosition, bucketCount);
         Unsafe.getUnsafe().putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
+        Unsafe.getUnsafe().putLong(ptr + startTimeStampMsecPosition, Long.MAX_VALUE);
+        Unsafe.getUnsafe().putLong(ptr + endTimeStampMsecPosition, 0);
 
         Vect.memset(ptr + headerSize, countsArrayLength * 8L, 0);
     }
