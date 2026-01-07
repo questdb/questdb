@@ -10078,6 +10078,101 @@ create table tab as (
     }
 
     @Test
+    public void testSendBufferOverflowVarchar() throws Exception {
+        // Similar to testSendBufferOverflowVanilla in PGArraysTest, but for VARCHAR.
+        // VARCHAR values larger than the send buffer should be sent in multiple parts.
+        final int sndBufSize = 512;
+        final int varcharSize = sndBufSize * 3; // VARCHAR larger than send buffer
+
+        StringSink expectedValue = new StringSink();
+        expectedValue.repeat("x", varcharSize);
+
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT x n, lpad('', " + varcharSize + ", 'x')::varchar v FROM long_sequence(3)")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    for (int i = 1; i <= 3; i++) {
+                        Assert.assertTrue("Expected row " + i, rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        String actualValue = rs.getString(2);
+                        Assert.assertEquals("VARCHAR length mismatch at row " + i, varcharSize, actualValue.length());
+                        TestUtils.assertEquals("VARCHAR content mismatch at row " + i, expectedValue, actualValue);
+                    }
+                    Assert.assertFalse("Expected no more rows", rs.next());
+                }
+            }
+        }, () -> {
+            sendBufferSize = sndBufSize;
+            recvBufferSize = varcharSize * 2;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
+    public void testSendBufferOverflowVarcharExactBufferSize() throws Exception {
+        // Test VARCHAR that is exactly the buffer size
+        final int sndBufSize = 512;
+        // Account for message header (~7 bytes) and column header (4 bytes)
+        final int varcharSize = sndBufSize - 20;
+
+        StringSink expectedValue = new StringSink();
+        expectedValue.repeat("x", varcharSize);
+
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT x n, lpad('', " + varcharSize + ", 'x')::varchar v FROM long_sequence(5)")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    for (int i = 1; i <= 5; i++) {
+                        Assert.assertTrue("Expected row " + i, rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        Assert.assertEquals("VARCHAR length mismatch at row " + i, varcharSize, rs.getString(2).length());
+                        TestUtils.assertContains("VARCHAR content mismatch at row " + i, expectedValue, rs.getString(2));
+                    }
+                    Assert.assertFalse("Expected no more rows", rs.next());
+                }
+            }
+        }, () -> {
+            sendBufferSize = sndBufSize;
+            recvBufferSize = varcharSize * 4;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
+    public void testSendBufferOverflowVarcharMultipleColumns() throws Exception {
+        // Test with multiple large VARCHAR columns in the same row
+        final int sndBufSize = 512;
+        final int varcharSize = sndBufSize * 2;
+
+        StringSink expectedA = new StringSink();
+        StringSink expectedB = new StringSink();
+        expectedA.repeat("a", varcharSize);
+        expectedB.repeat("b", varcharSize);
+
+
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT x n, lpad('', " + varcharSize + ", 'a')::varchar v1, lpad('', " + varcharSize + ", 'b')::varchar v2 FROM long_sequence(2)")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    for (int i = 1; i <= 2; i++) {
+                        Assert.assertTrue("Expected row " + i, rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        Assert.assertEquals("v1 length mismatch at row " + i, varcharSize, rs.getString(2).length());
+                        TestUtils.assertContains("v1 content mismatch at row " + i, expectedA, rs.getString(2));
+                        Assert.assertEquals("v2 length mismatch at row " + i, varcharSize, rs.getString(3).length());
+                        TestUtils.assertContains("v2 content mismatch at row " + i, expectedB, rs.getString(3));
+                    }
+                    Assert.assertFalse("Expected no more rows", rs.next());
+                }
+            }
+        }, () -> {
+            sendBufferSize = sndBufSize;
+            recvBufferSize = varcharSize * 6;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
     public void testSendingBufferWhenFlushMessageReceivedHex() throws Exception {
         assertHexScriptAltCreds(
                 """
@@ -10630,8 +10725,9 @@ create table tab as (
         final int sndBufSize = 256 + bufferSizeRnd.nextInt(256);
 
         // varchar, string, binary
+        // only string and binary can be oversized (varchar supports fragmented sending)
         int[] sizes = {sndBufSize / 4, sndBufSize / 2, sndBufSize - 4 - 1};
-        sizes[bufferSizeRnd.nextInt(sizes.length)] = 2 * sndBufSize;
+        sizes[1 + bufferSizeRnd.nextInt(2)] = 2 * sndBufSize;
 
         final int varcharSize = sizes[0];
         final int stringSize = sizes[1];
@@ -10668,9 +10764,7 @@ create table tab as (
 
     @Test
     public void testSmallSendBufferBigColumnValueNotEnoughSpace2() throws Exception {
-        Assume.assumeFalse(walEnabled);
-
-        final int varcharSize = 600;
+        final int strSize = 600;
 
         final String ddl = "create table x as (" +
                 "select " +
@@ -10694,10 +10788,10 @@ create table tab as (
                 "  rnd_symbol(4,4,4,2) f18," +
                 "  rnd_str(10,10,0) f19," +
                 "  rnd_bin(16,16,0) f20," +
-                "  rnd_varchar(" + varcharSize + "," + varcharSize + ",2) f21," +
+                "  rnd_str(" + strSize + "," + strSize + ",0) f21," +
                 "  timestamp_sequence(500000000000L,100000000L) ts " +
                 "from long_sequence(1)" +
-                ") timestamp (ts) partition by DAY";
+                ") timestamp (ts) partition by DAY WAL";
 
         // We need to be in full control of binary/text format since the buffer size depends on that,
         // so we run just a few combinations.
@@ -10708,13 +10802,14 @@ create table tab as (
                 (connection, binary, mode, port) -> {
                     try (Statement statement = connection.createStatement()) {
                         statement.executeUpdate(ddl);
+                        drainWalQueue();
 
                         try (PreparedStatement stmt = connection.prepareStatement("x")) {
                             try (ResultSet ignore = stmt.executeQuery()) {
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1788]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1063]");
                         }
                     }
                 },
@@ -10728,13 +10823,14 @@ create table tab as (
                 (connection, binary, mode, port) -> {
                     try (Statement statement = connection.createStatement()) {
                         statement.executeUpdate(ddl);
+                        drainWalQueue();
 
                         try (PreparedStatement stmt = connection.prepareStatement("x")) {
                             try (ResultSet ignore = stmt.executeQuery()) {
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1629]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1024]");
                         }
                     }
                 },
