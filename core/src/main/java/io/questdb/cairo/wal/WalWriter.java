@@ -376,18 +376,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         goActive(Long.MAX_VALUE);
     }
 
-    public boolean goActive(long maxStructureVersion) {
+    public void goActive(long maxStructureVersion) {
         try {
             applyMetadataChangeLog(maxStructureVersion);
-            return true;
         } catch (CairoException e) {
+            distressed = true;
+            if (e.isTableDropped()) {
+                // Throw table dropped exception as is
+                throw e;
+            }
             LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .$(", ex=").$((Throwable) e)
                     .$(", errno=").$(e.getErrno())
                     .I$();
-            distressed = true;
-            return false;
+            throw e;
         }
     }
 
