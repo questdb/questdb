@@ -10764,9 +10764,7 @@ create table tab as (
 
     @Test
     public void testSmallSendBufferBigColumnValueNotEnoughSpace2() throws Exception {
-        Assume.assumeFalse(walEnabled);
-
-        final int varcharSize = 600;
+        final int strSize = 600;
 
         final String ddl = "create table x as (" +
                 "select " +
@@ -10790,10 +10788,10 @@ create table tab as (
                 "  rnd_symbol(4,4,4,2) f18," +
                 "  rnd_str(10,10,0) f19," +
                 "  rnd_bin(16,16,0) f20," +
-                "  rnd_varchar(" + varcharSize + "," + varcharSize + ",2) f21," +
+                "  rnd_str(" + strSize + "," + strSize + ",0) f21," +
                 "  timestamp_sequence(500000000000L,100000000L) ts " +
                 "from long_sequence(1)" +
-                ") timestamp (ts) partition by DAY";
+                ") timestamp (ts) partition by DAY WAL";
 
         // We need to be in full control of binary/text format since the buffer size depends on that,
         // so we run just a few combinations.
@@ -10804,13 +10802,14 @@ create table tab as (
                 (connection, binary, mode, port) -> {
                     try (Statement statement = connection.createStatement()) {
                         statement.executeUpdate(ddl);
+                        drainWalQueue();
 
                         try (PreparedStatement stmt = connection.prepareStatement("x")) {
                             try (ResultSet ignore = stmt.executeQuery()) {
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1788]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1063]");
                         }
                     }
                 },
@@ -10824,13 +10823,14 @@ create table tab as (
                 (connection, binary, mode, port) -> {
                     try (Statement statement = connection.createStatement()) {
                         statement.executeUpdate(ddl);
+                        drainWalQueue();
 
                         try (PreparedStatement stmt = connection.prepareStatement("x")) {
                             try (ResultSet ignore = stmt.executeQuery()) {
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1629]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1024]");
                         }
                     }
                 },
