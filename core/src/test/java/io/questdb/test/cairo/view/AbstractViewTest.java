@@ -139,12 +139,12 @@ class AbstractViewTest extends AbstractCairoTest {
         return engine.getViewGraph().getViewDefinition(viewToken);
     }
 
-    void alterView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
-        execute("ALTER VIEW " + viewName + " AS (" + viewQuery + ")");
+    void alterView(String viewQuery, String... expectedDependencies) throws SqlException {
+        execute("ALTER VIEW " + VIEW1 + " AS (" + viewQuery + ")");
         drainWalAndViewQueues();
-        assertViewDefinition(viewName, viewQuery, expectedDependencies);
-        assertViewDefinitionFile(viewName, viewQuery);
-        assertViewState(viewName);
+        assertViewDefinition(VIEW1, viewQuery, expectedDependencies);
+        assertViewDefinitionFile(VIEW1, viewQuery);
+        assertViewState(VIEW1);
     }
 
     void assertQueryAndPlan(String expected, String query, String expectedPlan, String... expectedReferencedViews) throws Exception {
@@ -185,12 +185,12 @@ class AbstractViewTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
     }
 
-    void createOrReplaceView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
-        execute("CREATE OR REPLACE VIEW " + viewName + " AS (" + viewQuery + ")");
+    void createOrReplaceView(String viewQuery, String... expectedDependencies) throws SqlException {
+        execute("CREATE OR REPLACE VIEW " + VIEW1 + " AS (" + viewQuery + ")");
         drainWalAndViewQueues();
-        assertViewDefinition(viewName, viewQuery, expectedDependencies);
-        assertViewDefinitionFile(viewName, viewQuery);
-        assertViewState(viewName);
+        assertViewDefinition(VIEW1, viewQuery, expectedDependencies);
+        assertViewDefinitionFile(VIEW1, viewQuery);
+        assertViewState(VIEW1);
     }
 
     void createTable(String tableName) throws SqlException {
