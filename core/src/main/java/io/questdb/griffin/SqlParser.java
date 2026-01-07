@@ -500,6 +500,9 @@ public class SqlParser {
             viewModel.copyDeclsFrom(model, false);
             model.setNestedModel(viewModel);
             model.setNestedModelIsSubQuery(true);
+            if (model.getAlias() == null) {
+                model.setAlias(literal(viewName, viewPosition));
+            }
         } finally {
             viewsBeingCompiled.remove(viewName);
         }

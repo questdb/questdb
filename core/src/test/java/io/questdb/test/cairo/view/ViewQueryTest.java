@@ -1646,6 +1646,37 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testJoinWithViewAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (" +
+                    "ts TIMESTAMP, " +
+                    "ticker SYMBOL, " +
+                    "price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 'AAPL', 150.0), " +
+                    "('2024-01-01T00:01:00.000000Z', 'GOOG', 140.0), " +
+                    "('2024-01-01T00:02:00.000000Z', 'MSFT', 151.0)");
+            drainWalQueue();
+
+            createView(VIEW1, "SELECT ts, ticker FROM x WHERE price > 145", "x");
+
+            // view1 contains: AAPL (150.0) and MSFT (151.0), but not GOOG (140.0)
+            // LEFT JOIN should match: AAPL->AAPL, GOOG->NULL, MSFT->MSFT
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tticker\tprice
+                            2024-01-01T00:00:00.000000Z\tAAPL\t150.0
+                            \tGOOG\t140.0
+                            2024-01-01T00:02:00.000000Z\tMSFT\t151.0
+                            """,
+                    "SELECT view1.ts, x.ticker, x.price FROM x LEFT JOIN view1 ON ticker",
+                    null, false, false
+            );
+        });
+    }
+
+    @Test
     public void testDeclareTypeCoercion() throws Exception {
         // Test: Type coercion - string declared, used in numeric/other contexts
         assertMemoryLeak(() -> {
