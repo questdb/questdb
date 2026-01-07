@@ -86,12 +86,6 @@ public class TelemetryTask implements AbstractTelemetryTask {
         }
 
         @Override
-        public boolean shouldAlterTtl(int ttl) {
-            // 4 WEEKS
-            return ttl != 4 * 7 * 24;
-        }
-
-        @Override
         public boolean shouldLogClasses() {
             return true;
         }

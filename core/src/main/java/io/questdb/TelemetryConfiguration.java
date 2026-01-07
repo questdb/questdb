@@ -25,13 +25,15 @@
 package io.questdb;
 
 public interface TelemetryConfiguration {
+    long getDbSizeEstimateTimeout();
+
     boolean getDisableCompletely();
 
     boolean getEnabled();
 
     int getQueueCapacity();
 
-    boolean hideTables();
+    int getTtlWeeks();
 
-    long getDbSizeEstimateTimeout();
+    boolean hideTables();
 }

@@ -72,6 +72,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private RingQueue<T> telemetryQueue;
     private SCSequence telemetrySubSeq;
     private TelemetryType<T> telemetryType;
+    private int walWeeks;
     private TableWriter writer;
     private final QueueConsumer<T> taskConsumer = this::consume;
 
@@ -88,6 +89,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
             telemetrySubSeq = new SCSequence();
             telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
+            walWeeks = telemetryConfiguration.getTtlWeeks();
         }
     }
 
@@ -135,7 +137,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                 int ttl = meta.getTtlHoursOrMonths();
                 if (ttl == 0) {
                     shouldDropTable = true;
-                } else if (telemetryType.shouldAlterTtl(ttl)) {
+                } else if (walWeeks > 0 && ttl != walWeeks * 24 * 7) {
                     shouldAlterTtl = true;
                 }
             }
@@ -151,7 +153,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                     .execute(sqlExecutionContext, null)
                     .await();
         } else if (shouldAlterTtl) {
-            compiler.query().$("ALTER TABLE '").$(tableName).$("' SET TTL 4 WEEKS")
+            compiler.query().$("ALTER TABLE '").$(tableName).$("' SET TTL ").$(walWeeks).$(" WEEKS")
                     .compile(sqlExecutionContext)
                     .execute(null)
                     .await();
@@ -347,10 +349,6 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
         TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration);
 
         default void logStatus(TableWriter writer, short systemStatus, long micros) {
-        }
-
-        default boolean shouldAlterTtl(int ttl) {
-            return false;
         }
 
         default boolean shouldLogClasses() {

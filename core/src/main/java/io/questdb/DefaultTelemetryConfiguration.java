@@ -48,6 +48,11 @@ public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     }
 
     @Override
+    public int getTtlWeeks() {
+        return 4;
+    }
+
+    @Override
     public boolean hideTables() {
         return false;
     }

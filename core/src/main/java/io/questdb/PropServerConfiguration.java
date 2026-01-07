@@ -1630,17 +1630,20 @@ public class PropServerConfiguration implements ServerConfiguration {
             int telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
             boolean telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
             this.telemetryDbSizeEstimateTimeout = getMillis(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Micros.SECOND_MILLIS);
-            this.telemetryConfiguration = new PropTelemetryConfiguration(telemetryEnabled, telemetryQueueCapacity, telemetryHideTables);
+            int telemetryTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_TABLE_TTL_WEEKS, 4);
+            this.telemetryConfiguration = new PropTelemetryConfiguration(telemetryEnabled, telemetryQueueCapacity, telemetryHideTables, telemetryTableTTLWeeks);
 
             boolean telemetryWalEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_WAL_ENABLED, telemetryEnabled);
             int telemetryWalQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_WAL_QUEUE_CAPACITY, telemetryQueueCapacity));
             boolean telemetryWalHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_WAL_HIDE_TABLES, telemetryHideTables);
-            this.telemetryWalConfiguration = new PropTelemetryConfiguration(telemetryWalEnabled, telemetryWalQueueCapacity, telemetryWalHideTables);
+            int telemetryWalTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_WAL_TABLE_TTL_WEEKS, 1);
+            this.telemetryWalConfiguration = new PropTelemetryConfiguration(telemetryWalEnabled, telemetryWalQueueCapacity, telemetryWalHideTables, telemetryTableTTLWeeks);
 
             boolean telemetryMatViewEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_ENABLED, telemetryEnabled);
             int telemetryMatViewQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_QUEUE_CAPACITY, telemetryQueueCapacity));
             boolean telemetryMatViewHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_HIDE_TABLES, telemetryHideTables);
-            this.telemetryMatViewConfiguration = new PropTelemetryConfiguration(telemetryMatViewEnabled, telemetryMatViewQueueCapacity, telemetryMatViewHideTables);
+            int telemetryMatViewTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_TABLE_TTL_WEEKS, 1);
+            this.telemetryMatViewConfiguration = new PropTelemetryConfiguration(telemetryMatViewEnabled, telemetryMatViewQueueCapacity, telemetryMatViewHideTables, telemetryTableTTLWeeks);
 
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
@@ -6110,11 +6113,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         private final Boolean enabled;
         private final boolean hideTable;
         private final int queueCapacity;
+        private final int ttlWeeks;
 
-        PropTelemetryConfiguration(boolean enabled, int queueCapacity, boolean hideTable) {
+        PropTelemetryConfiguration(boolean enabled, int queueCapacity, boolean hideTable, int ttlWeeks) {
             this.enabled = enabled;
             this.queueCapacity = queueCapacity;
             this.hideTable = hideTable;
+            this.ttlWeeks = ttlWeeks;
         }
 
         @Override
@@ -6135,6 +6140,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueueCapacity() {
             return queueCapacity;
+        }
+
+        @Override
+        public int getTtlWeeks() {
+            return ttlWeeks;
         }
 
         @Override
