@@ -208,7 +208,8 @@ if (OS_LINUX)
     target_link_libraries(liburing INTERFACE ${SOURCE_DIR}/src/liburing.a)
 endif ()
 
-add_library(questdb SHARED ${SOURCE_FILES} ${ASMJIT_SRC})
+add_library(questdb SHARED ${SOURCE_FILES})
+target_link_libraries(questdb asmjit::asmjit)
 
 set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused-parameter;-fPIC;-fno-rtti;-fno-exceptions")
 
