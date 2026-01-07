@@ -87,6 +87,7 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
         return base.getBaseColumnName(idx);
     }
 
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base.getBaseFactory();
     }
