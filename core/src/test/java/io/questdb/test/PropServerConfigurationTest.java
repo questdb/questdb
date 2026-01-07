@@ -477,6 +477,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWalPurgeInterval());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getWalRecreateDistressedSequencerAttempts());
         Assert.assertEquals(120_000, configuration.getCairoConfiguration().getInactiveWalWriterTTL());
+        Assert.assertEquals(60_000, configuration.getCairoConfiguration().getInactiveViewWalWriterTTL());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
         Assert.assertTrue(configuration.getCairoConfiguration().getWalEnabledDefault());
@@ -2087,6 +2088,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(333, configuration.getWalPurgeInterval());
         Assert.assertEquals(13, configuration.getWalRecreateDistressedSequencerAttempts());
         Assert.assertEquals(333303, configuration.getInactiveWalWriterTTL());
+        Assert.assertEquals(3330, configuration.getInactiveViewWalWriterTTL());
         Assert.assertEquals(128, configuration.getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.isWalSupported());
         Assert.assertTrue(configuration.getWalEnabledDefault());
@@ -2094,6 +2096,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(23, configuration.getWalApplyLookAheadTransactionCount());
         Assert.assertFalse(configuration.isTableTypeConversionEnabled());
         Assert.assertEquals(100, configuration.getWalWriterPoolMaxSegments());
+        Assert.assertEquals(50, configuration.getViewWalWriterPoolMaxSegments());
         Assert.assertEquals(120, configuration.getO3LagCalculationWindowsSize());
         Assert.assertEquals(100, configuration.getWalSegmentRolloverRowCount());
         Assert.assertEquals(42.2d, configuration.getWalLagRowsMultiplier(), 0.00001);

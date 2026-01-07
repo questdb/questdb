@@ -269,6 +269,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String ilpProtoTransports;
     private final int inactiveReaderMaxOpenPartitions;
     private final long inactiveReaderTTL;
+    private final long inactiveViewWalWriterTTL;
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
     private final int indexValueBlockSize;
@@ -531,6 +532,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long viewCompilerWorkerNapThreshold;
     private final long viewCompilerWorkerSleepThreshold;
     private final long viewCompilerWorkerYieldThreshold;
+    private final int viewWalWriterPoolMaxSegments;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
@@ -1436,6 +1438,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inactiveWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_INACTIVE_WRITER_TTL, 600_000);
             this.recentWriteTrackerCapacity = getInt(properties, env, PropertyKey.CAIRO_RECENT_WRITE_TRACKER_CAPACITY, 1000);
             this.inactiveWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_WAL_INACTIVE_WRITER_TTL, 120_000);
+            this.inactiveViewWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_VIEW_WAL_INACTIVE_WRITER_TTL, 60_000);
             this.ttlUseWallClock = getBoolean(properties, env, PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, true);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
@@ -1443,6 +1446,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
             this.poolSegmentSize = getIntSize(properties, env, PropertyKey.DEBUG_CAIRO_POOL_SEGMENT_SIZE, 32);
             this.walWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS, 10);
+            this.viewWalWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_VIEW_WAL_WRITER_POOL_MAX_SEGMENTS, 4);
             this.spinLockTimeout = getMillis(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000);
             this.sqlCharacterStoreCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_CAPACITY, 1024);
             this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY, 64);
@@ -3362,6 +3366,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getInactiveViewWalWriterTTL() {
+            return inactiveViewWalWriterTTL;
+        }
+
+        @Override
         public long getInactiveWalWriterTTL() {
             return inactiveWalWriterTTL;
         }
@@ -4164,6 +4173,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getViewLexerPoolCapacity() {
             return sqlViewLexerPoolCapacity;
+        }
+
+        @Override
+        public int getViewWalWriterPoolMaxSegments() {
+            return viewWalWriterPoolMaxSegments;
         }
 
         @Override

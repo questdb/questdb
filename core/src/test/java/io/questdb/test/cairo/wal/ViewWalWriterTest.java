@@ -90,20 +90,6 @@ public class ViewWalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDoubleClose() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table base_table (id int, name string)");
-            execute("create view test_view as select * from base_table");
-
-            TableToken viewToken = engine.verifyTableName("test_view");
-
-            ViewWalWriter writer = engine.getViewWalWriter(viewToken);
-            writer.close();
-            writer.close(); // Second close should be safe
-        });
-    }
-
-    @Test
     public void testEmptyDependencyColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base_table (id int, name string)");

@@ -427,6 +427,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveViewWalWriterTTL() {
+        return getDelegate().getInactiveViewWalWriterTTL();
+    }
+
+    @Override
     public long getInactiveWriterTTL() {
         return getDelegate().getInactiveWriterTTL();
     }
@@ -1314,6 +1319,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalWriterPoolMaxSegments() {
         return getDelegate().getWalWriterPoolMaxSegments();
+    }
+
+    @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return getDelegate().getViewWalWriterPoolMaxSegments();
     }
 
     @Override

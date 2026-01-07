@@ -699,6 +699,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.apply.parallel.sql.enabled\tQDB_CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.enabled.default\tQDB_CAIRO_WAL_ENABLED_DEFAULT\tfalse\tconf\tfalse\tfalse\n" +
                                     "cairo.wal.inactive.writer.ttl\tQDB_CAIRO_WAL_INACTIVE_WRITER_TTL\t120000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.view.wal.inactive.writer.ttl\tQDB_CAIRO_VIEW_WAL_INACTIVE_WRITER_TTL\t60000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.max.lag.txn.count\tQDB_CAIRO_WAL_MAX_LAG_TXN_COUNT\t-1\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.max.segment.file.descriptors.cache\tQDB_CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE\t30\tdefault\tfalse\tfalse\n" +
                                     "cairo.file.async.munmap.enabled\tQDB_CAIRO_FILE_ASYNC_MUNMAP_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
@@ -713,6 +714,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.txn.notification.queue.capacity\tQDB_CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.writer.data.append.page.size\tQDB_CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.writer.pool.max.segments\tQDB_CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.view.wal.writer.pool.max.segments\tQDB_CAIRO_VIEW_WAL_WRITER_POOL_MAX_SEGMENTS\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.sequencer.check.interval\tQDB_CAIRO_WAL_SEQUENCER_CHECK_INTERVAL\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.writer.event.append.page.size\tQDB_CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.work.steal.timeout.nanos\tQDB_CAIRO_WORK_STEAL_TIMEOUT_NANOS\t10000\tdefault\tfalse\tfalse\n" +

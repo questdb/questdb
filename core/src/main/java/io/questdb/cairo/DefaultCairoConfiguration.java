@@ -447,6 +447,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveViewWalWriterTTL() {
+        return 30_000;
+    }
+
+    @Override
     public long getInactiveWalWriterTTL() {
         return 60_000;
     }
@@ -1250,6 +1255,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getViewLexerPoolCapacity() {
         return 8;
+    }
+
+    @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return 3;
     }
 
     @Override

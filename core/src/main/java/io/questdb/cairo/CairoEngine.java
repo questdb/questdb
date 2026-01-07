@@ -50,6 +50,7 @@ import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.pool.SequencerMetadataPool;
 import io.questdb.cairo.pool.SqlCompilerPool;
 import io.questdb.cairo.pool.TableMetadataPool;
+import io.questdb.cairo.pool.ViewWalWriterPool;
 import io.questdb.cairo.pool.WalWriterPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
@@ -186,6 +187,7 @@ public class CairoEngine implements Closeable, WriterSource {
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
+    private final ViewWalWriterPool viewWalWriterPool;
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
@@ -216,6 +218,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
+            this.viewWalWriterPool = new ViewWalWriterPool(configuration, this);
             this.telemetry = createTelemetry(TelemetryTask.TELEMETRY, configuration);
             this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
@@ -515,12 +518,13 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b3 = tableSequencerAPI.releaseAll();
         boolean b4 = sequencerMetadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
-        boolean b6 = tableMetadataPool.releaseAll();
+        boolean b6 = viewWalWriterPool.releaseAll();
+        boolean b7 = tableMetadataPool.releaseAll();
         scoreboardPool.clear();
         partitionOverwriteControl.clear();
         frameFactory.clear();
         copyExportContext.clear();
-        return b1 & b2 & b3 & b4 & b5 & b6;
+        return b1 & b2 & b3 & b4 & b5 & b6 & b7;
     }
 
     @SuppressWarnings("unused")
@@ -538,6 +542,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(sequencerMetadataPool);
         Misc.free(tableMetadataPool);
         Misc.free(walWriterPool);
+        Misc.free(viewWalWriterPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
@@ -1140,15 +1145,22 @@ public class CairoEngine implements Closeable, WriterSource {
         return viewStateStore;
     }
 
-    public @NotNull ViewWalWriter getViewWalWriter(TableToken tableToken) {
-        verifyTableToken(tableToken);
-        // todo: add a pool
-        return new ViewWalWriter(
-                getConfiguration(),
-                tableToken,
-                getTableSequencerAPI(),
-                getWalDirectoryPolicy()
-        );
+    public @NotNull ViewWalWriter getViewWalWriter(TableToken viewToken) {
+        verifyTableToken(viewToken);
+        try {
+            return viewWalWriterPool.get(viewToken);
+        } catch (CairoException e) {
+            if (isTableDropped(viewToken)) {
+                throw CairoException.tableDropped(viewToken);
+            }
+            // Check if the view is concurrently dropped after token verification
+            TableToken tt = tableNameRegistry.getTableToken(viewToken.getTableName());
+            if (tt == null || TableNameRegistry.isLocked(tt)) {
+                // Throw view does not exist exception to indicate that the view is gone.
+                throw CairoException.viewDoesNotExist(viewToken.getTableName());
+            }
+            throw e;
+        }
     }
 
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
@@ -1180,7 +1192,7 @@ public class CairoEngine implements Closeable, WriterSource {
             return walWriterPool.get(tableToken);
         } catch (CairoException e) {
             if (isTableDropped(tableToken)) {
-                // If table is dropped we can have some file not fund errors,
+                // If table is dropped we can have some file not found errors,
                 // throw table dropped exception instead to make it clear what happened.
                 throw CairoException.tableDropped(tableToken);
             }
@@ -1396,6 +1408,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableNameRegistry.dropTable(tableToken)) {
             readerPool.notifyDropped(tableToken, false);
             walWriterPool.notifyDropped(tableToken, false);
+            viewWalWriterPool.notifyDropped(tableToken, false);
             tableMetadataPool.notifyDropped(tableToken, false);
             sequencerMetadataPool.notifyDropped(tableToken, false);
             final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
@@ -1500,6 +1513,7 @@ public class CairoEngine implements Closeable, WriterSource {
         useful |= sequencerMetadataPool.releaseInactive();
         useful |= tableMetadataPool.releaseInactive();
         useful |= walWriterPool.releaseInactive();
+        useful |= viewWalWriterPool.releaseInactive();
         useful |= scoreboardPool.releaseInactive();
         return useful;
     }
@@ -1525,6 +1539,7 @@ public class CairoEngine implements Closeable, WriterSource {
         tableSequencerAPI.purgeTxnTracker(tableToken.getDirName());
         readerPool.notifyDropped(tableToken, true);
         walWriterPool.notifyDropped(tableToken, true);
+        viewWalWriterPool.notifyDropped(tableToken, true);
         tableMetadataPool.notifyDropped(tableToken, true);
         sequencerMetadataPool.notifyDropped(tableToken, true);
         PoolListener listener = getPoolListener();
@@ -1690,6 +1705,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.writerPool.setPoolListener(poolListener);
         this.readerPool.setPoolListener(poolListener);
         this.walWriterPool.setPoolListener(poolListener);
+        this.viewWalWriterPool.setPoolListener(poolListener);
     }
 
     @TestOnly

@@ -296,6 +296,8 @@ public interface CairoConfiguration {
 
     long getInactiveWalWriterTTL();
 
+    long getInactiveViewWalWriterTTL();
+
     long getInactiveWriterTTL();
 
     int getIndexValueBlockSize();
@@ -735,6 +737,8 @@ public interface CairoConfiguration {
     int getWalTxnNotificationQueueCapacity();
 
     int getWalWriterPoolMaxSegments();
+
+    int getViewWalWriterPoolMaxSegments();
 
     int getWindowColumnPoolCapacity();
 

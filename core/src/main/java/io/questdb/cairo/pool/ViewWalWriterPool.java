@@ -26,68 +26,63 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
+public class ViewWalWriterPool extends AbstractMultiTenantPool<ViewWalWriterPool.ViewWalWriterTenant> {
 
     private final CairoEngine engine;
 
-    public WalWriterPool(CairoConfiguration configuration, CairoEngine engine) {
-        super(configuration, configuration.getWalWriterPoolMaxSegments(), configuration.getInactiveWalWriterTTL());
+    public ViewWalWriterPool(CairoConfiguration configuration, CairoEngine engine) {
+        super(configuration, configuration.getViewWalWriterPoolMaxSegments(), configuration.getInactiveViewWalWriterTTL());
         this.engine = engine;
     }
 
     @Override
     protected byte getListenerSrc() {
-        return PoolListener.SRC_WAL_WRITER;
+        return PoolListener.SRC_VIEW_WAL_WRITER;
     }
 
     @Override
-    protected WalWriterTenant newTenant(
+    protected ViewWalWriterTenant newTenant(
             TableToken tableToken,
-            Entry<WalWriterTenant> rootEntry,
-            Entry<WalWriterTenant> entry,
+            Entry<ViewWalWriterTenant> rootEntry,
+            Entry<ViewWalWriterTenant> entry,
             int index,
-            @Nullable ResourcePoolSupervisor<WalWriterTenant> supervisor
+            @Nullable ResourcePoolSupervisor<ViewWalWriterTenant> supervisor
     ) {
-        return new WalWriterTenant(
+        return new ViewWalWriterTenant(
                 this,
                 rootEntry,
                 entry,
                 index,
                 tableToken,
                 engine.getTableSequencerAPI(),
-                engine.getDdlListener(tableToken),
-                engine.getWalDirectoryPolicy(),
-                engine.getRecentWriteTracker()
+                engine.getWalDirectoryPolicy()
         );
     }
 
-    public static class WalWriterTenant extends WalWriter implements PoolTenant<WalWriterTenant> {
+    public static class ViewWalWriterTenant extends ViewWalWriter implements PoolTenant<ViewWalWriterTenant> {
         private final int index;
-        private final Entry<WalWriterTenant> rootEntry;
-        private Entry<WalWriterTenant> entry;
-        private AbstractMultiTenantPool<WalWriterTenant> pool;
+        private final Entry<ViewWalWriterTenant> rootEntry;
+        private Entry<ViewWalWriterTenant> entry;
+        private AbstractMultiTenantPool<ViewWalWriterTenant> pool;
 
-        private WalWriterTenant(
-                AbstractMultiTenantPool<WalWriterTenant> pool,
-                Entry<WalWriterTenant> rootEntry,
-                Entry<WalWriterTenant> entry,
+        private ViewWalWriterTenant(
+                AbstractMultiTenantPool<ViewWalWriterTenant> pool,
+                Entry<ViewWalWriterTenant> rootEntry,
+                Entry<ViewWalWriterTenant> entry,
                 int index,
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
-                DdlListener ddlListener,
-                WalDirectoryPolicy walDirectoryPolicy,
-                RecentWriteTracker recentWriteTracker
+                WalDirectoryPolicy walDirectoryPolicy
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy, recentWriteTracker);
+            super(pool.getConfiguration(), tableToken, tableSequencerAPI, walDirectoryPolicy);
             this.pool = pool;
             this.rootEntry = rootEntry;
             this.entry = entry;
@@ -97,8 +92,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void close() {
             if (isOpen()) {
-                rollback();
-                final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
+                final AbstractMultiTenantPool<ViewWalWriterTenant> pool = this.pool;
                 if (pool != null && entry != null) {
                     if (!isDistressed()) {
                         if (pool.returnToPool(this)) {
@@ -118,7 +112,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         }
 
         @Override
-        public Entry<WalWriterTenant> getEntry() {
+        public Entry<ViewWalWriterTenant> getEntry() {
             return entry;
         }
 
@@ -128,7 +122,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         }
 
         @Override
-        public Entry<WalWriterTenant> getRootEntry() {
+        public Entry<ViewWalWriterTenant> getRootEntry() {
             return rootEntry;
         }
 
@@ -139,23 +133,16 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         }
 
         @Override
-        public void refresh(@Nullable ResourcePoolSupervisor<WalWriterTenant> supervisor) {
-            try {
-                goActive();
-            } catch (Throwable ex) {
-                close();
-                throw ex;
-            }
+        public void refresh(@Nullable ResourcePoolSupervisor<ViewWalWriterTenant> supervisor) {
         }
 
         @Override
         public void toSink(@NotNull CharSink<?> sink) {
-            sink.put("WalWriterTenant{index=").put(index).put(", tableToken=").put(getTableToken()).put('}');
+            sink.put("ViewWalWriterTenant{index=").put(index).put(", tableToken=").put(getTableToken()).put('}');
         }
 
         @Override
         public void updateTableToken(TableToken ignoredTableToken) {
-            // goActive() will update table token
         }
     }
 }
