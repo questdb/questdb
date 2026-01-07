@@ -151,19 +151,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
-    public void addViewColumn(
-            CharSequence columnName,
-            int columnType
-    ) {
-        addColumn0(
-                columnName,
-                columnType,
-                0,
-                false,
-                false
-        );
-    }
-
     public void changeColumnType(
             CharSequence columnName,
             int columnType,
@@ -247,10 +234,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     public void removeColumn(CharSequence columnName) {
         TableUtils.removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
         structureVersion++;
-    }
-
-    public void removeViewColumn(CharSequence columnName) {
-        TableUtils.removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
     }
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {
