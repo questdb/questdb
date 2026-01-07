@@ -178,7 +178,7 @@ public class HTTPSerialParquetExporter {
                         tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
                     }
                     if (tableToken != null) {
-                        cairoEngine.dropTableOrMatView(Path.getThreadLocal(""), tableToken);
+                        cairoEngine.dropTableOrViewOrMatView(Path.getThreadLocal(""), tableToken);
                     }
                     copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 } catch (CairoException e) {
