@@ -25,8 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -71,7 +71,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.TelemetrySystemEvent.*;
+import static io.questdb.TelemetryEvent.*;
 import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
@@ -593,7 +593,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
 
         try {
-            telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            telemetryFacade.store(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             LogRecord logRecord = LOG.critical().$("job failed, table suspended [table=").$(tableToken);
             if (lastAttemptSeqTxn > -1) {
                 logRecord.$(", seqTxn=").$(lastAttemptSeqTxn);

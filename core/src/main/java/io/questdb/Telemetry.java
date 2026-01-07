@@ -94,7 +94,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     public void clear() {
         if (writer != null) {
             consumeAll();
-            telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_DOWN, clock.getTicks());
+            telemetryType.logStatus(writer, TelemetryEvent.SYSTEM_DOWN, clock.getTicks());
             writer = Misc.free(writer);
         }
     }
@@ -157,7 +157,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                     .$(']').$();
         }
 
-        telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_UP, clock.getTicks());
+        telemetryType.logStatus(writer, TelemetryEvent.SYSTEM_UP, clock.getTicks());
 
         if (telemetryType.shouldLogClasses()) {
             telemetryType.logStatus(writer, getOSClass(), clock.getTicks());
@@ -194,54 +194,54 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private static short getCpuClass() {
         final int cpus = Runtime.getRuntime().availableProcessors();
         if (cpus <= 4) {         // 0 - 1-4 cores
-            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE;
+            return TelemetryEvent.SYSTEM_CPU_CLASS_BASE;
         } else if (cpus <= 8) {  // 1 - 5-8 cores
-            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 1;
+            return TelemetryEvent.SYSTEM_CPU_CLASS_BASE - 1;
         } else if (cpus <= 16) { // 2 - 9-16 cores
-            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 2;
+            return TelemetryEvent.SYSTEM_CPU_CLASS_BASE - 2;
         } else if (cpus <= 32) { // 3 - 17-32 cores
-            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 3;
+            return TelemetryEvent.SYSTEM_CPU_CLASS_BASE - 3;
         } else if (cpus <= 64) { // 4 - 33-64 cores
-            return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 4;
+            return TelemetryEvent.SYSTEM_CPU_CLASS_BASE - 4;
         }
         // 5 - 65+ cores
-        return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 5;
+        return TelemetryEvent.SYSTEM_CPU_CLASS_BASE - 5;
     }
 
     private static short getEnvTypeClass() {
         final int type = Os.getEnvironmentType();
-        return (short) (TelemetrySystemEvent.SYSTEM_ENV_TYPE_BASE - type);
+        return (short) (TelemetryEvent.SYSTEM_ENV_TYPE_BASE - type);
     }
 
     private static short getOSClass() {
         if (Os.isLinux()) {          // -10 - Linux
-            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE;
+            return TelemetryEvent.SYSTEM_OS_CLASS_BASE;
         } else if (Os.isOSX()) {     // -11 - OS X
-            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 1;
+            return TelemetryEvent.SYSTEM_OS_CLASS_BASE - 1;
         } else if (Os.isWindows()) { // -12 - Windows
-            return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 2;
+            return TelemetryEvent.SYSTEM_OS_CLASS_BASE - 2;
         }
         // -13 - BSD
-        return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE - 3;
+        return TelemetryEvent.SYSTEM_OS_CLASS_BASE - 3;
     }
 
     private static short getTableCountClass(CairoEngine engine) {
         final long tableCount = engine.getTableTokenCount(false);
         if (tableCount <= 10) {          // 0 - 0-10 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE;
+            return TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE;
         } else if (tableCount <= 25) {   // 1 - 11-25 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 1;
+            return TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 1;
         } else if (tableCount <= 50) {   // 2 - 26-50 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 2;
+            return TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 2;
         } else if (tableCount <= 100) {  // 3 - 51-100 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 3;
+            return TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 3;
         } else if (tableCount <= 250) {  // 4 - 101-250 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 4;
+            return TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 4;
         } else if (tableCount <= 1000) { // 5 - 251-1000 tables
-            return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 5;
+            return TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 5;
         }
         // 6 - 1001+ tables
-        return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 6;
+        return TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 6;
     }
 
     private short getDBSizeClass(CairoConfiguration configuration) {
@@ -253,30 +253,30 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             dbSize = getDirSize(configuration.getFilesFacade(), path, true, Misc.getThreadLocalSink());
             if (hasTimedOut()) {
                 LOG.info().$("Unable to estimate DB size, disk scanning timed out").$();
-                return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
+                return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
             }
         } catch (Throwable e) {
             LOG.info().$("Unable to estimate DB size, error=").$(e).$();
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
+            return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
         }
 
         if (dbSize <= 10 * Numbers.SIZE_1GB) {          // 0 - <10GB
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
+            return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE;
         } else if (dbSize <= 50 * Numbers.SIZE_1GB) {   // 1 - (10GB,50GB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 1;
+            return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE - 1;
         } else if (dbSize <= 100 * Numbers.SIZE_1GB) {  // 2 - (50GB,100GB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 2;
+            return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE - 2;
         } else if (dbSize <= 500 * Numbers.SIZE_1GB) {  // 3 - (100GB,500GB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 3;
+            return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE - 3;
         } else if (dbSize <= Numbers.SIZE_1TB) {        // 4 - (500GB,1TB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 4;
+            return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE - 4;
         } else if (dbSize <= 5 * Numbers.SIZE_1TB) {    // 5 - (1TB,5TB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 5;
+            return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE - 5;
         } else if (dbSize <= 10 * Numbers.SIZE_1TB) {   // 6 - (5TB,10TB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 6;
+            return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE - 6;
         }
         // 7 - >10TB
-        return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 7;
+        return TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE - 7;
     }
 
     private long getDirSize(FilesFacade ff, Path path, boolean topLevel, StringSink sink) {

@@ -205,7 +205,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             if (factory != null) {
                 // queries with sensitive info are not cached, doLog = true
                 try {
-                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
+                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP);
                     executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
                     LOG.info().$safe(e.getFlyweightMessage()).$();
@@ -488,7 +488,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
+                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 state.setQueryType(cc.getType());
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query

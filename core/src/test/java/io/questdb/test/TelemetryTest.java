@@ -29,8 +29,8 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryJob;
-import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CursorPrinter;
@@ -60,8 +60,8 @@ import org.junit.Test;
 import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
-import static io.questdb.TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
+import static io.questdb.TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE;
+import static io.questdb.TelemetryEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
 import static io.questdb.test.TelemetryTest.DBSizeTestType.*;
 
 public class TelemetryTest extends AbstractCairoTest {
@@ -207,11 +207,11 @@ public class TelemetryTest extends AbstractCairoTest {
                 refreshTablesInBaseEngine();
 
                 HashSet<Short> expectedClasses = new HashSet<>();
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE);
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_ENV_TYPE_BASE);
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE);
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE);
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_OS_CLASS_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_ENV_TYPE_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_CPU_CLASS_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE);
 
                 HashSet<Short> actualClasses = new HashSet<>();
                 try (

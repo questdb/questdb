@@ -24,13 +24,20 @@
 
 package io.questdb;
 
-public final class TelemetrySystemEvent {
+public final class TelemetryEvent {
+    public static final short HTTP_SETTINGS_READ = 113;
+    public static final short HTTP_SETTINGS_WRITE = 114;
+    public static final short HTTP_STATIC_CONTENT = 115;
+    public static final short HTTP_TEXT_IMPORT = 112;
     public static final short ILP_RESERVE_WRITER = 102;
     public static final short MAT_VIEW_CREATE = 200;
     public static final short MAT_VIEW_DROP = 201;
     public static final short MAT_VIEW_INVALIDATE = 202;
     public static final short MAT_VIEW_REFRESH_FAIL = 203;
     public static final short MAT_VIEW_REFRESH_SUCCESS = 204;
+    public static final short QUERY_RESULT_EXPORT_CSV = 110;
+    public static final short QUERY_RESULT_EXPORT_PARQUET = 111;
+    public static final short READ_PARQUET = 109;
     // CPU classes: -20 - 1-4 cores, -21 - 5-8 cores, -22 - 9-16 cores, -23 - 17-32 cores, -24 - 33-64 cores, -25 - 65+ cores
     public static final short SYSTEM_CPU_CLASS_BASE = -20;
     // DB size classes:
@@ -52,4 +59,5 @@ public final class TelemetrySystemEvent {
     public static final short WAL_TXN_DATA_APPLIED = 105;
     public static final short WAL_TXN_SQL_APPLIED = 106;
     public static final short WAL_TXN_STRUCTURE_CHANGE_APPLIED = 104;
+
 }

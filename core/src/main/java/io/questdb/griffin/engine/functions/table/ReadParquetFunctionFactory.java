@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.TelemetryEvent;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -73,6 +75,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         }
 
         try {
+            context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
             final Path path = Path.getThreadLocal2("");
             checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), configuration);
             final FilesFacade ff = configuration.getFilesFacade();

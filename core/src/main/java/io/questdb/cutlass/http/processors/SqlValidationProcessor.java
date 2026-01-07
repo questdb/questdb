@@ -296,7 +296,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             );
             sqlExecutionContext.setValidationOnly(true);
             final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
+            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_QUERY_VALIDATE);
             state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
             state.setQueryType(cc.getType());
             try {

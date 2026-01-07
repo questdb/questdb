@@ -45,6 +45,7 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
@@ -59,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
+    private static final IntHashSet SKIP_TELEMETRY_EVENTS = new IntHashSet();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final Decimal128 decimal128 = new Decimal128();
@@ -535,6 +537,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     private void doStoreTelemetry(short event, short origin) {
+        if (SKIP_TELEMETRY_EVENTS.contains(event)) {
+            return;
+        }
         TelemetryTask.store(telemetry, origin, event);
     }
 
@@ -544,5 +549,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @FunctionalInterface
     private interface TelemetryFacade {
         void store(short event, short origin);
+    }
+
+    static {
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.SET);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.BEGIN);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.COMMIT);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.ROLLBACK);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.DEALLOCATE);
     }
 }

@@ -25,8 +25,8 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
@@ -163,7 +163,7 @@ public class LineHttpTudCache implements QuietCloseable {
             throw parseException.of("cannot insert in non-WAL table", null);
         }
 
-        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
+        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_HTTP, TelemetryEvent.ILP_RESERVE_WRITER);
         // check if table on disk is WAL
         path.of(engine.getConfiguration().getDbRoot());
         Utf8String nameUtf8 = Utf8String.newInstance(parser.getMeasurementName());
