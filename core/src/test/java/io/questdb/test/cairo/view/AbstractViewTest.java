@@ -31,9 +31,12 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -61,6 +64,27 @@ class AbstractViewTest extends AbstractCairoTest {
         // JIT does not support ARM, and we want query plans to be the same
         setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(JIT_MODE_DISABLED));
         AbstractCairoTest.setUpStatic();
+    }
+
+    private void assertReferencedViews(String query, String[] expectedReferencedViews) throws SqlException {
+        if (expectedReferencedViews == null || expectedReferencedViews.length == 0) {
+            return;
+        }
+
+        final LowerCaseCharSequenceHashSet expectedRefViews = new LowerCaseCharSequenceHashSet();
+        for (String expectedReferencedView : expectedReferencedViews) {
+            expectedRefViews.add(expectedReferencedView);
+        }
+
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final ExecutionModel model = compiler.generateExecutionModel(query, sqlExecutionContext);
+            final ObjList<ViewDefinition> referencedViews = model.getQueryModel().getReferencedViews();
+            for (int i = 0; i < referencedViews.size(); i++) {
+                final ViewDefinition viewDefinition = referencedViews.get(i);
+                assertTrue(expectedRefViews.remove(viewDefinition.getViewToken().getTableName()) > -1);
+            }
+        }
+        assertEquals(0, expectedRefViews.size());
     }
 
     static void assertViewDefinition(String name, String query, String... expectedDependencies) {
@@ -151,17 +175,6 @@ class AbstractViewTest extends AbstractCairoTest {
         return engine.getViewGraph().getViewDefinition(viewToken);
     }
 
-    void assertView1AlterFailure(String newViewQuery) {
-        String sqlBefore = getView1DefinitionSql();
-        try {
-            execute("ALTER VIEW " + VIEW1 + " AS (" + newViewQuery + ")");
-            fail("Expected ALTER VIEW to fail");
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-        }
-        assertViewDefinition(VIEW1, sqlBefore, TABLE1);
-    }
-
     void alterView(String viewQuery, String... expectedDependencies) throws SqlException {
         execute("ALTER VIEW " + VIEW1 + " AS (" + viewQuery + ")");
         drainWalAndViewQueues();
@@ -176,21 +189,19 @@ class AbstractViewTest extends AbstractCairoTest {
 
     void assertQueryAndPlan(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, String expectedPlan, String... expectedReferencedViews) throws Exception {
         assertQueryNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize);
-
-        // assert referenced views
-        final LowerCaseCharSequenceHashSet expectedRefViews = new LowerCaseCharSequenceHashSet();
-        for (String expectedReferencedView : expectedReferencedViews) {
-            expectedRefViews.add(expectedReferencedView);
-        }
-        // todo: how to assert referenced views ???
-//        final ObjList<ViewDefinition> referencedViews = sqlExecutionContext.getReferencedViews();
-//        for (int i = 0; i < referencedViews.size(); i++) {
-//            final ViewDefinition viewDefinition = referencedViews.get(i);
-//            assertTrue(expectedRefViews.remove(viewDefinition.getViewToken().getTableName()) > -1);
-//        }
-//        assertEquals(0, expectedRefViews.size());
-
+        assertReferencedViews(query, expectedReferencedViews);
         assertQueryNoLeakCheck(expectedPlan, "explain " + query, null, false, true);
+    }
+
+    void assertView1AlterFailure(String newViewQuery) {
+        String sqlBefore = getView1DefinitionSql();
+        try {
+            execute("ALTER VIEW " + VIEW1 + " AS (" + newViewQuery + ")");
+            fail("Expected ALTER VIEW to fail");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+        assertViewDefinition(VIEW1, sqlBefore, TABLE1);
     }
 
     void compileView(String viewName) throws SqlException {
