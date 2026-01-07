@@ -45,16 +45,7 @@ public class ViewCycleTest extends AbstractViewTest {
             createView(VIEW1, "select * from " + TABLE1);
             createView(VIEW2, "select * from " + VIEW1);
 
-            String sqlBefore = getView1DefinitionSql();
-
-            try {
-                execute("ALTER VIEW " + VIEW1 + " AS (select * from " + TABLE2 + " t2 JOIN " + VIEW2 + " v2 ON t2.k = v2.k)");
-                fail("Expected cycle detection to prevent this");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-            }
-
-            assertViewDefinition(VIEW1, sqlBefore, TABLE1);
+            assertView1AlterFailure("select * from " + TABLE2 + " t2 JOIN " + VIEW2 + " v2 ON t2.k = v2.k");
         });
     }
 
@@ -70,16 +61,7 @@ public class ViewCycleTest extends AbstractViewTest {
             createView(VIEW1, "select * from " + TABLE1);
             createView(VIEW2, "select * from " + VIEW1);
 
-            String sqlBefore = getView1DefinitionSql();
-
-            try {
-                execute("ALTER VIEW " + VIEW1 + " AS (select * from " + TABLE2 + " t2 LEFT JOIN " + VIEW2 + " v2 ON t2.k = v2.k)");
-                fail("Expected cycle detection to prevent this");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-            }
-
-            assertViewDefinition(VIEW1, sqlBefore, TABLE1);
+            assertView1AlterFailure("select * from " + TABLE2 + " t2 LEFT JOIN " + VIEW2 + " v2 ON t2.k = v2.k");
         });
     }
 
@@ -94,16 +76,7 @@ public class ViewCycleTest extends AbstractViewTest {
             createView(VIEW1, "select * from " + TABLE1);
             createView(VIEW2, "select * from " + VIEW1);
 
-            String sqlBefore = getView1DefinitionSql();
-
-            try {
-                execute("ALTER VIEW " + VIEW1 + " AS (select * from (select * from " + VIEW2 + "))");
-                fail("Expected cycle detection to prevent this");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-            }
-
-            assertViewDefinition(VIEW1, sqlBefore, TABLE1);
+            assertView1AlterFailure("select * from (select * from " + VIEW2 + ")");
         });
     }
 
@@ -118,16 +91,7 @@ public class ViewCycleTest extends AbstractViewTest {
             createView(VIEW1, "select * from " + TABLE1);
             createView(VIEW2, "select * from " + VIEW1);
 
-            String sqlBefore = getView1DefinitionSql();
-
-            try {
-                execute("ALTER VIEW " + VIEW1 + " AS (select * from " + TABLE1 + " UNION select * from " + VIEW2 + ")");
-                fail("Expected cycle detection to prevent this");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-            }
-
-            assertViewDefinition(VIEW1, sqlBefore, TABLE1);
+            assertView1AlterFailure("select * from " + TABLE1 + " UNION select * from " + VIEW2);
         });
     }
 
@@ -180,16 +144,7 @@ public class ViewCycleTest extends AbstractViewTest {
             createTable(TABLE1);
             createView(VIEW1, "select * from " + TABLE1);
 
-            String sqlBefore = getView1DefinitionSql();
-
-            try {
-                execute("ALTER VIEW " + VIEW1 + " AS (select * from " + TABLE1 + " t1 JOIN " + VIEW1 + " v1 ON t1.k = v1.k)");
-                fail("Expected cycle detection to prevent this");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-            }
-
-            assertViewDefinition(VIEW1, sqlBefore, TABLE1);
+            assertView1AlterFailure("select * from " + TABLE1 + " t1 JOIN " + VIEW1 + " v1 ON t1.k = v1.k");
         });
     }
 
@@ -200,16 +155,7 @@ public class ViewCycleTest extends AbstractViewTest {
             createTable(TABLE1);
             createView(VIEW1, "select * from " + TABLE1);
 
-            String sqlBefore = getView1DefinitionSql();
-
-            try {
-                execute("ALTER VIEW " + VIEW1 + " AS (select * from " + TABLE1 + " UNION select * from " + VIEW1 + ")");
-                fail("Expected cycle detection to prevent this");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-            }
-
-            assertViewDefinition(VIEW1, sqlBefore, TABLE1);
+            assertView1AlterFailure("select * from " + TABLE1 + " UNION select * from " + VIEW1);
         });
     }
 
@@ -342,16 +288,7 @@ public class ViewCycleTest extends AbstractViewTest {
             createView(VIEW3, "select * from " + TABLE1);
             drainWalAndViewQueues();
 
-            String sqlBefore = getView1DefinitionSql();
-
-            try {
-                execute("ALTER VIEW " + VIEW1 + " AS (select v2.ts, v2.k, v2.v from " + VIEW2 + " v2 JOIN " + VIEW3 + " v3 ON v2.k = v3.k)");
-                fail("Expected cycle detection to prevent this");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-            }
-
-            assertViewDefinition(VIEW1, sqlBefore, TABLE1);
+            assertView1AlterFailure("select v2.ts, v2.k, v2.v from " + VIEW2 + " v2 JOIN " + VIEW3 + " v3 ON v2.k = v3.k");
         });
     }
 

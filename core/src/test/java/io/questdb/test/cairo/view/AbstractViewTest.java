@@ -37,6 +37,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -150,6 +151,17 @@ class AbstractViewTest extends AbstractCairoTest {
         return engine.getViewGraph().getViewDefinition(viewToken);
     }
 
+    void assertView1AlterFailure(String newViewQuery) {
+        String sqlBefore = getView1DefinitionSql();
+        try {
+            execute("ALTER VIEW " + VIEW1 + " AS (" + newViewQuery + ")");
+            fail("Expected ALTER VIEW to fail");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+        assertViewDefinition(VIEW1, sqlBefore, TABLE1);
+    }
+    
     void alterView(String viewQuery, String... expectedDependencies) throws SqlException {
         execute("ALTER VIEW " + VIEW1 + " AS (" + viewQuery + ")");
         drainWalAndViewQueues();
