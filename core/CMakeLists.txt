@@ -181,6 +181,7 @@ endif ()
 
 if (JIT_TEST)
     include_directories(${asmjit_SOURCE_DIR}/test SYSTEM)
+    include_directories(${asmjit_SOURCE_DIR}/asmjit-testing/commons SYSTEM)
     add_executable(jittests src/test/c/jittests/test_app.cpp)
     target_link_libraries(jittests questdb)
 endif ()
