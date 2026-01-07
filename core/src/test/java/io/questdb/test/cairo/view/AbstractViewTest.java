@@ -37,6 +37,8 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 
 import static io.questdb.cairo.SqlJitMode.JIT_MODE_DISABLED;
@@ -129,6 +131,15 @@ class AbstractViewTest extends AbstractCairoTest {
         } finally {
             viewState.unlockAfterRead();
         }
+    }
+
+    @NotNull
+    static String getView1DefinitionSql() {
+        final ViewDefinition viewDefinition = getViewDefinition(VIEW1);
+        Assert.assertNotNull(viewDefinition);
+        var sql = viewDefinition.getViewSql();
+        Assert.assertNotNull(sql);
+        return sql;
     }
 
     static ViewDefinition getViewDefinition(String viewName) {
