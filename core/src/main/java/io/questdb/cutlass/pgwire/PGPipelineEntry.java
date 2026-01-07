@@ -387,7 +387,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
         if (!recompile) {
-            sqlExecutionContext.resetFlags();
+            sqlExecutionContext.reset();
         }
         this.empty = sqlText == null || sqlText.isEmpty();
         if (empty) {
