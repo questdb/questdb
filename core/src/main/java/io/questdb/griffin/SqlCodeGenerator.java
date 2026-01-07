@@ -5659,6 +5659,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 if (tempKeyIndexesInBase.size() == 0) {
+                    // vectorized non-keyed tasks are lightweight, so it's fine to use larger frame sizes
+                    factory.changePageFrameSizes(
+                            Math.min(2 * configuration.getSqlPageFrameMinRows(), configuration.getSqlPageFrameMaxRows()),
+                            configuration.getSqlPageFrameMaxRows()
+                    );
                     return new GroupByNotKeyedVectorRecordCursorFactory(
                             executionContext.getCairoEngine(),
                             configuration,
