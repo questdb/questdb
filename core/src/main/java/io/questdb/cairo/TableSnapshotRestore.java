@@ -426,7 +426,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
             final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
 
-            // Skip if column doesn't exist in this partition
+            // -1 means column doesn't exist in partition, see ColumnVersionReader.getColumnTop()
             if (columnTop < 0 || columnTop >= partitionRowCount) {
                 continue;
             }
@@ -792,7 +792,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             final int writerIndex = metadata.getWriterIndex(columnIndex);
             final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
 
-            // Skip if column doesn't exist in this partition
+            // -1 means column doesn't exist in partition, see ColumnVersionReader.getColumnTop()
             if (columnTop < 0 || columnTop >= partitionRowCount) {
                 continue;
             }
@@ -842,7 +842,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             final int writerIndex = metadata.getWriterIndex(columnIndex);
             final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
 
-            // Skip if column doesn't exist in this partition
+            // -1 means column doesn't exist in partition, see ColumnVersionReader.getColumnTop()
             if (columnTop < 0 || columnTop >= partitionRowCount) {
                 continue;
             }
@@ -906,6 +906,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
                 final int writerIndex = metadata.getWriterIndex(columnIndex);
                 final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                // -1 means column doesn't exist in partition, see ColumnVersionReader.getColumnTop()
                 if (columnTop < 0 || columnTop >= partitionRowCount) {
                     continue;
                 }
