@@ -165,12 +165,11 @@ public class RandomSelectGenerator {
 
             // Generate ORDER BY clause
             if (rnd.nextDouble() < orderByProbability) {
-                sql.put(" ");
-                generateOrderByClause(sql, selectedTables, useGroupBy, metadataCache);
+                boolean orderByGenerated = generateOrderByClause(sql, selectedTables, useGroupBy, metadataCache);
 
                 // Generate LIMIT clause only after ORDER BY, the result of the generated SELECT could
                 // be non-deterministic if it is not ordered and LIMIT is present
-                if (rnd.nextDouble() < limitProbability) {
+                if (orderByGenerated && rnd.nextDouble() < limitProbability) {
                     sql.put(" LIMIT ");
                     sql.put(1 + rnd.nextInt(100));
                 }
@@ -454,11 +453,14 @@ public class RandomSelectGenerator {
         }
     }
 
-    private void generateOrderByClause(StringSink sql, ObjList<TableInfo> selectedTables, boolean hasGroupBy, CharSequenceObjHashMap<TableMetadata> metadataCache) {
+    /**
+     * @return true if ORDER BY was actually added to the SQL, false otherwise
+     */
+    private boolean generateOrderByClause(StringSink sql, ObjList<TableInfo> selectedTables, boolean hasGroupBy, CharSequenceObjHashMap<TableMetadata> metadataCache) {
         // SAMPLE BY requires ASC order on timestamp, so skip ORDER BY entirely
         // (default order is ASC which is what SAMPLE BY needs)
         if (currentlyUsingSampleBy) {
-            return;
+            return false;
         }
 
         if (hasGroupBy) {
@@ -469,10 +471,10 @@ public class RandomSelectGenerator {
                 int colType = metadata.getColumnType(currentGroupByColumnIndex);
                 if (colType == ColumnType.BINARY) {
                     // ORDER BY with BINARY column is not supported, we skip
-                    return;
+                    return false;
                 }
 
-                sql.put("ORDER BY ");
+                sql.put(" ORDER BY ");
                 if (selectedTables.size() > 1) {
                     sql.put(currentGroupByTable.alias).put(".");
                 }
@@ -482,8 +484,10 @@ public class RandomSelectGenerator {
                 if (rnd.nextBoolean()) {
                     sql.put(" DESC");
                 }
+                return true;
             }
             // Otherwise skip ORDER BY for GROUP BY queries
+            return false;
         } else {
             // Regular ORDER BY for non-aggregate queries
             TableInfo table = selectedTables.get(rnd.nextInt(selectedTables.size()));
@@ -491,7 +495,7 @@ public class RandomSelectGenerator {
 
             int columnCount = metadata.getColumnCount();
             if (columnCount == 0) {
-                return;
+                return false;
             }
 
             // Pick a random column to order by
@@ -500,10 +504,10 @@ public class RandomSelectGenerator {
             int colType = metadata.getColumnType(colIdx);
             if (colType == ColumnType.BINARY) {
                 // ORDER BY with BINARY column is not supported, we skip
-                return;
+                return false;
             }
 
-            sql.put("ORDER BY ");
+            sql.put(" ORDER BY ");
             if (selectedTables.size() > 1) {
                 sql.put(table.alias).put(".");
             }
@@ -513,6 +517,7 @@ public class RandomSelectGenerator {
             if (rnd.nextBoolean()) {
                 sql.put(" DESC");
             }
+            return true;
         }
     }
 
