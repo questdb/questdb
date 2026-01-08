@@ -30,6 +30,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
@@ -96,10 +97,13 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     void authorizeSelect(SqlExecutionContext executionContext, @NotNull IntList columnIndexes) throws SqlException {
+        final CairoEngine engine = executionContext.getCairoEngine();
+        if (Chars.startsWith(tableToken.getTableName(), engine.getConfiguration().getParquetExportTableNamePrefix())) {
+            return;
+        }
         final SecurityContext securityContext = executionContext.getSecurityContext();
         if (viewName != null) {
             // reading table via view, check access to view
-            final CairoEngine engine = executionContext.getCairoEngine();
             final TableToken viewToken = engine.verifyTableName(viewName);
             final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
             if (viewDefinition == null) {
