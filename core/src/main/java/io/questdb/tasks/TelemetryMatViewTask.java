@@ -110,6 +110,14 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
         }
     }
 
+    @Override
+    public int getEventKey() {
+        // Event is encoded in bits 20-31, tableId in bits 0-19.
+        // TableId exceeding 20 bits (~1M) may cause collisions, which is acceptable
+        // for telemetry rate limiting purposes.
+        return (event << 20) | (viewTableId & 0xFFFFF);
+    }
+
     public long getQueueCursor() {
         return queueCursor;
     }

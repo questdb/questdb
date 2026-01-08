@@ -31,7 +31,9 @@ import io.questdb.TelemetryConfigLogger;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryJob;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.TableReader;
@@ -41,11 +43,14 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.AbstractTelemetryTask;
 import io.questdb.tasks.TelemetryTask;
@@ -53,6 +58,7 @@ import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -169,6 +175,82 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryDBSizeTimeout() throws Exception {
         testTelemetryDBSize(TIMEOUT);
+    }
+
+    @Test
+    public void testTelemetryDeduplication() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                TelemetryJob telemetryJob = new TelemetryJob(engine);
+                Telemetry<TelemetryTask> telemetry = engine.getTelemetry();
+
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_TEXT_IMPORT);
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.QUERY_RESULT_EXPORT_CSV);
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP_QUERY_VALIDATE, CompiledQuery.SELECT);
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP_QUERY_VALIDATE, CompiledQuery.SELECT);
+                telemetryJob.runSerially();
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.QUERY_RESULT_EXPORT_CSV);
+                telemetryJob.runSerially();
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP_QUERY_VALIDATE, CompiledQuery.INSERT);
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.QUERY_RESULT_EXPORT_CSV);
+                Misc.free(telemetryJob);
+                refreshTablesInBaseEngine();
+                final String expectedEvent = """
+                        100	1
+                        112	2
+                        110	2
+                        1	7
+                        2	7
+                        101	1
+                        """;
+                assertEventAndOrigin(expectedEvent);
+            }
+        });
+    }
+
+    @Test
+    public void testTelemetryDeduplication1() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull MicrosecondClock getMicrosecondClock() {
+                    return TestUtils.unchecked(() -> new TestMicroClock(MicrosFormatUtils.parseTimestamp("2026-01-08T10:00:00.000Z"), 1));
+                }
+
+                @Override
+                public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
+                    return new DefaultTelemetryConfiguration() {
+                        @Override
+                        public long getDeduplicationIntervalMicros() {
+                            return 1500;
+                        }
+                    };
+                }
+            })) {
+                TelemetryJob telemetryJob = new TelemetryJob(engine);
+                Telemetry<TelemetryTask> telemetry = engine.getTelemetry();
+
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_TEXT_IMPORT); // record
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_TEXT_IMPORT); // skip
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_TEXT_IMPORT); // record
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, CompiledQuery.SELECT); // record
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, CompiledQuery.INSERT); // record
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, CompiledQuery.INSERT); // skip
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, CompiledQuery.SELECT); // skip
+                Misc.free(telemetryJob);
+                refreshTablesInBaseEngine();
+                final String expectedEvent = """
+                        100	1
+                        112	2
+                        112	2
+                        1	2
+                        2	2
+                        1	2
+                        101	1
+                        """;
+                assertEventAndOrigin(expectedEvent);
+            }
+        });
     }
 
     @Test

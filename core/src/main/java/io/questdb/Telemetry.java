@@ -43,6 +43,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
@@ -62,9 +63,11 @@ import static io.questdb.std.Files.notDots;
 
 public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(Telemetry.class);
-
+    private final long deduplicationInterval;
     private final boolean enabled;
+    private final IntLongHashMap lastEventTimestamps = new IntLongHashMap();
     private final int maxFileNameLen;
+    private final int walWeeks;
     private Clock clock;
     private long dbSizeEstimateStartTimestamp;
     private long dbSizeEstimateTimeout; //micros
@@ -72,7 +75,6 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private RingQueue<T> telemetryQueue;
     private SCSequence telemetrySubSeq;
     private TelemetryType<T> telemetryType;
-    private int walWeeks;
     private TableWriter writer;
     private final QueueConsumer<T> taskConsumer = this::consume;
 
@@ -90,6 +92,10 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             telemetrySubSeq = new SCSequence();
             telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
             walWeeks = telemetryConfiguration.getTtlWeeks();
+            deduplicationInterval = telemetryConfiguration.getDeduplicationIntervalMicros();
+        } else {
+            walWeeks = 0;
+            deduplicationInterval = Long.MAX_VALUE;
         }
     }
 
@@ -99,6 +105,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             telemetryType.logStatus(writer, TelemetryEvent.SYSTEM_DOWN, clock.getTicks());
             writer = Misc.free(writer);
         }
+        lastEventTimestamps.clear();
     }
 
     @Override
@@ -111,7 +118,14 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     }
 
     public void consume(T task) {
-        task.writeTo(writer, clock.getTicks());
+        long timestamp = clock.getTicks();
+        int eventKey = task.getEventKey();
+        System.out.println("event : " + task.getEventKey() + "    lastEventTimestamps.get(eventKey): " + lastEventTimestamps.get(eventKey) + " timestamp: " + timestamp);
+        if (lastEventTimestamps.get(eventKey) + deduplicationInterval > timestamp) {
+            return;
+        }
+        lastEventTimestamps.put(eventKey, timestamp);
+        task.writeTo(writer, timestamp);
     }
 
     public void consumeAll() {

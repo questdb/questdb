@@ -36,6 +36,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.std.Numbers.encodeLowHighShorts;
+
 public class TelemetryTask implements AbstractTelemetryTask {
     public static final String NAME = "TABLE TELEMETRY";
     public static final String TABLE_NAME = "telemetry";
@@ -104,6 +106,11 @@ public class TelemetryTask implements AbstractTelemetryTask {
             task.event = event;
             telemetry.store(task);
         }
+    }
+
+    @Override
+    public int getEventKey() {
+        return encodeLowHighShorts(event, origin);
     }
 
     public long getQueueCursor() {

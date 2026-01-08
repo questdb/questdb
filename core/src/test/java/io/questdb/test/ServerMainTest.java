@@ -982,14 +982,17 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "telemetry.hide.tables\tQDB_TELEMETRY_HIDE_TABLES\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.queue.capacity\tQDB_TELEMETRY_QUEUE_CAPACITY\t512\tdefault\tfalse\tfalse\n" +
                                     "telemetry.table.ttl.weeks\tQDB_TELEMETRY_TABLE_TTL_WEEKS\t4\tdefault\tfalse\tfalse\n" +
+                                    "telemetry.event.deduplication.interval\tQDB_TELEMETRY_EVENT_DEDUPLICATION_INTERVAL\t3600000000\tdefault\tfalse\tfalse\n" +
                                     "telemetry.wal.enabled\tQDB_TELEMETRY_WAL_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "telemetry.wal.hide.tables\tQDB_TELEMETRY_WAL_HIDE_TABLES\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.wal.queue.capacity\tQDB_TELEMETRY_WAL_QUEUE_CAPACITY\t512\tdefault\tfalse\tfalse\n" +
                                     "telemetry.wal.table.ttl.weeks\tQDB_TELEMETRY_WAL_TABLE_TTL_WEEKS\t1\tdefault\tfalse\tfalse\n" +
+                                    "telemetry.wal.event.deduplication.interval\tQDB_TELEMETRY_WAL_EVENT_DEDUPLICATION_INTERVAL\t3600000000\tdefault\tfalse\tfalse\n" +
                                     "telemetry.mat.view.enabled\tQDB_TELEMETRY_MAT_VIEW_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "telemetry.mat.view.hide.tables\tQDB_TELEMETRY_MAT_VIEW_HIDE_TABLES\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.mat.view.queue.capacity\tQDB_TELEMETRY_MAT_VIEW_QUEUE_CAPACITY\t512\tdefault\tfalse\tfalse\n" +
                                     "telemetry.mat.view.table.ttl.weeks\tQDB_TELEMETRY_MAT_VIEW_TABLE_TTL_WEEKS\t1\tdefault\tfalse\tfalse\n" +
+                                    "telemetry.mat.view.event.deduplication.interval\tQDB_TELEMETRY_MAT_VIEW_EVENT_DEDUPLICATION_INTERVAL\t3600000000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.affinity\tQDB_WAL_APPLY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.haltOnError\tQDB_WAL_APPLY_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.threshold\tQDB_WAL_APPLY_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
