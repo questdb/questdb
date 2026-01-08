@@ -66,6 +66,4 @@ public interface TableSequencer extends QuietCloseable {
     TableToken reload();
 
     void resumeTable();
-
-    void suspendTable();
 }
