@@ -40,12 +40,12 @@ import static org.junit.Assert.fail;
 
 @RunWith(Parameterized.class)
 public class TtlTest extends AbstractCairoTest {
-    private final WalMode walMode;
     private final String wal;
+    private final WalMode walMode;
 
     public TtlTest(WalMode walMode) {
         this.walMode = walMode;
-        this.wal = walMode == WalMode.WITH_WAL ? ";" : " BYPASS WAL;";
+        this.wal = walMode == WalMode.WITH_WAL ? "wal;" : " BYPASS WAL;";
     }
 
     @Parameterized.Parameters(name = "{0}")
@@ -191,14 +191,14 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableLike() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2 HOURS" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2 HOURS " + wal);
         execute("CREATE TABLE samba (LIKE tango)");
         assertSql("""
                         ddl
                         CREATE TABLE 'samba' (\s
                         \tts TIMESTAMP
-                        ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS BYPASS WAL;
-                        """,
+                        ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS%s
+                        """.formatted(walMode == WalMode.WITH_WAL ? ";" : wal),
                 "SHOW CREATE TABLE samba");
     }
 
