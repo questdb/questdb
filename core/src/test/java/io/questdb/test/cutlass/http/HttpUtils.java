@@ -45,16 +45,11 @@ public final class HttpUtils {
     private HttpUtils() {
     }
 
-    public static void assertChunkedBody(
-            HttpClient.ResponseHeaders responseHeaders,
-            @Nullable String expectedBody
-    ) {
+    public static void assertChunkedBody(HttpClient.ResponseHeaders responseHeaders, String expectedBody) {
         StringSink sink = tlSink.get();
         sink.clear();
         responseHeaders.getResponse().copyTextTo(sink);
-        if (expectedBody != null) {
-            TestUtils.assertEquals(expectedBody, sink);
-        }
+        TestUtils.assertEquals(expectedBody, sink);
     }
 
     public static void assertChunkedBodyContains(HttpClient.ResponseHeaders responseHeaders, String term) {
