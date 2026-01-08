@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -316,19 +317,41 @@ public class TableSnapshotRestore implements QuietCloseable {
             AtomicInteger recoveredCVFiles,
             AtomicInteger recoveredWalFiles,
             AtomicInteger symbolFilesCount,
+            AtomicInteger recoveredViewFiles,
             boolean rebuildPartitionColumnIndexes
     ) {
         int srcPathLen = srcPath.size();
         int dstPathLen = dstPath.size();
 
-        // Copy metadata files from source to the destination table location
-        copyMetadataFiles(srcPath, dstPath, recoveredMetaFiles, recoveredTxnFiles, recoveredCVFiles);
+        // Check if this is a view (views have _view file but no _cv file)
+        boolean isView = ff.exists(srcPath.trimTo(srcPathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+        srcPath.trimTo(srcPathLen);
 
-        // Reset _todo_ file to prevent metadata restoration on table open
-        TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
+        if (isView) {
+            // Views don't have data - only copy the view definition file
+            srcPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+            dstPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+            if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy view definition file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
+            }
+            recoveredViewFiles.incrementAndGet();
+            LOG.info()
+                    .$("recovered view definition file [src=").$(srcPath)
+                    .$(", dst=").$(dstPath)
+                    .I$();
+            srcPath.trimTo(srcPathLen);
+            dstPath.trimTo(dstPathLen);
+        } else {
+            // Copy metadata files from source to the destination table location
+            copyMetadataFiles(srcPath, dstPath, recoveredMetaFiles, recoveredTxnFiles, recoveredCVFiles);
 
-        // Rebuild symbol files and other table-specific processing
-        rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount, rebuildPartitionColumnIndexes);
+            // Reset _todo_ file to prevent metadata restoration on table open
+            TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
+
+            // Rebuild symbol files and other table-specific processing
+            rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount, rebuildPartitionColumnIndexes);
+        }
 
         // Handle WAL-specific processing
         processWalSequencerMetadata(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredWalFiles, -1);
