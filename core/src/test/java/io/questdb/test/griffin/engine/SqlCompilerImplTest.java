@@ -3855,6 +3855,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDependencyColumnsWithSameAliasError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            create table tab (
+                              x1 int,
+                              ts TIMESTAMP
+                            ) timestamp(ts);
+                            """
+            );
+
+            assertExceptionNoLeakCheck("select x1 as a, a as a from t", 18, "Duplicate column [name=a]");
+        });
+    }
+
+    @Test
     public void testDistinctDependencyColumnsThrowError() throws Exception {
         assertMemoryLeak(() -> {
             execute(
