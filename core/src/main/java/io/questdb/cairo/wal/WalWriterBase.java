@@ -27,7 +27,6 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -35,7 +34,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.TableUtils.lockName;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
@@ -53,16 +51,15 @@ abstract class WalWriterBase implements AutoCloseable {
     final WalDirectoryPolicy walDirectoryPolicy;
     final int walId;
     final String walName;
+    final WALSegmentLockManager walSegmentLockManager;
     boolean distressed;
     int lastSegmentTxn = -1;
     long lastSeqTxn = NO_TXN;
     boolean open;
     boolean rollSegmentOnNextRow = false;
     int segmentId = -1;
-    long segmentLockFd = -1;
+    int segmentLocked = -1;
     TableToken tableToken;
-    long walLockFd = -1;
-    final WALSegmentLockManager walSegmentLockManager;
 
     WalWriterBase(
             CairoConfiguration configuration,
@@ -122,6 +119,7 @@ abstract class WalWriterBase implements AutoCloseable {
         path.slash().put(segmentId);
         final int segmentPathLen = path.size();
         acquireSegmentLock(segmentId);
+        segmentLocked = segmentId;
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
@@ -144,10 +142,6 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     void releaseSegmentLock(int segmentId, long segmentTxn) {
-        if (segmentId == -1) {
-            return;
-        }
-
         walSegmentLockManager.unlockSegment(tableToken.getDirNameUtf8(), walId, segmentId);
         // if events file has some transactions
         if (segmentTxn >= 0) {

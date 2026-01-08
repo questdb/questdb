@@ -143,7 +143,9 @@ public class ViewWalWriter extends WalWriterBase {
                 events.close(truncate, Vm.TRUNCATE_TO_POINTER);
             }
 
-            releaseSegmentLock(segmentId, lastSegmentTxn);
+            if (segmentLocked > -1) {
+                releaseSegmentLock(segmentLocked, lastSegmentTxn);
+            }
 
             try {
                 releaseWalLock();
@@ -168,10 +170,10 @@ public class ViewWalWriter extends WalWriterBase {
     }
 
     private void openNewSegment() {
-        final int oldSegmentId = segmentId;
+        final int oldSegmentLocked = segmentLocked;
         final int newSegmentId = segmentId + 1;
-        segmentId = -1;
         final long oldLastSegmentTxn = lastSegmentTxn;
+        segmentLocked = -1;
         try {
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
@@ -192,8 +194,8 @@ public class ViewWalWriter extends WalWriterBase {
             lastSegmentTxn = -1;
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
-            if (oldSegmentId > -1) {
-                releaseSegmentLock(oldSegmentId, oldLastSegmentTxn);
+            if (oldSegmentLocked > -1) {
+                releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn);
             }
             path.trimTo(pathSize);
         }
