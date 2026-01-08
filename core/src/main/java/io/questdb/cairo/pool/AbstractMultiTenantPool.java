@@ -55,8 +55,8 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
     private final int maxSegments;
-    private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor;
     private final int segmentSize;
+    private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
@@ -211,11 +211,18 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     }
 
     public void unlock(TableToken tableToken) {
+        unlock(tableToken, false);
+    }
+
+    public void unlock(TableToken tableToken, boolean quiet) {
         Entry<T> e = entries.get(tableToken.getDirName());
         long thread = Thread.currentThread().getId();
         if (e == null) {
-            LOG.info().$("not found, cannot unlock [table=").$(tableToken).I$();
-            notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCKED, -1, -1);
+            if (!quiet) {
+                // This is OK, the table deletion holds lock and deletes the entry
+                LOG.info().$("not found, cannot unlock [table=").$(tableToken).I$();
+                notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCKED, -1, -1);
+            }
             return;
         }
 
