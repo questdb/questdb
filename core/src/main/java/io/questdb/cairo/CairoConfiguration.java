@@ -185,8 +185,18 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    int getCompileViewModelPoolCapacity();
+
     @NotNull
     CharSequence getConfRoot(); // same as root/../conf
+
+    /**
+     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
+     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
+     */
+    default int getCopierType() {
+        return 0; // COPIER_TYPE_DEFAULT
+    }
 
     @NotNull
     LongSupplier getCopyIDSupplier();
@@ -259,6 +269,8 @@ public interface CairoConfiguration {
 
     int getGroupByMergeShardQueueCapacity();
 
+    long getGroupByParallelTopKThreshold();
+
     int getGroupByPoolCapacity();
 
     long getGroupByPresizeMaxCapacity();
@@ -266,6 +278,8 @@ public interface CairoConfiguration {
     long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
+
+    int getGroupByTopKQueueCapacity();
 
     @NotNull
     default IOURingFacade getIOURingFacade() {
@@ -281,6 +295,8 @@ public interface CairoConfiguration {
     long getInactiveReaderTTL();
 
     long getInactiveWalWriterTTL();
+
+    long getInactiveViewWalWriterTTL();
 
     long getInactiveWriterTTL();
 
@@ -441,6 +457,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getPivotColumnPoolCapacity();
+
     int getPoolSegmentSize();
 
     int getPreferencesStringPoolCapacity();
@@ -463,6 +481,8 @@ public interface CairoConfiguration {
     }
 
     int getReaderPoolMaxSegments();
+
+    int getRecentWriteTrackerCapacity();
 
     int getRenameTableModelPoolCapacity();
 
@@ -594,6 +614,8 @@ public interface CairoConfiguration {
 
     int getSqlParquetFrameCacheCapacity();
 
+    int getSqlPivotMaxProducedColumns();
+
     int getSqlSmallMapKeyCapacity();
 
     long getSqlSmallMapPageSize();
@@ -665,6 +687,8 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    int getViewLexerPoolCapacity();
+
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
 
@@ -714,6 +738,8 @@ public interface CairoConfiguration {
 
     int getWalWriterPoolMaxSegments();
 
+    int getViewWalWriterPoolMaxSegments();
+
     int getWindowColumnPoolCapacity();
 
     int getWithClauseModelPoolCapacity();
@@ -749,14 +775,6 @@ public interface CairoConfiguration {
     boolean isColumnAliasExpressionEnabled();
 
     boolean isCopierChunkedEnabled();
-
-    /**
-     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
-     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
-     */
-    default int getCopierType() {
-        return 0; // COPIER_TYPE_DEFAULT
-    }
 
     boolean isDevModeEnabled();
 

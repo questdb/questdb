@@ -26,7 +26,7 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
-abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
+public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
     protected static final int MIN_INITIAL_CAPACITY = 16;
     protected static final CharSequence noEntryKey = null;
     protected final double loadFactor;
@@ -50,6 +50,14 @@ abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
     public void clear() {
         Arrays.fill(keys, noEntryKey);
         free = capacity;
+    }
+
+    public boolean contains(CharSequence key) {
+        return keyIndex(key) < 0;
+    }
+
+    public boolean contains(CharSequence key, int lo, int hi) {
+        return keyIndex(key, lo, hi) < 0;
     }
 
     public boolean excludes(CharSequence key) {

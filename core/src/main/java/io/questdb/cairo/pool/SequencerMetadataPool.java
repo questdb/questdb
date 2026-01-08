@@ -185,7 +185,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 int tableId,
                 int timestampIndex,
                 int compressedTimestampIndex,
-                boolean suspended,
                 long structureVersion,
                 int columnCount,
                 @Transient @Nullable IntList readColumnOrder

@@ -242,10 +242,10 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 Assert.assertTrue(cacheString.contains("name=bah"));
                 assertQueryNoLeakCheck(
                         """
-                                id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
-                                1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse
+                                id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
+                                1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tT
                                 """,
-                        "tables()",
+                        "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()",
                         ""
                 );
             }
@@ -254,11 +254,13 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 Assert.assertTrue(cacheString.contains("name=foo"));
                 assertQueryNoLeakCheck(
                         """
-                                id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
-                                1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse
+                                id	table_name	designatedTimestamp	partitionBy	maxUncommittedRows	o3MaxLag	walEnabled	directoryName	dedup	ttlValue	ttlUnit	matView	table_type
+                                1	foo	ts	DAY	1000	300000000	true	foo~1	false	0	HOUR	false	T
                                 """,
-                        "tables()",
-                        ""
+                        "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()",
+                        "",
+                        false,
+                        true
                 );
             }
         });
@@ -807,20 +809,20 @@ public class MetadataCacheTest extends AbstractCairoTest {
             execute("create table foo ( ts timestamp, x int) timestamp(ts) partition by day wal;");
             assertSql(
                     """
-                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
-                            1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse
+                            id	table_name	designatedTimestamp	partitionBy	maxUncommittedRows	o3MaxLag	walEnabled	directoryName	dedup	ttlValue	ttlUnit	matView	table_type
+                            1	foo	ts	DAY	1000	300000000	true	foo~1	false	0	HOUR	false	T
                             """,
-                    "tables()"
+                    "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()"
             );
 
             execute("rename table foo to bah");
             drainWalQueue();
             assertSql(
                     """
-                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
-                            1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse
+                            id	table_name	designatedTimestamp	partitionBy	maxUncommittedRows	o3MaxLag	walEnabled	directoryName	dedup	ttlValue	ttlUnit	matView	table_type
+                            1	bah	ts	DAY	1000	300000000	true	foo~1	false	0	HOUR	false	T
                             """,
-                    "tables()"
+                    "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables()"
             );
         });
     }

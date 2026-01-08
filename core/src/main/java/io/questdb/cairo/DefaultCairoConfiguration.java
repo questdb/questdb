@@ -237,6 +237,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCompileViewModelPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public @NotNull CharSequence getConfRoot() {
         return confRoot;
     }
@@ -392,6 +397,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByParallelTopKThreshold() {
+        return 5_000_000;
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return 1024;
     }
@@ -412,6 +422,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByTopKQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public int getIdGenerateBatchStep() {
         return 512;
     }
@@ -429,6 +444,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getInactiveReaderTTL() {
         return -10000;
+    }
+
+    @Override
+    public long getInactiveViewWalWriterTTL() {
+        return 30_000;
     }
 
     @Override
@@ -741,6 +761,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPivotColumnPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public int getPoolSegmentSize() {
         return 32;
     }
@@ -763,6 +788,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getReaderPoolMaxSegments() {
         return 5;
+    }
+
+    @Override
+    public int getRecentWriteTrackerCapacity() {
+        return 1000;
     }
 
     @Override
@@ -1048,6 +1078,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlPivotMaxProducedColumns() {
+        return 5_000;
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return 64;
     }
@@ -1215,6 +1250,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getVectorAggregateQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getViewLexerPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return 3;
     }
 
     @Override

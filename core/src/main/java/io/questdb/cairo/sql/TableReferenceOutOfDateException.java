@@ -81,6 +81,17 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
+    public static TableReferenceOutOfDateException ofOutdatedView(TableToken tableToken, long expectedTxn, long actualTxn) {
+        TableReferenceOutOfDateException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new TableReferenceOutOfDateException()) != null;
+        ex.message.clear(prefix.length());
+        ex.message.put(tableToken.getTableName())
+                .put("', expectedSeqTxn=").put(expectedTxn)
+                .put(", actualSeqTxn=").put(actualTxn).put(']');
+        return ex;
+    }
+
     @Override
     public CharSequence getFlyweightMessage() {
         return message;

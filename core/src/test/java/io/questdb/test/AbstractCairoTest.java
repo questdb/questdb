@@ -694,7 +694,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         TestFilesFacadeImpl.resetTracking();
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
-        sqlExecutionContext.resetFlags();
+        sqlExecutionContext.reset();
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());
@@ -704,6 +704,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
+        engine.getViewStateStore().clear();
     }
 
     public void tearDown(boolean removeDir) {
@@ -1580,8 +1581,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         TestUtils.drainPurgeJob(engine);
     }
 
+    protected static void drainViewQueue() {
+        drainViewQueue(engine);
+    }
+
     protected static void drainWalAndMatViewQueues() {
         drainWalAndMatViewQueues(engine);
+    }
+
+    protected static void drainWalAndViewQueues() {
+        drainWalAndViewQueues(engine);
     }
 
     protected static void drainWalQueue(QuestDBTestNode node) {

@@ -92,7 +92,7 @@ public class AbstractO3Test extends AbstractTest {
     private RecordToRowCopier copier;
 
     public AbstractO3Test() {
-        this.rnd = TestUtils.generateRandom(LOG);
+        this.rnd = TestUtils.generateRandom(LOG, 4737712417750L, 1767629084672L);
         this.timestampType = TestUtils.getTimestampType(rnd);
     }
 

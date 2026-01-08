@@ -265,7 +265,7 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
-    public void resetFlags() {
+    public void reset() {
     }
 
     @Override

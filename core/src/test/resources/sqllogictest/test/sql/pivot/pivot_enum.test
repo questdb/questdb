@@ -1,0 +1,49 @@
+statement ok
+CREATE TABLE monthly_sales (empid INT, amount INT, month TEXT);
+
+statement ok
+INSERT INTO monthly_sales VALUES
+    (1, 10000, 'JAN'),
+    (1, 400, 'JAN'),
+    (2, 4500, 'JAN'),
+    (2, 35000, 'JAN'),
+    (1, 5000, 'FEB'),
+    (1, 3000, 'FEB'),
+    (2, 200, 'FEB'),
+    (2, 90500, 'FEB'),
+    (1, 6000, 'MAR'),
+    (1, 5000, 'MAR'),
+    (2, 2500, 'MAR'),
+    (2, 9500, 'MAR'),
+    (1, 8000, 'APR'),
+    (1, 10000, 'APR'),
+    (2, 800, 'APR'),
+    (2, 4500, 'APR');
+
+#SELECT *
+#  FROM monthly_sales
+#    PIVOT(SUM(amount) FOR MONTH IN unique_months)
+#      AS p
+#  ORDER BY EMPID;
+query IIIII
+monthly_sales
+PIVOT (
+  SUM(amount)
+  FOR MONTH IN ('JAN' AS '1', 'FEB' AS '2', 'MAR' AS '3')
+  GROUP BY EMPID
+) ORDER BY EMPID;
+----
+1 10400 8000 11000
+2 39500 90700 12000
+
+
+
+#SELECT *
+#  FROM monthly_sales
+#    PIVOT(SUM(amount) FOR MONTH IN unique_monthsx)
+#      AS p
+#  ORDER BY EMPID;
+## enum does not exist
+statement error
+monthly_sales PIVOT (SUM(amount) FOR MONTH IN (SELECT DISTINCT MONTH FROM unique_monthsx) GROUP BY EMPID) ORDER BY EMPID;
+error

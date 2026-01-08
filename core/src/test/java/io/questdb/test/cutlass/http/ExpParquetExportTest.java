@@ -592,7 +592,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     Thread thread = startCancelThread(engine, sqlExecutionContext);
                     thread.start();
                     String expectedError = "cancelled by user";
-                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
+                    testHttpClient.assertGetContains("/exp", expectedError, params);
                     thread.join();
                 });
     }
@@ -612,7 +612,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     thread.start();
                     String expectedError = "cancelled by user";
                     try {
-                        testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
+                        testHttpClient.assertGetContains("/exp", expectedError, params);
                         Assert.fail("server should disconnect");
                     } catch (HttpClientException e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -1332,7 +1332,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("timeout", "1");
                     String expectedError = "timeout, query aborted";
-                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
+                    testHttpClient.assertGetContains("/exp", expectedError, params);
                 });
     }
 
@@ -1347,7 +1347,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("rmode", "nodelay");
 
                     try {
-                        testHttpClient.assertGetContains("/exp", "nothing", params, null, null, 9001);
+                        testHttpClient.assertGetContains("/exp", "nothing", params);
                         Assert.fail();
                     } catch (HttpClientException e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -1375,6 +1375,31 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
 
                     testHttpClient.assertGetParquet("/exp", 2075, tableName);
+                });
+    }
+
+    @Test
+    public void testParquetExportWithPivot() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE monthly_sales (empid INT, amount INT, month SYMBOL)", sqlExecutionContext);
+                    engine.execute("INSERT INTO monthly_sales VALUES " +
+                            "(1, 10000, 'JAN'), (1, 400, 'JAN'), (2, 4500, 'JAN'), (2, 35000, 'JAN'), " +
+                            "(1, 5000, 'FEB'), (1, 3000, 'FEB'), (2, 200, 'FEB'), (2, 90500, 'FEB'), " +
+                            "(1, 6000, 'MAR'), (1, 5000, 'MAR'), (2, 2500, 'MAR'), (2, 9500, 'MAR')", sqlExecutionContext);
+                    testHttpClient.setKeepConnection(true);
+                    testHttpClient.assertGetParquet(
+                            "/exp",
+                            1177,
+                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                    );
+                    engine.execute("INSERT INTO monthly_sales VALUES (3, 9000, 'APRIL')", sqlExecutionContext);
+                    testHttpClient.setKeepConnection(false);
+                    testHttpClient.assertGetParquet(
+                            "/exp",
+                            1453,
+                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                    );
                 });
     }
 

@@ -207,8 +207,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getCompileViewModelPoolCapacity() {
+        return getDelegate().getCompileViewModelPoolCapacity();
+    }
+
+    @Override
     public @NotNull CharSequence getConfRoot() {
         return getDelegate().getConfRoot();
+    }
+
+    @Override
+    public int getCopierType() {
+        return getDelegate().getCopierType();
     }
 
     @Override
@@ -362,6 +372,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByParallelTopKThreshold() {
+        return getDelegate().getGroupByParallelTopKThreshold();
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return getDelegate().getGroupByPoolCapacity();
     }
@@ -379,6 +394,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getGroupByShardingThreshold() {
         return getDelegate().getGroupByShardingThreshold();
+    }
+
+    @Override
+    public int getGroupByTopKQueueCapacity() {
+        return getDelegate().getGroupByTopKQueueCapacity();
     }
 
     @Override
@@ -404,6 +424,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getInactiveWalWriterTTL() {
         return getDelegate().getInactiveWalWriterTTL();
+    }
+
+    @Override
+    public long getInactiveViewWalWriterTTL() {
+        return getDelegate().getInactiveViewWalWriterTTL();
     }
 
     @Override
@@ -717,6 +742,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPivotColumnPoolCapacity() {
+        return getDelegate().getPivotColumnPoolCapacity();
+    }
+
+    @Override
     public int getPoolSegmentSize() {
         return getDelegate().getPoolSegmentSize();
     }
@@ -739,6 +769,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getReaderPoolMaxSegments() {
         return getDelegate().getReaderPoolMaxSegments();
+    }
+
+    @Override
+    public int getRecentWriteTrackerCapacity() {
+        return getDelegate().getRecentWriteTrackerCapacity();
     }
 
     @Override
@@ -1022,6 +1057,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlPivotMaxProducedColumns() {
+        return getDelegate().getSqlPivotMaxProducedColumns();
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return getDelegate().getSqlSmallMapKeyCapacity();
     }
@@ -1192,6 +1232,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getViewLexerPoolCapacity() {
+        return getDelegate().getViewLexerPoolCapacity();
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return getDelegate().getVolumeDefinitions();
     }
@@ -1277,6 +1322,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return getDelegate().getViewWalWriterPoolMaxSegments();
+    }
+
+    @Override
     public int getWindowColumnPoolCapacity() {
         return getDelegate().getWindowColumnPoolCapacity();
     }
@@ -1339,11 +1389,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isCopierChunkedEnabled() {
         return getDelegate().isCopierChunkedEnabled();
-    }
-
-    @Override
-    public int getCopierType() {
-        return getDelegate().getCopierType();
     }
 
     @Override
