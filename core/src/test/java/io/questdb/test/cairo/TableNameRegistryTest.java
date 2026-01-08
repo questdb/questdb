@@ -391,7 +391,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         if (rnd.nextDouble() > 0.2) {
                             // Add table
                             String tableName = "tab" + iteration;
-                            TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, false, false, true);
+                            String tableDir = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + iteration;
+                            TableToken tableToken = rw.lockTableName(tableName, tableDir, iteration, false, false, true);
                             TestUtils.createTable(tm, configuration, ColumnType.VERSION, iteration, tableToken);
                             rw.registerName(tableToken);
                             addedTables.add(iteration);
@@ -405,7 +406,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
                             // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
                             // Remove _txn file first
-                            rmPath.trimTo(rootLen).concat(tableName);
+                            rmPath.trimTo(rootLen).concat(tableToken.getDirName());
                             int len = rmPath.size();
                             rmPath.concat(TableUtils.TXN_FILE_NAME);
                             ff.remove(rmPath.$());
