@@ -6781,8 +6781,10 @@ public class SqlOptimiser implements Mutable {
 
         // group-by generator can cope with virtual columns, it does not require virtual model to be its base
         // however, sample-by single-threaded implementation still relies on the innerVirtualModel, hence the fork
+        boolean forceNotUseInnerModel = false;
         if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 && sampleBy == null || ((rewriteStatus & REWRITE_STATUS_USE_WINDOWS_JOIN_MODE) != 0)) {
             rewriteStatus &= ~REWRITE_STATUS_USE_INNER_MODEL;
+            forceNotUseInnerModel = true;
         }
 
         rewriteStatus |= REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
@@ -6927,9 +6929,18 @@ public class SqlOptimiser implements Mutable {
                             }
                         } else {
                             // check what this column would reference to establish the priority
+                            // TODO: currently we don't support referencing columns from the same projection
+                            //  when there are aggregate functions. Even if we wanted to support this, the
+                            //  current implementation has issues: if this column appears after other expression
+                            //  columns, those expressions have already been added to groupByModel and
+                            //  innerVirtualModel. The groupByModel would either fail to find the column at
+                            //  runtime, or the expression would be executed multiple times. To properly support
+                            //  this, we would need to analyze all columns upfront to determine if any reference
+                            //  the same model's columns, then introduce an innerValueModel to handle this case.
+                            //  This would change the processing logic for all columns.
                             if (
-                                    baseModel.getAliasToColumnMap().excludes(qc.getAst().token) &&
-                                            innerVirtualModel.getAliasToColumnMap().contains(qc.getAst().token)
+                                    (!forceNotUseInnerModel && baseModel.getAliasToColumnMap().excludes(qc.getAst().token) &&
+                                            innerVirtualModel.getAliasToColumnMap().contains(qc.getAst().token))
                             ) {
                                 // column is referencing another column or function on the same projection
                                 // we must not add it to the translating model. This model is inserted between
