@@ -246,7 +246,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         zero();
 
         for (long p = oldPtr, lim = oldPtr + 16L * oldCapacity; p < lim; p += 16L) {
-            long key = Unsafe.getUnsafe().getInt(p);
+            long key = Unsafe.getUnsafe().getLong(p);
             if (key != noEntryKey) {
                 long hashCode = Hash.fastHashLong64(key);
                 long index = hashCode & mask;

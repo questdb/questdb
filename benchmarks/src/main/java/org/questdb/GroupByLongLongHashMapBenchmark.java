@@ -76,7 +76,7 @@ public class GroupByLongLongHashMapBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        allocator.close();
+        allocator.clear();
         groupByLongLongHashMap.setAllocator(allocator);
         groupByLongHashSet.setAllocator(allocator);
         longLongHashMap.clear();

@@ -402,11 +402,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             masterCursor.toTop();
             slaveTimeFrameHelper.toTop();
             GroupByUtils.toTop(groupByFunctions);
+            allocator.clear();
         }
 
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                allocator.reopen();
             }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

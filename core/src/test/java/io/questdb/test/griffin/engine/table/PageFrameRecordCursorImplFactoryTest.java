@@ -711,47 +711,47 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     @Test
     public void testPageFrameBwdCursorNoColTops() throws Exception {
         // pageFrameMaxSize < rowCount
-        testBwdPageFrameCursor(64, 8, -1);
-        testBwdPageFrameCursor(65, 8, -1);
+        testBwdPageFrameCursor(64, 4, 8, -1);
+        testBwdPageFrameCursor(65, 4, 8, -1);
         // pageFrameMaxSize == rowCount
-        testBwdPageFrameCursor(64, 64, -1);
+        testBwdPageFrameCursor(64, 32, 64, -1);
         // pageFrameMaxSize > rowCount
-        testBwdPageFrameCursor(63, 64, -1);
+        testBwdPageFrameCursor(63, 32, 64, -1);
     }
 
     @Test
     public void testPageFrameBwdCursorWithColTops() throws Exception {
         // pageFrameMaxSize < rowCount
-        testBwdPageFrameCursor(64, 8, 3);
-        testBwdPageFrameCursor(64, 8, 8);
-        testBwdPageFrameCursor(65, 8, 11);
+        testBwdPageFrameCursor(64, 8, 8, 3);
+        testBwdPageFrameCursor(64, 8, 8, 8);
+        testBwdPageFrameCursor(65, 8, 8, 11);
         // pageFrameMaxSize == rowCount
-        testBwdPageFrameCursor(64, 64, 32);
+        testBwdPageFrameCursor(64, 64, 64, 32);
         // pageFrameMaxSize > rowCount
-        testBwdPageFrameCursor(63, 64, 61);
+        testBwdPageFrameCursor(63, 64, 64, 61);
     }
 
     @Test
     public void testPageFrameCursorNoColTops() throws Exception {
         // pageFrameMaxSize < rowCount
-        testFwdPageFrameCursor(64, 8, -1);
-        testFwdPageFrameCursor(65, 8, -1);
+        testFwdPageFrameCursor(64, 4, 8, -1);
+        testFwdPageFrameCursor(65, 4, 8, -1);
         // pageFrameMaxSize == rowCount
-        testFwdPageFrameCursor(64, 64, -1);
+        testFwdPageFrameCursor(64, 32, 64, -1);
         // pageFrameMaxSize > rowCount
-        testFwdPageFrameCursor(63, 64, -1);
+        testFwdPageFrameCursor(63, 32, 64, -1);
     }
 
     @Test
     public void testPageFrameCursorWithColTops() throws Exception {
         // pageFrameMaxSize < rowCount
-        testFwdPageFrameCursor(64, 8, 3);
-        testFwdPageFrameCursor(64, 8, 8);
-        testFwdPageFrameCursor(65, 8, 11);
+        testFwdPageFrameCursor(64, 8, 8, 3);
+        testFwdPageFrameCursor(64, 8, 8, 8);
+        testFwdPageFrameCursor(65, 8, 8, 11);
         // pageFrameMaxSize == rowCount
-        testFwdPageFrameCursor(64, 64, 32);
+        testFwdPageFrameCursor(64, 64, 64, 32);
         // pageFrameMaxSize > rowCount
-        testFwdPageFrameCursor(63, 64, 61);
+        testFwdPageFrameCursor(63, 64, 64, 61);
     }
 
     private void populateColumnTypes(RecordMetadata metadata, IntList columnIndexes, IntList columnSizes) {
@@ -761,7 +761,8 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         }
     }
 
-    private void testBwdPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
+    private void testBwdPageFrameCursor(int rowCount, int minSize, int maxSize, int startTopAt) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, minSize);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, maxSize);
 
         assertMemoryLeak(() -> {
@@ -843,10 +844,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         ) {
                             PageFrame frame;
                             while ((frame = cursor.next()) != null) {
-
                                 long len = frame.getPartitionHi() - frame.getPartitionLo();
                                 Assert.assertTrue(len > 0);
-                                Assert.assertTrue(len <= maxSize);
+                                Assert.assertTrue(len <= maxSize + minSize);
 
                                 long intColAddr = frame.getPageAddress(0);
                                 long tsColAddr = frame.getPageAddress(1);
@@ -1157,7 +1157,8 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private void testFwdPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
+    private void testFwdPageFrameCursor(int rowCount, int minSize, int maxSize, int startTopAt) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, minSize);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, maxSize);
 
         assertMemoryLeak(() -> {
@@ -1232,10 +1233,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         ) {
                             PageFrame frame;
                             while ((frame = cursor.next()) != null) {
-
                                 long len = frame.getPartitionHi() - frame.getPartitionLo();
                                 Assert.assertTrue(len > 0);
-                                Assert.assertTrue(len <= maxSize);
+                                Assert.assertTrue(len <= maxSize + minSize);
 
                                 long intColAddr = frame.getPageAddress(0);
                                 long tsColAddr = frame.getPageAddress(1);

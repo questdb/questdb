@@ -494,7 +494,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             if (masterTimestampHi > lastSlaveTimestamp) {
                 slaveData.clear();
-                slaveAllocator.close();
+                slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
@@ -596,7 +596,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             slaveTimeFrameHelper.toTop();
             lastSlaveTimestamp = Long.MIN_VALUE;
             slaveData.clear();
-            slaveAllocator.close();
+            allocator.clear();
+            slaveAllocator.clear();
             slaveTimestamps.resetPtr();
             slaveRowIds.resetPtr();
             GroupByUtils.toTop(groupByFunctions);
@@ -606,6 +607,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             if (!isOpen) {
                 isOpen = true;
                 slaveData.reopen();
+                allocator.reopen();
+                slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }
             this.masterCursor = masterCursor;
@@ -766,7 +769,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             if (masterTimestampHi > lastSlaveTimestamp) {
                 slaveData.clear();
-                slaveAllocator.close();
+                slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, masterTimestampHi, includePrevailing);
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
@@ -930,7 +933,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             slaveTimeFrameHelper.toTop();
             prevailingCache.clear();
             lastSlaveTimestamp = Long.MIN_VALUE;
-            slaveAllocator.close();
+            allocator.clear();
+            slaveAllocator.clear();
             timestamps.resetPtr();
             columnSink.resetPtr();
             slaveData.clear();
@@ -942,6 +946,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 isOpen = true;
                 slaveData.reopen();
                 prevailingCache.reopen();
+                allocator.reopen();
+                slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }
             this.masterCursor = masterCursor;
@@ -1003,7 +1009,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             if (masterTimestampHi > lastSlaveTimestamp) {
                 slaveData.clear();
-                slaveAllocator.close();
+                slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
@@ -1239,7 +1245,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             if (masterTimestampHi > lastSlaveTimestamp) {
                 slaveData.clear();
-                slaveAllocator.close();
+                slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();

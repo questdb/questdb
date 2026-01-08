@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.DirectLongLongHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
@@ -59,7 +60,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
         this.defaultChunkSize = defaultChunkSize;
         this.maxChunkSize = maxChunkSize;
         this.aligned = aligned;
-        this.chunks = new DirectLongLongHashMap(8, 0.5, -1, 0, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+        this.chunks = new DirectLongLongHashMap(8, 0.5, 0, 0, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
     }
 
     // Allocated chunks total (bytes).
@@ -69,17 +70,15 @@ public class FastGroupByAllocator implements GroupByAllocator {
     }
 
     @Override
-    public void close() {
-        for (int i = 0, n = chunks.capacity(); i < n; i++) {
-            long ptr = chunks.keyAtRaw(i);
-            if (ptr != -1) {
-                long size = chunks.valueAtRaw(i);
-                Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
-            }
-        }
+    public void clear() {
+        _close();
         chunks.restoreInitialCapacity();
-        allocated = 0;
-        ptr = lim = 0;
+    }
+
+    @Override
+    public void close() {
+        _close();
+        Misc.free(chunks);
     }
 
     @Override
@@ -166,6 +165,23 @@ public class FastGroupByAllocator implements GroupByAllocator {
         long allocatedPtr = malloc(newSize);
         Vect.memcpy(allocatedPtr, ptr, oldSize);
         return allocatedPtr;
+    }
+
+    @Override
+    public void reopen() {
+        chunks.reopen();
+    }
+
+    private void _close() {
+        for (int i = 0, n = chunks.capacity(); i < n; i++) {
+            long ptr = chunks.keyAtRaw(i);
+            if (ptr != 0) {
+                long size = chunks.valueAtRaw(i);
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+            }
+        }
+        allocated = 0;
+        ptr = lim = 0;
     }
 
     private long alignMaybe(long ptr) {

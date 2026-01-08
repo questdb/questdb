@@ -304,10 +304,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     public void clear() {
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
-        Misc.free(ownerFunctionAllocator);
-        Misc.freeObjListAndKeepObjects(perWorkerFunctionAllocators);
-        Misc.free(ownerTemporaryAllocator);
-        Misc.freeObjListAndKeepObjects(perWorkerTemporaryAllocators);
+        Misc.clear(ownerFunctionAllocator);
+        Misc.clearObjList(perWorkerFunctionAllocators);
+        Misc.clear(ownerTemporaryAllocator);
+        Misc.clearObjList(perWorkerTemporaryAllocators);
         Misc.clearObjList(ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
@@ -318,9 +318,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     public void clearTemporaryData(int slotId) {
         if (slotId == -1) {
-            ownerTemporaryAllocator.close();
+            ownerTemporaryAllocator.clear();
         } else {
-            perWorkerTemporaryAllocators.getQuick(slotId).close();
+            perWorkerTemporaryAllocators.getQuick(slotId).clear();
         }
     }
 

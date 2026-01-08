@@ -241,6 +241,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.baseCursor = baseCursor;
             circuitBreaker = executionContext.getCircuitBreaker();
             initState = INIT_PENDING;
+            allocator.reopen();
             Function.init(groupByFunctions, baseCursor, executionContext, null);
             toTop();
             return this;
