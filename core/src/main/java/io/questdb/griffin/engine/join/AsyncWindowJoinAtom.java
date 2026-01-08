@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -63,7 +64,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
-public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
+public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable {
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
     // kept public for tests
@@ -584,6 +585,21 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
+    }
+
+    @Override
+    public void reopen() {
+        ownerFunctionAllocator.reopen();
+        if (perWorkerFunctionAllocators != null) {
+            for (int i = 0, n = perWorkerFunctionAllocators.size(); i < n; i++) {
+                perWorkerFunctionAllocators.getQuick(i).reopen();
+            }
+        }
+
+        ownerTemporaryAllocator.reopen();
+        for (int i = 0, n = perWorkerTemporaryAllocators.size(); i < n; i++) {
+            perWorkerTemporaryAllocators.getQuick(i).reopen();
+        }
     }
 
     public void setSkipAggregation(boolean skipAggregation) {

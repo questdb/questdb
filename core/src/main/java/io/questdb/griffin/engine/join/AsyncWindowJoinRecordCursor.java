@@ -488,10 +488,14 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             TablePageFrameCursor slaveFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
+        if (!isOpen) {
+            isOpen = true;
+            atom.reopen();
+        }
         this.masterFrameSequence = masterFrameSequence;
         this.slaveFrameCursor = slaveFrameCursor;
         this.executionContext = executionContext;
-        isOpen = true;
         allFramesActive = true;
         isSlaveTimeFrameCacheBuilt = false;
         frameIndex = -1;
@@ -500,7 +504,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         frameValueOffset = -1;
         frameRowCount = -1;
         masterRecord.of(masterFrameSequence.getSymbolTableSource());
-        final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
         valueSizeBytes = atom.getValueSizeBytes();
         groupByValue = atom.getOwnerGroupByValue();
         groupByRecord.of(groupByValue);
