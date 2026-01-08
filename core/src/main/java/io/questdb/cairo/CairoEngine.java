@@ -66,6 +66,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.NoOpViewStateStore;
+import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewGraph;
 import io.questdb.cairo.view.ViewMetadata;
@@ -390,7 +391,6 @@ public class CairoEngine implements Closeable, WriterSource {
                                 viewStateStore.createViewState(viewDefinition);
                             }
                         }
-                        viewStateStore.enqueueCompile(tableToken);
                     } catch (Throwable th) {
                         final LogRecord rec = LOG.error().$("could not load view [view=").$(tableToken);
                         if (th instanceof CairoException ce) {
@@ -656,6 +656,10 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
         return viewDefinition;
+    }
+
+    public ViewCompilerExecutionContext createViewCompilerContext(int workerCount) {
+        return new ViewCompilerExecutionContext(this, workerCount);
     }
 
     // The reader will ignore close() calls until attached back.

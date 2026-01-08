@@ -33,25 +33,30 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class ViewCompilerJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(ViewCompilerJob.class);
-    private final ObjList<TableToken> compileViewsSink = new ObjList<>();
     private final ViewCompilerExecutionContext compilerExecutionContext;
     private final ViewCompilerTask compilerTask = new ViewCompilerTask();
     private final CairoEngine engine;
     private final ObjList<TableToken> invalidateViewsSink = new ObjList<>();
+    private final ObjList<TableToken> compileViewsSink = new ObjList<>();
     private final ViewStateStore stateStore;
     private final ViewGraph viewGraph;
     private final int workerId;
@@ -60,7 +65,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         try {
             this.workerId = workerId;
             this.engine = engine;
-            this.compilerExecutionContext = new ViewCompilerExecutionContext(engine, sharedQueryWorkerCount);
+            this.compilerExecutionContext = engine.createViewCompilerContext(sharedQueryWorkerCount);
             this.viewGraph = engine.getViewGraph();
             this.stateStore = engine.getViewStateStore();
         } catch (Throwable th) {
@@ -74,9 +79,39 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         this(workerId, engine, 1);
     }
 
+    /**
+     * Used on a background thread at startup to compile all views.
+     * Compiling views initializes view state and hydrates metadata cache.
+     */
+    public static void compileAllViews(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            ObjList<TableToken> tempSink
+    ) {
+        try {
+            final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
+            engine.getTableTokens(tableTokens, false);
+            final ObjList<TableToken> tokens = tableTokens.getList();
+
+            LOG.info().$("compiling views").$();
+            final MicrosecondClock microsClock = engine.getConfiguration().getMicrosecondClock();
+            for (int i = 0, n = tokens.size(); i < n; i++) {
+                final TableToken token = tokens.getQuick(i);
+                if (token.isView()) {
+                    compileView(engine, executionContext, token, microsClock.getTicks(), tempSink);
+                }
+            }
+        } catch (CairoException e) {
+            LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
+            l.$safe(e.getFlyweightMessage()).$();
+        } finally {
+            Path.clearThreadLocals();
+        }
+    }
+
     @Override
     public void close() {
-        LOG.info().$("view compiler job closing [workerId=").$(workerId).I$();
+        LOG.debug().$("view compiler job closing [workerId=").$(workerId).I$();
         Misc.free(compilerExecutionContext);
     }
 
@@ -87,24 +122,14 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         return processNotifications();
     }
 
-    private void compile(TableToken tableToken, long updateTimestamp) {
-        compileDependentViews(tableToken, updateTimestamp);
-        if (tableToken.isView()) {
-            compileView(tableToken, updateTimestamp);
-        }
-    }
-
-    private void compileDependentViews(TableToken tableToken, long updateTimestamp) {
-        compileViewsSink.clear();
-        viewGraph.getDependentViews(tableToken, compileViewsSink);
-        for (int i = 0, n = compileViewsSink.size(); i < n; i++) {
-            final TableToken viewToken = compileViewsSink.get(i);
-            compileView(viewToken, updateTimestamp);
-        }
-    }
-
-    private void compileView(TableToken viewToken, long updateTimestamp) {
-        final ViewDefinition viewDefinition = viewGraph.getViewDefinition(viewToken);
+    private static void compileView(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            long updateTimestamp,
+            ObjList<TableToken> invalidateViewsSink
+    ) {
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
         if (viewDefinition == null) {
             // the view could have been dropped concurrently
             if (!engine.isTableDropped(viewToken)) {
@@ -114,24 +139,29 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewDefinition.getViewSql(), compilerExecutionContext);
+            final ExecutionModel executionModel = compiler.generateExecutionModel(viewDefinition.getViewSql(), executionContext);
             // view went from invalid to valid state
             // we should also update view metadata, if there was a change
-            final ViewMetadata viewMetadata = getUpdatedViewMetadata(viewToken, compiler, executionModel);
-            reset(viewToken, viewMetadata, updateTimestamp);
+            final ViewMetadata viewMetadata = getUpdatedViewMetadata(executionContext, viewToken, compiler, executionModel);
+            reset(engine, viewToken, viewMetadata, updateTimestamp);
         } catch (SqlException | CairoException e) {
-            invalidate(viewToken, e.getFlyweightMessage(), updateTimestamp);
+            invalidate(engine, viewToken, e.getFlyweightMessage(), updateTimestamp, invalidateViewsSink);
         } catch (Throwable e) {
-            invalidate(viewToken, e.getMessage(), updateTimestamp);
+            invalidate(engine, viewToken, e.getMessage(), updateTimestamp, invalidateViewsSink);
         }
     }
 
     // checks for view metadata changes
     // returns new view metadata if there is a change, otherwise returns null
-    private @Nullable ViewMetadata getUpdatedViewMetadata(TableToken viewToken, SqlCompiler compiler, ExecutionModel executionModel) throws SqlException {
+    private static @Nullable ViewMetadata getUpdatedViewMetadata(
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            SqlCompiler compiler,
+            ExecutionModel executionModel
+    ) throws SqlException {
         try (
-                RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, compilerExecutionContext);
-                TableMetadata currentMetadata = engine.getTableMetadata(viewToken)
+                RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext);
+                TableMetadata currentMetadata = compiler.getEngine().getTableMetadata(viewToken)
         ) {
             final RecordMetadata newMetadata = factory.getMetadata();
             final int columnCount = newMetadata.getColumnCount();
@@ -161,46 +191,58 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
     }
 
-    private void invalidate(TableToken tableToken, CharSequence invalidationReason, long updateTimestamp) {
-        invalidateDependentViews(tableToken, invalidationReason, updateTimestamp);
+    private static void invalidate(
+            CairoEngine engine,
+            TableToken tableToken,
+            CharSequence invalidationReason,
+            long updateTimestamp,
+            ObjList<TableToken> tempSink
+    ) {
+        invalidateDependentViews(engine, tableToken, invalidationReason, updateTimestamp, tempSink);
         if (tableToken.isView()) {
-            updateViewState(tableToken, true, invalidationReason, null, updateTimestamp);
+            updateViewState(engine, tableToken, true, invalidationReason, null, updateTimestamp);
         }
     }
 
-    private void invalidateDependentViews(TableToken tableToken, CharSequence invalidationReason, long updateTimestamp) {
-        invalidateViewsSink.clear();
-        viewGraph.getDependentViews(tableToken, invalidateViewsSink);
-        for (int i = 0, n = invalidateViewsSink.size(); i < n; i++) {
-            final TableToken viewToken = invalidateViewsSink.get(i);
-            updateViewState(viewToken, true, invalidationReason, null, updateTimestamp);
+    private static void invalidateDependentViews(
+            CairoEngine engine,
+            TableToken tableToken,
+            CharSequence invalidationReason,
+            long updateTimestamp,
+            ObjList<TableToken> tempSink
+    ) {
+        tempSink.clear();
+        engine.getViewGraph().getDependentViews(tableToken, tempSink);
+        for (int i = 0, n = tempSink.size(); i < n; i++) {
+            final TableToken viewToken = tempSink.get(i);
+            updateViewState(engine, viewToken, true, invalidationReason, null, updateTimestamp);
         }
     }
 
-    private boolean processNotifications() {
-        while (stateStore.tryDequeueCompilerTask(compilerTask)) {
-            compile(compilerTask.tableToken, compilerTask.updateTimestamp);
-        }
-        return false;
-    }
-
-    private void reset(TableToken tableToken, @Nullable ViewMetadata viewMetadata, long updateTimestamp) {
+    private static void reset(CairoEngine engine, TableToken tableToken, @Nullable ViewMetadata viewMetadata, long updateTimestamp) {
         if (tableToken == null || !tableToken.isView()) {
             LOG.error().$("cannot reset view state, not a view token [token=").$(tableToken).I$();
             return;
         }
-        updateViewState(tableToken, false, null, viewMetadata, updateTimestamp);
+        updateViewState(engine, tableToken, false, null, viewMetadata, updateTimestamp);
     }
 
     // if viewMetadata is null, no metadata update needed
-    private void updateViewState(TableToken viewToken, boolean invalid, CharSequence invalidationReason, @Nullable ViewMetadata viewMetadata, long updateTimestamp) {
-        final ViewDefinition viewDefinition = viewGraph.getViewDefinition(viewToken);
+    private static void updateViewState(
+            CairoEngine engine,
+            TableToken viewToken,
+            boolean invalid,
+            CharSequence invalidationReason,
+            @Nullable ViewMetadata viewMetadata,
+            long updateTimestamp
+    ) {
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
         if (viewDefinition == null) {
             LOG.info().$("view definition is missing, probably dropped concurrently [token=").$(viewToken).I$();
             return;
         }
 
-        final ViewState viewState = stateStore.getViewState(viewToken);
+        final ViewState viewState = engine.getViewStateStore().getViewState(viewToken);
         if (viewState == null) {
             LOG.info().$("view state is missing, probably dropped concurrently [token=").$(viewToken).I$();
             return;
@@ -227,5 +269,28 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         } finally {
             viewState.unlockAfterWrite();
         }
+    }
+
+    private void compile(TableToken tableToken, long updateTimestamp) {
+        compileDependentViews(tableToken, updateTimestamp);
+        if (tableToken.isView()) {
+            compileView(engine, compilerExecutionContext, tableToken, updateTimestamp, compileViewsSink);
+        }
+    }
+
+    private void compileDependentViews(TableToken tableToken, long updateTimestamp) {
+        compileViewsSink.clear();
+        viewGraph.getDependentViews(tableToken, compileViewsSink);
+        for (int i = 0, n = compileViewsSink.size(); i < n; i++) {
+            final TableToken viewToken = compileViewsSink.get(i);
+            compileView(engine, compilerExecutionContext, viewToken, updateTimestamp, invalidateViewsSink);
+        }
+    }
+
+    private boolean processNotifications() {
+        while (stateStore.tryDequeueCompilerTask(compilerTask)) {
+            compile(compilerTask.tableToken, compilerTask.updateTimestamp);
+        }
+        return false;
     }
 }

@@ -242,7 +242,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     private void checkClosed() {
         if (isClosed()) {
-            LOG.info().$("is closed").$();
+            LOG.debug().$("is closed").$();
             throw PoolClosedException.INSTANCE;
         }
     }
@@ -252,7 +252,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         if (tenant != null) {
             tenant.goodbye();
             tenant.close();
-            LOG.info().$("closed [table=").$(tenant.getTableToken())
+            LOG.debug().$("closed [table=").$(tenant.getTableToken())
                     .$(", at=").$(entry.index).$(':').$(index)
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
                     .I$();
@@ -403,7 +403,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     @Override
     protected void closePool() {
         super.closePool();
-        LOG.info().$("closed").$();
+        LOG.debug().$("closed").$();
     }
 
     protected void expelFromPool(T tenant) {
