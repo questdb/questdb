@@ -151,11 +151,16 @@ public class TableSnapshotRestore implements QuietCloseable {
                 throw ex;
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();
+                if (cause != null) {
+                    LOG.critical().$("error in parallel task").$(cause).I$();
+                } else {
+                    LOG.critical().$("error in parallel task: ").$(e.getMessage()).I$();
+                }
                 final CairoException ex = CairoException.critical(0)
                         .put("error in parallel task")
                         .put(": ")
-                        .put(cause.getMessage());
-                ex.initCause(cause);
+                        .put(cause != null ? cause.getMessage() : e.getMessage());
+                ex.initCause(cause != null ? cause : e);
                 throw ex;
             }
         }
@@ -418,32 +423,22 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     private void rebuildBitmapIndexForNativePartition(int pathTableLen, int columnCount, long partitionTimestamp, long partitionRowCount, long partitionNameTxn, String tablePathStr, int partitionBy, int timestampType) {
         for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            if (!tableMetadata.isColumnIndexed(colIdx)) {
+            // Skip non-indexed columns and non-symbol columns (deleted columns may still have indexed flag set)
+            if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
                 continue;
             }
 
-            // Currently only symbol columns can be indexed
-            assert ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))
-                    : "Only symbol columns can be indexed, found: " + ColumnType.nameOf(tableMetadata.getColumnType(colIdx));
+            final int writerIndex = tableMetadata.getWriterIndex(colIdx);
+            final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+            final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
 
-            int writerIndex = tableMetadata.getWriterIndex(colIdx);
-            long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
-            long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-
-            // Skip if column doesn't exist in this partition (columnTopRaw = -1)
-            if (columnTopRaw < 0 || columnTopRaw >= partitionRowCount) {
+            // Skip if column doesn't exist in this partition
+            if (columnTop < 0 || columnTop >= partitionRowCount) {
                 continue;
             }
 
-            long columnTop = columnTopRaw;
-
-            // Capture variables for lambda
             final String columnName = tableMetadata.getColumnName(colIdx);
             final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
-            final long fPartitionTimestamp = partitionTimestamp;
-            final long fPartitionNameTxn = partitionNameTxn;
-            final long fPartitionRowCount = partitionRowCount;
-            final long fColumnTop = columnTop;
 
             futures.add(executor.submit(() -> rebuildBitmapIndexForNativePartitionColumn(
                     tablePathStr,
@@ -451,10 +446,10 @@ public class TableSnapshotRestore implements QuietCloseable {
                     columnName,
                     columnNameTxn,
                     indexBlockCapacity,
-                    fPartitionTimestamp,
-                    fPartitionNameTxn,
-                    fPartitionRowCount,
-                    fColumnTop,
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    partitionRowCount,
+                    columnTop,
                     partitionBy,
                     timestampType
             )));
