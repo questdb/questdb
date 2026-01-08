@@ -112,9 +112,11 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
 
     @Override
     public int getEventKey() {
-        // Event is encoded in bits 20-31, tableId in bits 0-19.
-        // TableId exceeding 20 bits (~1M) may cause collisions, which is acceptable
+        // Event is encoded in bits 20-31, viewTableId in bits 0-19.
+        // ViewTableId exceeding 20 bits (~1M) may cause collisions, which is acceptable
         // for telemetry rate limiting purposes.
+        // Note: With many views, this produces many unique keys in lastEventTimestamps map.
+        // By default, telemetry_mat_view deduplication is disabled (telemetry.mat.view.event.deduplication.interval=0).
         return (event << 20) | (viewTableId & 0xFFFFF);
     }
 

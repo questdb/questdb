@@ -120,6 +120,8 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
         // Event is encoded in bits 20-31, tableId in bits 0-19.
         // TableId exceeding 20 bits (~1M) may cause collisions, which is acceptable
         // for telemetry rate limiting purposes.
+        // Note: With many tables, this produces many unique keys in lastEventTimestamps map.
+        // By default, telemetry_wal deduplication is disabled (telemetry.wal.event.deduplication.interval=0).
         return (event << 20) | (tableId & 0xFFFFF);
     }
 

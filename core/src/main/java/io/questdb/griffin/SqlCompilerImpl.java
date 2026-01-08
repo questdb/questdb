@@ -4184,7 +4184,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     createViewOp.updateOperationFutureTableToken(viewToken);
                     engine.getViewStateStore().enqueueCompile(viewToken);
-                    TelemetryTask.store(engine.getTelemetry(), TelemetryOrigin.INTERNAL, TelemetryEvent.VIEW_CREATE);
+                    TelemetryTask.store(engine.getTelemetry(), TelemetryOrigin.NO_MATTERS, TelemetryEvent.VIEW_CREATE);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "view requires a SELECT statement");
                 }
@@ -4331,6 +4331,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
         try {
             engine.dropTableOrViewOrMatView(path, tableToken);
+            TelemetryTask.store(engine.getTelemetry(), TelemetryOrigin.NO_MATTERS, TelemetryEvent.VIEW_DROP);
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, mat view dropped already

@@ -4474,10 +4474,9 @@ public class IODispatcherTest extends AbstractTest {
                 """, 2, true);
 
         final String expected = """
-                100\t1
-                1\t2
-                1\t2
-                101\t1
+                100	1
+                1	2
+                101	1
                 """;
         assertTelemetryEventAndOrigin(expected);
     }

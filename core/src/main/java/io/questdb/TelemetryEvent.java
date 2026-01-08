@@ -37,7 +37,7 @@ public final class TelemetryEvent {
     public static final short MAT_VIEW_REFRESH_SUCCESS = 204;
     public static final short QUERY_RESULT_EXPORT_CSV = 110;
     public static final short QUERY_RESULT_EXPORT_PARQUET = 111;
-    public static final short READ_PARQUET = 109;
+    public static final short READ_PARQUET = 150;
     // CPU classes: -20 - 1-4 cores, -21 - 5-8 cores, -22 - 9-16 cores, -23 - 17-32 cores, -24 - 33-64 cores, -25 - 65+ cores
     public static final short SYSTEM_CPU_CLASS_BASE = -20;
     // DB size classes:
@@ -53,7 +53,12 @@ public final class TelemetryEvent {
     // Table count classes: -40 - 0-10 tables, -41 - 11-25 tables, -42 - 26-50 tables, -43 - 51-100 tables, -44 - 101-250 tables, -45 - 251-1000 tables, -46 - 1001+ tables
     public static final short SYSTEM_TABLE_COUNT_CLASS_BASE = -40;
     public static final short SYSTEM_UP = 100;
+    public static final short USE_TIMESTAMP_NANOS = READ_PARQUET + 1;
+    public static final short USE_ARRAY = USE_TIMESTAMP_NANOS + 1;
+    public static final short PARALLEL_WINDOW_JOIN = USE_ARRAY + 1;
+    public static final short SINGLE_THREAD_WINDOW_JOIN = PARALLEL_WINDOW_JOIN + 1;
     public static final short VIEW_CREATE = 210;
+    public static final short VIEW_DROP = 210;
     public static final short WAL_APPLY_RESUME = 108;
     public static final short WAL_APPLY_SUSPEND = 107;
     public static final short WAL_TXN_APPLY_START = 103;

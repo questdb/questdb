@@ -1662,14 +1662,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             int telemetryWalQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_WAL_QUEUE_CAPACITY, telemetryQueueCapacity));
             boolean telemetryWalHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_WAL_HIDE_TABLES, telemetryHideTables);
             int telemetryWalTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_WAL_TABLE_TTL_WEEKS, 1);
-            long telemetryWalDeduplicationInterval = getMicros(properties, env, PropertyKey.TELEMETRY_WAL_EVENT_DEDUPLICATION_INTERVAL, 3600000000L);
+            long telemetryWalDeduplicationInterval = getMicros(properties, env, PropertyKey.TELEMETRY_WAL_EVENT_DEDUPLICATION_INTERVAL, 0L);
             this.telemetryWalConfiguration = new PropTelemetryConfiguration(telemetryWalEnabled, telemetryWalQueueCapacity, telemetryWalHideTables, telemetryWalTableTTLWeeks, telemetryWalDeduplicationInterval);
 
             boolean telemetryMatViewEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_ENABLED, telemetryEnabled);
             int telemetryMatViewQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_QUEUE_CAPACITY, telemetryQueueCapacity));
             boolean telemetryMatViewHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_HIDE_TABLES, telemetryHideTables);
             int telemetryMatViewTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_TABLE_TTL_WEEKS, 1);
-            long telemetryMatViewDeduplicationInterval = getMicros(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_EVENT_DEDUPLICATION_INTERVAL, 3600000000L);
+            long telemetryMatViewDeduplicationInterval = getMicros(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_EVENT_DEDUPLICATION_INTERVAL, 0L);
             this.telemetryMatViewConfiguration = new PropTelemetryConfiguration(telemetryMatViewEnabled, telemetryMatViewQueueCapacity, telemetryMatViewHideTables, telemetryMatViewTableTTLWeeks, telemetryMatViewDeduplicationInterval);
 
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);

@@ -63,18 +63,18 @@ import static io.questdb.std.Files.notDots;
 
 public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(Telemetry.class);
+    private final Clock clock;
+    private final long dbSizeEstimateTimeout; //micros
     private final long deduplicationInterval;
     private final boolean enabled;
-    private final IntLongHashMap lastEventTimestamps = new IntLongHashMap();
+    private final IntLongHashMap lastEventTimestamps;
     private final int maxFileNameLen;
+    private final MPSequence telemetryPubSeq;
+    private final SCSequence telemetrySubSeq;
+    private final TelemetryType<T> telemetryType;
     private final int walWeeks;
-    private Clock clock;
     private long dbSizeEstimateStartTimestamp;
-    private long dbSizeEstimateTimeout; //micros
-    private MPSequence telemetryPubSeq;
     private RingQueue<T> telemetryQueue;
-    private SCSequence telemetrySubSeq;
-    private TelemetryType<T> telemetryType;
     private TableWriter writer;
     private final QueueConsumer<T> taskConsumer = this::consume;
 
@@ -93,9 +93,17 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
             walWeeks = telemetryConfiguration.getTtlWeeks();
             deduplicationInterval = telemetryConfiguration.getDeduplicationIntervalMicros();
+            lastEventTimestamps = new IntLongHashMap();
         } else {
+            telemetryType = null;
+            clock = null;
+            dbSizeEstimateTimeout = 0;
+            telemetryQueue = null;
+            telemetryPubSeq = null;
+            telemetrySubSeq = null;
+            lastEventTimestamps = null;
             walWeeks = 0;
-            deduplicationInterval = Long.MAX_VALUE;
+            deduplicationInterval = 0;
         }
     }
 
@@ -105,7 +113,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             telemetryType.logStatus(writer, TelemetryEvent.SYSTEM_DOWN, clock.getTicks());
             writer = Misc.free(writer);
         }
-        lastEventTimestamps.clear();
+        Misc.clear(lastEventTimestamps);
     }
 
     @Override
@@ -119,12 +127,14 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
 
     public void consume(T task) {
         long timestamp = clock.getTicks();
-        int eventKey = task.getEventKey();
-        System.out.println("event : " + task.getEventKey() + "    lastEventTimestamps.get(eventKey): " + lastEventTimestamps.get(eventKey) + " timestamp: " + timestamp);
-        if (lastEventTimestamps.get(eventKey) + deduplicationInterval > timestamp) {
-            return;
+        if (deduplicationInterval > 0) {
+            int eventKey = task.getEventKey();
+            if (lastEventTimestamps.get(eventKey) + deduplicationInterval > timestamp) {
+                return;
+            }
+            lastEventTimestamps.put(eventKey, timestamp);
         }
-        lastEventTimestamps.put(eventKey, timestamp);
+
         task.writeTo(writer, timestamp);
     }
 
