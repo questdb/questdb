@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
@@ -43,9 +43,9 @@ import java.util.concurrent.Semaphore;
  */
 public class WALSegmentLockManager {
     private static final Log LOG = LogFactory.getLog(WALSegmentLockManager.class);
-
     // Use same sentinel as Rust for WAL directory locks (not actual segments)
     private static final int WAL_LOCK_SENTINEL = WalUtils.SEG_NONE_ID;
+    private static final ThreadLocal<StringSink> sinks = new ThreadLocal<>(StringSink::new);
     private final ConcurrentHashMap<Semaphore> locks = new ConcurrentHashMap<>();
 
     @TestOnly
@@ -145,7 +145,8 @@ public class WALSegmentLockManager {
     }
 
     private static CharSequence makeKey(Utf8Sequence tableName, int walId, int segmentId) {
-        final StringSink sink = Misc.getThreadLocalSink();
+        final StringSink sink = sinks.get();
+        sink.clear();
         sink.put(tableName).put('/').put(walId).put('/').put(segmentId);
         return sink;
     }
