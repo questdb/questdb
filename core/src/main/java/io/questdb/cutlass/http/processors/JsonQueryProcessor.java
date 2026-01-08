@@ -150,6 +150,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.EMPTY, (state, cq, keepAliveHeader) -> sendEmptyQueryNotice(state, keepAliveHeader));
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_MAT_VIEW, this::executeDdl);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_VIEW, this::executeDdl);
+            this.queryExecutors.extendAndSet(CompiledQuery.COMPILE_VIEW, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.ALTER_VIEW, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.REFRESH_MAT_VIEW, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_DATABASE, sendConfirmation);
 

@@ -217,6 +217,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCompileViewModelPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public @NotNull CharSequence getConfRoot() {
         return confRoot;
     }
@@ -419,6 +424,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getInactiveReaderTTL() {
         return -10000;
+    }
+
+    @Override
+    public long getInactiveViewWalWriterTTL() {
+        return 30_000;
     }
 
     @Override
@@ -1220,6 +1230,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getVectorAggregateQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getViewLexerPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return 3;
     }
 
     @Override

@@ -592,7 +592,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     Thread thread = startCancelThread(engine, sqlExecutionContext);
                     thread.start();
                     String expectedError = "cancelled by user";
-                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
+                    testHttpClient.assertGetContains("/exp", expectedError, params);
                     thread.join();
                 });
     }
@@ -612,7 +612,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     thread.start();
                     String expectedError = "cancelled by user";
                     try {
-                        testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
+                        testHttpClient.assertGetContains("/exp", expectedError, params);
                         Assert.fail("server should disconnect");
                     } catch (HttpClientException e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -1332,7 +1332,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("timeout", "1");
                     String expectedError = "timeout, query aborted";
-                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
+                    testHttpClient.assertGetContains("/exp", expectedError, params);
                 });
     }
 
@@ -1347,7 +1347,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("rmode", "nodelay");
 
                     try {
-                        testHttpClient.assertGetContains("/exp", "nothing", params, null, null, 9001);
+                        testHttpClient.assertGetContains("/exp", "nothing", params);
                         Assert.fail();
                     } catch (HttpClientException e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");

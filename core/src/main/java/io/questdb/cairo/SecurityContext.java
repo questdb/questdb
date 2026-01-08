@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -65,6 +66,8 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
+    void authorizeAlterView(TableToken tableToken);
+
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
     void authorizeDatabaseBackup();
@@ -86,6 +89,8 @@ public interface SecurityContext extends Mutable {
     void authorizePGWire();
 
     void authorizeResumeWal(TableToken tableToken);
+
+    void authorizeSelect(ViewDefinition viewDefinition);
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
@@ -125,6 +130,12 @@ public interface SecurityContext extends Mutable {
     void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableVacuum(TableToken tableToken);
+
+    void authorizeViewCompile(TableToken tableToken);
+
+    void authorizeViewCreate();
+
+    void authorizeViewDrop(TableToken tableToken);
 
     /**
      * Should throw an exception if:

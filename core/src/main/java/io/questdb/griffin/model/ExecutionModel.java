@@ -35,7 +35,9 @@ public interface ExecutionModel {
     int UPDATE = COPY + 1;                  // 6
     int EXPLAIN = UPDATE + 1;               // 7
     int CREATE_MAT_VIEW = EXPLAIN + 1;      // 8
-    int MAX = CREATE_MAT_VIEW + 1;
+    int CREATE_VIEW = CREATE_MAT_VIEW + 1;  // 9
+    int COMPILE_VIEW = CREATE_VIEW + 1;     // 10
+    int MAX = COMPILE_VIEW + 1;
 
     int getModelType();
 
@@ -71,6 +73,8 @@ public interface ExecutionModel {
             typeNameMap[ExecutionModel.UPDATE] = "Update";
             typeNameMap[ExecutionModel.EXPLAIN] = "Explain";
             typeNameMap[ExecutionModel.CREATE_MAT_VIEW] = "Create materialized";
+            typeNameMap[ExecutionModel.CREATE_VIEW] = "Create view";
+            typeNameMap[ExecutionModel.COMPILE_VIEW] = "Compile view";
         }
     }
 }

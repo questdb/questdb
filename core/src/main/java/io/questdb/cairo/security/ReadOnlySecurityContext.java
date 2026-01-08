@@ -27,6 +27,7 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -111,6 +112,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterView(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -160,6 +166,10 @@ public class ReadOnlySecurityContext implements SecurityContext {
     @Override
     public void authorizeResumeWal(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeSelect(ViewDefinition viewDefinition) {
     }
 
     @Override
@@ -217,6 +227,21 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public void authorizeTableVacuum(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeViewCompile(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeViewCreate() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeViewDrop(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 

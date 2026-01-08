@@ -52,6 +52,7 @@ public interface PoolListener {
     byte SRC_SQL_COMPILER = 6;
     byte SRC_TABLE_METADATA = 7;
     byte SRC_TABLE_REGISTRY = 5;
+    byte SRC_VIEW_WAL_WRITER = 8;
     byte SRC_WAL_WRITER = 4;
     byte SRC_WRITER = 1;
 
