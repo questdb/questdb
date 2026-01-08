@@ -675,46 +675,51 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 @NotNull IntList groupByFunctionToColumnIndex
         ) {
             super(groupByFunctionsUpdater, valueCount);
-            this.crossIndex = columnIndex;
-            this.columnSplit = columnSplit;
-            this.groupByFunctions = groupByFunctions;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
-            GroupByUtils.setAllocator(groupByFunctions, allocator);
-            this.simpleMapValue = simpleMapValue;
-            this.masterTimestampIndex = masterTimestampIndex;
-            this.slaveTimestampIndex = slaveTimestampIndex;
-            if (masterTimestampType == slaveTimestampType) {
-                masterTimestampScale = slaveTimestampScale = 1L;
-            } else {
-                masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
-                slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+            try {
+                this.crossIndex = columnIndex;
+                this.columnSplit = columnSplit;
+                this.groupByFunctions = groupByFunctions;
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                GroupByUtils.setAllocator(groupByFunctions, allocator);
+                this.simpleMapValue = simpleMapValue;
+                this.masterTimestampIndex = masterTimestampIndex;
+                this.slaveTimestampIndex = slaveTimestampIndex;
+                if (masterTimestampType == slaveTimestampType) {
+                    masterTimestampScale = slaveTimestampScale = 1L;
+                } else {
+                    masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
+                    slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+                }
+                this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
+                this.prevailingCache = new WindowJoinPrevailingCache();
+                this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
+
+                this.internalJoinRecord = new JoinRecord(columnSplit);
+                this.groupByRecord = new VirtualRecord(groupByFunctions);
+                groupByRecord.of(simpleMapValue);
+                this.joinRecord = new JoinRecord(columnSplit);
+                if (columnIndex != null) {
+                    SelectedRecord sr = new SelectedRecord(columnIndex);
+                    sr.of(joinRecord);
+                    this.record = sr;
+                } else {
+                    this.record = joinRecord;
+                }
+
+                this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.columnSink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
+                this.columnSink.setAllocator(slaveAllocator);
+                this.timestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
+                this.timestamps.setAllocator(slaveAllocator);
+
+                this.columnCount = groupByFuncArgs.size();
+                this.groupByFuncArgs = groupByFuncArgs;
+                this.groupByFuncTypes = groupByFuncTypes;
+                this.groupByFunctionToColumnIndex = groupByFunctionToColumnIndex;
+            } catch (Throwable th) {
+                close();
+                throw th;
             }
-            this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
-            this.prevailingCache = new WindowJoinPrevailingCache();
-            this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
-
-            this.internalJoinRecord = new JoinRecord(columnSplit);
-            this.groupByRecord = new VirtualRecord(groupByFunctions);
-            groupByRecord.of(simpleMapValue);
-            this.joinRecord = new JoinRecord(columnSplit);
-            if (columnIndex != null) {
-                SelectedRecord sr = new SelectedRecord(columnIndex);
-                sr.of(joinRecord);
-                this.record = sr;
-            } else {
-                this.record = joinRecord;
-            }
-
-            this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration);
-            this.columnSink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
-            this.columnSink.setAllocator(slaveAllocator);
-            this.timestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
-            this.timestamps.setAllocator(slaveAllocator);
-
-            this.columnCount = groupByFuncArgs.size();
-            this.groupByFuncArgs = groupByFuncArgs;
-            this.groupByFuncTypes = groupByFuncTypes;
-            this.groupByFunctionToColumnIndex = groupByFunctionToColumnIndex;
         }
 
         @Override
@@ -726,13 +731,13 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         public void close() {
             super.close();
             Misc.free(prevailingCache);
+            Misc.free(allocator);
+            Misc.free(slaveAllocator);
             if (isOpen) {
                 isOpen = false;
-                Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
-                Misc.free(slaveAllocator);
                 timestamps.resetPtr();
                 columnSink.resetPtr();
             }
