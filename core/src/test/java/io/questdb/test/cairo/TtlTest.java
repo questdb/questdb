@@ -45,7 +45,7 @@ public class TtlTest extends AbstractCairoTest {
 
     public TtlTest(WalMode walMode) {
         this.walMode = walMode;
-        this.wal = walMode == WalMode.WITH_WAL ? "wal;" : " BYPASS WAL;";
+        this.wal = walMode == WalMode.WITH_WAL ? " wal;" : " BYPASS WAL;";
     }
 
     @Parameterized.Parameters(name = "{0}")
