@@ -31,6 +31,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 
 import java.net.URLEncoder;
 
@@ -44,11 +45,16 @@ public final class HttpUtils {
     private HttpUtils() {
     }
 
-    public static void assertChunkedBody(HttpClient.ResponseHeaders responseHeaders, String expectedBody) {
+    public static void assertChunkedBody(
+            HttpClient.ResponseHeaders responseHeaders,
+            @Nullable String expectedBody
+    ) {
         StringSink sink = tlSink.get();
         sink.clear();
         responseHeaders.getResponse().copyTextTo(sink);
-        TestUtils.assertEquals(expectedBody, sink);
+        if (expectedBody != null) {
+            TestUtils.assertEquals(expectedBody, sink);
+        }
     }
 
     public static void assertChunkedBodyContains(HttpClient.ResponseHeaders responseHeaders, String term) {
