@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -166,11 +167,15 @@ public class RandomSelectGenerator {
             // Generate ORDER BY clause
             if (rnd.nextDouble() < orderByProbability) {
                 sql.put(" ");
-                generateOrderByClause(sql, selectedTables, useGroupBy, metadataCache);
+                int orderedColType = generateOrderByClause(sql, selectedTables, useGroupBy, metadataCache);
+
+                // we don't allow LIMIT with ORDER BY <boolean> because boolean ordering is practically meaningless
+                // and LIMIT could yield non-determistic results. it's the same as if there was no ORDER BY at all
+                boolean meaningfulOrdering = orderedColType != Numbers.INT_NULL && orderedColType != ColumnType.BOOLEAN;
 
                 // Generate LIMIT clause only after ORDER BY, the result of the generated SELECT could
                 // be non-deterministic if it is not ordered and LIMIT is present
-                if (rnd.nextDouble() < limitProbability) {
+                if (meaningfulOrdering && rnd.nextDouble() < limitProbability) {
                     sql.put(" LIMIT ");
                     sql.put(1 + rnd.nextInt(100));
                 }
@@ -454,11 +459,12 @@ public class RandomSelectGenerator {
         }
     }
 
-    private void generateOrderByClause(StringSink sql, ObjList<TableInfo> selectedTables, boolean hasGroupBy, CharSequenceObjHashMap<TableMetadata> metadataCache) {
+    private int generateOrderByClause(StringSink sql, ObjList<TableInfo> selectedTables, boolean hasGroupBy, CharSequenceObjHashMap<TableMetadata> metadataCache) {
         // SAMPLE BY requires ASC order on timestamp, so skip ORDER BY entirely
         // (default order is ASC which is what SAMPLE BY needs)
         if (currentlyUsingSampleBy) {
-            return;
+            // assumption: SAMPLE BY results are always ordered by timestamp ASC -> we can treat it as ORDER BY
+            return ColumnType.TIMESTAMP;
         }
 
         if (hasGroupBy) {
@@ -469,7 +475,7 @@ public class RandomSelectGenerator {
                 int colType = metadata.getColumnType(currentGroupByColumnIndex);
                 if (colType == ColumnType.BINARY) {
                     // ORDER BY with BINARY column is not supported, we skip
-                    return;
+                    return Numbers.INT_NULL;
                 }
 
                 sql.put("ORDER BY ");
@@ -482,8 +488,10 @@ public class RandomSelectGenerator {
                 if (rnd.nextBoolean()) {
                     sql.put(" DESC");
                 }
+                return colType;
             }
             // Otherwise skip ORDER BY for GROUP BY queries
+            return Numbers.INT_NULL;
         } else {
             // Regular ORDER BY for non-aggregate queries
             TableInfo table = selectedTables.get(rnd.nextInt(selectedTables.size()));
@@ -491,7 +499,7 @@ public class RandomSelectGenerator {
 
             int columnCount = metadata.getColumnCount();
             if (columnCount == 0) {
-                return;
+                return Numbers.INT_NULL;
             }
 
             // Pick a random column to order by
@@ -500,7 +508,7 @@ public class RandomSelectGenerator {
             int colType = metadata.getColumnType(colIdx);
             if (colType == ColumnType.BINARY) {
                 // ORDER BY with BINARY column is not supported, we skip
-                return;
+                return Numbers.INT_NULL;
             }
 
             sql.put("ORDER BY ");
@@ -513,6 +521,7 @@ public class RandomSelectGenerator {
             if (rnd.nextBoolean()) {
                 sql.put(" DESC");
             }
+            return colType;
         }
     }
 
@@ -588,32 +597,26 @@ public class RandomSelectGenerator {
         TableInfo table = selectedTables.get(rnd.nextInt(selectedTables.size()));
         RecordMetadata metadata = metadataCache.get(table.tableName());
 
-        int columnCount = metadata.getColumnCount();
-        if (columnCount == 0) {
+        IntList usableColumns = new IntList();
+        for (int i = 0; i < metadata.getColumnCount(); i++) {
+            int columnType = metadata.getColumnType(i);
+            if (columnType != ColumnType.BINARY && columnType != ColumnType.LONG128) {
+                usableColumns.add(i);
+            }
+        }
+        if (usableColumns.size() == 0) {
             sql.put("1=1");
             return;
         }
 
-        int numConditions = 1 + rnd.nextInt(Math.min(3, columnCount));
+        int numConditions = 1 + rnd.nextInt(Math.min(3, usableColumns.size()));
         for (int i = 0; i < numConditions; i++) {
             if (i > 0) {
                 sql.put(rnd.nextBoolean() ? " AND " : " OR ");
             }
 
-            int colIdx = -1;
-            int columnType = ColumnType.UNDEFINED;
-            for (int j = 0; j < 10; j++) {
-                colIdx = rnd.nextInt(columnCount);
-                columnType = metadata.getColumnType(colIdx);
-
-                // pick a new column if the column type is BINARY or LONG128
-                if (columnType != ColumnType.BINARY && columnType != ColumnType.LONG128) {
-                    break;
-                }
-            }
-            if (columnType == ColumnType.BINARY || columnType == ColumnType.LONG128) {
-                throw new RuntimeException("BINARY and LONG128 column types cannot be used in WHERE clause");
-            }
+            int colIdx = usableColumns.get(rnd.nextInt(usableColumns.size()));
+            int columnType = metadata.getColumnType(colIdx);
 
             if (selectedTables.size() > 1) {
                 sql.put(table.alias).put(".");

@@ -664,8 +664,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                                     CREATE TABLE 'arr_auto_creation_test' (\s
                                     \tarr DOUBLE[],
                                     \ttimestamp TIMESTAMP
-                                    ) timestamp(timestamp) PARTITION BY DAY WAL
-                                    WITH maxUncommittedRows=500000, o3MaxLag=600000000us;
+                                    ) timestamp(timestamp) PARTITION BY DAY;
                                     """);
                 }
             }
