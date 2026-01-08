@@ -161,7 +161,6 @@ HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD 
                 FILE_ATTRIBUTE_NORMAL,
                 NULL
         );
-        
         if (handle == INVALID_HANDLE_VALUE) {
             SaveLastError();
         }
@@ -585,8 +584,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jl
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
         (JNIEnv *e, jclass cl, jint fd) {
-    HANDLE handle = FD_TO_HANDLE(fd);
-    jint r = CloseHandle(handle);
+    jint r = CloseHandle(FD_TO_HANDLE(fd));
     if (!r) {
         SaveLastError();
         return -1;
@@ -895,8 +893,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jint fd) {
-    HANDLE handle = FD_TO_HANDLE(fd);
-    if (LockFile(handle, 0, 0, 1, 0)) {
+    if (LockFile(FD_TO_HANDLE(fd), 0, 0, 1, 0)) {
         return 0;
     }
 
