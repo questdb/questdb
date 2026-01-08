@@ -80,7 +80,10 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testMultipleLevelDependencyViews() throws Exception {
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+//        final Rnd rnd = fuzzer.generateRandom(LOG, 1667075212736414L, 1767857790813L);
+//        final Rnd rnd = fuzzer.generateRandom(LOG, 1663538805955362L, 1767854254406L);
+//        final Rnd rnd = fuzzer.generateRandom(LOG, 86385347609413L, 1767862063016L);
+        final Rnd rnd = fuzzer.generateRandom(LOG, 180665875728L, 1767862750951L);
         final RandomSelectGenerator selectGenerator = new RandomSelectGenerator(engine, rnd);
 
         final String tableName = testName.getMethodName();
@@ -276,6 +279,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                 final String viewSql = selectGenerator.generate();
                 viewSqls.add(viewSql);
                 createView(viewName, viewSql);
+                LOG.info().$("created view ").$(viewName).$(" as ").$(viewSql).$();
                 selectGenerator.registerTable(viewName);
             }
 
@@ -315,6 +319,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                         }
                     }
 
+                    LOG.info().$("asserting view ").$(viewName).$(" against ").$(viewSql).$(", order-by-column-index: ").$(orderByColumnIndex).I$();
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,
