@@ -37,10 +37,14 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -78,6 +82,32 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     public void close() {
         LOG.info().$("view compiler job closing [workerId=").$(workerId).I$();
         Misc.free(compilerExecutionContext);
+    }
+
+    /**
+     * Used on a background thread at startup to compile all views.
+     * Compiling views initializes view state and hydrates metadata cache.
+     */
+    public void compileAllViews() {
+        try {
+            final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
+            engine.getTableTokens(tableTokens, false);
+            final ObjList<TableToken> tokens = tableTokens.getList();
+
+            LOG.info().$("compiling all views [workerId=").$(workerId).I$();
+            final MicrosecondClock microsClock = engine.getConfiguration().getMicrosecondClock();
+            for (int i = 0, n = tokens.size(); i < n; i++) {
+                final TableToken token = tokens.getQuick(i);
+                if (token.isView()) {
+                    compileView(token, microsClock.getTicks());
+                }
+            }
+        } catch (CairoException e) {
+            LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
+            l.$safe(e.getFlyweightMessage()).$();
+        } finally {
+            Path.clearThreadLocals();
+        }
     }
 
     @Override

@@ -68,6 +68,7 @@ public class ServerMain implements Closeable {
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     protected PGServer pgServer;
+    private Thread compileViewsThread;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
@@ -157,13 +158,8 @@ public class ServerMain implements Closeable {
      * with background hydration threads that may hold table metadata locks.
      */
     public void awaitStartup() {
-        if (hydrateMetadataThread != null) {
-            try {
-                hydrateMetadataThread.join();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        joinThread(hydrateMetadataThread, false);
+        joinThread(compileViewsThread, false);
     }
 
     public void awaitTable(String tableName) {
@@ -178,12 +174,8 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            if (hydrateMetadataThread != null) {
-                try {
-                    hydrateMetadataThread.join();
-                } catch (InterruptedException ignored) {
-                }
-            }
+            joinThread(hydrateMetadataThread, true);
+            joinThread(compileViewsThread, true);
             System.err.println("QuestDB is shutting down...");
             System.out.println("QuestDB is shutting down...");
             if (bootstrap != null && bootstrap.getLog() != null) {
@@ -386,7 +378,7 @@ public class ServerMain implements Closeable {
             }
         };
 
-        // make sure view definitions loaded before the view compiler job is started
+        // make sure view definitions are loaded before the view compiler job is started,
         // all views have to be loaded with their dependencies before the compiler starts processing notifications
         engine.buildViewGraphs();
 
@@ -479,8 +471,28 @@ public class ServerMain implements Closeable {
         });
         hydrateMetadataThread.start();
 
+        // populate view state store and hydrate metadata cache with view metadata
+        compileViewsThread = new Thread(() -> {
+            try (ViewCompilerJob viewCompiler = new ViewCompilerJob(-1, engine, 0)) {
+                viewCompiler.compileAllViews();
+            }
+        });
+        compileViewsThread.start();
+
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();
+    }
+
+    private void joinThread(Thread thread, boolean ignoreInterrupt) {
+        if (thread != null) {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                if (!ignoreInterrupt) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
     }
 
     protected <T extends Closeable> T freeOnExit(T closeable) {

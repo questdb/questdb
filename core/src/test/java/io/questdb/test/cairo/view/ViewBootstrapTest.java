@@ -612,6 +612,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         ));
         questdb = createServerMain();
         questdb.start();
+        questdb.awaitStartup();
     }
 
     private void stopQuestDB() {
