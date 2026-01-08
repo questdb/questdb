@@ -37,6 +37,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.sql.RandomSelectGenerator;
@@ -311,15 +312,15 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     // Order by ALL non-binary columns to ensure deterministic ordering.
                     // Ordering by a single low-cardinality column can cause flaky failures
                     // when multiple rows have the same value.
-                    StringBuilder orderByClause = new StringBuilder();
+                    StringSink orderByClause = new StringSink();
                     final TableToken viewToken = engine.getTableTokenIfExists(viewName);
                     try (TableMetadata metadata = engine.getTableMetadata(viewToken)) {
                         for (int j = 0; j < metadata.getColumnCount(); j++) {
                             if (metadata.getColumnType(j) != ColumnType.BINARY) {
                                 if (!orderByClause.isEmpty()) {
-                                    orderByClause.append(", ");
+                                    orderByClause.put(", ");
                                 }
-                                orderByClause.append(j + 1);
+                                orderByClause.put(j + 1);
                             }
                         }
                     }
