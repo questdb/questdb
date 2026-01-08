@@ -75,7 +75,6 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         }
 
         try {
-            context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
             final Path path = Path.getThreadLocal2("");
             checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), configuration);
             final FilesFacade ff = configuration.getFilesFacade();
@@ -93,6 +92,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
                 }
 
+                context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
                 if (context.isParallelReadParquetEnabled()) {
                     return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(path, metadata));
                 } else {

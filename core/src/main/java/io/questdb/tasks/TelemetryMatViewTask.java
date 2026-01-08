@@ -54,7 +54,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
                                 "base_table_txn LONG, " + // -1 stands for range refresh
                                 "invalidation_reason VARCHAR, " +
                                 "latency FLOAT " +
-                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEKS BYPASS WAL"
+                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                         );
             }
 

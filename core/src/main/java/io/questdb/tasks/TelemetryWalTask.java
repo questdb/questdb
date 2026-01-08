@@ -54,7 +54,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
                                 "rowCount LONG, " +
                                 "physicalRowCount LONG, " +
                                 "latency FLOAT " +
-                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEKS BYPASS WAL"
+                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                         );
             }
 
