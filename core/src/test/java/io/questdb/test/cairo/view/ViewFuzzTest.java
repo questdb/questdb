@@ -87,6 +87,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 //        final Rnd rnd = fuzzer.generateRandom(LOG, 1663538805955362L, 1767854254406L);
 //        final Rnd rnd = fuzzer.generateRandom(LOG, 86385347609413L, 1767862063016L);
 //        final Rnd rnd = fuzzer.generateRandom(LOG, 180665875728L, 1767862750951L);
+//        final Rnd rnd = fuzzer.generateRandom(LOG, 7858902015755L, 1767870429187L);
         final Rnd rnd = fuzzer.generateRandom(LOG);
         final RandomSelectGenerator selectGenerator = new RandomSelectGenerator(engine, rnd);
 
@@ -324,23 +325,29 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     final String viewName = viewNames[i];
                     final String viewSql = viewSqls.getQuick(i);
 
-                    int orderByColumnIndex = 0;
+                    // Order by ALL non-binary columns to ensure deterministic ordering.
+                    // Ordering by a single low-cardinality column can cause flaky failures
+                    // when multiple rows have the same value.
+                    StringBuilder orderByClause = new StringBuilder();
                     final TableToken viewToken = engine.getTableTokenIfExists(viewName);
                     try (TableMetadata metadata = engine.getTableMetadata(viewToken)) {
                         for (int j = 0; j < metadata.getColumnCount(); j++) {
                             if (metadata.getColumnType(j) != ColumnType.BINARY) {
-                                orderByColumnIndex = j + 1;
-                                break;
+                                if (!orderByClause.isEmpty()) {
+                                    orderByClause.append(", ");
+                                }
+                                orderByClause.append(j + 1);
                             }
                         }
                     }
+                    String orderBy = !orderByClause.isEmpty() ? " order by " + orderByClause : "";
 
-                    LOG.info().$("asserting view ").$(viewName).$(" against ").$(viewSql).$(", order-by-column-index: ").$(orderByColumnIndex).I$();
+                    LOG.info().$("asserting view ").$(viewName).$(" against ").$(viewSql).$(", order-by: ").$(orderBy).I$();
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,
-                            orderByColumnIndex > 0 ? "(" + viewSql + ") order by " + orderByColumnIndex : viewSql,
-                            orderByColumnIndex > 0 ? "(" + viewName + ") order by " + orderByColumnIndex : viewName,
+                            "(" + viewSql + ")" + orderBy,
+                            "(" + viewName + ")" + orderBy,
                             LOG
                     );
                 }
