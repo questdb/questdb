@@ -99,10 +99,10 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         this.slaveMetadata = slaveMetadata;
         this.columnSplit = columnSplit;
         this.isMasterFiltered = isMasterFiltered;
-        slaveTimeFrameAddressCache = new PageFrameAddressCache(configuration);
+        this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
         this.crossIndex = columnIndex;
-        masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        groupByRecord = new VirtualRecord(groupByFunctions);
+        this.masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        this.groupByRecord = new VirtualRecord(groupByFunctions);
         final JoinRecord jr = new JoinRecord(columnSplit);
         jr.of(masterRecord, groupByRecord);
         if (columnIndex != null) {
@@ -129,7 +129,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         if (isOpen) {
             Misc.free(slaveFrameCursor);
-            slaveTimeFrameAddressCache.clear();
+            Misc.free(slaveTimeFrameAddressCache);
             if (masterFrameSequence != null) {
                 LOG.debug()
                         .$("closing [shard=").$(masterFrameSequence.getShard())

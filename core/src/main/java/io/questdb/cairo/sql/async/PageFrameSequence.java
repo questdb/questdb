@@ -109,7 +109,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     ) {
         try {
             this.atom = atom;
-            this.frameAddressCache = new PageFrameAddressCache(configuration);
+            this.frameAddressCache = new PageFrameAddressCache();
             this.messageBus = messageBus;
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
@@ -205,8 +205,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         collectedFrameIndex = -1;
         readyToDispatch = false;
         frameRowCounts.clear();
-        frameAddressCache.clear();
         atom.clear();
+        Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
         // collect sequence may not be set here when
         // factory is closed without using cursor

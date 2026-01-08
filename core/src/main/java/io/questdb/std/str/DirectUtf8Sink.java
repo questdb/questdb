@@ -41,11 +41,11 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     private final DirectByteSink sink;
 
     public DirectUtf8Sink(long initialCapacity) {
-        this(initialCapacity, true);
+        this(initialCapacity, false);
     }
 
-    public DirectUtf8Sink(long initialCapacity, boolean alloc) {
-        sink = new DirectByteSink(initialCapacity, alloc, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+    public DirectUtf8Sink(long initialCapacity, boolean keepClosed) {
+        sink = new DirectByteSink(initialCapacity, MemoryTag.NATIVE_DIRECT_UTF8_SINK, keepClosed);
     }
 
     @Override

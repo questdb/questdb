@@ -170,7 +170,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE("cairo.sql.jit.bind.vars.memory.page.size"),
     CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES("cairo.sql.jit.bind.vars.memory.max.pages"),
     CAIRO_SQL_JIT_ROWS_THRESHOLD("cairo.sql.jit.rows.threshold"),
-    CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD("cairo.sql.jit.page.address.cache.threshold"),
     CAIRO_SQL_JIT_DEBUG_ENABLED("cairo.sql.jit.debug.enabled"),
     CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD("cairo.sql.jit.max.in.list.size.threshold"),
     CAIRO_WRITER_FO_OPTS("cairo.writer.fo_opts"),

@@ -51,13 +51,13 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         assert capacity >= 0;
         this.memoryTag = memoryTag;
         final long capacityBytes = capacity * Integer.BYTES;
+        this.initialCapacity = capacityBytes;
         if (!keepClosed) {
-            this.capacity = capacityBytes;
             this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag) : 0;
+            this.capacity = capacityBytes;
             this.pos = address;
             this.limit = pos + capacityBytes;
         }
-        this.initialCapacity = capacityBytes;
     }
 
     public void add(int x) {

@@ -24,15 +24,16 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.ByteList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 
@@ -47,31 +48,34 @@ import io.questdb.std.Transient;
  * <p>
  * Meant to be used along with {@link PageFrameMemoryPool}.
  */
-public class PageFrameAddressCache implements Mutable {
-    private final ObjList<LongList> auxPageAddresses = new ObjList<>();
-    private final ObjList<LongList> auxPageSizes = new ObjList<>();
+public class PageFrameAddressCache implements QuietCloseable, Mutable {
+    private static final int ADDRESS_LIST_INITIAL_CAPACITY = 64;
+    // Flat arrays storing per-frame, per-column data. Indexed as: frameIndex * columnCount + columnIndex.
+    // These are off-heap to reduce GC pressure for large and wide tables.
+    private final DirectLongList auxPageAddresses;
+    private final DirectLongList auxPageSizes;
     private final IntList columnIndexes = new IntList();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
-    private final ObjectPool<LongList> longListPool = new ObjectPool<>(LongList::new, 64);
-    private final long nativeCacheSizeThreshold;
-    private final ObjList<LongList> pageAddresses = new ObjList<>();
-    private final ObjList<LongList> pageSizes = new ObjList<>();
+    private final DirectLongList pageAddresses;
+    private final DirectLongList pageSizes;
     private final ObjList<PartitionDecoder> parquetPartitionDecoders = new ObjList<>();
     private final IntList parquetRowGroupHis = new IntList();
     private final IntList parquetRowGroupLos = new IntList();
     private final IntList parquetRowGroups = new IntList();
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
-    // Sum of all LongList sizes.
-    private long cacheSize;
     private int columnCount;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
 
-    public PageFrameAddressCache(CairoConfiguration configuration) {
-        this.nativeCacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
+    public PageFrameAddressCache() {
+        this.auxPageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.auxPageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.pageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.pageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+
     }
 
     public void add(int frameIndex, @Transient PageFrame frame) {
@@ -80,34 +84,26 @@ public class PageFrameAddressCache implements Mutable {
         }
 
         if (frame.getFormat() == PartitionFormat.NATIVE) {
-            final LongList framePageAddresses = longListPool.next();
-            final LongList framePageSizes = longListPool.next();
-            final LongList frameAuxPageAddresses = longListPool.next();
-            final LongList frameAuxPageSizes = longListPool.next();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                framePageAddresses.add(frame.getPageAddress(columnIndex));
-                framePageSizes.add(frame.getPageSize(columnIndex));
+                pageAddresses.add(frame.getPageAddress(columnIndex));
+                pageSizes.add(frame.getPageSize(columnIndex));
                 if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
-                    frameAuxPageAddresses.add(frame.getAuxPageAddress(columnIndex));
-                    frameAuxPageSizes.add(frame.getAuxPageSize(columnIndex));
+                    auxPageAddresses.add(frame.getAuxPageAddress(columnIndex));
+                    auxPageSizes.add(frame.getAuxPageSize(columnIndex));
                 } else {
-                    frameAuxPageAddresses.add(0);
-                    frameAuxPageSizes.add(0);
+                    auxPageAddresses.add(0);
+                    auxPageSizes.add(0);
                 }
             }
-            pageAddresses.add(framePageAddresses);
-            cacheSize += framePageAddresses.capacity();
-            pageSizes.add(framePageSizes);
-            cacheSize += framePageSizes.capacity();
-            auxPageAddresses.add(frameAuxPageAddresses);
-            cacheSize += frameAuxPageAddresses.capacity();
-            auxPageSizes.add(frameAuxPageSizes);
-            cacheSize += frameAuxPageSizes.capacity();
         } else {
-            pageAddresses.add(null);
-            pageSizes.add(null);
-            auxPageAddresses.add(null);
-            auxPageSizes.add(null);
+            // For parquet frames, we still need to reserve space in flat arrays
+            // to maintain consistent indexing, but values will be unused.
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                pageAddresses.add(0);
+                pageSizes.add(0);
+                auxPageAddresses.add(0);
+                auxPageSizes.add(0);
+            }
         }
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
@@ -134,21 +130,31 @@ public class PageFrameAddressCache implements Mutable {
         pageSizes.clear();
         auxPageSizes.clear();
         rowIdOffsets.clear();
-        if (cacheSize < nativeCacheSizeThreshold) {
-            longListPool.clear();
-        } else {
-            longListPool.resetCapacity();
-        }
-        cacheSize = 0;
         external = false;
     }
 
-    public LongList getAuxPageAddresses(int frameIndex) {
-        return auxPageAddresses.getQuick(frameIndex);
+    @Override
+    public void close() {
+        pageAddresses.close();
+        pageSizes.close();
+        auxPageAddresses.close();
+        auxPageSizes.close();
     }
 
-    public LongList getAuxPageSizes(int frameIndex) {
-        return auxPageSizes.getQuick(frameIndex);
+    /**
+     * Returns the flat auxPageAddresses list for direct access.
+     * Use with {@link #toColumnOffset(int)} for efficient batch operations.
+     */
+    public DirectLongList getAuxPageAddresses() {
+        return auxPageAddresses;
+    }
+
+    /**
+     * Returns the flat auxPageSizes list for direct access.
+     * Use with {@link #toColumnOffset(int)} for efficient batch operations.
+     */
+    public DirectLongList getAuxPageSizes() {
+        return auxPageSizes;
     }
 
     public int getColumnCount() {
@@ -172,12 +178,20 @@ public class PageFrameAddressCache implements Mutable {
         return frameSizes.getQuick(frameIndex);
     }
 
-    public LongList getPageAddresses(int frameIndex) {
-        return pageAddresses.getQuick(frameIndex);
+    /**
+     * Returns the flat pageAddresses list for direct access.
+     * Use with {@link #toColumnOffset(int)} for efficient batch operations.
+     */
+    public DirectLongList getPageAddresses() {
+        return pageAddresses;
     }
 
-    public LongList getPageSizes(int frameIndex) {
-        return pageSizes.getQuick(frameIndex);
+    /**
+     * Returns the flat pageSizes list for direct access.
+     * Use with {@link #toColumnOffset(int)} for efficient batch operations.
+     */
+    public DirectLongList getPageSizes() {
+        return pageSizes;
     }
 
     public PartitionDecoder getParquetPartitionDecoder(int frameIndex) {
@@ -211,8 +225,14 @@ public class PageFrameAddressCache implements Mutable {
     }
 
     public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes, boolean external) {
-        // Reset frame-derived state and external flag first.
+        // Reopen off-heap lists in case they were closed.
+        pageAddresses.reopen();
+        pageSizes.reopen();
+        auxPageAddresses.reopen();
+        auxPageSizes.reopen();
+        // Reset frame-derived state and external flag.
         clear();
+
         this.columnCount = metadata.getColumnCount();
         columnTypes.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -221,5 +241,13 @@ public class PageFrameAddressCache implements Mutable {
         this.columnIndexes.clear();
         this.columnIndexes.addAll(columnIndexes);
         this.external = external;
+    }
+
+    /**
+     * Converts a frame index to an offset into the flat column arrays.
+     * Usage: {@code cache.getPageAddresses().getQuick(cache.toColumnOffset(frameIndex) + columnIndex)}
+     */
+    public int toColumnOffset(int frameIndex) {
+        return frameIndex * columnCount;
     }
 }

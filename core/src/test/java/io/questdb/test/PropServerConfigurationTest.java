@@ -328,7 +328,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
-        Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlJitPageAddressCacheThreshold());
         Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
 
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getRndFunctionMemoryPageSize());
@@ -2059,7 +2058,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2, configuration.getSqlJitIRMemoryMaxPages());
         Assert.assertEquals(1024, configuration.getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(1, configuration.getSqlJitBindVarsMemoryMaxPages());
-        Assert.assertEquals(1024, configuration.getSqlJitPageAddressCacheThreshold());
         Assert.assertTrue(configuration.isSqlJitDebugEnabled());
 
         Assert.assertEquals(16384, configuration.getRndFunctionMemoryPageSize());
