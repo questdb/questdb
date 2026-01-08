@@ -36,6 +36,6 @@ public interface TelemetryConfiguration {
     int getQueueCapacity();
 
     int getTtlWeeks();
-    
+
     boolean hideTables();
 }
