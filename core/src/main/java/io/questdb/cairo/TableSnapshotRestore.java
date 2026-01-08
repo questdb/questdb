@@ -70,10 +70,9 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
  * Used by both DatabaseCheckpointAgent and BackupRestoreAgent.
  */
 public class TableSnapshotRestore implements QuietCloseable {
-    private static final int BITMAP_INDEX_RESTORE_THREAD_COUNT = Math.max(4, Math.min(16, Runtime.getRuntime().availableProcessors()));
     private static final Log LOG = LogFactory.getLog(TableSnapshotRestore.class);
     private final CairoConfiguration configuration;
-    private final ExecutorService executor = Executors.newFixedThreadPool(BITMAP_INDEX_RESTORE_THREAD_COUNT);
+    private final ExecutorService executor;
     private final FilesFacade ff;
     private final ObjList<Future<?>> futures = new ObjList<>();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -89,6 +88,11 @@ public class TableSnapshotRestore implements QuietCloseable {
     public TableSnapshotRestore(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+        int threadCount = Math.max(
+                configuration.getCheckpointRecoveryThreadpoolMin(),
+                Math.min(configuration.getCheckpointRecoveryThreadpoolMax(), Runtime.getRuntime().availableProcessors())
+        );
+        this.executor = Executors.newFixedThreadPool(threadCount);
     }
 
     @Override
