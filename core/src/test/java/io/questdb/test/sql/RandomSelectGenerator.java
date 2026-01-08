@@ -597,39 +597,26 @@ public class RandomSelectGenerator {
         TableInfo table = selectedTables.get(rnd.nextInt(selectedTables.size()));
         RecordMetadata metadata = metadataCache.get(table.tableName());
 
-        int totalColumnCount = metadata.getColumnCount();
-        int usableColumnCount = 0;
-        for (int i = 0; i < totalColumnCount; i++) {
+        IntList usableColumns = new IntList();
+        for (int i = 0; i < metadata.getColumnCount(); i++) {
             int columnType = metadata.getColumnType(i);
             if (columnType != ColumnType.BINARY && columnType != ColumnType.LONG128) {
-                usableColumnCount++;
+                usableColumns.add(i);
             }
         }
-        if (usableColumnCount == 0) {
+        if (usableColumns.size() == 0) {
             sql.put("1=1");
             return;
         }
 
-        int numConditions = 1 + rnd.nextInt(Math.min(3, usableColumnCount));
+        int numConditions = 1 + rnd.nextInt(Math.min(3, usableColumns.size()));
         for (int i = 0; i < numConditions; i++) {
             if (i > 0) {
                 sql.put(rnd.nextBoolean() ? " AND " : " OR ");
             }
 
-            int colIdx = -1;
-            int columnType = ColumnType.UNDEFINED;
-            for (int j = 0; j < 10_000; j++) { // 10k acts as a circuit breaker to exit infinite loop. it can only happen due to a bug. then we throw an exception bellow
-                colIdx = rnd.nextInt(totalColumnCount);
-                columnType = metadata.getColumnType(colIdx);
-
-                // pick a new column if the column type is BINARY or LONG128
-                if (columnType != ColumnType.BINARY && columnType != ColumnType.LONG128) {
-                    break;
-                }
-            }
-            if (columnType == ColumnType.BINARY || columnType == ColumnType.LONG128) {
-                throw new RuntimeException("BINARY and LONG128 column types cannot be used in WHERE clause");
-            }
+            int colIdx = usableColumns.get(rnd.nextInt(usableColumns.size()));
+            int columnType = metadata.getColumnType(colIdx);
 
             if (selectedTables.size() > 1) {
                 sql.put(table.alias).put(".");
