@@ -181,6 +181,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoTableRegistryCompactionThreshold;
     private final long cairoWriteBackOffTimeoutOnMemPressureMs;
     private final boolean checkpointRecoveryEnabled;
+    private final boolean checkpointRecoveryRebuildColumnIndexes;
+    private final int checkpointRecoveryThreadpoolMax;
+    private final int checkpointRecoveryThreadpoolMin;
     private final String checkpointRoot;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
@@ -950,6 +953,20 @@ public class PropServerConfiguration implements ServerConfiguration {
                         true
                 )
         );
+        this.checkpointRecoveryRebuildColumnIndexes = getBoolean(properties, env, PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, false);
+        int checkpointRecoveryThreadpoolMinRaw = getInt(properties, env, PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN, 4);
+        int checkpointRecoveryThreadpoolMaxRaw = getInt(properties, env, PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX, 12);
+        if (checkpointRecoveryThreadpoolMinRaw < 2 || checkpointRecoveryThreadpoolMinRaw > 32) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN.getPropertyPath() + " must be between 2 and 32");
+        }
+        if (checkpointRecoveryThreadpoolMaxRaw < 2 || checkpointRecoveryThreadpoolMaxRaw > 32) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX.getPropertyPath() + " must be between 2 and 32");
+        }
+        if (checkpointRecoveryThreadpoolMinRaw > checkpointRecoveryThreadpoolMaxRaw) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN.getPropertyPath() + " must be less than or equal to " + PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX.getPropertyPath());
+        }
+        this.checkpointRecoveryThreadpoolMin = checkpointRecoveryThreadpoolMinRaw;
+        this.checkpointRecoveryThreadpoolMax = checkpointRecoveryThreadpoolMaxRaw;
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
@@ -3060,6 +3077,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getCairoSqlLegacyOperatorPrecedence() {
             return cairoSqlLegacyOperatorPrecedence;
+        }
+
+        @Override
+        public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+            return checkpointRecoveryRebuildColumnIndexes;
+        }
+
+        @Override
+        public int getCheckpointRecoveryThreadpoolMax() {
+            return checkpointRecoveryThreadpoolMax;
+        }
+
+        @Override
+        public int getCheckpointRecoveryThreadpoolMin() {
+            return checkpointRecoveryThreadpoolMin;
         }
 
         @Override

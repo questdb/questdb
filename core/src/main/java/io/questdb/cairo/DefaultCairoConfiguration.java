@@ -162,6 +162,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+        return false;
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMax() {
+        return 12;
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMin() {
+        return 4;
+    }
+
+    @Override
     public @NotNull CharSequence getCheckpointRoot() {
         return checkpointRoot;
     }

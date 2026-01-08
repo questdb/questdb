@@ -32,11 +32,11 @@ import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
-import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.cairo.view.ViewGraph;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.cairo.view.ViewGraph;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
@@ -767,11 +767,13 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     recoveredCVFiles,
                                     recoveredWalFiles,
                                     symbolFilesCount,
-                                    recoveredViewFiles
+                                    recoveredViewFiles,
+                                    configuration.getCheckpointRecoveryRebuildColumnIndexes()
                             );
                         }
                     }
             );
+            recoveryAgent.finalizeParallelTasks();
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())

@@ -132,6 +132,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+        return getDelegate().getCheckpointRecoveryRebuildColumnIndexes();
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMax() {
+        return getDelegate().getCheckpointRecoveryThreadpoolMax();
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMin() {
+        return getDelegate().getCheckpointRecoveryThreadpoolMin();
+    }
+
+    @Override
     public @NotNull CharSequence getCheckpointRoot() {
         return getDelegate().getCheckpointRoot();
     }
@@ -402,13 +417,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getInactiveWalWriterTTL() {
-        return getDelegate().getInactiveWalWriterTTL();
+    public long getInactiveViewWalWriterTTL() {
+        return getDelegate().getInactiveViewWalWriterTTL();
     }
 
     @Override
-    public long getInactiveViewWalWriterTTL() {
-        return getDelegate().getInactiveViewWalWriterTTL();
+    public long getInactiveWalWriterTTL() {
+        return getDelegate().getInactiveWalWriterTTL();
     }
 
     @Override
@@ -1217,6 +1232,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return getDelegate().getViewWalWriterPoolMaxSegments();
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return getDelegate().getVolumeDefinitions();
     }
@@ -1299,11 +1319,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalWriterPoolMaxSegments() {
         return getDelegate().getWalWriterPoolMaxSegments();
-    }
-
-    @Override
-    public int getViewWalWriterPoolMaxSegments() {
-        return getDelegate().getViewWalWriterPoolMaxSegments();
     }
 
     @Override
