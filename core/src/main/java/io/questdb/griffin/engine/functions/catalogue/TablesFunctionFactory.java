@@ -56,7 +56,7 @@ import io.questdb.std.str.StringSink;
 public class TablesFunctionFactory implements FunctionFactory {
     private static final int DEDUP_NAME_COLUMN = 5;
     private static final int TABLE_NAME = 1;
-    private static final int DEDUP_ROW_COUNT_COLUMN = 28;
+    private static final int DEDUP_ROW_COUNT_COLUMN = 29;
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
     private static final int WAL_ENABLED_COLUMN = 4;
     private static final int DIRECTORY_NAME_COLUMN = 9;
@@ -67,40 +67,41 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final int O3_MAX_LAG_COLUMN = 11;
     private static final int PARTITION_BY_COLUMN = 3;
-    // Replica metrics (36-41) - replica_* prefix
-    private static final int REPLICA_BATCH_COUNT_COLUMN = 36;
-    private static final int REPLICA_BATCH_SIZE_MAX_COLUMN = 40;
-    private static final int REPLICA_BATCH_SIZE_P50_COLUMN = 37;
-    private static final int REPLICA_BATCH_SIZE_P90_COLUMN = 38;
-    private static final int REPLICA_BATCH_SIZE_P99_COLUMN = 39;
-    private static final int REPLICA_MORE_PENDING_COLUMN = 41;
-    private static final int TABLE_MAX_TIMESTAMP_COLUMN = 14;
-    private static final int TABLE_MEMORY_PRESSURE_COLUMN = 16;
-    private static final int TABLE_MERGE_RATE_COUNT_COLUMN = 22;
-    private static final int TABLE_MERGE_RATE_MAX_COLUMN = 26;
-    private static final int TABLE_MERGE_RATE_P50_COLUMN = 23;
-    private static final int TABLE_MERGE_RATE_P90_COLUMN = 24;
-    private static final int TABLE_MERGE_RATE_P99_COLUMN = 25;
-    private static final int TABLE_ROW_COUNT_COLUMN = 13;
-    // Table metrics (12-26) - table_* prefix
+    // Replica metrics (37-42) - replica_* prefix
+    private static final int REPLICA_BATCH_COUNT_COLUMN = 37;
+    private static final int REPLICA_BATCH_SIZE_MAX_COLUMN = 41;
+    private static final int REPLICA_BATCH_SIZE_P50_COLUMN = 38;
+    private static final int REPLICA_BATCH_SIZE_P90_COLUMN = 39;
+    private static final int REPLICA_BATCH_SIZE_P99_COLUMN = 40;
+    private static final int REPLICA_MORE_PENDING_COLUMN = 42;
+    private static final int TABLE_MAX_TIMESTAMP_COLUMN = 15;
+    private static final int TABLE_MEMORY_PRESSURE_COLUMN = 17;
+    private static final int TABLE_MERGE_RATE_COUNT_COLUMN = 23;
+    private static final int TABLE_MERGE_RATE_MAX_COLUMN = 27;
+    private static final int TABLE_MERGE_RATE_P50_COLUMN = 24;
+    private static final int TABLE_MERGE_RATE_P90_COLUMN = 25;
+    private static final int TABLE_MERGE_RATE_P99_COLUMN = 26;
+    private static final int TABLE_ROW_COUNT_COLUMN = 14;
+    // Table metrics (12-27) - table_* prefix
     private static final int TABLE_SUSPENDED_COLUMN = 12;
-    private static final int TABLE_TXN_COLUMN = 15;
-    private static final int TABLE_WRITE_AMP_COUNT_COLUMN = 17;
-    private static final int TABLE_WRITE_AMP_MAX_COLUMN = 21;
-    private static final int TABLE_WRITE_AMP_P50_COLUMN = 18;
-    private static final int TABLE_WRITE_AMP_P90_COLUMN = 19;
-    private static final int TABLE_WRITE_AMP_P99_COLUMN = 20;
+    private static final int TABLE_TXN_COLUMN = 16;
+    private static final int TABLE_TYPE_COLUMN = 13;
+    private static final int TABLE_WRITE_AMP_COUNT_COLUMN = 18;
+    private static final int TABLE_WRITE_AMP_MAX_COLUMN = 22;
+    private static final int TABLE_WRITE_AMP_P50_COLUMN = 19;
+    private static final int TABLE_WRITE_AMP_P90_COLUMN = 20;
+    private static final int TABLE_WRITE_AMP_P99_COLUMN = 21;
     private static final int TTL_UNIT_COLUMN = 7;
     private static final int TTL_VALUE_COLUMN = 6;
-    private static final int WAL_MAX_TIMESTAMP_COLUMN = 30;
-    // WAL metrics (27-35) - wal_* prefix
-    private static final int WAL_PENDING_ROW_COUNT_COLUMN = 27;
-    private static final int WAL_TXN_COLUMN = 29;
-    private static final int WAL_TX_COUNT_COLUMN = 31;
-    private static final int WAL_TX_SIZE_MAX_COLUMN = 35;
-    private static final int WAL_TX_SIZE_P50_COLUMN = 32;
-    private static final int WAL_TX_SIZE_P90_COLUMN = 33;
-    private static final int WAL_TX_SIZE_P99_COLUMN = 34;
+    private static final int WAL_MAX_TIMESTAMP_COLUMN = 31;
+    // WAL metrics (28-36) - wal_* prefix
+    private static final int WAL_PENDING_ROW_COUNT_COLUMN = 28;
+    private static final int WAL_TXN_COLUMN = 30;
+    private static final int WAL_TX_COUNT_COLUMN = 32;
+    private static final int WAL_TX_SIZE_MAX_COLUMN = 36;
+    private static final int WAL_TX_SIZE_P50_COLUMN = 33;
+    private static final int WAL_TX_SIZE_P90_COLUMN = 34;
+    private static final int WAL_TX_SIZE_P99_COLUMN = 35;
 
     public static String getTtlUnit(int ttl) {
         if (ttl == 0) {
@@ -267,6 +268,20 @@ public class TablesFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
+                public char getChar(int col) {
+                    if (col == TABLE_TYPE_COLUMN) {
+                        if (table.getTableToken().isMatView()) {
+                            return 'M';
+                        } else if (table.getTableToken().isView()) {
+                            return 'V';
+                        } else {
+                            return 'T';
+                        }
+                    }
+                    return 0;
+                }
+
+                @Override
                 public double getDouble(int col) {
                     if (writeStats == null) {
                         return 0.0;
@@ -410,39 +425,40 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));                // 9
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));              // 10
         metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));                       // 11
-        // Table metrics (12-26) - table_* prefix
+        // Table metrics (12-27) - table_* prefix
         metadata.add(new TableColumnMetadata("table_suspended", ColumnType.BOOLEAN));             // 12
-        metadata.add(new TableColumnMetadata("table_row_count", ColumnType.LONG));                // 13
-        metadata.add(new TableColumnMetadata("table_max_timestamp", ColumnType.TIMESTAMP));       // 14
-        metadata.add(new TableColumnMetadata("table_txn", ColumnType.LONG));                      // 15
-        metadata.add(new TableColumnMetadata("table_memory_pressure_level", ColumnType.INT));     // 16
-        metadata.add(new TableColumnMetadata("table_write_amp_count", ColumnType.LONG));          // 17
-        metadata.add(new TableColumnMetadata("table_write_amp_p50", ColumnType.DOUBLE));          // 18
-        metadata.add(new TableColumnMetadata("table_write_amp_p90", ColumnType.DOUBLE));          // 19
-        metadata.add(new TableColumnMetadata("table_write_amp_p99", ColumnType.DOUBLE));          // 20
-        metadata.add(new TableColumnMetadata("table_write_amp_max", ColumnType.DOUBLE));          // 21
-        metadata.add(new TableColumnMetadata("table_merge_rate_count", ColumnType.LONG));         // 22
-        metadata.add(new TableColumnMetadata("table_merge_rate_p50", ColumnType.LONG));           // 23
-        metadata.add(new TableColumnMetadata("table_merge_rate_p90", ColumnType.LONG));           // 24
-        metadata.add(new TableColumnMetadata("table_merge_rate_p99", ColumnType.LONG));           // 25
-        metadata.add(new TableColumnMetadata("table_merge_rate_max", ColumnType.LONG));           // 26
-        // WAL metrics (27-35) - wal_* prefix
-        metadata.add(new TableColumnMetadata("wal_pending_row_count", ColumnType.LONG));          // 27
-        metadata.add(new TableColumnMetadata("dedup_row_count_since_start", ColumnType.LONG));    // 28
-        metadata.add(new TableColumnMetadata("wal_txn", ColumnType.LONG));                        // 29
-        metadata.add(new TableColumnMetadata("wal_max_timestamp", ColumnType.TIMESTAMP));         // 30
-        metadata.add(new TableColumnMetadata("wal_tx_count", ColumnType.LONG));                   // 31
-        metadata.add(new TableColumnMetadata("wal_tx_size_p50", ColumnType.LONG));                // 32
-        metadata.add(new TableColumnMetadata("wal_tx_size_p90", ColumnType.LONG));                // 33
-        metadata.add(new TableColumnMetadata("wal_tx_size_p99", ColumnType.LONG));                // 34
-        metadata.add(new TableColumnMetadata("wal_tx_size_max", ColumnType.LONG));                // 35
-        // Replica metrics (36-41) - replica_* prefix
-        metadata.add(new TableColumnMetadata("replica_batch_count", ColumnType.LONG));            // 36
-        metadata.add(new TableColumnMetadata("replica_batch_size_p50", ColumnType.LONG));         // 37
-        metadata.add(new TableColumnMetadata("replica_batch_size_p90", ColumnType.LONG));         // 38
-        metadata.add(new TableColumnMetadata("replica_batch_size_p99", ColumnType.LONG));         // 39
-        metadata.add(new TableColumnMetadata("replica_batch_size_max", ColumnType.LONG));         // 40
-        metadata.add(new TableColumnMetadata("replica_more_pending", ColumnType.BOOLEAN));        // 41
+        metadata.add(new TableColumnMetadata("table_type", ColumnType.CHAR));                     // 13
+        metadata.add(new TableColumnMetadata("table_row_count", ColumnType.LONG));                // 14
+        metadata.add(new TableColumnMetadata("table_max_timestamp", ColumnType.TIMESTAMP));       // 15
+        metadata.add(new TableColumnMetadata("table_txn", ColumnType.LONG));                      // 16
+        metadata.add(new TableColumnMetadata("table_memory_pressure_level", ColumnType.INT));     // 17
+        metadata.add(new TableColumnMetadata("table_write_amp_count", ColumnType.LONG));          // 18
+        metadata.add(new TableColumnMetadata("table_write_amp_p50", ColumnType.DOUBLE));          // 19
+        metadata.add(new TableColumnMetadata("table_write_amp_p90", ColumnType.DOUBLE));          // 20
+        metadata.add(new TableColumnMetadata("table_write_amp_p99", ColumnType.DOUBLE));          // 21
+        metadata.add(new TableColumnMetadata("table_write_amp_max", ColumnType.DOUBLE));          // 22
+        metadata.add(new TableColumnMetadata("table_merge_rate_count", ColumnType.LONG));         // 23
+        metadata.add(new TableColumnMetadata("table_merge_rate_p50", ColumnType.LONG));           // 24
+        metadata.add(new TableColumnMetadata("table_merge_rate_p90", ColumnType.LONG));           // 25
+        metadata.add(new TableColumnMetadata("table_merge_rate_p99", ColumnType.LONG));           // 26
+        metadata.add(new TableColumnMetadata("table_merge_rate_max", ColumnType.LONG));           // 27
+        // WAL metrics (28-36) - wal_* prefix
+        metadata.add(new TableColumnMetadata("wal_pending_row_count", ColumnType.LONG));          // 28
+        metadata.add(new TableColumnMetadata("dedup_row_count_since_start", ColumnType.LONG));    // 29
+        metadata.add(new TableColumnMetadata("wal_txn", ColumnType.LONG));                        // 30
+        metadata.add(new TableColumnMetadata("wal_max_timestamp", ColumnType.TIMESTAMP));         // 31
+        metadata.add(new TableColumnMetadata("wal_tx_count", ColumnType.LONG));                   // 32
+        metadata.add(new TableColumnMetadata("wal_tx_size_p50", ColumnType.LONG));                // 33
+        metadata.add(new TableColumnMetadata("wal_tx_size_p90", ColumnType.LONG));                // 34
+        metadata.add(new TableColumnMetadata("wal_tx_size_p99", ColumnType.LONG));                // 35
+        metadata.add(new TableColumnMetadata("wal_tx_size_max", ColumnType.LONG));                // 36
+        // Replica metrics (37-42) - replica_* prefix
+        metadata.add(new TableColumnMetadata("replica_batch_count", ColumnType.LONG));            // 37
+        metadata.add(new TableColumnMetadata("replica_batch_size_p50", ColumnType.LONG));         // 38
+        metadata.add(new TableColumnMetadata("replica_batch_size_p90", ColumnType.LONG));         // 39
+        metadata.add(new TableColumnMetadata("replica_batch_size_p99", ColumnType.LONG));         // 40
+        metadata.add(new TableColumnMetadata("replica_batch_size_max", ColumnType.LONG));         // 41
+        metadata.add(new TableColumnMetadata("replica_more_pending", ColumnType.BOOLEAN));        // 42
         METADATA = metadata;
     }
 }

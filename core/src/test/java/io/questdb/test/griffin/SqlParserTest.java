@@ -285,7 +285,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     sink.clear();
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         for (String frameType : frameTypes) {
-                            ExecutionModel model = compiler.testCompileModel(
+                            ExecutionModel model = compiler.generateExecutionModel(
                                     "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 10 following) from xyz".replace("#FRAME", frameType),
                                     sqlExecutionContext
                             );
@@ -971,6 +971,74 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select *, cast(a as long) a1 from x",
                 modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testAlterViewSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.execute("create view v1 as select 42");
+            drainWalAndViewQueues();
+
+            assertExceptionNoLeakCheck(
+                    "alter",
+                    5,
+                    "'table' or 'materialized' or 'view' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view",
+                    10,
+                    "view name expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1",
+                    13,
+                    "'as' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as",
+                    16,
+                    "'(' or 'with' or 'select' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as (",
+                    18,
+                    "'with' or 'select' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as select",
+                    23,
+                    "[distinct] column expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as (select",
+                    24,
+                    "[distinct] column expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as (select 42",
+                    27,
+                    "')' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as bla",
+                    17,
+                    "table does not exist [table=bla]"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as select * from bla",
+                    31,
+                    "table does not exist [table=bla]"
+            );
+        });
     }
 
     @Test
@@ -1923,7 +1991,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create",
                 6,
-                "'atomic' or 'table' or 'batch' or 'materialized' expected"
+                "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace' expected"
         );
     }
 
@@ -4105,6 +4173,93 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateViewSyntax() throws Exception {
+        assertSyntaxError(
+                "create view",
+                11,
+                "view name or 'if' expected"
+        );
+
+        assertSyntaxError(
+                "create view if",
+                14,
+                "'not' expected"
+        );
+
+        assertSyntaxError(
+                "create view if abc",
+                15,
+                "'if not exists' expected"
+        );
+
+        assertSyntaxError(
+                "create view if not",
+                18,
+                "'exists' expected"
+        );
+
+        assertSyntaxError(
+                "create view if not abc",
+                19,
+                "'if not exists' expected"
+        );
+
+        assertSyntaxError(
+                "create view if not exists",
+                25,
+                "view name expected"
+        );
+
+        assertSyntaxError(
+                "create view if not exists v1",
+                28,
+                "'as' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1",
+                14,
+                "'as' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as",
+                17,
+                "'(' or 'with' or 'select' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as (",
+                19,
+                "'with' or 'select' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as select",
+                24,
+                "[distinct] column expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as (select",
+                25,
+                "[distinct] column expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as (select 42",
+                28,
+                "')' expected"
+        );
+
+        assertSyntaxError(
+                "create view v1 as (bla)",
+                19,
+                "table does not exist [table=bla]"
+        );
+    }
+
+    @Test
     public void testCrossJoin() throws Exception {
         assertSyntaxError("select x from a a cross join b on b.x = a.x", 31, "cannot");
     }
@@ -4479,7 +4634,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop foobar",
                 5,
-                "'table' or 'materialized view' or 'all' expected"
+                "'table' or 'view' or 'materialized view' or 'all' expected"
         );
     }
 
@@ -4515,7 +4670,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop materialized view",
                 18,
-                "expected IF EXISTS mat-view-name"
+                "expected [IF EXISTS] mat-view-name"
         );
     }
 
@@ -4533,7 +4688,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1 tab2",
                 5,
-                "'table' or 'materialized view' or 'all' expected",
+                "'table' or 'view' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -4544,7 +4699,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1, ",
                 5,
-                "'table' or 'materialized view' or 'all' expected",
+                "'table' or 'view' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -4558,6 +4713,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "unexpected token [,]",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDropViewSyntax() throws Exception {
+        assertSyntaxError(
+                "drop view",
+                9,
+                "expected [IF EXISTS] view-name"
+        );
+
+        assertSyntaxError(
+                "drop view if",
+                12,
+                "expected EXISTS view-name"
+        );
+
+        assertSyntaxError(
+                "drop view if exists",
+                19,
+                "view name expected"
+        );
+
+        assertSyntaxError(
+                "drop view bla",
+                10,
+                "view does not exist [view=bla]"
         );
     }
 
@@ -10776,7 +10958,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from tab sample by 2m align to first observation",
                 0,
-                "base query does not provide ASC order over designated TIMESTAMP column",
+                "base query does not provide designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -10785,7 +10967,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from tab sample by 2m",
                 0,
-                "base query does not provide ASC order over designated TIMESTAMP column",
+                "base query does not provide designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -10794,7 +10976,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from tab sample by 2m align to calendar",
                 0,
-                "base query does not provide ASC order over designated TIMESTAMP column",
+                "base query does not provide designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -10806,7 +10988,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from (select distinct x, y from tab) sample by 2m align to first observation",
                 0,
-                "base query does not provide ASC order over designated TIMESTAMP column",
+                "base query does not provide designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -10815,7 +10997,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from (select distinct x, y from tab) sample by 2m",
                 0,
-                "base query does not provide ASC order over designated TIMESTAMP column",
+                "base query does not provide designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -10824,7 +11006,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from (select distinct x, y from tab) sample by 2m align to calendar",
                 0,
-                "base query does not provide ASC order over designated TIMESTAMP column",
+                "base query does not provide designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -10836,7 +11018,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select tab.x,sum(y) from tab join tab2 on (x) sample by 2m align to first observation",
                 0,
-                "ASC order over TIMESTAMP column is required but not provided",
+                "TIMESTAMP column is required but not provided",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT),
@@ -10848,7 +11030,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select tab.x,sum(y) from tab join tab2 on (x) sample by 2m",
                 0,
-                "ASC order over TIMESTAMP column is required but not provided",
+                "TIMESTAMP column is required but not provided",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT),
@@ -10860,7 +11042,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select tab.x,sum(y) from tab join tab2 on (x) sample by 2m align to calendar",
                 0,
-                "ASC order over TIMESTAMP column is required but not provided",
+                "TIMESTAMP column is required but not provided",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT),
@@ -12104,7 +12286,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             b.append('f').append(i);
         }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            QueryModel st = (QueryModel) compiler.testCompileModel(b, sqlExecutionContext);
+            QueryModel st = (QueryModel) compiler.generateExecutionModel(b, sqlExecutionContext);
             Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
         }
     }
@@ -12644,7 +12826,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 19,
                 "missing expression",
                 modelOf("tab").col("a", ColumnType.INT)
-
         );
     }
 
@@ -12754,7 +12935,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 () -> {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         for (String frameType : frameTypes) {
-                            ExecutionModel model = compiler.testCompileModel(query.replace("#FRAME", frameType), sqlExecutionContext);
+                            ExecutionModel model = compiler.generateExecutionModel(query.replace("#FRAME", frameType), sqlExecutionContext);
                             Assert.assertEquals(ExecutionModel.QUERY, model.getModelType());
                             sink.clear();
                             ((Sinkable) model).toSink(sink);

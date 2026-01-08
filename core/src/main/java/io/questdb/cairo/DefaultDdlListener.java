@@ -36,7 +36,7 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onTableOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+    public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
     }
 
     @Override

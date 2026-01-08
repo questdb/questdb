@@ -185,6 +185,8 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    int getCompileViewModelPoolCapacity();
+
     @NotNull
     CharSequence getConfRoot(); // same as root/../conf
 
@@ -293,6 +295,8 @@ public interface CairoConfiguration {
     long getInactiveReaderTTL();
 
     long getInactiveWalWriterTTL();
+
+    long getInactiveViewWalWriterTTL();
 
     long getInactiveWriterTTL();
 
@@ -683,6 +687,8 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    int getViewLexerPoolCapacity();
+
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
 
@@ -731,6 +737,8 @@ public interface CairoConfiguration {
     int getWalTxnNotificationQueueCapacity();
 
     int getWalWriterPoolMaxSegments();
+
+    int getViewWalWriterPoolMaxSegments();
 
     int getWindowColumnPoolCapacity();
 

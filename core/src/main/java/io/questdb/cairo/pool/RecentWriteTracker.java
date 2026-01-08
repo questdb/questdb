@@ -601,6 +601,10 @@ public class RecentWriteTracker {
             this.writerTxn = writerTxn;
             this.sequencerTxn = new AtomicLong(sequencerTxn);
             this.walTimestamp = new AtomicLong(walTimestamp);
+            this.batchSizeHistogram.setAutoResize(true);
+            this.mergeThroughputHistogram.setAutoResize(true);
+            this.txnSizeHistogram.setAutoResize(true);
+            this.writeAmplificationHistogram.setAutoResize(true);
         }
 
         /**
