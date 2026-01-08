@@ -376,7 +376,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     "\torigin SHORT\n" +
                     ") timestamp(created)";
             String middle = " PARTITION BY DAY TTL 1 WEEK";
-            String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
+            String end = " BYPASS WAL;\n";
 
             assertSql(start + middle + end, showCreateTable);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
