@@ -131,10 +131,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
-    private final WalDirectoryPolicy walDirectoryPolicy;
-    private final int walId;
-    private final String walName;
-    private final WALSegmentLockManager walSegmentLockManager;
     private long avgRecordSize;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
@@ -1128,7 +1124,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             freeSymbolMapReaders();
             freeColumns(truncate);
 
-            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
+            releaseSegmentLock(segmentId, lastSegmentTxn);
 
             try {
                 releaseWalLock();
@@ -1478,7 +1474,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         .put(", walId=").put(walId)
                         .put(", segmentId=").put(newSegmentId).put(']');
             }
-            final long oldSegmentLockFd = segmentLockFd;
             segmentLockFd = -1;
             try {
                 createSegmentDir(newSegmentId);
@@ -1569,7 +1564,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 segmentRowCount = uncommittedRows;
                 currentTxnStartRowNum = 0;
             } finally {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+                releaseSegmentLock(oldSegmentId, oldLastSegmentTxn);
             }
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;

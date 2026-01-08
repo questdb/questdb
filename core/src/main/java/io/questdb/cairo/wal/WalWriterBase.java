@@ -62,17 +62,20 @@ abstract class WalWriterBase implements AutoCloseable {
     long segmentLockFd = -1;
     TableToken tableToken;
     long walLockFd = -1;
+    final WALSegmentLockManager walSegmentLockManager;
 
     WalWriterBase(
             CairoConfiguration configuration,
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
-            WalDirectoryPolicy walDirectoryPolicy
+            WalDirectoryPolicy walDirectoryPolicy,
+            WALSegmentLockManager walSegmentLockManager
     ) {
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
         this.walDirectoryPolicy = walDirectoryPolicy;
         this.tableToken = tableToken;
+        this.walSegmentLockManager = walSegmentLockManager;
 
         mkDirMode = configuration.getMkDirMode();
         ff = configuration.getFilesFacade();
@@ -107,26 +110,18 @@ abstract class WalWriterBase implements AutoCloseable {
         return open;
     }
 
-    long acquireSegmentLock() {
-        final int segmentPathLen = path.size();
-        try {
-            lockName(path);
-            final long segmentLockFd = TableUtils.lock(ff, path.$());
-            if (segmentLockFd == -1) {
-                path.trimTo(segmentPathLen);
-                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path);
-            }
-            return segmentLockFd;
-        } finally {
-            path.trimTo(segmentPathLen);
-        }
+    void acquireSegmentLock(int segmentId) {
+        walSegmentLockManager.lockSegment(tableToken.getDirNameUtf8(), walId, segmentId);
+        LOG.debug().$("locked segment [walId=").$(walId)
+                .$(", segmentId=").$(segmentId)
+                .I$();
     }
 
     int createSegmentDir(int segmentId) {
         path.trimTo(pathSize);
         path.slash().put(segmentId);
         final int segmentPathLen = path.size();
-        segmentLockFd = acquireSegmentLock();
+        acquireSegmentLock(segmentId);
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
@@ -136,16 +131,8 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     void lockWal() {
-        try {
-            lockName(path);
-            walLockFd = TableUtils.lock(ff, path.$());
-        } finally {
-            path.trimTo(pathSize);
-        }
-
-        if (walLockFd == -1) {
-            throw CairoException.critical(ff.errno()).put("cannot lock table: ").put(path.$());
-        }
+        walSegmentLockManager.lockWal(tableToken.getDirNameUtf8(), walId);
+        LOG.debug().$("locked WAL [walId=").$(walId).I$();
     }
 
     void mkWalDir() {
@@ -156,40 +143,27 @@ abstract class WalWriterBase implements AutoCloseable {
         path.trimTo(walDirLength);
     }
 
-    void releaseSegmentLock(int segmentId, long segmentLockFd, long segmentTxn) {
-        if (ff.close(segmentLockFd)) {
-            // if events file has some transactions
-            if (segmentTxn >= 0) {
-                sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
-                LOG.debug().$("released segment lock [walId=").$(walId)
-                        .$(", segmentId=").$(segmentId)
-                        .$(", fd=").$(segmentLockFd)
-                        .$(']').$();
-            } else {
-                path.trimTo(pathSize).slash().put(segmentId);
-                walDirectoryPolicy.rollbackDirectory(path);
-                path.trimTo(pathSize);
-            }
-        } else {
-            LOG.error()
-                    .$("cannot close segment lock fd [walId=").$(walId)
+    void releaseSegmentLock(int segmentId, long segmentTxn) {
+        if (segmentId == -1) {
+            return;
+        }
+
+        walSegmentLockManager.unlockSegment(tableToken.getDirNameUtf8(), walId, segmentId);
+        // if events file has some transactions
+        if (segmentTxn >= 0) {
+            sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
+            LOG.debug().$("released segment lock [walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
-                    .$(", fd=").$(segmentLockFd)
-                    .$(", errno=").$(ff.errno()).I$();
+                    .I$();
+        } else {
+            path.trimTo(pathSize).slash().put(segmentId);
+            walDirectoryPolicy.rollbackDirectory(path);
+            path.trimTo(pathSize);
         }
     }
 
     void releaseWalLock() {
-        if (ff.close(walLockFd)) {
-            walLockFd = -1;
-            LOG.debug().$("released WAL lock [walId=").$(walId)
-                    .$(", fd=").$(walLockFd)
-                    .$(']').$();
-        } else {
-            LOG.error()
-                    .$("cannot close WAL lock fd [walId=").$(walId)
-                    .$(", fd=").$(walLockFd)
-                    .$(", errno=").$(ff.errno()).I$();
-        }
+        walSegmentLockManager.unlockWal(tableToken.getDirNameUtf8(), walId);
+        LOG.debug().$("released WAL lock [walId=").$(walId).I$();
     }
 }

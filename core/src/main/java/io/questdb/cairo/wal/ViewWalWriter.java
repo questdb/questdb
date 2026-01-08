@@ -58,9 +58,10 @@ public class ViewWalWriter extends WalWriterBase {
             CairoConfiguration configuration,
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
-            WalDirectoryPolicy walDirectoryPolicy
+            WalDirectoryPolicy walDirectoryPolicy,
+            WALSegmentLockManager walSegmentLockManager
     ) {
-        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy);
+        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walSegmentLockManager);
 
         LOG.info().$("open [table=").$(tableToken).I$();
 
@@ -142,7 +143,7 @@ public class ViewWalWriter extends WalWriterBase {
                 events.close(truncate, Vm.TRUNCATE_TO_POINTER);
             }
 
-            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
+            releaseSegmentLock(segmentId, lastSegmentTxn);
 
             try {
                 releaseWalLock();
@@ -169,8 +170,7 @@ public class ViewWalWriter extends WalWriterBase {
     private void openNewSegment() {
         final int oldSegmentId = segmentId;
         final int newSegmentId = segmentId + 1;
-        final long oldSegmentLockFd = segmentLockFd;
-        segmentLockFd = -1;
+        segmentId = -1;
         final long oldLastSegmentTxn = lastSegmentTxn;
         try {
             final int segmentPathLen = createSegmentDir(newSegmentId);
@@ -192,8 +192,8 @@ public class ViewWalWriter extends WalWriterBase {
             lastSegmentTxn = -1;
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
-            if (oldSegmentLockFd > -1) {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+            if (oldSegmentId > -1) {
+                releaseSegmentLock(oldSegmentId, oldLastSegmentTxn);
             }
             path.trimTo(pathSize);
         }
