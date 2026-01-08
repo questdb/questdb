@@ -194,6 +194,7 @@ public class ConvertOperatorImpl implements Closeable {
     ) {
         try {
             this.columnName = columnName;
+
             if (ColumnType.isSymbol(newType)) {
                 if (symbolMapper == null) {
                     symbolMapper = new SymbolMapper();

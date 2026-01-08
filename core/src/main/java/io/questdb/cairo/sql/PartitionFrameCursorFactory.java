@@ -28,6 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -65,7 +66,7 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     @Override
     void close();
 
-    PartitionFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException;
+    PartitionFrameCursor getCursor(SqlExecutionContext executionContext, IntList columnIndexes, int order) throws SqlException;
 
     RecordMetadata getMetadata();
 

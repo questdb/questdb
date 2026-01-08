@@ -207,6 +207,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getCompileViewModelPoolCapacity() {
+        return getDelegate().getCompileViewModelPoolCapacity();
+    }
+
+    @Override
     public @NotNull CharSequence getConfRoot() {
         return getDelegate().getConfRoot();
     }
@@ -419,6 +424,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getInactiveWalWriterTTL() {
         return getDelegate().getInactiveWalWriterTTL();
+    }
+
+    @Override
+    public long getInactiveViewWalWriterTTL() {
+        return getDelegate().getInactiveViewWalWriterTTL();
     }
 
     @Override
@@ -1227,6 +1237,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getViewLexerPoolCapacity() {
+        return getDelegate().getViewLexerPoolCapacity();
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return getDelegate().getVolumeDefinitions();
     }
@@ -1314,6 +1329,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalWriterPoolMaxSegments() {
         return getDelegate().getWalWriterPoolMaxSegments();
+    }
+
+    @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return getDelegate().getViewWalWriterPoolMaxSegments();
     }
 
     @Override

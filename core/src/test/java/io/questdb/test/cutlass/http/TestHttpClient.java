@@ -271,6 +271,14 @@ public class TestHttpClient implements QuietCloseable {
     public void assertGetContains(
             CharSequence url,
             CharSequence expectedResponse,
+            @Nullable CharSequenceObjHashMap<String> queryParams
+    ) {
+        assertGetContains(url, expectedResponse, queryParams, null, null, 9001);
+    }
+
+    public void assertGetContains(
+            CharSequence url,
+            CharSequence expectedResponse,
             @Nullable CharSequenceObjHashMap<String> queryParams,
             @Nullable CharSequence username,
             @Nullable CharSequence password,
@@ -496,7 +504,7 @@ public class TestHttpClient implements QuietCloseable {
         return statusCode;
     }
 
-    protected String reqToSinkUtf8Params(
+    protected void reqToSinkUtf8Params(
             HttpClient.Request req,
             MutableUtf8Sink sink,
             @Nullable CharSequence username,
@@ -511,7 +519,7 @@ public class TestHttpClient implements QuietCloseable {
             }
         }
 
-        return reqToSink0(req, sink, username, password, token);
+        reqToSink0(req, sink, username, password, token);
     }
 
     protected void toSink0(

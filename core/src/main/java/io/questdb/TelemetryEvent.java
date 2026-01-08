@@ -53,11 +53,11 @@ public final class TelemetryEvent {
     // Table count classes: -40 - 0-10 tables, -41 - 11-25 tables, -42 - 26-50 tables, -43 - 51-100 tables, -44 - 101-250 tables, -45 - 251-1000 tables, -46 - 1001+ tables
     public static final short SYSTEM_TABLE_COUNT_CLASS_BASE = -40;
     public static final short SYSTEM_UP = 100;
+    public static final short VIEW_CREATE = 210;
     public static final short WAL_APPLY_RESUME = 108;
     public static final short WAL_APPLY_SUSPEND = 107;
     public static final short WAL_TXN_APPLY_START = 103;
     public static final short WAL_TXN_DATA_APPLIED = 105;
     public static final short WAL_TXN_SQL_APPLIED = 106;
     public static final short WAL_TXN_STRUCTURE_CHANGE_APPLIED = 104;
-
 }
