@@ -25,12 +25,12 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.Semaphore;
@@ -49,8 +49,8 @@ public class WALSegmentLockManager {
     private final ConcurrentHashMap<Semaphore> locks = new ConcurrentHashMap<>();
 
     @TestOnly
-    public boolean isSegmentLocked(Utf8Sequence tableName, int walId, int segmentId) {
-        final CharSequence key = makeKey(tableName, walId, segmentId);
+    public boolean isSegmentLocked(TableToken tableToken, int walId, int segmentId) {
+        final CharSequence key = makeKey(tableToken, walId, segmentId);
         Semaphore lock = locks.get(key);
         if (lock == null) {
             return false;
@@ -59,8 +59,8 @@ public class WALSegmentLockManager {
     }
 
     @TestOnly
-    public boolean isWalLocked(Utf8Sequence tableName, int walId) {
-        final CharSequence key = makeKey(tableName, walId, WAL_LOCK_SENTINEL);
+    public boolean isWalLocked(TableToken tableToken, int walId) {
+        final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
         Semaphore lock = locks.get(key);
         if (lock == null) {
             return false;
@@ -69,8 +69,8 @@ public class WALSegmentLockManager {
     }
 
     // Lock specific segment
-    public void lockSegment(Utf8Sequence tableName, int walId, int segmentId) {
-        final CharSequence key = makeKey(tableName, walId, segmentId);
+    public void lockSegment(TableToken tableToken, int walId, int segmentId) {
+        final CharSequence key = makeKey(tableToken, walId, segmentId);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         LOG.debug().$("locking WAL segment [key=").$(key).I$();
         try {
@@ -84,8 +84,8 @@ public class WALSegmentLockManager {
     }
 
     // Lock entire WAL directory
-    public void lockWal(Utf8Sequence tableName, int walId) {
-        final CharSequence key = makeKey(tableName, walId, WAL_LOCK_SENTINEL);
+    public void lockWal(TableToken tableToken, int walId) {
+        final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         LOG.debug().$("locking WAL [key=").$(key).I$();
         try {
@@ -98,8 +98,8 @@ public class WALSegmentLockManager {
         LOG.debug().$("locked WAL [key=").$(key).$(", semaphore=").$(lock).I$();
     }
 
-    public boolean tryLockSegment(Utf8Sequence tableName, int walId, int segmentId) {
-        final CharSequence key = makeKey(tableName, walId, segmentId);
+    public boolean tryLockSegment(TableToken tableToken, int walId, int segmentId) {
+        final CharSequence key = makeKey(tableToken, walId, segmentId);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         boolean locked = lock.tryAcquire();
         if (locked) {
@@ -110,8 +110,8 @@ public class WALSegmentLockManager {
         return locked;
     }
 
-    public boolean tryLockWal(Utf8Sequence tableName, int walId) {
-        final CharSequence key = makeKey(tableName, walId, WAL_LOCK_SENTINEL);
+    public boolean tryLockWal(TableToken tableToken, int walId) {
+        final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         boolean locked = lock.tryAcquire();
         if (locked) {
@@ -122,8 +122,8 @@ public class WALSegmentLockManager {
         return locked;
     }
 
-    public void unlockSegment(Utf8Sequence tableName, int walId, int segmentId) {
-        final CharSequence key = makeKey(tableName, walId, segmentId);
+    public void unlockSegment(TableToken tableToken, int walId, int segmentId) {
+        final CharSequence key = makeKey(tableToken, walId, segmentId);
         Semaphore lock = locks.get(key);
         if (lock != null) {
             LOG.debug().$("unlock WAL segment [key=").$(key).I$();
@@ -133,8 +133,8 @@ public class WALSegmentLockManager {
         }
     }
 
-    public void unlockWal(Utf8Sequence tableName, int walId) {
-        final CharSequence key = makeKey(tableName, walId, WAL_LOCK_SENTINEL);
+    public void unlockWal(TableToken tableToken, int walId) {
+        final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
         Semaphore lock = locks.get(key);
         if (lock != null) {
             LOG.debug().$("unlock WAL [key=").$(key).I$();
@@ -144,10 +144,10 @@ public class WALSegmentLockManager {
         }
     }
 
-    private static CharSequence makeKey(Utf8Sequence tableName, int walId, int segmentId) {
+    private static CharSequence makeKey(TableToken tableToken, int walId, int segmentId) {
         final StringSink sink = sinks.get();
         sink.clear();
-        sink.put(tableName).put('/').put(walId).put('/').put(segmentId);
+        sink.put(tableToken.getTableId()).put('/').put(walId).put('/').put(segmentId);
         return sink;
     }
 }
