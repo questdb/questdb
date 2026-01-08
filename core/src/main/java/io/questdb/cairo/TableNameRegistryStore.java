@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -309,22 +310,26 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     }
 
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
-        path.of(configuration.getDbRoot()).concat(dirName).concat(META_FILE_NAME);
+        path.of(configuration.getDbRoot()).concat(dirName);
+        int pathLen = path.size();
+        path.concat(META_FILE_NAME);
         long fd = ff.openRO(path.$());
         if (fd < 1) {
-            // negative table id means WAL table
-            // normally we would hit this code path for views only, because they do not have _meta file
-            // views are considered to be WAL tables
-            return -getTableIdFromTableDir(dirName);
+            // check if it is a view
+            path.trimTo(pathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+            if (ff.exists(path.$())) {
+                // negative table id means WAL table,
+                // views are considered to be WAL tables
+                return -getTableIdFromTableDir(dirName);
+            }
+            return 0;
         }
 
         try {
             int tableId = ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_TABLE_ID);
             if (tableId < 0) {
                 LOG.error().$("cannot read table id from metadata file [path=").$(path).I$();
-                // negative table id means WAL table
-                // we assume the table is WAL enabled
-                return -getTableIdFromTableDir(dirName);
+                return 0;
             }
             byte isWal = (byte) (ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_WAL_ENABLED) & 0xFF);
             return isWal == 0 ? tableId : -tableId;
