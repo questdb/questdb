@@ -205,7 +205,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose x1 from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
+            assert !aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlanNoLeakCheck(
                     query,
                     """
