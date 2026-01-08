@@ -35,6 +35,8 @@ import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.cairo.view.ViewGraph;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
@@ -263,6 +265,35 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         LOG.info().$("skipping, materialized view is concurrently dropped [view=").$(tableToken).I$();
                                         break;
                                     }
+                                }
+
+                                if (tableToken.isView()) {
+                                    final ViewGraph viewGraph = engine.getViewGraph();
+                                    final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tableToken);
+                                    if (viewDefinition != null) {
+                                        matViewFileWriter.of(path.trimTo(rootLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+                                        ViewDefinition.append(viewDefinition, matViewFileWriter);
+                                        tableNameRegistryStore.logAddTable(tableToken);
+
+                                        path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
+                                        if (ff.mkdirs(path.slash(), configuration.getMkDirMode()) != 0) {
+                                            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
+                                        }
+                                        metadata.clear();
+                                        long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
+                                        path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
+                                        metadata.switchTo(path, path.size(), true);
+                                        metadata.close(true, Vm.TRUNCATE_TO_POINTER);
+
+                                        mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                        mem.putLong(lastTxn);
+                                        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+                                        LOG.info().$("view included in the checkpoint [view=").$(tableToken).I$();
+                                    } else {
+                                        LOG.info().$("skipping, view is concurrently dropped [view=").$(tableToken).I$();
+                                    }
+                                    break;
                                 }
 
                                 TableReader reader = null;
@@ -720,23 +751,47 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             AtomicInteger recoveredTxnFiles = new AtomicInteger();
             AtomicInteger recoveredCVFiles = new AtomicInteger();
             AtomicInteger recoveredWalFiles = new AtomicInteger();
+            AtomicInteger recoveredViewFiles = new AtomicInteger();
             AtomicInteger symbolFilesCount = new AtomicInteger();
             srcPath.trimTo(checkpointRootLen);
             ff.iterateDir(
                     srcPath.$(), (pUtf8NameZ, type) -> {
                         if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                             dstPath.trimTo(rootLen).concat(pUtf8NameZ);
+                            int srcPathLen = srcPath.size();
+                            int dstPathLen = dstPath.size();
 
-                            recoveryAgent.restoreTableFiles(
-                                    srcPath,
-                                    dstPath,
-                                    recoveredMetaFiles,
-                                    recoveredTxnFiles,
-                                    recoveredCVFiles,
-                                    recoveredWalFiles,
-                                    symbolFilesCount,
-                                    configuration.getCheckpointRecoveryRebuildColumnIndexes()
-                            );
+                            // Check if this is a view (views have _view file but no _cv file)
+                            boolean isView = ff.exists(srcPath.trimTo(srcPathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+                            srcPath.trimTo(srcPathLen);
+
+                            if (isView) {
+                                // Views don't have data - only copy the view definition file
+                                srcPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+                                dstPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                                    throw CairoException.critical(ff.errno())
+                                            .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy view definition file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
+                                }
+                                recoveredViewFiles.incrementAndGet();
+                                LOG.info()
+                                        .$("recovered view definition file [src=").$(srcPath)
+                                        .$(", dst=").$(dstPath)
+                                        .I$();
+                                srcPath.trimTo(srcPathLen);
+                                dstPath.trimTo(dstPathLen);
+                            } else {
+                                recoveryAgent.restoreTableFiles(
+                                        srcPath,
+                                        dstPath,
+                                        recoveredMetaFiles,
+                                        recoveredTxnFiles,
+                                        recoveredCVFiles,
+                                        recoveredWalFiles,
+                                        symbolFilesCount,
+                                        configuration.getCheckpointRecoveryRebuildColumnIndexes()
+                                );
+                            }
                         }
                     }
             );
@@ -746,6 +801,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())
                     .$(", cvFilesCount=").$(recoveredCVFiles.get())
                     .$(", walFilesCount=").$(recoveredWalFiles.get())
+                    .$(", viewFilesCount=").$(recoveredViewFiles.get())
                     .$(", symbolFilesCount=").$(symbolFilesCount.get())
                     .I$();
 

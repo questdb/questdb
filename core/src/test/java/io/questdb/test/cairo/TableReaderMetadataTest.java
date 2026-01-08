@@ -557,7 +557,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         // Test one by one
         runWithManipulators(expected, writerColumnCount, manipulators);
         try (Path path = new Path()) {
-            engine.dropTableOrMatView(path, engine.verifyTableName("all"));
+            engine.dropTableOrViewOrMatView(path, engine.verifyTableName("all"));
         }
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY, timestampType);
 

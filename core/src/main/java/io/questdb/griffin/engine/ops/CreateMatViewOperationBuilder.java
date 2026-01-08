@@ -29,8 +29,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.str.Sinkable;
 
-public interface CreateMatViewOperationBuilder extends ExecutionModel {
+public interface CreateMatViewOperationBuilder extends ExecutionModel, Sinkable {
 
     CreateMatViewOperation build(
             SqlCompiler sqlCompiler,

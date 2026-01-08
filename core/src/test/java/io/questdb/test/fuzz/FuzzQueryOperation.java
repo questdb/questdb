@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -63,7 +64,7 @@ public class FuzzQueryOperation implements FuzzTransactionOperation {
         }
         final TableToken tableToken = tableWriter.getTableToken();
         final StringSink sink = new StringSink();
-        try (SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+        try (SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
             TestUtils.printSql(engine, sqlExecutionContext, tableToken.getTableName() + " LIMIT " + limit, sink);
         } catch (SqlException e) {
             if (failureFileFacade != null && failureFileFacade.failureGenerated() > failuresObserved) {

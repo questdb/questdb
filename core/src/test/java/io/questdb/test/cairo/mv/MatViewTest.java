@@ -1099,7 +1099,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view foobar;",
                     24,
-                    "table does not exist [table=foobar]"
+                    "materialized view does not exist [view=foobar]"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h",
@@ -2241,6 +2241,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
             // copy
             assertCannotModifyMatView("copy price_1h from 'test-numeric-headers.csv' with header true");
             // rename table
@@ -2248,7 +2249,7 @@ public class MatViewTest extends AbstractCairoTest {
             // update
             assertCannotModifyMatView("update price_1h set price = 1.1");
             // insert
-            assertCannotModifyMatView("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')");
+            assertCannotModifyMatView("insert into price_1h values('gbpusd', 1.319, '2024-09-10T12:05')");
             // insert as select
             assertCannotModifyMatView("insert into price_1h select sym, last(price) as price, ts from base_price sample by 1h");
             // alter
@@ -2266,8 +2267,6 @@ public class MatViewTest extends AbstractCairoTest {
             assertCannotModifyMatView("reindex table price_1h");
             // truncate
             assertCannotModifyMatView("truncate table price_1h");
-            // drop
-            assertCannotModifyMatView("drop table price_1h");
             // vacuum
             assertCannotModifyMatView("vacuum table price_1h");
         });
@@ -6012,7 +6011,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Iran'";
             final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
             final long step = timestampType.getDriver().fromMicros(6 * 60000000);
-            final int N = 100;
+            final int N = 110;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
 
@@ -6028,7 +6027,8 @@ public class MatViewTest extends AbstractCairoTest {
                     2021-03-28T11:00:00.000000Z\t10
                     2021-03-28T12:00:00.000000Z\t10
                     2021-03-28T13:00:00.000000Z\t10
-                    2021-03-28T14:00:00.000000Z\t7
+                    2021-03-28T14:00:00.000000Z\t10
+                    2021-03-28T15:00:00.000000Z\t7
                     """;
 
             final String out = "select to_timezone(k, 'Iran') k, c";
@@ -6045,7 +6045,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
             final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
-            final int K = 5;
+            final int K = 4;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = """
@@ -6763,6 +6763,27 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTryingToDropMatViewAsTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            try {
+                execute("drop table price_1h");
+                Assert.fail("Expected exception missing");
+            } catch (SqlException e) {
+                Assert.assertEquals(11, e.getPosition());
+                Assert.assertTrue(e.getMessage().contains("table name expected, got view or materialized view name"));
+            }
+        });
+    }
+
+    @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -7010,6 +7031,7 @@ public class MatViewTest extends AbstractCairoTest {
     private static void assertCannotModifyMatView(String updateSql) {
         try {
             execute(updateSql);
+            Assert.fail("Expected exception missing");
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage().contains("cannot modify materialized view"));
         }
@@ -7830,11 +7852,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void updateViewIncrementally(String viewQuery, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
-    }
-
-    private void updateViewIncrementally(String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally("x_view", viewQuery, columns, null, startTs, step, N, K);
+        updateViewIncrementally("x_view", viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", null, startTs, step, N, K);
     }
 
     private void updateViewIncrementally(String viewName, String viewQuery, String columns, @Nullable String index, long startTs, long step, int N, int K) throws SqlException {
