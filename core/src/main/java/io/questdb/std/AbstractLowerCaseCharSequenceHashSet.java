@@ -52,6 +52,14 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
         free = capacity;
     }
 
+    public boolean contains(CharSequence key) {
+        return keyIndex(key) < 0;
+    }
+
+    public boolean contains(CharSequence key, int lo, int hi) {
+        return keyIndex(key, lo, hi) < 0;
+    }
+
     public boolean excludes(CharSequence key) {
         return keyIndex(key) > -1;
     }

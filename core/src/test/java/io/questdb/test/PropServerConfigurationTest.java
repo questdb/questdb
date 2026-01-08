@@ -205,6 +205,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
@@ -276,6 +277,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertModelPoolCapacity());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getCompileViewModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getInsertModelBatchSize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getCreateTableModelBatchSize());
@@ -475,6 +477,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWalPurgeInterval());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getWalRecreateDistressedSequencerAttempts());
         Assert.assertEquals(120_000, configuration.getCairoConfiguration().getInactiveWalWriterTTL());
+        Assert.assertEquals(60_000, configuration.getCairoConfiguration().getInactiveViewWalWriterTTL());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
         Assert.assertTrue(configuration.getCairoConfiguration().getWalEnabledDefault());
@@ -1936,6 +1939,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
+        Assert.assertEquals(16, configuration.getViewLexerPoolCapacity());
         Assert.assertFalse(configuration.isMatViewEnabled());
         Assert.assertTrue(configuration.getDefaultSymbolCacheFlag());
         Assert.assertEquals(512, configuration.getDefaultSymbolCapacity());
@@ -1999,6 +2003,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getWithClauseModelPoolCapacity());
         Assert.assertEquals(512, configuration.getRenameTableModelPoolCapacity());
         Assert.assertEquals(128, configuration.getInsertModelPoolCapacity());
+        Assert.assertEquals(32, configuration.getCompileViewModelPoolCapacity());
         Assert.assertEquals(256, configuration.getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(2001, configuration.getSampleByIndexSearchPageSize());
         Assert.assertFalse(configuration.getSampleByDefaultAlignmentCalendar());
@@ -2083,6 +2088,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(333, configuration.getWalPurgeInterval());
         Assert.assertEquals(13, configuration.getWalRecreateDistressedSequencerAttempts());
         Assert.assertEquals(333303, configuration.getInactiveWalWriterTTL());
+        Assert.assertEquals(3330, configuration.getInactiveViewWalWriterTTL());
         Assert.assertEquals(128, configuration.getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.isWalSupported());
         Assert.assertTrue(configuration.getWalEnabledDefault());
@@ -2090,6 +2096,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(23, configuration.getWalApplyLookAheadTransactionCount());
         Assert.assertFalse(configuration.isTableTypeConversionEnabled());
         Assert.assertEquals(100, configuration.getWalWriterPoolMaxSegments());
+        Assert.assertEquals(50, configuration.getViewWalWriterPoolMaxSegments());
         Assert.assertEquals(120, configuration.getO3LagCalculationWindowsSize());
         Assert.assertEquals(100, configuration.getWalSegmentRolloverRowCount());
         Assert.assertEquals(42.2d, configuration.getWalLagRowsMultiplier(), 0.00001);

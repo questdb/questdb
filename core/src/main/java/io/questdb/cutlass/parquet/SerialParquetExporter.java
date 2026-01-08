@@ -277,7 +277,7 @@ public class SerialParquetExporter implements Closeable {
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
                 try {
                     fromParquet.trimTo(0);
-                    cairoEngine.dropTableOrMatView(fromParquet, tableToken);
+                    cairoEngine.dropTableOrViewOrMatView(fromParquet, tableToken);
                     copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
                 } catch (CairoException e) {
                     // drop failure doesn't affect task continuation - log and proceed

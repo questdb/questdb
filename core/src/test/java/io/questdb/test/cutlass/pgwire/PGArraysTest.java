@@ -403,6 +403,33 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayViewWithBindingVars() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (arr double[], ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("insert into tango values ('{1.0, 2.0}', '2000'), ('{3.0, 4.0}', '2001')");
+                stmt.execute("create view v_tango as select arr[1] as x, arr[2] as y from tango");
+            }
+
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select x, y from v_tango where x = ?")) {
+                stmt.setInt(1, 1);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[DOUBLE],y[DOUBLE]
+                                    1.0,2.0
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testExplicitCastInsertStringToArrayColum() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[])")) {
@@ -688,6 +715,7 @@ public class PGArraysTest extends BasePGTest {
         String result = buildArrayResult2d(dimLen1, dimLen2) + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (Statement stmt = conn.createStatement()) {
+                //noinspection SqlSourceToSinkFlow
                 stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(9))");
             }
             drainWalQueue();
@@ -719,6 +747,7 @@ public class PGArraysTest extends BasePGTest {
         String literal = buildArrayLiteral1d(elemCount);
         String result = buildArrayResult1d(elemCount) + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            //noinspection SqlSourceToSinkFlow
             try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(9)")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {

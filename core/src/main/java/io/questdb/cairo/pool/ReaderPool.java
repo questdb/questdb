@@ -26,6 +26,7 @@ package io.questdb.cairo.pool;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionOverwriteControl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -61,6 +62,14 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     public void detach(TableReader reader) {
         ReaderPool.R rdr = (ReaderPool.R) reader;
         rdr.detach();
+    }
+
+    @Override
+    public ReaderPool.R get(TableToken tableToken) {
+        if (tableToken.isView()) {
+            throw CairoException.critical(0).put("cannot get a reader for view [view=").put(tableToken).put(']');
+        }
+        return super.get(tableToken);
     }
 
     /**

@@ -37,6 +37,7 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -394,7 +395,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     };
                     TelemetryJob ignored = new TelemetryJob(engine);
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1)
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 TestUtils.printSql(compiler, context, "select event, origin from " + TELEMETRY, sink);
                 TestUtils.assertContains(
