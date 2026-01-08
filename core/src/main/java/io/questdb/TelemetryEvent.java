@@ -58,7 +58,7 @@ public final class TelemetryEvent {
     public static final short PARALLEL_WINDOW_JOIN = USE_ARRAY + 1;
     public static final short SINGLE_THREAD_WINDOW_JOIN = PARALLEL_WINDOW_JOIN + 1;
     public static final short VIEW_CREATE = 210;
-    public static final short VIEW_DROP = 210;
+    public static final short VIEW_DROP = 211;
     public static final short WAL_APPLY_RESUME = 108;
     public static final short WAL_APPLY_SUSPEND = 107;
     public static final short WAL_TXN_APPLY_START = 103;
