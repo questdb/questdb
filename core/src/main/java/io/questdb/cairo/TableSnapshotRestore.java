@@ -141,13 +141,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             try {
                 futures.getQuick(i).get();
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                final CairoException ex = CairoException.critical(0)
-                        .put("parallel task interrupted")
-                        .put(": ")
-                        .put(e.getMessage());
-                ex.initCause(e);
-                throw ex;
+                LOG.error().$("parallel task interrupted ").$(e).I$();
+                throw CairoException.critical(0).put("parallel task interrupted");
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();
                 if (cause != null) {
