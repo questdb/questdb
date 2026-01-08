@@ -217,10 +217,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     public void unlock(TableToken tableToken, boolean quiet) {
         Entry<T> e = entries.get(tableToken.getDirName());
         long thread = Thread.currentThread().getId();
-        if (!quiet && e == null) {
-            // This is OK, the table deletion holds lock and deletes the entry
-            LOG.info().$("not found, cannot unlock [table=").$(tableToken).I$();
-            notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCKED, -1, -1);
+        if (e == null) {
+            if (!quiet) {
+                // This is OK, the table deletion holds lock and deletes the entry
+                LOG.info().$("not found, cannot unlock [table=").$(tableToken).I$();
+                notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCKED, -1, -1);
+            }
             return;
         }
 

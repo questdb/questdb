@@ -1397,7 +1397,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean lockWalWriters(TableToken tableToken) {
-        verifyTableToken(tableToken);
         return walWriterPool.lock(tableToken);
     }
 
