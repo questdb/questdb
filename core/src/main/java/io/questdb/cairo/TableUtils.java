@@ -874,7 +874,9 @@ public final class TableUtils {
     public static int getTableIdFromTableDir(CharSequence dirName) throws NumericException {
         int suffixIndex = Chars.indexOf(dirName, SYSTEM_TABLE_NAME_SUFFIX);
         if (suffixIndex == -1) {
-            throw NumericException.instance();
+            throw NumericException.instance()
+                    .put("cannot parse table id from table dir name [dirName=").put(dirName)
+                    .put(']');
         }
         return Numbers.parseInt(dirName, suffixIndex + 1, dirName.length());
     }
