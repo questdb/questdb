@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,20 @@
 
 package org.questdb;
 
-import io.questdb.std.*;
-import org.openjdk.jmh.annotations.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -37,10 +49,10 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class SumShortBenchmark {
-    private final static long memSize = 1_000_000 * Short.BYTES;
+    private final static long memSize = 1024 * 16;
     private final static int shortCount = (int) (memSize / Short.BYTES);
-    private long mem;
-    private short[] sarr;
+    private long shortAddr;
+    private short[] shortArray;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -56,28 +68,28 @@ public class SumShortBenchmark {
     @Setup(Level.Iteration)
     public void setup() {
         Os.init();
-        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
-        sarr = new short[shortCount];
+        shortAddr = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
+        shortArray = new short[shortCount];
         final Rnd rnd = new Rnd();
-        long p = mem;
+        long p = shortAddr;
         for (int i = 0; i < shortCount; i++) {
             short s = rnd.nextShort();
             Unsafe.getUnsafe().putShort(p, s);
-            sarr[i] = s;
+            shortArray[i] = s;
             p += Short.BYTES;
         }
     }
 
     @TearDown(Level.Iteration)
     public void tearDown() {
-        Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(shortAddr, memSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Benchmark
     public double testJavaHeapSum() {
         double result = 0.0;
         for (int i = 0; i < shortCount; i++) {
-            result += sarr[i];
+            result += shortArray[i];
         }
         return result;
     }
@@ -86,13 +98,23 @@ public class SumShortBenchmark {
     public double testJavaNativeSum() {
         double result = 0.0;
         for (int i = 0; i < shortCount; i++) {
-            result += Unsafe.getUnsafe().getShort(mem + i * Short.BYTES);
+            result += Unsafe.getUnsafe().getShort(shortAddr + i * Short.BYTES);
         }
         return result;
     }
 
     @Benchmark
-    public double testNativeSum() {
-        return Vect.sumShort(mem, shortCount);
+    public int testVectMaxShort() {
+        return Vect.maxShort(shortAddr, shortCount);
+    }
+
+    @Benchmark
+    public int testVectMinShort() {
+        return Vect.minShort(shortAddr, shortCount);
+    }
+
+    @Benchmark
+    public double testVectSumShort() {
+        return Vect.sumShort(shortAddr, shortCount);
     }
 }

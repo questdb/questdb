@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,6 +62,17 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof BinaryFunction that) {
+            return getLeft().isEquivalentTo(that.getLeft()) && getRight().isEquivalentTo(that.getRight());
+        }
+        return false;
+    }
+
+    @Override
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
     }
@@ -96,9 +107,9 @@ public interface BinaryFunction extends Function {
 
     @Override
     default void offerStateTo(Function that) {
-        if (that instanceof BinaryFunction) {
-            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
-            getRight().offerStateTo(((BinaryFunction) that).getRight());
+        if (that instanceof BinaryFunction other) {
+            getLeft().offerStateTo(other.getLeft());
+            getRight().offerStateTo(other.getRight());
         }
     }
 

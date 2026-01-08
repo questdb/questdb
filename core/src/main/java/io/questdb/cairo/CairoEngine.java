@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1071,7 +1071,16 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull WalWriter getWalWriter(TableToken tableToken) {
         verifyTableToken(tableToken);
-        return walWriterPool.get(tableToken);
+        try {
+            return walWriterPool.get(tableToken);
+        } catch (CairoException e) {
+            if (isTableDropped(tableToken)) {
+                // If table is dropped we can have some file not fund errors,
+                // throw table dropped exception instead to make it clear what happened.
+                throw CairoException.tableDropped(tableToken);
+            }
+            throw e;
+        }
     }
 
     public TableWriter getWriter(TableToken tableToken, @NotNull String lockReason) {
@@ -1201,6 +1210,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean notifyDropped(TableToken tableToken) {
         if (tableNameRegistry.dropTable(tableToken)) {
+            readerPool.notifyDropped(tableToken, false);
+            walWriterPool.notifyDropped(tableToken, false);
+            tableMetadataPool.notifyDropped(tableToken, false);
+            sequencerMetadataPool.notifyDropped(tableToken, false);
             final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
             matViewRefreshTask.clear();
             matViewRefreshTask.baseTableToken = tableToken;
@@ -1325,6 +1338,10 @@ public class CairoEngine implements Closeable, WriterSource {
     public void removeTableToken(TableToken tableToken) {
         tableNameRegistry.purgeToken(tableToken);
         tableSequencerAPI.purgeTxnTracker(tableToken.getDirName());
+        readerPool.notifyDropped(tableToken, true);
+        walWriterPool.notifyDropped(tableToken, true);
+        tableMetadataPool.notifyDropped(tableToken, true);
+        sequencerMetadataPool.notifyDropped(tableToken, true);
         PoolListener listener = getPoolListener();
         if (listener != null) {
             listener.onEvent(

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -821,7 +821,7 @@ public final class Utf8s {
     public static boolean isAscii(long ptr, int size) {
         long i = 0;
         for (; i + 7 < size; i += 8) {
-            if (isAscii(Unsafe.getUnsafe().getLong(ptr + i))) {
+            if (!isAscii(Unsafe.getUnsafe().getLong(ptr + i))) {
                 return false;
             }
         }

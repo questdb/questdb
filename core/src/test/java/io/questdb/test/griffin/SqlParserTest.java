@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -112,7 +112,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between current row and 4+3 preceding) from xyz",
                 85,
-                "start row is CURRENT, end row not must be PRECEDING"
+                "start row is CURRENT, end row must not be PRECEDING"
         );
     }
 
@@ -194,7 +194,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between current row and 2 preceding) from xyz",
                 83,
-                "start row is CURRENT, end row not must be PRECEDING",
+                "start row is CURRENT, end row must not be PRECEDING",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -208,7 +208,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 2 following and 2 preceding) from xyz",
                 83,
-                "start row is FOLLOWING, end row not must be PRECEDING",
+                "start row is FOLLOWING, end row must not be PRECEDING",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -1646,6 +1646,29 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual 1 1, x, concat('2', x) concat from (select [x] from tab)",
                 "select 1, x, '2' || x from tab",
                 modelOf("tab").col("x", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testConsecutiveWindowJoins() throws Exception {
+        assertQuery(
+                "select-window-join sum(t.price + q.price) sum, sum(t.price + q1.price) sum1 from (select [price, tag] from trades t timestamp (timestamp) window join select [price, tag] from quotes q timestamp (timestamp) between 2 preceding and current row include prevailing outer-join-expression t.tag = q.tag window join select [price, tag] from quotes q1 timestamp (timestamp) between 2 preceding and current row include prevailing outer-join-expression t.tag = q1.tag) t",
+                "select sum(t.price + q.price), sum(t.price + q1.price) from trades t WINDOW JOIN quotes q on tag range between 2 preceding and current row window join quotes q1 on tag range between 2 preceding and current row",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+
+        assertQuery(
+                "select-window-join sum(t.price + q.price) sum from (select [price, tag] from trades t timestamp (timestamp) asof join select [price, tag] from quotes q timestamp (timestamp) on q.tag = t.tag window join select [tag] from quotes q1 timestamp (timestamp) between 2 preceding and current row include prevailing outer-join-expression t.tag = q1.tag) t",
+                "select sum(t.price + q.price) from trades t asof JOIN quotes q on tag window join quotes q1 on tag range between 2 preceding and current row",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+
+        assertException(
+                "select sum(t.price + q.price) from trades t WINDOW JOIN quotes q on tag range between 2 preceding and current row inner join quotes q1 on tag",
+                114,
+                "no other join types allowed after window join"
         );
     }
 
@@ -12093,6 +12116,65 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .timestamp("ts")
         );
+    }
+
+    @Test
+    public void testWindowJoin() throws Exception {
+        assertQuery(
+                "select-window-join sum(t.price + q.price) sum from (select [price, tag] from trades t timestamp (timestamp) window join select [price, tag] from quotes q timestamp (timestamp) between 2 preceding and current row include prevailing outer-join-expression t.tag = q.tag) t",
+                "select sum(t.price + q.price) from trades t WINDOW JOIN quotes q on tag range between 2 preceding and current row",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+        assertQuery(
+                "select-virtual price + 1 column, sum from (select-window-join [t.price price, sum(q.price) sum] t.price price, sum(q.price) sum from (select [price, tag] from trades t timestamp (timestamp) window join select [price, tag] from quotes q timestamp (timestamp) between 2 second preceding and current row include prevailing outer-join-expression t.tag = q.tag) t) t",
+                "select t.price + 1, sum(q.price) from trades t WINDOW JOIN quotes q on tag range between 2 seconds preceding and current row",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+        assertQuery(
+                "select-virtual price + 1 column, sum + 10 column1 from (select-window-join [t.price price, sum(q.price) sum] t.price price, sum(q.price) sum from (select [price, tag] from trades t timestamp (timestamp) window join select [price, tag] from quotes q timestamp (timestamp) between 1 second preceding and current row exclude prevailing outer-join-expression t.tag = q.tag) t) t",
+                "select t.price + 1, sum(q.price) + 10 from trades t WINDOW JOIN quotes q on tag range between 1 second preceding and current row exclude prevailing",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+        assertQuery(
+                "select-virtual price + 1 column, sum + 10 column1 from (select-window-join [t.price price, sum(q.price) sum] t.price price, sum(q.price) sum from (select [price] from trades t timestamp (timestamp) window join select [price] from quotes q timestamp (timestamp) between 1 second preceding and 2 minute following include prevailing) t) t",
+                "select t.price + 1, sum(q.price) + 10 from trades t WINDOW JOIN quotes q range between 1 second preceding and 2 minute following",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+        assertQuery(
+                "select-choose column, column1 from (select-virtual [price + 1 column, sum + 10 column1, timestamp] price + 1 column, sum + 10 column1, timestamp from (select-window-join [t.price price, sum(q.price) sum, t.timestamp timestamp] t.price price, sum(q.price) sum, t.timestamp timestamp from (select [price, timestamp] from trades t timestamp (timestamp) window join select [price] from quotes q timestamp (timestamp) between 1 second preceding and 2 minute following include prevailing) t) t order by timestamp)",
+                "select t.price + 1, sum(q.price) + 10 from trades t WINDOW JOIN quotes q range between 1 second preceding and 2 minutes following order by t.timestamp",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+        assertQuery(
+                "select-window-join t.timestamp timestamp, t.tag tag, t.price price from (select [timestamp, tag, price] from trades t timestamp (timestamp) window join quotes timestamp (timestamp) between 2 second preceding and 1 second preceding include prevailing) t order by timestamp",
+                "select t.* from trades t WINDOW JOIN quotes range between 2 second preceding and 1 second preceding order by t.timestamp",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+        assertQuery(
+                "select-virtual sum + 1 column, max, avg, min from (select-window-join [sum(quotes.price) sum, max(quotes.timestamp) max, avg(quotes.price + 2) avg, min(quotes.timestamp) min] sum(quotes.price) sum, max(quotes.timestamp) max, avg(quotes.price + 2) avg, min(quotes.timestamp) min from (trades t timestamp (timestamp) window join select [price, timestamp] from quotes timestamp (timestamp) between 2 second preceding and 1 second preceding include prevailing) t) t",
+                "select sum(quotes.price) + 1, max(quotes.timestamp), avg(quotes.price + 2), min(quotes.timestamp) from trades t WINDOW JOIN quotes range between 2 second preceding and 1 second preceding",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+        assertQuery(
+                "select-group-by sum(sum) sum, avg(avg) avg from (select-virtual [sum + 1 sum, avg] sum + 1 sum, avg from (select-window-join [sum(quotes.price) sum, avg(quotes.price + 2) avg] sum(quotes.price) sum, avg(quotes.price + 2) avg from (trades t timestamp (timestamp) window join select [price] from quotes timestamp (timestamp) between 2 second preceding and 1 second preceding include prevailing) t) t)",
+                "select sum(sum), avg(avg) from(select sum(quotes.price) + 1 as sum, avg(quotes.price + 2) as avg from trades t WINDOW JOIN quotes range between 2 second preceding and 1 second preceding)",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
+        );
+        assertQuery(
+                "select-window-join sum(trades.price + quotes.price1) sum from (select [price, tag] from trades timestamp (timestamp) window join select [price1, tag] from quotes timestamp (timestamp) between 2 preceding and current row include prevailing outer-join-expression trades.tag = quotes.tag)",
+                "select sum(price + price1) from trades WINDOW JOIN quotes on tag range between 2 preceding and current row",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price1", ColumnType.DOUBLE)
+        );
+        assertException("select t.price + 1, sum(q.price) from trades t WINDOW JOIN quotes q on tag", 71, "'range' expected");
     }
 
     @Test

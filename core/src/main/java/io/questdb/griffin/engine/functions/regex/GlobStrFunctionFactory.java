@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,64 +26,19 @@ package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.catalogue.GlobFilesFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.str.Utf8Sequence;
 
 public class GlobStrFunctionFactory implements FunctionFactory {
-    private static final io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
-    private final MatchStrFunctionFactory matchStrFactory = new MatchStrFunctionFactory();
-
-    public static void convertGlobPatternToRegex(@NotNull CharSequence globPattern, StringSink sink, int position) throws SqlException {
-        int bracketStackDepth = 0;
-        sink.put('^'); // start anchor
-        for (int i = 0, n = globPattern.length(); i < n; i++) {
-            char c = globPattern.charAt(i);
-            switch (c) {
-                case '.', '^', '$', '+', '{', '}', '(', ')', '|' -> {
-                    sink.put('\\');
-                    sink.put(c);
-                }
-                case '\\' -> sink.put("\\\\");
-                case '*' -> {
-                    if (i + 1 < n && globPattern.charAt(i + 1) == '*' && i + 2 < n && globPattern.charAt(i + 2) == Files.SEPARATOR) {
-                        i++;
-                    }
-                    sink.put(".*");
-                }
-                case '?' -> sink.put('.');
-                case '[' -> {
-                    bracketStackDepth++;
-                    sink.put('[');
-                }
-                case ']' -> {
-                    bracketStackDepth--;
-                    sink.put(']');
-                }
-                case '!' -> {
-                    if (bracketStackDepth > 0) {
-                        sink.put('^');
-                    } else {
-                        sink.put('!');
-                    }
-                }
-                default -> sink.put(c);
-            }
-        }
-        sink.put('$'); // end anchor
-        if (bracketStackDepth != 0) {
-            throw SqlException.$(position, "unbalanced bracket [glob=").put(globPattern).put(']');
-        }
-    }
-
     @Override
     public String getSignature() {
         return "glob(Ss)";
@@ -91,21 +46,48 @@ public class GlobStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function arg = args.getQuick(1);
-        assert arg.isConstant();
-        final CharSequence globPattern = arg.getStrA(null);
-
-        if (Chars.isBlank(globPattern)) {
+        final Function value = args.getQuick(0);
+        final Function pattern = args.getQuick(1);
+        final Utf8Sequence globPattern = pattern.getVarcharA(null);
+        if (globPattern == null || globPattern.size() == 0) {
             throw SqlException.$(argPositions.get(1), "glob pattern must not be null or empty");
         }
 
-        final StringSink sink = tlSink.get();
-        sink.clear();
-        convertGlobPatternToRegex(globPattern, sink, argPositions.get(1));
-        StrConstant regex = StrConstant.newInstance(sink);
+        return new GlobStrFunction(value, pattern, globPattern);
+    }
 
-        final ObjList<Function> newArgList = args.copy();
-        newArgList.set(1, regex);
-        return matchStrFactory.newInstance(position, newArgList, argPositions, configuration, sqlExecutionContext);
+    static class GlobStrFunction extends BooleanFunction implements BinaryFunction {
+        private final Utf8Sequence pattern;
+        private final Function patternFunc;
+        private final Function value;
+
+
+        public GlobStrFunction(Function value, Function patternFunc, Utf8Sequence pattern) {
+            this.value = value;
+            this.pattern = pattern;
+            this.patternFunc = patternFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            Utf8Sequence name = value.getVarcharA(rec);
+            if (name == null) {
+                return false;
+            }
+            return GlobFilesFunctionFactory.globMatch(name, pattern, 0, pattern.size());
+        }
+
+        public Function getLeft() {
+            return value;
+        }
+
+        public Function getRight() {
+            return patternFunc;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value).val(" glob ").val(pattern);
+        }
     }
 }

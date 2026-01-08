@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
@@ -57,7 +57,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     protected Record slaveRecA; // used for internal navigation
     protected Record slaveRecB; // used inside the user-facing OuterJoinRecord
     protected TimeFrame slaveTimeFrame;
-    protected TimeFrameRecordCursor slaveTimeFrameCursor;
+    protected TimeFrameCursor slaveTimeFrameCursor;
 
     public AbstractAsOfJoinFastRecordCursor(
             int columnSplit,
@@ -125,7 +125,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         return slaveTimeFrameCursor.newSymbolTable(columnIndex - columnSplit);
     }
 
-    public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor) {
+    public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor) {
         this.masterCursor = masterCursor;
         this.slaveTimeFrameCursor = slaveCursor;
         this.slaveTimeFrame = slaveCursor.getTimeFrame();

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,8 +60,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
     private final CompiledFilter compiledFilter;
     private final GroupByAllocator ownerAllocator;
     private final Function ownerFilter;
-    // Note: all function updaters should be used through a getFunctionUpdater() call
-    // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final SimpleMapValue ownerMapValue;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
@@ -129,9 +127,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             }
 
             clear();
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             close();
-            throw e;
+            throw th;
         }
     }
 
@@ -165,6 +163,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         Misc.freeObjList(perWorkerFilters);
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
+        Misc.free(ownerMapValue);
+        Misc.freeObjList(perWorkerMapValues);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));

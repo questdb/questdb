@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -5087,12 +5087,12 @@ public class JoinTest extends AbstractCairoTest {
                     query,
                     null,
                     false,
-                    true
+                    false
             );
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 3 skip-over-rows: 0 limit: 3
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
                                     SelectedRecord
@@ -5126,12 +5126,12 @@ public class JoinTest extends AbstractCairoTest {
                     query,
                     null,
                     false,
-                    true
+                    false
             );
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 3 skip-over-rows: 0 limit: 3
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
                                     SelectedRecord
@@ -5165,12 +5165,12 @@ public class JoinTest extends AbstractCairoTest {
                     query,
                     null,
                     false,
-                    true
+                    false
             );
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 3 skip-over-rows: 0 limit: 3
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
                                     SelectedRecord
@@ -6484,7 +6484,8 @@ public class JoinTest extends AbstractCairoTest {
                             ZW\t-1067292175\tZW
                             ZW\t-1067292175\tZW
                             """,
-                    "xy3 join xy2 on (a) order by a desc, b limit 5"
+                    "xy3 join xy2 on (a) order by a desc, b limit 5",
+                    false
             );
             super.assertQueryNoLeakCheck(
                     """
@@ -6495,7 +6496,8 @@ public class JoinTest extends AbstractCairoTest {
                             ZW\tZW\t-1067292175
                             ZW\tZW\t-1067292175
                             """,
-                    "xy2 join xy3 on (a) order by a desc, b limit 5"
+                    "xy2 join xy3 on (a) order by a desc, b limit 5",
+                    false
             );
         });
     }
@@ -6514,7 +6516,8 @@ public class JoinTest extends AbstractCairoTest {
                             \uEF20X\t1327628680\t\uEF20X
                             \uED0D|\uDB08\uDCF3\t-890115527\t\uED0D|\uDB08\uDCF3
                             """,
-                    "xy3 join xy2 on (a) order by a desc, b limit 5"
+                    "xy3 join xy2 on (a) order by a desc, b limit 5",
+                    false
             );
             super.assertQueryNoLeakCheck(
                     """
@@ -6525,7 +6528,8 @@ public class JoinTest extends AbstractCairoTest {
                             \uDBAE\uDD12ɜ|\t\uDBAE\uDD12ɜ|\t-2013119811
                             \uDBAD\uDCF1푻䑫\t\uDBAD\uDCF1푻䑫\t-681264014
                             """,
-                    "xy2 join xy3 on (a) order by a desc, b limit 5"
+                    "xy2 join xy3 on (a) order by a desc, b limit 5",
+                    false
             );
         });
     }

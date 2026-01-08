@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -183,8 +183,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof StrCursorFunc) {
-                StrCursorFunc thatF = (StrCursorFunc) that;
+            if (that instanceof StrCursorFunc thatF) {
                 thatF.epoch = epoch;
                 thatF.stateInherited = this.stateShared = true;
             }
@@ -258,8 +257,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof TimestampCursorFunc) {
-                TimestampCursorFunc thatF = (TimestampCursorFunc) that;
+            if (that instanceof TimestampCursorFunc thatF) {
                 thatF.epoch = epoch;
                 thatF.stateInherited = this.stateShared = true;
             }
@@ -340,8 +338,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof VarcharCursorFunc) {
-                VarcharCursorFunc thatF = (VarcharCursorFunc) that;
+            if (that instanceof VarcharCursorFunc thatF) {
                 thatF.epoch = epoch;
                 thatF.stateInherited = this.stateShared = true;
             }
