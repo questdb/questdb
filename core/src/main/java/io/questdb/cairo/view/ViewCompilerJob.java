@@ -281,9 +281,6 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private void compileDependentViews(TableToken tableToken, long updateTimestamp) {
         compileViewsSink.clear();
         viewGraph.getDependentViews(tableToken, compileViewsSink);
-
-
-
         for (int i = 0, n = compileViewsSink.size(); i < n; i++) {
             final TableToken viewToken = compileViewsSink.get(i);
             compileView(engine, compilerExecutionContext, viewToken, updateTimestamp, invalidateViewsSink);

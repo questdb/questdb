@@ -40,6 +40,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -475,7 +476,9 @@ public class ServerMain implements Closeable {
         compileViewsThread = new Thread(() -> {
             // temporary list to re-use for listing dependent views
             ObjList<TableToken> tempSink = new ObjList<>();
-            ViewCompilerJob.compileAllViews(engine, engine.createViewCompilerContext(0), tempSink);
+            try (SqlExecutionContext executionContext = engine.createViewCompilerContext(0)) {
+                ViewCompilerJob.compileAllViews(engine, executionContext, tempSink);
+            }
         });
         compileViewsThread.start();
 
