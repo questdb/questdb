@@ -27,6 +27,8 @@ package io.questdb.test.cairo.view;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -41,6 +43,7 @@ import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.sql.RandomSelectGenerator;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -83,7 +86,8 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 //        final Rnd rnd = fuzzer.generateRandom(LOG, 1667075212736414L, 1767857790813L);
 //        final Rnd rnd = fuzzer.generateRandom(LOG, 1663538805955362L, 1767854254406L);
 //        final Rnd rnd = fuzzer.generateRandom(LOG, 86385347609413L, 1767862063016L);
-        final Rnd rnd = fuzzer.generateRandom(LOG, 180665875728L, 1767862750951L);
+//        final Rnd rnd = fuzzer.generateRandom(LOG, 180665875728L, 1767862750951L);
+        final Rnd rnd = fuzzer.generateRandom(LOG);
         final RandomSelectGenerator selectGenerator = new RandomSelectGenerator(engine, rnd);
 
         final String tableName = testName.getMethodName();
@@ -275,12 +279,15 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             selectGenerator.registerTable(baseTableName);
 
             final ObjList<String> viewSqls = new ObjList<>();
-            for (final String viewName : viewNames) {
-                final String viewSql = selectGenerator.generate();
-                viewSqls.add(viewSql);
-                createView(viewName, viewSql);
-                LOG.info().$("created view ").$(viewName).$(" as ").$(viewSql).$();
-                selectGenerator.registerTable(viewName);
+            try (ViewCompilerJob viewCompiler = new ViewCompilerJob(0, engine, 0)) {
+                for (final String viewName : viewNames) {
+                    final String viewSql = selectGenerator.generate();
+                    viewSqls.add(viewSql);
+                    createView(viewName, viewSql);
+                    LOG.info().$("created view ").$(viewName).$(" as ").$(viewSql).$();
+                    viewCompiler.run(0); // compile the view before registering it -> so if there is a dependant view it gets to see this view's metadata
+                    selectGenerator.registerTable(viewName);
+                }
             }
 
             AtomicBoolean stop = new AtomicBoolean();
@@ -302,6 +309,15 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             stop.set(true);
             viewCompilerJob.join();
             drainWalQueue();
+
+            // count row count in the original table
+            try (RecordCursorFactory factory = select("select count() from " + baseTableName);
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                var record = cursor.getRecord();
+                final long rowCount = record.getLong(0);
+                LOG.info().$("original table row count: ").$(rowCount).$();
+            }
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 for (int i = 0, n = viewNames.length; i < n; i++) {

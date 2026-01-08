@@ -597,13 +597,20 @@ public class RandomSelectGenerator {
         TableInfo table = selectedTables.get(rnd.nextInt(selectedTables.size()));
         RecordMetadata metadata = metadataCache.get(table.tableName());
 
-        int columnCount = metadata.getColumnCount();
-        if (columnCount == 0) {
+        int totalColumnCount = metadata.getColumnCount();
+        int usableColumnCount = 0;
+        for (int i = 0; i < totalColumnCount; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (columnType != ColumnType.BINARY && columnType != ColumnType.LONG128) {
+                usableColumnCount++;
+            }
+        }
+        if (usableColumnCount == 0) {
             sql.put("1=1");
             return;
         }
 
-        int numConditions = 1 + rnd.nextInt(Math.min(3, columnCount));
+        int numConditions = 1 + rnd.nextInt(Math.min(3, usableColumnCount));
         for (int i = 0; i < numConditions; i++) {
             if (i > 0) {
                 sql.put(rnd.nextBoolean() ? " AND " : " OR ");
@@ -611,8 +618,8 @@ public class RandomSelectGenerator {
 
             int colIdx = -1;
             int columnType = ColumnType.UNDEFINED;
-            for (int j = 0; j < 10; j++) {
-                colIdx = rnd.nextInt(columnCount);
+            for (int j = 0; j < 10_000; j++) { // 10k acts as a circuit breaker to exit infinite loop. it can only happen due to a bug. then we throw an exception bellow
+                colIdx = rnd.nextInt(totalColumnCount);
                 columnType = metadata.getColumnType(colIdx);
 
                 // pick a new column if the column type is BINARY or LONG128
