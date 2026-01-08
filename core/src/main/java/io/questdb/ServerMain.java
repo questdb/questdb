@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
@@ -49,6 +50,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.Clock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -353,8 +355,6 @@ public class ServerMain implements Closeable {
                                 exportWorkerPool.assign(i, copyExportRequestJob);
                                 exportWorkerPool.freeOnExit(copyExportRequestJob);
                             }
-
-                            log.info().$("export workers count: ").$(workerCount).$();
                         } else {
                             log.advisory().$("export is disabled; set ")
                                     .$(EXPORT_WORKER_COUNT.getPropertyPath())
@@ -473,9 +473,9 @@ public class ServerMain implements Closeable {
 
         // populate view state store and hydrate metadata cache with view metadata
         compileViewsThread = new Thread(() -> {
-            try (ViewCompilerJob viewCompiler = new ViewCompilerJob(-1, engine, 0)) {
-                viewCompiler.compileAllViews();
-            }
+            // temporary list to re-use for listing dependent views
+            ObjList<TableToken> tempSink = new ObjList<>();
+            ViewCompilerJob.compileAllViews(engine, engine.createViewCompilerContext(0), tempSink);
         });
         compileViewsThread.start();
 

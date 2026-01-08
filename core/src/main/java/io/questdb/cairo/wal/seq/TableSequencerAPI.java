@@ -531,7 +531,7 @@ public class TableSequencerAPI implements QuietCloseable {
             if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
                 // Remove from registry only if this thread closed the instance
                 if (sequencer.checkClose()) {
-                    LOG.info().$("releasing idle table sequencer [tableDir=").$safe(tableDir).I$();
+                    LOG.debug().$("releasing idle table sequencer [tableDir=").$safe(tableDir).I$();
                     iterator.remove();
                     removed = true;
                 }

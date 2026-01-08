@@ -613,7 +613,7 @@ public class WriterPool extends AbstractPool {
     @Override
     protected void closePool() {
         super.closePool();
-        LOG.info().$("closed").$();
+        LOG.debug().$("closed").$();
     }
 
     @Override
