@@ -54,6 +54,7 @@ import io.questdb.cairo.pool.ViewWalWriterPool;
 import io.questdb.cairo.pool.WalWriterPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.InsertMethod;
@@ -1190,19 +1191,10 @@ public class CairoEngine implements Closeable, WriterSource {
         verifyTableToken(tableToken);
         try {
             return walWriterPool.get(tableToken);
-        } catch (CairoException e) {
-            if (isTableDropped(tableToken)) {
-                // If table is dropped we can have some file not found errors,
-                // throw table dropped exception instead to make it clear what happened.
-                throw CairoException.tableDropped(tableToken);
-            }
-            // Check if the table is concurrently dropped after token verification
-            TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
-            if (tt == null || TableNameRegistry.isLocked(tt)) {
-                // Throw table does not exist exception to indicate that the table is gone.
-                throw CairoException.tableDoesNotExist(tableToken.getTableName());
-            }
-            throw e;
+        } catch (EntryLockedException e) {
+            // WAL writer pool is locked only when the table is being dropped
+            // Throw table does not exist exception to indicate that the table is gone already.
+            throw CairoException.tableDoesNotExist(tableToken.getTableName());
         }
     }
 
@@ -1402,6 +1394,10 @@ public class CairoEngine implements Closeable, WriterSource {
         validNameOrThrow(tableName);
         final String tableNameStr = Chars.toString(tableName);
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isView, isMatView, isWal);
+    }
+
+    public boolean lockWalWriters(TableToken tableToken) {
+        return walWriterPool.lock(tableToken);
     }
 
     public boolean notifyDropped(TableToken tableToken) {
@@ -1775,6 +1771,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockTableName(TableToken tableToken) {
         tableNameRegistry.unlockTableName(tableToken);
+    }
+
+    public void unlockWalWriters(TableToken tableToken) {
+        walWriterPool.unlock(tableToken, true);
     }
 
     public long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
