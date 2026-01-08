@@ -758,39 +758,17 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     srcPath.$(), (pUtf8NameZ, type) -> {
                         if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                             dstPath.trimTo(rootLen).concat(pUtf8NameZ);
-                            int srcPathLen = srcPath.size();
-                            int dstPathLen = dstPath.size();
 
-                            // Check if this is a view (views have _view file but no _cv file)
-                            boolean isView = ff.exists(srcPath.trimTo(srcPathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
-                            srcPath.trimTo(srcPathLen);
-
-                            if (isView) {
-                                // Views don't have data - only copy the view definition file
-                                srcPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
-                                dstPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
-                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                                    throw CairoException.critical(ff.errno())
-                                            .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy view definition file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
-                                }
-                                recoveredViewFiles.incrementAndGet();
-                                LOG.info()
-                                        .$("recovered view definition file [src=").$(srcPath)
-                                        .$(", dst=").$(dstPath)
-                                        .I$();
-                                srcPath.trimTo(srcPathLen);
-                                dstPath.trimTo(dstPathLen);
-                            } else {
-                                recoveryAgent.restoreTableFiles(
-                                        srcPath,
-                                        dstPath,
-                                        recoveredMetaFiles,
-                                        recoveredTxnFiles,
-                                        recoveredCVFiles,
-                                        recoveredWalFiles,
-                                        symbolFilesCount
-                                );
-                            }
+                            recoveryAgent.restoreTableFiles(
+                                    srcPath,
+                                    dstPath,
+                                    recoveredMetaFiles,
+                                    recoveredTxnFiles,
+                                    recoveredCVFiles,
+                                    recoveredWalFiles,
+                                    symbolFilesCount,
+                                    recoveredViewFiles
+                            );
                         }
                     }
             );
