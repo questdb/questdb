@@ -1010,7 +1010,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<QueryColumn> columns,
             RecordMetadata metadata,
             int hourFunctionIndex
-    ) {
+    ) throws SqlException {
         tempVaf.clear();
         tempMetadata.clear();
         tempSymbolSkewIndexes.clear();
@@ -1025,7 +1025,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // when "hour" index is not set (-1) we assume we should be looking for
                 // intrinsic cases, such as "columnRef, sum(col)"
                 if (hourFunctionIndex == -1) {
-                    final int columnIndex = metadata.getColumnIndex(ast.token);
+                    final int columnIndex = metadata.getColumnIndexQuiet(ast.token);
+                    if (columnIndex < 0) {
+                        throw SqlException.invalidColumn(ast.position, ast.token);
+                    }
                     final int type = metadata.getColumnType(columnIndex);
                     if (isInt(type)) {
                         tempKeyIndexesInBase.add(columnIndex);
