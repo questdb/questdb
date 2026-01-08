@@ -38,7 +38,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
-import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
@@ -1239,7 +1238,6 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     private static class TestDeleter implements WalPurgeJob.Deleter {
-        public final LongList closedFds = new LongList();
         public final ObjList<DeletionEvent> events = new ObjList<>();
 
         @Override
@@ -1259,7 +1257,6 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         @Override
         public void unlock(int walId, int segmentId) {
-            // No-op in test - memory-based locking doesn't need cleanup tracking
         }
     }
 }
