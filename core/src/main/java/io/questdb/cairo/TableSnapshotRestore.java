@@ -380,6 +380,43 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
+     * Check if column is a valid indexed symbol column that exists in parquet
+     * and has valid data in this partition.
+     *
+     * @return parquet column index, or -1 if column should be skipped
+     */
+    private static int getIndexedParquetColumnIndex(
+            RecordMetadata metadata,
+            PartitionDecoder.Metadata parquetMetadata,
+            ColumnVersionReader columnVersionReader,
+            int columnIndex,
+            long partitionTimestamp,
+            long partitionRowCount
+    ) {
+        if (metadata.getColumnType(columnIndex) != ColumnType.SYMBOL || !metadata.isColumnIndexed(columnIndex)) {
+            return -1;
+        }
+        if (metadata.getIndexValueBlockCapacity(columnIndex) < 0) {
+            return -1;
+        }
+
+        // Check columnTop validity
+        final int writerIndex = metadata.getWriterIndex(columnIndex);
+        final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+        // -1 means column doesn't exist in partition, see ColumnVersionReader.getColumnTop()
+        if (columnTop < 0 || columnTop >= partitionRowCount) {
+            return -1;
+        }
+
+        for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
+            if (parquetMetadata.getColumnId(idx) == columnIndex) {
+                return idx;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Copies a file from source to destination, optionally ignoring if file doesn't exist.
      */
     private void copyFile(
@@ -766,44 +803,15 @@ public class TableSnapshotRestore implements QuietCloseable {
         indexWriters.clear();
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            if (metadata.getColumnType(columnIndex) != ColumnType.SYMBOL || !metadata.isColumnIndexed(columnIndex)) {
+            if (getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount) == -1) {
                 continue;
             }
-
-            final int indexBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-            if (indexBlockCapacity < 0) {
-                continue;
-            }
-
-            // Find parquet column index by matching column ID
-            int parquetColumnIndex = -1;
-            for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
-                if (parquetMetadata.getColumnId(idx) == columnIndex) {
-                    parquetColumnIndex = idx;
-                    break;
-                }
-            }
-
-            if (parquetColumnIndex == -1) {
-                LOG.error().$("could not find symbol column for indexing in parquet, skipping [columnIndex=").$(columnIndex).I$();
-                continue;
-            }
-
-            final int writerIndex = metadata.getWriterIndex(columnIndex);
-            final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-
-            // -1 means column doesn't exist in partition, see ColumnVersionReader.getColumnTop()
-            if (columnTop < 0 || columnTop >= partitionRowCount) {
-                continue;
-            }
-
-            final CharSequence columnName = metadata.getColumnName(columnIndex);
 
             // Collect column names for logging
             if (!columnNamesSink.isEmpty()) {
                 columnNamesSink.put(", ");
             }
-            columnNamesSink.put(columnName);
+            columnNamesSink.put(metadata.getColumnName(columnIndex));
         }
 
         if (columnNamesSink.isEmpty()) {
@@ -817,38 +825,15 @@ public class TableSnapshotRestore implements QuietCloseable {
         // Second pass: create index files, open writers, build parquetColumns list
         int indexedColumnCount = 0;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            if (metadata.getColumnType(columnIndex) != ColumnType.SYMBOL || !metadata.isColumnIndexed(columnIndex)) {
-                continue;
-            }
-
-            final int indexBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-            if (indexBlockCapacity < 0) {
-                continue;
-            }
-
-            // Find parquet column index by matching column ID
-            int parquetColumnIndex = -1;
-            for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
-                if (parquetMetadata.getColumnId(idx) == columnIndex) {
-                    parquetColumnIndex = idx;
-                    break;
-                }
-            }
-
+            int parquetColumnIndex = getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount);
             if (parquetColumnIndex == -1) {
                 continue;
             }
 
             final int writerIndex = metadata.getWriterIndex(columnIndex);
-            final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-
-            // -1 means column doesn't exist in partition, see ColumnVersionReader.getColumnTop()
-            if (columnTop < 0 || columnTop >= partitionRowCount) {
-                continue;
-            }
-
             final CharSequence columnName = metadata.getColumnName(columnIndex);
             final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+            final int indexBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
 
             // Remove existing index files
             removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
@@ -885,33 +870,12 @@ public class TableSnapshotRestore implements QuietCloseable {
             long[] columnTops = new long[indexedColumnCount];
             int colIdx = 0;
             for (int columnIndex = 0; columnIndex < columnCount && colIdx < indexedColumnCount; columnIndex++) {
-                if (metadata.getColumnType(columnIndex) != ColumnType.SYMBOL || !metadata.isColumnIndexed(columnIndex)) {
-                    continue;
-                }
-                if (metadata.getIndexValueBlockCapacity(columnIndex) < 0) {
-                    continue;
-                }
-
-                // Find parquet column index
-                int parquetColumnIndex = -1;
-                for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
-                    if (parquetMetadata.getColumnId(idx) == columnIndex) {
-                        parquetColumnIndex = idx;
-                        break;
-                    }
-                }
-                if (parquetColumnIndex == -1) {
+                if (getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount) == -1) {
                     continue;
                 }
 
                 final int writerIndex = metadata.getWriterIndex(columnIndex);
-                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-                // -1 means column doesn't exist in partition, see ColumnVersionReader.getColumnTop()
-                if (columnTop < 0 || columnTop >= partitionRowCount) {
-                    continue;
-                }
-
-                columnTops[colIdx++] = columnTop;
+                columnTops[colIdx++] = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
             }
 
             long rowCount = 0;
