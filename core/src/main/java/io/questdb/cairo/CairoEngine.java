@@ -70,6 +70,7 @@ import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalListener;
+import io.questdb.cairo.wal.WALSegmentLockManager;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -171,6 +172,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Telemetry<TelemetryWalTask> telemetryWal;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
+    protected WALSegmentLockManager walSegmentLockManager;
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
@@ -183,6 +185,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CairoEngine(CairoConfiguration configuration) {
         try {
+            this.walSegmentLockManager = new WALSegmentLockManager();
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
@@ -1045,6 +1048,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull WalListener getWalListener() {
         return walListener;
+    }
+
+    public @NotNull WALSegmentLockManager getWalSegmentLockManager() {
+        return walSegmentLockManager;
     }
 
     // For testing only

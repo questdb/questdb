@@ -139,6 +139,7 @@ public class WalWriter implements TableWriterAPI {
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final int walId;
     private final String walName;
+    private final WALSegmentLockManager walSegmentLockManager;
     private long avgRecordSize;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
@@ -160,7 +161,6 @@ public class WalWriter implements TableWriterAPI {
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
-    private long segmentLockFd = -1;
     private long segmentRowCount = -1;
     private TableToken tableToken;
     private long totalSegmentsRowCount;
@@ -169,14 +169,14 @@ public class WalWriter implements TableWriterAPI {
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
-    private long walLockFd = -1;
 
     public WalWriter(
             CairoConfiguration configuration,
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
-            WalDirectoryPolicy walDirectoryPolicy
+            WalDirectoryPolicy walDirectoryPolicy,
+            WALSegmentLockManager walSegmentLockManager
     ) {
         LOG.info().$("open [table=").$(tableToken).I$();
         this.sequencer = tableSequencerAPI;
@@ -185,6 +185,7 @@ public class WalWriter implements TableWriterAPI {
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.walDirectoryPolicy = walDirectoryPolicy;
+        this.walSegmentLockManager = walSegmentLockManager;
         this.tableToken = tableToken;
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
@@ -378,7 +379,7 @@ public class WalWriter implements TableWriterAPI {
             freeSymbolMapReaders();
             freeColumns(truncate);
 
-            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
+            releaseSegmentLock(segmentId, lastSegmentTxn);
 
             try {
                 releaseWalLock();
@@ -577,8 +578,7 @@ public class WalWriter implements TableWriterAPI {
                         .put(", walId=").put(walId)
                         .put(", segmentId=").put(newSegmentId).put(']');
             }
-            final long oldSegmentLockFd = segmentLockFd;
-            segmentLockFd = -1;
+            segmentId = -1; // prevent releasing lock in case of failure
             try {
                 createSegmentDir(newSegmentId);
                 path.trimTo(pathSize);
@@ -668,7 +668,7 @@ public class WalWriter implements TableWriterAPI {
                 segmentRowCount = uncommittedRows;
                 currentTxnStartRowNum = 0;
             } finally {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+                releaseSegmentLock(oldSegmentId, oldLastSegmentTxn);
             }
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;
@@ -823,19 +823,11 @@ public class WalWriter implements TableWriterAPI {
         return columnIndex * 2;
     }
 
-    private long acquireSegmentLock() {
-        final int segmentPathLen = path.size();
-        try {
-            lockName(path);
-            final long segmentLockFd = TableUtils.lock(ff, path.$());
-            if (segmentLockFd == -1) {
-                path.trimTo(segmentPathLen);
-                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path);
-            }
-            return segmentLockFd;
-        } finally {
-            path.trimTo(segmentPathLen);
-        }
+    private void acquireSegmentLock(int segmentId) {
+        walSegmentLockManager.lockSegment(tableToken.getDirNameUtf8(), walId, segmentId);
+        LOG.debug().$("locked segment [walId=").$(walId)
+                .$(", segmentId=").$(segmentId)
+                .I$();
     }
 
     private void addColumn(
@@ -1309,7 +1301,7 @@ public class WalWriter implements TableWriterAPI {
         path.trimTo(pathSize);
         path.slash().put(segmentId);
         final int segmentPathLen = path.size();
-        segmentLockFd = acquireSegmentLock();
+        acquireSegmentLock(segmentId);
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
@@ -1405,16 +1397,8 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void lockWal() {
-        try {
-            lockName(path);
-            walLockFd = TableUtils.lock(ff, path.$());
-        } finally {
-            path.trimTo(pathSize);
-        }
-
-        if (walLockFd == -1) {
-            throw CairoException.critical(ff.errno()).put("cannot lock table: ").put(path.$());
-        }
+        walSegmentLockManager.lockWal(tableToken.getDirNameUtf8(), walId);
+        LOG.debug().$("locked WAL [walId=").$(walId).I$();
     }
 
     private void markColumnRemoved(int columnIndex, int columnType) {
@@ -1483,8 +1467,6 @@ public class WalWriter implements TableWriterAPI {
     private void openNewSegment() {
         final int oldSegmentId = segmentId;
         final int newSegmentId = segmentId + 1;
-        final long oldSegmentLockFd = segmentLockFd;
-        segmentLockFd = -1;
         final long oldLastSegmentTxn = lastSegmentTxn;
         try {
             totalSegmentsRowCount += Math.max(0, segmentRowCount);
@@ -1533,48 +1515,33 @@ public class WalWriter implements TableWriterAPI {
             lastSegmentTxn = -1;
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
-            if (oldSegmentLockFd > -1) {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
-            }
+            releaseSegmentLock(oldSegmentId, oldLastSegmentTxn);
             path.trimTo(pathSize);
         }
     }
 
-    private void releaseSegmentLock(int segmentId, long segmentLockFd, long segmentTxn) {
-        if (ff.close(segmentLockFd)) {
-            // if events file has some transactions
-            if (segmentTxn >= 0) {
-                sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
-                LOG.debug().$("released segment lock [walId=").$(walId)
-                        .$(", segmentId=").$(segmentId)
-                        .$(", fd=").$(segmentLockFd)
-                        .$(']').$();
-            } else {
-                path.trimTo(pathSize).slash().put(segmentId);
-                walDirectoryPolicy.rollbackDirectory(path);
-                path.trimTo(pathSize);
-            }
-        } else {
-            LOG.error()
-                    .$("cannot close segment lock fd [walId=").$(walId)
+    private void releaseSegmentLock(int segmentId, long segmentTxn) {
+        if (segmentId == -1) {
+            return;
+        }
+
+        walSegmentLockManager.unlockSegment(tableToken.getDirNameUtf8(), walId, segmentId);
+        // if events file has some transactions
+        if (segmentTxn >= 0) {
+            sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
+            LOG.debug().$("released segment lock [walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
-                    .$(", fd=").$(segmentLockFd)
-                    .$(", errno=").$(ff.errno()).I$();
+                    .I$();
+        } else {
+            path.trimTo(pathSize).slash().put(segmentId);
+            walDirectoryPolicy.rollbackDirectory(path);
+            path.trimTo(pathSize);
         }
     }
 
     private void releaseWalLock() {
-        if (ff.close(walLockFd)) {
-            walLockFd = -1;
-            LOG.debug().$("released WAL lock [walId=").$(walId)
-                    .$(", fd=").$(walLockFd)
-                    .$(']').$();
-        } else {
-            LOG.error()
-                    .$("cannot close WAL lock fd [walId=").$(walId)
-                    .$(", fd=").$(walLockFd)
-                    .$(", errno=").$(ff.errno()).I$();
-        }
+        walSegmentLockManager.unlockWal(tableToken.getDirNameUtf8(), walId);
+        LOG.debug().$("released WAL lock [walId=").$(walId).I$();
     }
 
     private void removeSymbolFiles(Path path, int rootLen, CharSequence columnName) {

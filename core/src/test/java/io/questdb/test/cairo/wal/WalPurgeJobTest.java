@@ -405,33 +405,33 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, 1);
-        logic.trackDiscoveredSegment(1, 2, 2);
-        logic.trackDiscoveredSegment(1, 3, 3);
-        logic.trackDiscoveredSegment(1, 4, 4);
-        logic.trackDiscoveredSegment(1, 5, 5);
-        logic.trackDiscoveredSegment(1, 6, -1);
-        logic.trackDiscoveredSegment(1, 7, 6);
-        logic.trackDiscoveredWal(1, -1);
-        logic.trackDiscoveredSegment(2, 0, 7);
-        logic.trackDiscoveredSegment(2, 1, 8);
-        logic.trackDiscoveredSegment(2, 2, 9);
-        logic.trackDiscoveredSegment(2, 3, 10);
-        logic.trackDiscoveredSegment(2, 4, -1);
-        logic.trackDiscoveredWal(2, -1);
-        logic.trackDiscoveredSegment(3, 0, 11);
-        logic.trackDiscoveredSegment(3, 1, 12);
-        logic.trackDiscoveredSegment(3, 2, 13);
-        logic.trackDiscoveredSegment(3, 3, -1);
-        logic.trackDiscoveredWal(3, -1);
-        logic.trackDiscoveredSegment(4, 0, 14);
-        logic.trackDiscoveredSegment(4, 1, 15);
-        logic.trackDiscoveredSegment(4, 2, 16);
-        logic.trackDiscoveredSegment(4, 3, 17);
-        logic.trackDiscoveredSegment(4, 4, 18);
-        logic.trackDiscoveredSegment(4, 5, 19);
-        logic.trackDiscoveredSegment(4, 6, -1);
-        logic.trackDiscoveredWal(4, -1);
+        logic.trackDiscoveredSegment(1, 1, true);
+        logic.trackDiscoveredSegment(1, 2, true);
+        logic.trackDiscoveredSegment(1, 3, true);
+        logic.trackDiscoveredSegment(1, 4, true);
+        logic.trackDiscoveredSegment(1, 5, true);
+        logic.trackDiscoveredSegment(1, 6, false);
+        logic.trackDiscoveredSegment(1, 7, true);
+        logic.trackDiscoveredWal(1, false);
+        logic.trackDiscoveredSegment(2, 0, true);
+        logic.trackDiscoveredSegment(2, 1, true);
+        logic.trackDiscoveredSegment(2, 2, true);
+        logic.trackDiscoveredSegment(2, 3, true);
+        logic.trackDiscoveredSegment(2, 4, false);
+        logic.trackDiscoveredWal(2, false);
+        logic.trackDiscoveredSegment(3, 0, true);
+        logic.trackDiscoveredSegment(3, 1, true);
+        logic.trackDiscoveredSegment(3, 2, true);
+        logic.trackDiscoveredSegment(3, 3, false);
+        logic.trackDiscoveredWal(3, false);
+        logic.trackDiscoveredSegment(4, 0, true);
+        logic.trackDiscoveredSegment(4, 1, true);
+        logic.trackDiscoveredSegment(4, 2, true);
+        logic.trackDiscoveredSegment(4, 3, true);
+        logic.trackDiscoveredSegment(4, 4, true);
+        logic.trackDiscoveredSegment(4, 5, true);
+        logic.trackDiscoveredSegment(4, 6, false);
+        logic.trackDiscoveredWal(4, false);
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.trackNextToApplySegment(3, 0);
@@ -455,12 +455,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, 1);
-        logic.trackDiscoveredSegment(1, 2, -1);
-        logic.trackDiscoveredSegment(1, 3, 2);
-        logic.trackDiscoveredWal(1, -1);
-        logic.trackDiscoveredSegment(2, 0, -1);
-        logic.trackDiscoveredWal(2, -1);
+        logic.trackDiscoveredSegment(1, 1, true);
+        logic.trackDiscoveredSegment(1, 2, false);
+        logic.trackDiscoveredSegment(1, 3, true);
+        logic.trackDiscoveredWal(1, false);
+        logic.trackDiscoveredSegment(2, 0, false);
+        logic.trackDiscoveredWal(2, false);
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.run();
@@ -1243,7 +1243,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         public final ObjList<DeletionEvent> events = new ObjList<>();
 
         @Override
-        public void deleteSegmentDirectory(int walId, int segmentId, long lockFd) {
+        public void deleteSegmentDirectory(int walId, int segmentId) {
             events.add(new DeletionEvent(walId, segmentId));
         }
 
@@ -1253,15 +1253,13 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         }
 
         @Override
-        public void deleteWalDirectory(int walId, long lockFd) {
+        public void deleteWalDirectory(int walId) {
             events.add(new DeletionEvent(walId));
         }
 
         @Override
-        public void unlock(long lockFd) {
-            if (lockFd > -1) {
-                closedFds.add(lockFd);
-            }
+        public void unlock(int walId, int segmentId) {
+            // No-op in test - memory-based locking doesn't need cleanup tracking
         }
     }
 }
