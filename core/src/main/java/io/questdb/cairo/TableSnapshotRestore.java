@@ -62,7 +62,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME_META_INX;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 /**
@@ -213,11 +212,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                     openSmallFile(ff, srcPath.trimTo(srcSeqLen), srcSeqLen, memFile, TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
                     newMaxTxn = memFile.getLong(0L);
                 }
-
-                dstPath.trimTo(dstSeqLen).concat(TableUtils.META_FILE_NAME);
-                memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
-                dstPath.trimTo(dstSeqLen);
-                openSmallFile(ff, dstPath, dstSeqLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
 
                 if (newMaxTxn >= 0) {
                     dstPath.trimTo(dstSeqLen);
@@ -521,7 +515,6 @@ public class TableSnapshotRestore implements QuietCloseable {
     private void rebuildBitmapIndexForParquetPartition(
             String tablePathStr,
             int pathTableLen,
-            int columnCount,
             long partitionTimestamp,
             long partitionRowCount,
             long partitionNameTxn,
@@ -595,9 +588,9 @@ public class TableSnapshotRestore implements QuietCloseable {
         int partitionCount = isPartitioned ? txWriter.getPartitionCount() : 1;
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            long partitionTimestamp;
-            long partitionRowCount;
-            long partitionNameTxn;
+            final long partitionTimestamp;
+            final long partitionRowCount;
+            final long partitionNameTxn;
 
             if (isPartitioned) {
                 partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
@@ -615,17 +608,13 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
                 final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
-                final long fPartitionTimestamp = partitionTimestamp;
-                final long fPartitionRowCount = partitionRowCount;
-                final long fPartitionNameTxn = partitionNameTxn;
 
                 futures.add(executor.submit(() -> rebuildBitmapIndexForParquetPartition(
                         tablePathStr,
                         pathTableLen,
-                        columnCount,
-                        fPartitionTimestamp,
-                        fPartitionRowCount,
-                        fPartitionNameTxn,
+                        partitionTimestamp,
+                        partitionRowCount,
+                        partitionNameTxn,
                         parquetSize,
                         partitionBy,
                         timestampType
@@ -811,13 +800,13 @@ public class TableSnapshotRestore implements QuietCloseable {
             final CharSequence columnName = metadata.getColumnName(columnIndex);
 
             // Collect column names for logging
-            if (columnNamesSink.length() > 0) {
+            if (!columnNamesSink.isEmpty()) {
                 columnNamesSink.put(", ");
             }
             columnNamesSink.put(columnName);
         }
 
-        if (columnNamesSink.length() == 0) {
+        if (columnNamesSink.isEmpty()) {
             return; // No indexed columns to process
         }
 
