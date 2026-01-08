@@ -62,6 +62,7 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -868,6 +869,14 @@ public final class TableUtils {
             dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         }
         return dirName;
+    }
+
+    public static int getTableIdFromTableDir(CharSequence dirName) throws NumericException {
+        int suffixIndex = Chars.indexOf(dirName, SYSTEM_TABLE_NAME_SUFFIX);
+        if (suffixIndex == -1) {
+            throw NumericException.instance();
+        }
+        return Numbers.parseInt(dirName, suffixIndex + 1, dirName.length());
     }
 
     public static CharSequence getTableNameFromDirName(CharSequence privateName) {

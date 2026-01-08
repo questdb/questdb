@@ -312,14 +312,19 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         path.of(configuration.getDbRoot()).concat(dirName).concat(META_FILE_NAME);
         long fd = ff.openRO(path.$());
         if (fd < 1) {
-            return 0;
+            // negative table id means WAL table
+            // normally we would hit this code path for views only, because they do not have _meta file
+            // views are considered to be WAL tables
+            return -getTableIdFromTableDir(dirName);
         }
 
         try {
             int tableId = ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_TABLE_ID);
             if (tableId < 0) {
                 LOG.error().$("cannot read table id from metadata file [path=").$(path).I$();
-                return 0;
+                // negative table id means WAL table
+                // we assume the table is WAL enabled
+                return -getTableIdFromTableDir(dirName);
             }
             byte isWal = (byte) (ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_WAL_ENABLED) & 0xFF);
             return isWal == 0 ? tableId : -tableId;
