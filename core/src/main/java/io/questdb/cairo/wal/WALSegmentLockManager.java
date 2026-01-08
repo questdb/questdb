@@ -80,7 +80,7 @@ public class WALSegmentLockManager {
             throw CairoException.critical(0)
                     .put("Interrupted while acquiring WAL segment lock [key=").put(key).put(']');
         }
-        LOG.debug().$("locked WAL segment [key=").$(key).I$();
+        LOG.debug().$("locked WAL segment [key=").$(key).$(", semaphore=").$(lock).I$();
     }
 
     // Lock entire WAL directory
@@ -95,7 +95,7 @@ public class WALSegmentLockManager {
             throw CairoException.critical(0)
                     .put("Interrupted while acquiring WAL lock [key=").put(key).put(']');
         }
-        LOG.debug().$("locked WAL [key=").$(key).I$();
+        LOG.debug().$("locked WAL [key=").$(key).$(", semaphore=").$(lock).I$();
     }
 
     public boolean tryLockSegment(Utf8Sequence tableName, int walId, int segmentId) {
@@ -103,7 +103,7 @@ public class WALSegmentLockManager {
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         boolean locked = lock.tryAcquire();
         if (locked) {
-            LOG.debug().$("lock WAL segment [key=").$(key).I$();
+            LOG.debug().$("lock WAL segment [key=").$(key).$(", semaphore=").$(lock).I$();
         } else {
             LOG.debug().$("fail to lock WAL segment [key=").$(key).I$();
         }
@@ -115,7 +115,7 @@ public class WALSegmentLockManager {
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         boolean locked = lock.tryAcquire();
         if (locked) {
-            LOG.debug().$("lock WAL [key=").$(key).I$();
+            LOG.debug().$("lock WAL [key=").$(key).$(", semaphore=").$(lock).I$();
         } else {
             LOG.debug().$("fail to lock WAL [key=").$(key).I$();
         }
