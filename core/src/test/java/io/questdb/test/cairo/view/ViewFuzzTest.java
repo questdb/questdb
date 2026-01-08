@@ -83,11 +83,6 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testMultipleLevelDependencyViews() throws Exception {
-//        final Rnd rnd = fuzzer.generateRandom(LOG, 1667075212736414L, 1767857790813L);
-//        final Rnd rnd = fuzzer.generateRandom(LOG, 1663538805955362L, 1767854254406L);
-//        final Rnd rnd = fuzzer.generateRandom(LOG, 86385347609413L, 1767862063016L);
-//        final Rnd rnd = fuzzer.generateRandom(LOG, 180665875728L, 1767862750951L);
-//        final Rnd rnd = fuzzer.generateRandom(LOG, 7858902015755L, 1767870429187L);
         final Rnd rnd = fuzzer.generateRandom(LOG);
         final RandomSelectGenerator selectGenerator = new RandomSelectGenerator(engine, rnd);
 
@@ -286,7 +281,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     viewSqls.add(viewSql);
                     createView(viewName, viewSql);
                     LOG.info().$("created view ").$(viewName).$(" as ").$(viewSql).$();
-                    viewCompiler.run(0); // compile the view before registering it -> so if there is a dependant view it gets to see this view's metadata
+                    viewCompiler.run(0); // compile the view before registering it. so if there is a dependant view it gets to see this view's metadata
                     selectGenerator.registerTable(viewName);
                 }
             }
@@ -310,15 +305,6 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             stop.set(true);
             viewCompilerJob.join();
             drainWalQueue();
-
-            // count row count in the original table
-            try (RecordCursorFactory factory = select("select count() from " + baseTableName);
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Assert.assertTrue(cursor.hasNext());
-                var record = cursor.getRecord();
-                final long rowCount = record.getLong(0);
-                LOG.info().$("original table row count: ").$(rowCount).$();
-            }
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 for (int i = 0, n = viewNames.length; i < n; i++) {

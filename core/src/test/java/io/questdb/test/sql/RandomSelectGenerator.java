@@ -169,13 +169,13 @@ public class RandomSelectGenerator {
                 sql.put(" ");
                 int orderedColType = generateOrderByClause(sql, selectedTables, useGroupBy, metadataCache);
 
-                // we don't allow LIMIT with ORDER BY on BOOLEAN because boolean ordering is practically meaningless and does not
-                // LIMIT could yield non-determistic results
-                boolean limitPossible = orderedColType != Numbers.INT_NULL && orderedColType != ColumnType.BOOLEAN;
+                // we don't allow LIMIT with ORDER BY <boolean> because boolean ordering is practically meaningless
+                // and LIMIT could yield non-determistic results. it's the same as if there was no ORDER BY at all
+                boolean meaningfulOrdering = orderedColType != Numbers.INT_NULL && orderedColType != ColumnType.BOOLEAN;
 
                 // Generate LIMIT clause only after ORDER BY, the result of the generated SELECT could
                 // be non-deterministic if it is not ordered and LIMIT is present
-                if (limitPossible && rnd.nextDouble() < limitProbability) {
+                if (meaningfulOrdering && rnd.nextDouble() < limitProbability) {
                     sql.put(" LIMIT ");
                     sql.put(1 + rnd.nextInt(100));
                 }
