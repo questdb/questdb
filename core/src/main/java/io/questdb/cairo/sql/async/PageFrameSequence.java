@@ -147,7 +147,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 if (!done) {
                     // Looks like not all the frames were dispatched, so no one reached the very last frame and
                     // reset the sequence via calling PageFrameReduceTask#collected(). Let's do it ourselves.
-                    reset();
+                    markAsDone();
                 }
                 break;
             }
@@ -198,30 +198,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         cancelReason.set(reason);
     }
 
-    public void clear() {
-        // prepare different frame sequence using the same object instance
-        frameCount = 0;
-        dispatchStartFrameIndex = 0;
-        collectedFrameIndex = -1;
-        readyToDispatch = false;
-        frameRowCounts.clear();
-        atom.clear();
-        Misc.free(frameAddressCache);
-        frameCursor = Misc.free(frameCursor);
-        // collect sequence may not be set here when
-        // factory is closed without using cursor
-        if (collectSubSeq != null) {
-            messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
-            LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
-        }
-        if (localTask != null) {
-            localTask.clear();
-        }
-    }
-
     @Override
     public void close() {
-        clear();
+        reset();
         localRecord = Misc.free(localRecord);
         workStealCircuitBreaker = Misc.free(workStealCircuitBreaker);
         localTask = Misc.free(localTask);
@@ -321,6 +300,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public boolean isUninterruptible() {
         return uninterruptible;
+    }
+
+    public void markAsDone() {
+        // prepare to resend the same sequence as it might be required by toTop()
+        assert !done;
+        done = true;
     }
 
     public long next() {
@@ -441,9 +426,24 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public void reset() {
-        // prepare to resend the same sequence as it might be required by toTop()
-        assert !done;
-        done = true;
+        // prepare different frame sequence using the same object instance
+        frameCount = 0;
+        dispatchStartFrameIndex = 0;
+        collectedFrameIndex = -1;
+        readyToDispatch = false;
+        frameRowCounts.clear();
+        atom.clear();
+        Misc.free(frameAddressCache);
+        frameCursor = Misc.free(frameCursor);
+        // collect sequence may not be set here when
+        // factory is closed without using cursor
+        if (collectSubSeq != null) {
+            messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
+            LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
+        }
+        if (localTask != null) {
+            localTask.clear();
+        }
     }
 
     /**

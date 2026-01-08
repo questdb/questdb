@@ -86,7 +86,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
                 if (frameLimit > -1) {
                     frameSequence.await();
                 }
-                frameSequence.clear();
+                frameSequence.reset();
             }
         }
     }

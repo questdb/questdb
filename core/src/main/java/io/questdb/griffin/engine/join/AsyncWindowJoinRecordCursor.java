@@ -143,7 +143,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 if (frameLimit > -1) {
                     masterFrameSequence.await();
                 }
-                masterFrameSequence.clear();
+                masterFrameSequence.reset();
             }
             isOpen = false;
         }
