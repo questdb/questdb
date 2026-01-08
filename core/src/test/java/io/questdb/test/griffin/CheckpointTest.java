@@ -771,7 +771,8 @@ public class CheckpointTest extends AbstractCairoTest {
             createTriggerFile();
             engine.checkpointRecover();
             engine.reloadTableNames();
-            engine.buildMatViewGraph();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
 
             assertSql(
                     """
