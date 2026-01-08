@@ -128,6 +128,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         Misc.free(simpleMapValue);
         Misc.freeObjList(groupByFunctions);
         Misc.free(base);
+        Misc.free(cursor);
     }
 
     private class EarlyExitGroupByNotKeyedRecordCursor extends GroupByNotKeyedRecordCursor {
