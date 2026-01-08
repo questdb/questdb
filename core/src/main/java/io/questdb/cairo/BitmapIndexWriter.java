@@ -31,6 +31,8 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -57,6 +59,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private long seekValueCount;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
     private long valueMemSize = -1;
+
+    // Bulk build state
+    private IntIntHashMap bulkCounts;        // key -> total value count (from histogram)
+    private IntLongHashMap bulkFirstBlockOffset; // key -> first block offset in value file
+    private IntLongHashMap bulkBlockOffset;  // key -> current block offset
+    private IntIntHashMap bulkCellIndex;     // key -> current cell index within key's values
+    private boolean bulkBuildActive = false;
+    private int bulkMaxKey = -1;
 
     @TestOnly
     public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
@@ -423,6 +433,140 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         keyCount = 0;
         valueMemSize = 0;
     }
+
+    // ==================== Bulk Build API ====================
+
+    /**
+     * Initialize bulk build mode. Pre-allocates value file based on histogram.
+     * After calling this method, use {@link #addBulk(int, long)} to add values,
+     * then call {@link #finalizeBulkBuild(long)} to complete.
+     * <p>
+     * Note: This method takes ownership of the counts map and uses it directly
+     * for tracking. The caller should not modify it after this call.
+     *
+     * @param counts histogram of key -> count of values for that key (will be used directly)
+     * @param maxKey the maximum key value in the histogram
+     */
+    public void initBulkBuild(IntIntHashMap counts, int maxKey) {
+        assert !bulkBuildActive : "bulk build already active";
+
+        // Take ownership of counts map - we'll use it directly
+        bulkCounts = counts;
+        bulkMaxKey = maxKey;
+
+        // Initialize tracking structures
+        int mapSize = counts.size();
+        if (bulkFirstBlockOffset == null || bulkFirstBlockOffset.size() < mapSize) {
+            bulkFirstBlockOffset = new IntLongHashMap(mapSize);
+            bulkBlockOffset = new IntLongHashMap(mapSize);
+            bulkCellIndex = new IntIntHashMap(mapSize);
+        } else {
+            bulkFirstBlockOffset.clear();
+            bulkBlockOffset.clear();
+            bulkCellIndex.clear();
+        }
+
+        // Compute layout by iterating over keys 0..maxKey
+        // Only keys present in counts will have non-zero values
+        int blockValueCount = blockValueCountMod + 1;
+        long offset = 0;
+
+        for (int key = 0; key <= maxKey; key++) {
+            int count = counts.get(key);
+            if (count > 0) {
+                bulkFirstBlockOffset.put(key, offset);
+                bulkBlockOffset.put(key, offset);
+                bulkCellIndex.put(key, 0);
+
+                int numBlocks = (count + blockValueCount - 1) / blockValueCount;
+                offset += (long) numBlocks * blockCapacity;
+            }
+        }
+
+        // Pre-allocate value file
+        valueMemSize = offset;
+        valueMem.jumpTo(offset);
+
+        bulkBuildActive = true;
+    }
+
+    /**
+     * Add a value during bulk build. Must be called after {@link #initBulkBuild(IntIntHashMap)}.
+     * This method does not update key metadata - that happens in {@link #finalizeBulkBuild(long)}.
+     *
+     * @param key   the key (must have been present in the histogram)
+     * @param value the row ID to add
+     */
+    public void addBulk(int key, long value) {
+        assert bulkBuildActive : "bulk build not active";
+
+        int cellIdx = bulkCellIndex.get(key);
+        int cellInBlock = cellIdx & blockValueCountMod;
+
+        // If crossing block boundary, update linkage and advance to next block
+        if (cellInBlock == 0 && cellIdx > 0) {
+            long oldBlock = bulkBlockOffset.get(key);
+            long newBlock = oldBlock + blockCapacity;
+
+            // Link old block -> new block (next pointer)
+            valueMem.putLong(oldBlock + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED + 8, newBlock);
+            // Link new block -> old block (prev pointer)
+            valueMem.putLong(newBlock + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED, oldBlock);
+
+            bulkBlockOffset.put(key, newBlock);
+        }
+
+        // Write value
+        long blockOffset = bulkBlockOffset.get(key);
+        valueMem.putLong(blockOffset + (long) cellInBlock * 8, value);
+
+        // Increment cell index
+        bulkCellIndex.put(key, cellIdx + 1);
+    }
+
+    /**
+     * Finalize bulk build. Writes all key metadata and updates header.
+     *
+     * @param maxValue the maximum row ID written (inclusive)
+     */
+    public void finalizeBulkBuild(long maxValue) {
+        assert bulkBuildActive : "bulk build not active";
+
+        // Write key entries by iterating over keys 0..maxKey
+        for (int key = 0; key <= bulkMaxKey; key++) {
+            int count = bulkCounts.get(key);
+            if (count > 0) {
+                long keyOffset = BitmapIndexUtils.getKeyEntryOffset(key);
+                long firstBlock = bulkFirstBlockOffset.get(key);
+                long lastBlock = bulkBlockOffset.get(key);
+
+                keyMem.putLong(keyOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, count);
+                keyMem.putLong(keyOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET, firstBlock);
+                keyMem.putLong(keyOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, lastBlock);
+                keyMem.putLong(keyOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, count);
+            }
+        }
+
+        // Update key count and header
+        if (bulkMaxKey >= keyCount) {
+            updateKeyCount(bulkMaxKey);
+        }
+        // Ensure keyMem append offset is set correctly for proper file truncation on close
+        keyMem.jumpTo(BitmapIndexUtils.getKeyEntryOffset(bulkMaxKey) + BitmapIndexUtils.KEY_ENTRY_SIZE);
+        updateValueMemSize();
+        setMaxValue(maxValue);
+
+        bulkBuildActive = false;
+    }
+
+    /**
+     * @return true if bulk build is currently active
+     */
+    public boolean isBulkBuildActive() {
+        return bulkBuildActive;
+    }
+
+    // ==================== End Bulk Build API ====================
 
     private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
         long newValueBlockOffset = allocateValueBlockAndStore(value);

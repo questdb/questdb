@@ -151,7 +151,8 @@ public class IndexBuilder extends RebuildColumnBase {
                         long columnDataFd = TableUtils.openRO(ff, TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
                         try {
                             indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                            indexer.index(ff, columnDataFd, columnTop, partitionSize);
+                            // Use optimized bulk rebuild for full index rebuilds
+                            indexer.rebuildNewIndex(ff, columnDataFd, columnTop, partitionSize);
                         } finally {
                             ff.close(columnDataFd);
                             indexer.clear();
