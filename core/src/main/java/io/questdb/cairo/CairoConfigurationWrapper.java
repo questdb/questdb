@@ -422,13 +422,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getInactiveWalWriterTTL() {
-        return getDelegate().getInactiveWalWriterTTL();
+    public long getInactiveViewWalWriterTTL() {
+        return getDelegate().getInactiveViewWalWriterTTL();
     }
 
     @Override
-    public long getInactiveViewWalWriterTTL() {
-        return getDelegate().getInactiveViewWalWriterTTL();
+    public long getInactiveWalWriterTTL() {
+        return getDelegate().getInactiveWalWriterTTL();
     }
 
     @Override
@@ -529,11 +529,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getMatViewRowsPerQueryEstimate() {
         return getDelegate().getMatViewRowsPerQueryEstimate();
-    }
-
-    @Override
-    public @NotNull TelemetryConfiguration getMatViewTelemetryConfiguration() {
-        return getDelegate().getMatViewTelemetryConfiguration();
     }
 
     @Override
@@ -1242,6 +1237,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return getDelegate().getViewWalWriterPoolMaxSegments();
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return getDelegate().getVolumeDefinitions();
     }
@@ -1317,11 +1317,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull TelemetryConfiguration getWalTelemetryConfiguration() {
-        return getDelegate().getWalTelemetryConfiguration();
-    }
-
-    @Override
     public int getWalTxnNotificationQueueCapacity() {
         return getDelegate().getWalTxnNotificationQueueCapacity();
     }
@@ -1329,11 +1324,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalWriterPoolMaxSegments() {
         return getDelegate().getWalWriterPoolMaxSegments();
-    }
-
-    @Override
-    public int getViewWalWriterPoolMaxSegments() {
-        return getDelegate().getViewWalWriterPoolMaxSegments();
     }
 
     @Override

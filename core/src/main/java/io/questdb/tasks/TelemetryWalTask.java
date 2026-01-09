@@ -26,6 +26,7 @@ package io.questdb.tasks;
 
 import io.questdb.Telemetry;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.TelemetryConfigurationWrapper;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
@@ -73,9 +74,22 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
                 return TelemetryWalTask::new;
             }
 
+            // Hardcoded configuration for telemetry_wal table:
+            // - Throttling disabled (0L) to record every WAL event without rate limiting
+            // - TTL fixed at 1 week
             @Override
             public TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
-                return configuration.getWalTelemetryConfiguration();
+                return new TelemetryConfigurationWrapper(configuration.getTelemetryConfiguration()) {
+                    @Override
+                    public long getThrottleIntervalMicros() {
+                        return 0L;
+                    }
+
+                    @Override
+                    public int getTtlWeeks() {
+                        return 1;
+                    }
+                };
             }
         };
     };
@@ -117,11 +131,6 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
 
     @Override
     public int getEventKey() {
-        // Event is encoded in bits 20-31, tableId in bits 0-19.
-        // TableId exceeding 20 bits (~1M) may cause collisions, which is acceptable
-        // for telemetry rate limiting purposes.
-        // Note: With many tables, this produces many unique keys in lastEventTimestamps map.
-        // By default, telemetry_wal deduplication is disabled (telemetry.wal.event.throttle.interval=0).
         return ((event & 0xFFFF) << 20) | (tableId & 0xFFFFF);
     }
 

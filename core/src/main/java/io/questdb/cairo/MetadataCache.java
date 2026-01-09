@@ -46,9 +46,7 @@ import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.TelemetryMatViewTask;
 import io.questdb.tasks.TelemetryTask;
-import io.questdb.tasks.TelemetryWalTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -412,18 +410,6 @@ public class MetadataCache implements QuietCloseable {
             if (configuration.getTelemetryConfiguration().hideTables()
                     && (Chars.equals(tableName, TelemetryTask.TABLE_NAME)
                     || Chars.equals(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
-            ) {
-                return false;
-            }
-
-            if (configuration.getWalTelemetryConfiguration().hideTables()
-                    && (Chars.equals(tableName, TelemetryWalTask.TABLE_NAME))
-            ) {
-                return false;
-            }
-
-            if (configuration.getMatViewTelemetryConfiguration().hideTables()
-                    && (Chars.equals(tableName, TelemetryMatViewTask.TABLE_NAME))
             ) {
                 return false;
             }

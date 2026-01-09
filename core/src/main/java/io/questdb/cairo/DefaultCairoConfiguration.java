@@ -560,11 +560,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull TelemetryConfiguration getMatViewTelemetryConfiguration() {
-        return telemetryConfiguration;
-    }
-
-    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
@@ -1335,11 +1330,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverSize() {
         return 0;  // watermark level disabled.
-    }
-
-    @Override
-    public @NotNull TelemetryConfiguration getWalTelemetryConfiguration() {
-        return telemetryConfiguration;
     }
 
     @Override

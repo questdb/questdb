@@ -26,6 +26,7 @@ package io.questdb.tasks;
 
 import io.questdb.Telemetry;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.TelemetryConfigurationWrapper;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
@@ -74,9 +75,22 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
                 return TelemetryMatViewTask::new;
             }
 
+            // Hardcoded configuration for telemetry_mat_view table:
+            // - Throttling disabled (0L) to record every mat view event without rate limiting
+            // - TTL fixed at 1 week
             @Override
             public TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
-                return configuration.getMatViewTelemetryConfiguration();
+                return new TelemetryConfigurationWrapper(configuration.getTelemetryConfiguration()) {
+                    @Override
+                    public long getThrottleIntervalMicros() {
+                        return 0L;
+                    }
+
+                    @Override
+                    public int getTtlWeeks() {
+                        return 1;
+                    }
+                };
             }
         };
     };
@@ -113,11 +127,6 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
 
     @Override
     public int getEventKey() {
-        // Event is encoded in bits 20-31, viewTableId in bits 0-19.
-        // ViewTableId exceeding 20 bits (~1M) may cause collisions, which is acceptable
-        // for telemetry rate limiting purposes.
-        // Note: With many views, this produces many unique keys in lastEventTimestamps map.
-        // By default, telemetry_mat_view deduplication is disabled (telemetry.mat.view.event.throttle.interval=0).
         return ((event & 0xFFFF) << 20) | (viewTableId & 0xFFFFF);
     }
 

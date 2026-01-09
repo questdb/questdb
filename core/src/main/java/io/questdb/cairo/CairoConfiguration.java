@@ -294,9 +294,9 @@ public interface CairoConfiguration {
 
     long getInactiveReaderTTL();
 
-    long getInactiveWalWriterTTL();
-
     long getInactiveViewWalWriterTTL();
+
+    long getInactiveWalWriterTTL();
 
     long getInactiveWriterTTL();
 
@@ -342,9 +342,6 @@ public interface CairoConfiguration {
     long getMatViewRefreshOomRetryTimeout();
 
     long getMatViewRowsPerQueryEstimate();
-
-    @NotNull
-    TelemetryConfiguration getMatViewTelemetryConfiguration();
 
     int getMaxCrashFiles();
 
@@ -692,6 +689,8 @@ public interface CairoConfiguration {
 
     int getViewLexerPoolCapacity();
 
+    int getViewWalWriterPoolMaxSegments();
+
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
 
@@ -737,14 +736,9 @@ public interface CairoConfiguration {
      */
     long getWalSegmentRolloverSize();
 
-    @NotNull
-    TelemetryConfiguration getWalTelemetryConfiguration();
-
     int getWalTxnNotificationQueueCapacity();
 
     int getWalWriterPoolMaxSegments();
-
-    int getViewWalWriterPoolMaxSegments();
 
     int getWindowColumnPoolCapacity();
 

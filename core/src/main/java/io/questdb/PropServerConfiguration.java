@@ -511,8 +511,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TelemetryConfiguration telemetryConfiguration;
     private final long telemetryDbSizeEstimateTimeout;
     private final boolean telemetryDisableCompletely;
-    private final TelemetryConfiguration telemetryMatViewConfiguration;
-    private final TelemetryConfiguration telemetryWalConfiguration;
     private final CharSequence tempRenamePendingTablePrefix;
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
@@ -1657,20 +1655,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             int telemetryTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_TABLE_TTL_WEEKS, 4);
             long telemetryThrottleInterval = getMicros(properties, env, PropertyKey.TELEMETRY_EVENT_THROTTLE_INTERVAL, 60000000L);
             this.telemetryConfiguration = new PropTelemetryConfiguration(telemetryEnabled, telemetryQueueCapacity, telemetryHideTables, telemetryTableTTLWeeks, telemetryThrottleInterval);
-
-            boolean telemetryWalEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_WAL_ENABLED, telemetryEnabled);
-            int telemetryWalQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_WAL_QUEUE_CAPACITY, telemetryQueueCapacity));
-            boolean telemetryWalHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_WAL_HIDE_TABLES, telemetryHideTables);
-            int telemetryWalTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_WAL_TABLE_TTL_WEEKS, 1);
-            long telemetryWalThrottleInterval = getMicros(properties, env, PropertyKey.TELEMETRY_WAL_EVENT_THROTTLE_INTERVAL, 0L);
-            this.telemetryWalConfiguration = new PropTelemetryConfiguration(telemetryWalEnabled, telemetryWalQueueCapacity, telemetryWalHideTables, telemetryWalTableTTLWeeks, telemetryWalThrottleInterval);
-
-            boolean telemetryMatViewEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_ENABLED, telemetryEnabled);
-            int telemetryMatViewQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_QUEUE_CAPACITY, telemetryQueueCapacity));
-            boolean telemetryMatViewHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_HIDE_TABLES, telemetryHideTables);
-            int telemetryMatViewTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_TABLE_TTL_WEEKS, 1);
-            long telemetryMatViewThrottleInterval = getMicros(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_EVENT_THROTTLE_INTERVAL, 0L);
-            this.telemetryMatViewConfiguration = new PropTelemetryConfiguration(telemetryMatViewEnabled, telemetryMatViewQueueCapacity, telemetryMatViewHideTables, telemetryMatViewTableTTLWeeks, telemetryMatViewThrottleInterval);
 
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
@@ -3495,11 +3479,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull TelemetryConfiguration getMatViewTelemetryConfiguration() {
-            return telemetryMatViewConfiguration;
-        }
-
-        @Override
         public int getMaxCrashFiles() {
             return cairoMaxCrashFiles;
         }
@@ -4277,11 +4256,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverSize() {
             return walSegmentRolloverSize;
-        }
-
-        @Override
-        public @NotNull TelemetryConfiguration getWalTelemetryConfiguration() {
-            return telemetryWalConfiguration;
         }
 
         @Override
