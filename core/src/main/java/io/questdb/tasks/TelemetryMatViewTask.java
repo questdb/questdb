@@ -44,7 +44,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
         final String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
         return new Telemetry.TelemetryType<>() {
             @Override
-            public QueryBuilder getCreateSql(QueryBuilder builder) {
+            public QueryBuilder getCreateSql(QueryBuilder builder, int ttlWeeks) {
                 return builder.$("CREATE TABLE IF NOT EXISTS '")
                         .$(tableName)
                         .$("' (" +
@@ -54,8 +54,9 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
                                 "base_table_txn LONG, " + // -1 stands for range refresh
                                 "invalidation_reason VARCHAR, " +
                                 "latency FLOAT " +
-                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
-                        );
+                                ") TIMESTAMP(created) PARTITION BY DAY TTL ")
+                        .$(ttlWeeks > 0 ? ttlWeeks : 1)
+                        .$(" WEEKS BYPASS WAL");
             }
 
             @Override
@@ -116,7 +117,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
         // ViewTableId exceeding 20 bits (~1M) may cause collisions, which is acceptable
         // for telemetry rate limiting purposes.
         // Note: With many views, this produces many unique keys in lastEventTimestamps map.
-        // By default, telemetry_mat_view deduplication is disabled (telemetry.mat.view.event.deduplication.interval=0).
+        // By default, telemetry_mat_view deduplication is disabled (telemetry.mat.view.event.throttle.interval=0).
         return ((event & 0xFFFF) << 20) | (viewTableId & 0xFFFFF);
     }
 

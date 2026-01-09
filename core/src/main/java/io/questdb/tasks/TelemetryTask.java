@@ -47,7 +47,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
         private final TelemetryTask systemStatusTask = new TelemetryTask();
 
         @Override
-        public QueryBuilder getCreateSql(QueryBuilder builder) {
+        public QueryBuilder getCreateSql(QueryBuilder builder, int ttlWeeks) {
             return builder
                     .$("CREATE TABLE IF NOT EXISTS \"")
                     .$(TABLE_NAME)
@@ -55,8 +55,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
                             "created TIMESTAMP, " +
                             "event SHORT, " +
                             "origin SHORT" +
-                            ") TIMESTAMP(created) PARTITION BY DAY TTL 4 WEEKS BYPASS WAL"
-                    );
+                            ") TIMESTAMP(created) PARTITION BY DAY TTL ").$(ttlWeeks > 0 ? ttlWeeks : 4).$(" WEEKS BYPASS WAL");
         }
 
         @Override

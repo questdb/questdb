@@ -42,7 +42,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
         final String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
         return new Telemetry.TelemetryType<>() {
             @Override
-            public QueryBuilder getCreateSql(QueryBuilder builder) {
+            public QueryBuilder getCreateSql(QueryBuilder builder, int ttlWeeks) {
                 return builder.$("CREATE TABLE IF NOT EXISTS '")
                         .$(tableName)
                         .$("' (" +
@@ -54,7 +54,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
                                 "rowCount LONG, " +
                                 "physicalRowCount LONG, " +
                                 "latency FLOAT " +
-                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
+                                ") TIMESTAMP(created) PARTITION BY DAY TTL ").$(ttlWeeks > 0 ? ttlWeeks : 1).$(" WEEKS BYPASS WAL"
                         );
             }
 
@@ -121,7 +121,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
         // TableId exceeding 20 bits (~1M) may cause collisions, which is acceptable
         // for telemetry rate limiting purposes.
         // Note: With many tables, this produces many unique keys in lastEventTimestamps map.
-        // By default, telemetry_wal deduplication is disabled (telemetry.wal.event.deduplication.interval=0).
+        // By default, telemetry_wal deduplication is disabled (telemetry.wal.event.throttle.interval=0).
         return ((event & 0xFFFF) << 20) | (tableId & 0xFFFFF);
     }
 

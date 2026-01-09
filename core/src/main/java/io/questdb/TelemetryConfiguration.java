@@ -27,13 +27,13 @@ package io.questdb;
 public interface TelemetryConfiguration {
     long getDbSizeEstimateTimeout();
 
-    long getDeduplicationIntervalMicros();
-
     boolean getDisableCompletely();
 
     boolean getEnabled();
 
     int getQueueCapacity();
+
+    long getThrottleIntervalMicros();
 
     int getTtlWeeks();
 

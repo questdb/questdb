@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -48,7 +49,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -63,9 +64,9 @@ import static io.questdb.std.Files.notDots;
 
 public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(Telemetry.class);
-    private final Clock clock;
+    private final long ThrottleInterval;
+    private final MicrosecondClock clock;
     private final long dbSizeEstimateTimeout; //micros
-    private final long deduplicationInterval;
     private final boolean enabled;
     private final IntLongHashMap lastEventTimestamps;
     private final int maxFileNameLen;
@@ -92,7 +93,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             telemetrySubSeq = new SCSequence();
             telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
             ttlWeeks = telemetryConfiguration.getTtlWeeks();
-            deduplicationInterval = telemetryConfiguration.getDeduplicationIntervalMicros();
+            ThrottleInterval = telemetryConfiguration.getThrottleIntervalMicros();
             lastEventTimestamps = new IntLongHashMap();
         } else {
             telemetryType = null;
@@ -103,7 +104,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             telemetrySubSeq = null;
             lastEventTimestamps = null;
             ttlWeeks = 0;
-            deduplicationInterval = 0;
+            ThrottleInterval = 0;
         }
     }
 
@@ -127,9 +128,9 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
 
     public void consume(T task) {
         long timestamp = clock.getTicks();
-        if (deduplicationInterval > 0) {
+        if (ThrottleInterval > 0) {
             int eventKey = task.getEventKey();
-            if (lastEventTimestamps.get(eventKey) + deduplicationInterval > timestamp) {
+            if (lastEventTimestamps.get(eventKey) + ThrottleInterval > timestamp) {
                 return;
             }
             lastEventTimestamps.put(eventKey, timestamp);
@@ -155,8 +156,9 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
         String tableName = telemetryType.getTableName();
         boolean shouldDropTable = false;
         boolean shouldAlterTtl = false;
+        TableToken tableToken = null;
         try {
-            TableToken tableToken = engine.verifyTableName(tableName);
+            tableToken = engine.verifyTableName(tableName);
             try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
                 int ttl = meta.getTtlHoursOrMonths();
                 if (ttl == 0) {
@@ -177,13 +179,17 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                     .execute(sqlExecutionContext, null)
                     .await();
         } else if (shouldAlterTtl) {
+            assert tableToken != null;
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(tableToken);
+            }
             compiler.query().$("ALTER TABLE '").$(tableName).$("' SET TTL ").$(ttlWeeks).$(" WEEKS")
                     .compile(sqlExecutionContext)
                     .execute(null)
                     .await();
         }
-        telemetryType.getCreateSql(compiler.query()).createTable(sqlExecutionContext);
-        TableToken tableToken = engine.verifyTableName(tableName);
+        telemetryType.getCreateSql(compiler.query(), ttlWeeks).createTable(sqlExecutionContext);
+        tableToken = engine.verifyTableName(tableName);
         try {
             writer = engine.getWriter(tableToken, "telemetry");
         } catch (CairoException ex) {
@@ -362,7 +368,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
-        QueryBuilder getCreateSql(QueryBuilder builder);
+        QueryBuilder getCreateSql(QueryBuilder builder, int ttlWeeks);
 
         String getName();
 

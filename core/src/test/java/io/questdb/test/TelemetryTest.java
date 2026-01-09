@@ -221,7 +221,7 @@ public class TelemetryTest extends AbstractCairoTest {
                 public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
                     return new DefaultTelemetryConfiguration() {
                         @Override
-                        public long getDeduplicationIntervalMicros() {
+                        public long getThrottleIntervalMicros() {
                             return 1500;
                         }
                     };

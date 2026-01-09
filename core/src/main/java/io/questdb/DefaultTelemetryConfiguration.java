@@ -33,11 +33,6 @@ public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     }
 
     @Override
-    public long getDeduplicationIntervalMicros() {
-        return Micros.HOUR_MICROS;
-    }
-
-    @Override
     public boolean getDisableCompletely() {
         return false;
     }
@@ -50,6 +45,11 @@ public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     @Override
     public int getQueueCapacity() {
         return 16;
+    }
+
+    @Override
+    public long getThrottleIntervalMicros() {
+        return Micros.MINUTE_MICROS;
     }
 
     @Override

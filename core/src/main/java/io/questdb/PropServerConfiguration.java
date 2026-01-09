@@ -1655,22 +1655,22 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
             this.telemetryDbSizeEstimateTimeout = getMillis(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Micros.SECOND_MILLIS);
             int telemetryTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_TABLE_TTL_WEEKS, 4);
-            long telemetryDeduplicationInterval = getMicros(properties, env, PropertyKey.TELEMETRY_EVENT_DEDUPLICATION_INTERVAL, 3600000000L);
-            this.telemetryConfiguration = new PropTelemetryConfiguration(telemetryEnabled, telemetryQueueCapacity, telemetryHideTables, telemetryTableTTLWeeks, telemetryDeduplicationInterval);
+            long telemetryThrottleInterval = getMicros(properties, env, PropertyKey.TELEMETRY_EVENT_THROTTLE_INTERVAL, 60000000L);
+            this.telemetryConfiguration = new PropTelemetryConfiguration(telemetryEnabled, telemetryQueueCapacity, telemetryHideTables, telemetryTableTTLWeeks, telemetryThrottleInterval);
 
             boolean telemetryWalEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_WAL_ENABLED, telemetryEnabled);
             int telemetryWalQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_WAL_QUEUE_CAPACITY, telemetryQueueCapacity));
             boolean telemetryWalHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_WAL_HIDE_TABLES, telemetryHideTables);
             int telemetryWalTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_WAL_TABLE_TTL_WEEKS, 1);
-            long telemetryWalDeduplicationInterval = getMicros(properties, env, PropertyKey.TELEMETRY_WAL_EVENT_DEDUPLICATION_INTERVAL, 0L);
-            this.telemetryWalConfiguration = new PropTelemetryConfiguration(telemetryWalEnabled, telemetryWalQueueCapacity, telemetryWalHideTables, telemetryWalTableTTLWeeks, telemetryWalDeduplicationInterval);
+            long telemetryWalThrottleInterval = getMicros(properties, env, PropertyKey.TELEMETRY_WAL_EVENT_THROTTLE_INTERVAL, 0L);
+            this.telemetryWalConfiguration = new PropTelemetryConfiguration(telemetryWalEnabled, telemetryWalQueueCapacity, telemetryWalHideTables, telemetryWalTableTTLWeeks, telemetryWalThrottleInterval);
 
             boolean telemetryMatViewEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_ENABLED, telemetryEnabled);
             int telemetryMatViewQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_QUEUE_CAPACITY, telemetryQueueCapacity));
             boolean telemetryMatViewHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_HIDE_TABLES, telemetryHideTables);
             int telemetryMatViewTableTTLWeeks = getInt(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_TABLE_TTL_WEEKS, 1);
-            long telemetryMatViewDeduplicationInterval = getMicros(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_EVENT_DEDUPLICATION_INTERVAL, 0L);
-            this.telemetryMatViewConfiguration = new PropTelemetryConfiguration(telemetryMatViewEnabled, telemetryMatViewQueueCapacity, telemetryMatViewHideTables, telemetryMatViewTableTTLWeeks, telemetryMatViewDeduplicationInterval);
+            long telemetryMatViewThrottleInterval = getMicros(properties, env, PropertyKey.TELEMETRY_MAT_VIEW_EVENT_THROTTLE_INTERVAL, 0L);
+            this.telemetryMatViewConfiguration = new PropTelemetryConfiguration(telemetryMatViewEnabled, telemetryMatViewQueueCapacity, telemetryMatViewHideTables, telemetryMatViewTableTTLWeeks, telemetryMatViewThrottleInterval);
 
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
@@ -6162,28 +6162,23 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropTelemetryConfiguration implements TelemetryConfiguration {
-        private final long deduplicationInterval;
+        private final long ThrottleInterval;
         private final Boolean enabled;
         private final boolean hideTable;
         private final int queueCapacity;
         private final int ttlWeeks;
 
-        PropTelemetryConfiguration(boolean enabled, int queueCapacity, boolean hideTable, int ttlWeeks, long deduplicationInterval) {
+        PropTelemetryConfiguration(boolean enabled, int queueCapacity, boolean hideTable, int ttlWeeks, long ThrottleInterval) {
             this.enabled = enabled;
             this.queueCapacity = queueCapacity;
             this.hideTable = hideTable;
             this.ttlWeeks = ttlWeeks;
-            this.deduplicationInterval = deduplicationInterval;
+            this.ThrottleInterval = ThrottleInterval;
         }
 
         @Override
         public long getDbSizeEstimateTimeout() {
             return telemetryDbSizeEstimateTimeout;
-        }
-
-        @Override
-        public long getDeduplicationIntervalMicros() {
-            return deduplicationInterval;
         }
 
         @Override
@@ -6199,6 +6194,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueueCapacity() {
             return queueCapacity;
+        }
+
+        @Override
+        public long getThrottleIntervalMicros() {
+            return ThrottleInterval;
         }
 
         @Override
