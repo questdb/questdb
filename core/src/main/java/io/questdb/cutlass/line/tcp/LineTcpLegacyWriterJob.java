@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -72,7 +72,7 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
 
     @Override
     public void close() {
-        LOG.info().$("line protocol writer closing [workerId=").$(workerId).I$();
+        LOG.debug().$("line protocol writer closing [workerId=").$(workerId).I$();
         // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
             if (!run(workerId, Job.TERMINATING_STATUS)) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,14 +29,45 @@ package io.questdb.cairo.sql;
  * like record and string array.
  */
 public interface FunctionExtension {
+    /**
+     * Returns the array length.
+     *
+     * @return the array length
+     */
     int getArrayLength();
 
-    // Implemented in functions that return a record of values
+    /**
+     * Returns a record from the given record. Implemented in functions that return a record of values.
+     *
+     * @param rec the input record
+     * @return the output record
+     */
     Record getRecord(Record rec);
 
+    /**
+     * Returns the string value at the given array index (buffer A).
+     *
+     * @param rec        the record to read from
+     * @param arrayIndex the array index
+     * @return the string value
+     */
     CharSequence getStrA(Record rec, int arrayIndex);
 
+    /**
+     * Returns the string value at the given array index (buffer B).
+     *
+     * @param rec        the record to read from
+     * @param arrayIndex the array index
+     * @return the string value
+     */
     CharSequence getStrB(Record rec, int arrayIndex);
 
+    /**
+     * Returns the string length at the given array index.
+     *
+     * @param rec        the record to read from
+     * @param arrayIndex the array index
+     * @return the string length
+     */
     int getStrLen(Record rec, int arrayIndex);
 }

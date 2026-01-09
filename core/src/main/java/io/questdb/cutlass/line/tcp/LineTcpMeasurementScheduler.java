@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -485,6 +485,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                         .put(']');
                             }
                             continue; // go for another spin
+                        }
+                        if (tableToken.isView()) {
+                            throw CairoException.nonCritical()
+                                    .put("cannot modify view [view=")
+                                    .put(tableToken.getTableName())
+                                    .put(']');
                         }
                         if (tableToken.isMatView()) {
                             throw CairoException.nonCritical()

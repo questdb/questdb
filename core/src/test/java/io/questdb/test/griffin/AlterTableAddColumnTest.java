@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -89,23 +89,25 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     drainWalQueue();
 
-                    final String originalColumns = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\n" +
-                            "amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\n" +
-                            "j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n";
+                    final String originalColumns = """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse
+                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse
+                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            """;
 
                     assertQueryNoLeakCheck(
                             isWal
@@ -194,17 +196,19 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     assertQueryNoLeakCheck(
-                            "c\tmycol\n" +
-                                    "XYZ\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "XYZ\tnull\n" +
-                                    "\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "\tnull\n" +
-                                    "XYZ\tnull\n",
+                            """
+                                    c\tmycol
+                                    XYZ\tnull
+                                    ABC\tnull
+                                    ABC\tnull
+                                    XYZ\tnull
+                                    \tnull
+                                    CDE\tnull
+                                    CDE\tnull
+                                    ABC\tnull
+                                    \tnull
+                                    XYZ\tnull
+                                    """,
                             "select c, mycol from x"
                     );
                 }
@@ -260,17 +264,19 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     assertQueryNoLeakCheck(
-                            "c\tmycol\n" +
-                                    "XYZ\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "XYZ\tnull\n" +
-                                    "\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "\tnull\n" +
-                                    "XYZ\tnull\n",
+                            """
+                                    c\tmycol
+                                    XYZ\tnull
+                                    ABC\tnull
+                                    ABC\tnull
+                                    XYZ\tnull
+                                    \tnull
+                                    CDE\tnull
+                                    CDE\tnull
+                                    ABC\tnull
+                                    \tnull
+                                    XYZ\tnull
+                                    """,
                             "select c, mycol from x"
                     );
                 }
@@ -287,17 +293,19 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     assertQueryNoLeakCheck(
-                            "c\tmycol\n" +
-                                    "XYZ\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "XYZ\tnull\n" +
-                                    "\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "\tnull\n" +
-                                    "XYZ\tnull\n",
+                            """
+                                    c\tmycol
+                                    XYZ\tnull
+                                    ABC\tnull
+                                    ABC\tnull
+                                    XYZ\tnull
+                                    \tnull
+                                    CDE\tnull
+                                    CDE\tnull
+                                    ABC\tnull
+                                    \tnull
+                                    XYZ\tnull
+                                    """,
                             "select c, mycol from x"
                     );
                 }
@@ -314,17 +322,19 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     assertQueryNoLeakCheck(
-                            "c\tspa ce\n" +
-                                    "XYZ\t\n" +
-                                    "ABC\t\n" +
-                                    "ABC\t\n" +
-                                    "XYZ\t\n" +
-                                    "\t\n" +
-                                    "CDE\t\n" +
-                                    "CDE\t\n" +
-                                    "ABC\t\n" +
-                                    "\t\n" +
-                                    "XYZ\t\n",
+                            """
+                                    c\tspa ce
+                                    XYZ\t
+                                    ABC\t
+                                    ABC\t
+                                    XYZ\t
+                                    \t
+                                    CDE\t
+                                    CDE\t
+                                    ABC\t
+                                    \t
+                                    XYZ\t
+                                    """,
                             "select c, \"spa ce\" from x"
                     );
                 }
@@ -341,17 +351,19 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     assertQueryNoLeakCheck(
-                            "c\tmycol\n" +
-                                    "XYZ\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "XYZ\tnull\n" +
-                                    "\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "\tnull\n" +
-                                    "XYZ\tnull\n",
+                            """
+                                    c\tmycol
+                                    XYZ\tnull
+                                    ABC\tnull
+                                    ABC\tnull
+                                    XYZ\tnull
+                                    \tnull
+                                    CDE\tnull
+                                    CDE\tnull
+                                    ABC\tnull
+                                    \tnull
+                                    XYZ\tnull
+                                    """,
                             "select c, mycol from x"
                     );
                 }
@@ -368,17 +380,19 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     assertQueryNoLeakCheck(
-                            "c\tmycol\n" +
-                                    "XYZ\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "XYZ\tnull\n" +
-                                    "\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "\tnull\n" +
-                                    "XYZ\tnull\n",
+                            """
+                                    c\tmycol
+                                    XYZ\tnull
+                                    ABC\tnull
+                                    ABC\tnull
+                                    XYZ\tnull
+                                    \tnull
+                                    CDE\tnull
+                                    CDE\tnull
+                                    ABC\tnull
+                                    \tnull
+                                    XYZ\tnull
+                                    """,
                             "select c, mycol from x"
                     );
                 }
@@ -395,17 +409,19 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     assertQueryNoLeakCheck(
-                            "c\tmycol\n" +
-                                    "XYZ\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "XYZ\tnull\n" +
-                                    "\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "CDE\tnull\n" +
-                                    "ABC\tnull\n" +
-                                    "\tnull\n" +
-                                    "XYZ\tnull\n",
+                            """
+                                    c\tmycol
+                                    XYZ\tnull
+                                    ABC\tnull
+                                    ABC\tnull
+                                    XYZ\tnull
+                                    \tnull
+                                    CDE\tnull
+                                    CDE\tnull
+                                    ABC\tnull
+                                    \tnull
+                                    XYZ\tnull
+                                    """,
                             "select c, mycol from x"
                     );
                 }
@@ -788,7 +804,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     assertSql("ddl\n" +
                                     "CREATE TABLE 'x' ( \n" +
                                     "\ti INT,\n" +
-                                    "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
+                                    "\tsym SYMBOL,\n" +
                                     "\tamt DOUBLE,\n" +
                                     "\ttimestamp TIMESTAMP,\n" +
                                     "\tb BOOLEAN,\n" +
@@ -797,29 +813,30 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     "\te FLOAT,\n" +
                                     "\tf SHORT,\n" +
                                     "\tg DATE,\n" +
-                                    "\tik SYMBOL CAPACITY 128 CACHE,\n" +
+                                    "\tik SYMBOL,\n" +
                                     "\tj LONG,\n" +
                                     "\tk TIMESTAMP,\n" +
                                     "\tl BYTE,\n" +
                                     "\tm BINARY,\n" +
                                     "\tn STRING,\n" +
                                     "\tnscol TIMESTAMP_NS\n" +
-                                    ") timestamp(timestamp) PARTITION BY DAY " + (isWal ? "" : "BYPASS ") + "WAL\n" +
-                                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                                    ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n",
                             "show create table x;");
 
                     assertQueryNoLeakCheck(
-                            "c\tnscol\n" +
-                                    "XYZ\t\n" +
-                                    "ABC\t\n" +
-                                    "ABC\t\n" +
-                                    "XYZ\t\n" +
-                                    "\t\n" +
-                                    "CDE\t\n" +
-                                    "CDE\t\n" +
-                                    "ABC\t\n" +
-                                    "\t\n" +
-                                    "XYZ\t\n",
+                            """
+                                    c\tnscol
+                                    XYZ\t
+                                    ABC\t
+                                    ABC\t
+                                    XYZ\t
+                                    \t
+                                    CDE\t
+                                    CDE\t
+                                    ABC\t
+                                    \t
+                                    XYZ\t
+                                    """,
                             "select c, nscol from x"
                     );
                 }
@@ -848,30 +865,32 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     drainWalQueue();
 
-                    final String originalColumns = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\n" +
-                            "amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\n" +
-                            "j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n";
+                    final String originalColumns = """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse
+                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse
+                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            """;
 
                     assertQueryNoLeakCheck(
                             isWal
                                     ? originalColumns
                                     : originalColumns +
                                     "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                                    "second\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n",
+                                    "second\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n",
                             "show columns from x",
                             null,
                             false
@@ -896,17 +915,19 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     assertQueryNoLeakCheck(
-                            "c\tmycol\tsecond\n" +
-                                    "XYZ\tnull\t\n" +
-                                    "ABC\tnull\t\n" +
-                                    "ABC\tnull\t\n" +
-                                    "XYZ\tnull\t\n" +
-                                    "\tnull\t\n" +
-                                    "CDE\tnull\t\n" +
-                                    "CDE\tnull\t\n" +
-                                    "ABC\tnull\t\n" +
-                                    "\tnull\t\n" +
-                                    "XYZ\tnull\t\n",
+                            """
+                                    c\tmycol\tsecond
+                                    XYZ\tnull\t
+                                    ABC\tnull\t
+                                    ABC\tnull\t
+                                    XYZ\tnull\t
+                                    \tnull\t
+                                    CDE\tnull\t
+                                    CDE\tnull\t
+                                    ABC\tnull\t
+                                    \tnull\t
+                                    XYZ\tnull\t
+                                    """,
                             "select c, mycol, second from x"
                     );
                 }
@@ -925,7 +946,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             assertSql("ddl\n" +
                             "CREATE TABLE 'x' ( \n" +
                             "\ti INT,\n" +
-                            "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tsym SYMBOL,\n" +
                             "\tamt DOUBLE,\n" +
                             "\ttimestamp TIMESTAMP,\n" +
                             "\tb BOOLEAN,\n" +
@@ -934,15 +955,14 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\te FLOAT,\n" +
                             "\tf SHORT,\n" +
                             "\tg DATE,\n" +
-                            "\tik SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tik SYMBOL,\n" +
                             "\tj LONG,\n" +
                             "\tk TIMESTAMP,\n" +
                             "\tl BYTE,\n" +
                             "\tm BINARY,\n" +
                             "\tn STRING,\n" +
                             "\tarr DOUBLE[]\n" + // <-- array should be present
-                            ") timestamp(timestamp) PARTITION BY DAY " + (isWal ? "" : "BYPASS ") + "WAL\n" +
-                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                            ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n",
                     "show create table x;");
         });
     }
@@ -973,12 +993,12 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' or 'materialized' expected");
+        assertFailure("alter x", 6, "'table' or 'materialized' or 'view' expected");
     }
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' or 'materialized' expected");
+        assertFailure("alter", 5, "'table' or 'materialized' or 'view' expected");
     }
 
     @Test
@@ -1009,15 +1029,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "('2025-02-01', 'A')");
                     drainWalQueue();
                     assertQuery(
-                            "sym\tts\n" +
-                                    "\t2025-01-01T00:00:00.000000Z\n" +
-                                    "\t2025-01-02T00:00:00.000000Z\n" +
-                                    "\t2025-01-03T00:00:00.000000Z\n" +
-                                    "\t2025-01-04T00:00:00.000000Z\n" +
-                                    "A\t2025-01-05T00:00:00.000000Z\n" +
-                                    "A\t2025-02-01T00:00:00.000000Z\n" +
-                                    "B\t2025-01-06T00:00:00.000000Z\n" +
-                                    "B\t2025-01-07T00:00:00.000000Z\n",
+                            """
+                                    sym\tts
+                                    \t2025-01-01T00:00:00.000000Z
+                                    \t2025-01-02T00:00:00.000000Z
+                                    \t2025-01-03T00:00:00.000000Z
+                                    \t2025-01-04T00:00:00.000000Z
+                                    A\t2025-01-05T00:00:00.000000Z
+                                    A\t2025-02-01T00:00:00.000000Z
+                                    B\t2025-01-06T00:00:00.000000Z
+                                    B\t2025-01-07T00:00:00.000000Z
+                                    """,
                             "select sym, ts from x order by  sym",
                             null,
                             true,

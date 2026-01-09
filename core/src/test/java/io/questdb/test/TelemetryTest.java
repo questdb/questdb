@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -79,12 +80,12 @@ public class TelemetryTest extends AbstractCairoTest {
                         column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
                         id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
                         enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                        version\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        os\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        package\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse
-                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                        version\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        os\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        package\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
                         """;
                 assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
                 expected = """
@@ -226,7 +227,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     "\torigin SHORT\n" +
                     ") timestamp(created)";
             String middle = " PARTITION BY NONE";
-            String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
+            String end = " BYPASS WAL;\n";
 
             assertSql(start + middle + end, showCreateTable);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
@@ -303,7 +304,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     ") timestamp(created)";
             String midOld = " PARTITION BY MONTH";
             String midNew = " PARTITION BY DAY TTL 1 WEEK";
-            String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
+            String end = " BYPASS WAL;\n";
 
             assertSql(start + midOld + end, showCreateTable);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
@@ -394,7 +395,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     };
                     TelemetryJob ignored = new TelemetryJob(engine);
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1)
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 TestUtils.printSql(compiler, context, "select event, origin from " + TELEMETRY, sink);
                 TestUtils.assertContains(

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -122,6 +122,15 @@ public class CaseCommon {
         return type;
     }
 
+    @NotNull
+    private static CaseFunctionConstructor getCaseFunctionConstructor(int position, int returnType) throws SqlException {
+        final CaseFunctionConstructor constructor = constructors.getQuick(tagOf(returnType));
+        if (constructor == null) {
+            throw SqlException.$(position, "unsupported CASE value type '").put(nameOf(returnType)).put('\'');
+        }
+        return constructor;
+    }
+
     private static int getDecimalCommonType(int commonType, int valueType, int valuePos) throws SqlException {
         if (commonType == valueType) {
             return commonType;
@@ -145,15 +154,6 @@ public class CaseCommon {
         );
 
         return ColumnType.getDecimalType(targetPrecision, targetScale);
-    }
-
-    @NotNull
-    private static CaseFunctionConstructor getCaseFunctionConstructor(int position, int returnType) throws SqlException {
-        final CaseFunctionConstructor constructor = constructors.getQuick(tagOf(returnType));
-        if (constructor == null) {
-            throw SqlException.$(position, "unsupported CASE value type '").put(nameOf(returnType)).put('\'');
-        }
-        return constructor;
     }
 
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
@@ -203,10 +203,15 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(INT, IPv4), new CastIntToIPv4FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(IPv4, INT), new CastIPv4ToIntFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, SYMBOL), new CastIntToSymbolFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(INT, SHORT), new CastIntToShortFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(INT, BYTE), new CastIntToByteFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(LONG, LONG256), new CastLongToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(LONG, STRING), new CastLongToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(LONG, VARCHAR), new CastLongToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(LONG, SYMBOL), new CastLongToSymbolFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(LONG, INT), new CastLongToIntFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(LONG, SHORT), new CastLongToShortFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(LONG, BYTE), new CastLongToByteFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(FLOAT, LONG256), new CastFloatToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(FLOAT, STRING), new CastFloatToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(FLOAT, VARCHAR), new CastFloatToVarcharFunctionFactory());

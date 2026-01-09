@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,6 +53,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -152,6 +153,8 @@ import static io.questdb.test.AbstractTest.CLOSEABLE;
 import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
+    public static final boolean INVALID = true;
+    public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
@@ -1156,6 +1159,16 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
+    public static void assertViewState(boolean expectedInvalid, ViewState viewState) {
+        assertNotNull(viewState);
+        try {
+            viewState.lockForRead();
+            Assert.assertEquals(expectedInvalid, viewState.isInvalid());
+        } finally {
+            viewState.unlockAfterRead();
+        }
+    }
+
     public static void await(CyclicBarrier barrier) {
         try {
             barrier.await();
@@ -1457,7 +1470,7 @@ public final class TestUtils {
             int tableId,
             CharSequence tableName
     ) {
-        TableToken token = engine.lockTableName(tableName, tableId, structure.isMatView(), structure.isWalEnabled());
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isView(), structure.isMatView(), structure.isWalEnabled());
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }

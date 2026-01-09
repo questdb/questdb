@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -198,7 +198,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         final Utf8Sink sink = sink();
         final ObjHashSet<Throwable> dejaVu = tlSet.get();
         dejaVu.add(e);
-        sink.putEOL();
+        // Do not log EOL before exception type and message for log alerting to have more context.
         put0(sink, e);
         sink.putEOL();
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -7588,8 +7588,11 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, false, false, false, false, true);
-        try (TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, new TxnScoreboardPoolV2(configuration)); TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, false, false, false, false, false, true);
+        try (
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, new TxnScoreboardPoolV2(configuration));
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+        ) {
             cursor.of(reader);
             final StringSink sink = new StringSink();
             sink.clear();

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -92,7 +92,7 @@ public class AbstractO3Test extends AbstractTest {
     private RecordToRowCopier copier;
 
     public AbstractO3Test() {
-        this.rnd = TestUtils.generateRandom(LOG);
+        this.rnd = TestUtils.generateRandom(LOG, 4737712417750L, 1767629084672L);
         this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
@@ -508,7 +508,8 @@ public class AbstractO3Test extends AbstractTest {
                         new BytecodeAssembler(),
                         metadata,
                         writer.getMetadata(),
-                        toColumnFilter
+                        toColumnFilter,
+                        sqlExecutionContext.getCairoEngine().getConfiguration()
                 );
             }
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

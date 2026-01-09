@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -256,9 +256,9 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 freeAllIteratorBlocks();
                 counter.add(size - emittedRowCount);
             } else {
-                // Potential optimization: go through all the iterators, count their pending rows,
-                // and then add the pending master rows. Since we already know slaveRowCount, the rest
-                // is similar to the `if (size != -1)` branch.
+                // This can be optimized more by inspecting nextSlaveRowNum in all active iterators.
+                // Use that to sum up remaining rows in all iterators, then add
+                // masterCursor.calculateSize() * slaveRowCount
                 super.calculateSize(circuitBreaker, counter);
             }
         }

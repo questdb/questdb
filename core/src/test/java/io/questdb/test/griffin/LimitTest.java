@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -104,6 +104,12 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit -6,-2";
         testLimit(expected, expected2, query);
+        assertPlanNoLeakCheck(query, """
+                Limit left: -6 right: -2 skip-rows: 54 take-rows: 4
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: y
+                """);
     }
 
     @Test
@@ -119,6 +125,12 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit -33,-31";
         testLimit(expected, expected2, query);
+        assertPlanNoLeakCheck(query, """
+                Limit left: -33 right: -31 skip-rows: 27 take-rows: 2
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: y
+                """);
     }
 
     @Test
@@ -279,7 +291,13 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInvalidTopRange() throws Exception {
+    public void testInvalidNegativePositiveArgs() throws Exception {
+        execute("CREATE TABLE tango (name VARCHAR)");
+        assertException("tango LIMIT -3, 2", 12, "LIMIT <negative>, <positive> is not allowed");
+    }
+
+    @Test
+    public void testInvertedTopRange() throws Exception {
         String expected = """
                 i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                 6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.13264287\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE
@@ -327,6 +345,91 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitForSubQueryWithAnotherLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table if not exists table1" +
+                            " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                            " timestamp(ts) partition by day wal"
+            );
+            for (int i = 0; i < 9; i++) {
+                execute("insert into table1 values (" + (i * 10000000) + ", 'k" + i + "', " + "'k2_" + i + "', " + i + ")");
+            }
+            drainWalQueue();
+
+            String query = """
+                    SELECT ts, v_max FROM (
+                        SELECT ts, k, max(v) AS v_max FROM table1 LIMIT -2
+                    ) LIMIT 1""";
+            assertPlanNoLeakCheck(query, """
+                    Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                        SelectedRecord
+                            Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
+                                Async Group By workers: 1
+                                  keys: [ts,k]
+                                  values: [max(v)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                    """);
+            assertQueryAndCache(
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:10.000000Z\t7
+                            """,
+                    query,
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testLimitForSubQueryWithFilterAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE eq_equities_market_data (" +
+                    "timestamp TIMESTAMP, " +
+                    "symbol SYMBOL, " +
+                    "venue SYMBOL, " +
+                    "asks DOUBLE[][], bids DOUBLE[][]" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("INSERT INTO eq_equities_market_data VALUES " +
+                    "(0, 'AAPL', 'NYSE', ARRAY[ [11.4, 12], [10.3, 15] ], ARRAY[ [21.1, 31], [20.1, 21] ]), " +
+                    "(1, 'AAPL', 'NYSE', ARRAY[ [11.5, 13], [10.4, 14] ], ARRAY[ [21.2, 32], [20.2, 22] ]), " +
+                    "(2, 'AAPL', 'NYSE', ARRAY[ [11.6, 17], [10.5, 15] ], ARRAY[ [21.3, 33], [20.3, 23] ]), " +
+                    "(3, 'AAPL', 'NYSE', ARRAY[ [11.2, 30], [10.2, 16] ], ARRAY[ [21.4, 34], [20.4, 24] ]), " +
+                    "(4, 'AAPL', 'NYSE', ARRAY[ [11.4, 20], [10.4,  7] ], ARRAY[ [21.5, 35], [20.5, 25] ]), " +
+                    "(5, 'AAPL', 'NYSE', ARRAY[ [16.0,  3], [15.0,  2] ], ARRAY[ [15.6, 36], [14.6, 26] ])"
+            );
+            drainWalQueue();
+
+            assertQueryAndCache(
+                    """
+                            timestamp\tsymbol\tvenue\tbid_price\tbid_size\task_price\task_size
+                            1970-01-01T00:00:00.000002Z\tAAPL\tNYSE\t21.3\t20.3\t11.6\t10.5
+                            1970-01-01T00:00:00.000003Z\tAAPL\tNYSE\t21.4\t20.4\t11.2\t10.2
+                            """,
+                    """
+                            select * from (
+                                select timestamp, symbol, venue,
+                                    bids[1][1] as bid_price,
+                                    bids[2][1] as bid_size,
+                                    asks[1][1] as ask_price,
+                                    asks[2][1] as ask_size
+                                from eq_equities_market_data
+                                where symbol='AAPL' and timestamp in '1970'
+                                limit -4
+                            ) limit 2""",
+                    "timestamp",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testLimitMinusOneAndPredicateAndColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (ts timestamp, id symbol)");
@@ -361,9 +464,10 @@ public class LimitTest extends AbstractCairoTest {
             execute(createTableDdl);
             execute(createTableDml);
 
-            String query = "select * from y limit $1;";
+            String query = "select * from y limit $1, $2;";
 
-            bindVariableService.setLong(0, 2L);
+            bindVariableService.setLong(0, 0L);
+            bindVariableService.setLong(1, 2L);
 
             assertQueryAndCache(
                     """
@@ -380,7 +484,7 @@ public class LimitTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: $0::long[2] skip-over-rows: 0 limit: 2
+                            Limit left: $0::long[0] right: $1::long[2] skip-rows: 0 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -390,7 +494,7 @@ public class LimitTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from y limit -2",
                     """
-                            Limit lo: -2 skip-over-rows: 58 limit: 2
+                            Limit value: -2 skip-rows: 58 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -398,11 +502,12 @@ public class LimitTest extends AbstractCairoTest {
             );
 
             bindVariableService.setLong(0, -2L);
+            bindVariableService.setLong(1, 0L);
 
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: $0::long[-2] skip-over-rows: 58 limit: 2
+                            Limit left: $0::long[-2] right: $1::long[0] skip-rows: 58 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -788,7 +893,7 @@ public class LimitTest extends AbstractCairoTest {
                     "SELECT * FROM trades WHERE timestamp < '2025-01-01' ORDER BY timestamp DESC LIMIT 10",
                     "timestamp###desc",
                     true,
-                    true
+                    false
             );
 
             // Both queries should return the same results - the last 10 rows in descending order
@@ -798,6 +903,58 @@ public class LimitTest extends AbstractCairoTest {
                     "SELECT * FROM trades WHERE timestamp < '2025-01-01' ORDER BY timestamp DESC LIMIT 10",
                     "(SELECT * FROM trades WHERE timestamp < '2025-01-01' LIMIT -10) ORDER BY timestamp DESC"
             );
+        });
+    }
+
+    @Test
+    public void testPlanUnresolvedBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (name VARCHAR)");
+            assertPlanNoLeakCheck("tango WHERE name <> 'a' LIMIT 2, -3", """
+                    Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
+                        Async Filter workers: 1
+                          filter: name!='a'
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tango
+                    """);
+            assertPlanNoLeakCheck("(tango WHERE name <> 'a' LIMIT 2, -3) LIMIT 2, -3", """
+                    Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
+                        Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
+                            Async Filter workers: 1
+                              filter: name!='a'
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
+                    """);
+            assertQueryNoLeakCheck("""
+                            name
+                            """, "(tango WHERE name <> 'a' LIMIT 2, 5) LIMIT 2, 5",
+                    null, true, false);
+            assertQueryNoLeakCheck("""
+                            name
+                            """, "tango WHERE name <> 'a' LIMIT 2, 10",
+                    null, true, false);
+        });
+    }
+
+    @Test
+    public void testPlanZeroLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (name VARCHAR)");
+            String query = "tango WHERE name <> 'a' LIMIT 2, 2";
+            assertPlanNoLeakCheck(query, """
+                    Limit left: 2 right: 2 skip-rows-max: 0 take-rows-max: 0
+                        Async Filter workers: 1
+                          filter: name!='a'
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tango
+                    """);
+            assertQueryNoLeakCheck("""
+                            name
+                            """, query,
+                    null, true, false);
         });
     }
 
@@ -873,7 +1030,7 @@ public class LimitTest extends AbstractCairoTest {
                     ) timestamp (ts) PARTITION BY DAY""");
 
             execute("""
-                    insert into intervaltest\s
+                    insert into intervaltest
                     select x, ('2023-04-06T00:00:00.000000Z'::timestamp::long + (x*1000))::timestamp
                     from long_sequence(600000)""");
 
@@ -891,14 +1048,14 @@ public class LimitTest extends AbstractCairoTest {
             String query = """
                     select *
                     from intervaltest
-                    WHERE ts > '2023-04-06T00:09:59.000000Z'\s
-                    ORDER BY ts DESC \
+                    WHERE ts > '2023-04-06T00:09:59.000000Z'
+                    ORDER BY ts DESC
                     LIMIT 10""";
 
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 10 skip-over-rows: 0 limit: 10
+                            Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                 PageFrame
                                     Row backward scan
                                     Interval backward scan on: intervaltest
@@ -923,7 +1080,7 @@ public class LimitTest extends AbstractCairoTest {
                     query,
                     "ts###DESC",
                     true,
-                    true
+                    false
             );
         });
     }
@@ -1428,9 +1585,7 @@ public class LimitTest extends AbstractCairoTest {
 
     private void testLimit(String expected1, String expected2, String query) throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    createTableDdl
-            );
+            execute(createTableDdl);
 
             assertQueryAndCache(expected1, query, "timestamp", true, true);
 

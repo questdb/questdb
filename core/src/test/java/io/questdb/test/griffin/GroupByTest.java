@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,8 +23,11 @@
  ******************************************************************************/
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -34,6 +37,10 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test1GroupByWithoutAggregateFunctionsReturnsUniqueKeys() throws Exception {
+
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t as (" +
                     "    select 1 as l, 'a' as s " +
@@ -228,6 +235,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             execute("insert into t values (1, 11), (1, 12);");
@@ -266,6 +276,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             execute("insert into t values (1, 11), (1, 12);");
@@ -302,6 +315,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns3() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             execute("insert into t values (1, 11), (1, 12);");
@@ -377,6 +393,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumnsAndBindVariable() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             execute("insert into t values (1, 11), (1, 12);");
@@ -416,6 +435,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test2SuccessOnSelectWithExplicitGroupBy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             execute("insert into t values (1, 11), (1, 12);");
@@ -449,6 +471,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test2SuccessOnSelectWithoutExplicitGroupBy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             execute("insert into t values (1, 11), (1, 12);");
@@ -482,6 +507,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test3GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE weather ( \
@@ -501,6 +529,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select ordr.date_report, count(*) " +
@@ -539,6 +570,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select ordr.date_report, count(*) " +
@@ -576,6 +610,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel3() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select date_report, count(*) " +//date_report used with no alias
@@ -614,6 +651,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel4() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select date_report, ordr.date_report,  count(*) " +
@@ -655,6 +695,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel5() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select date_report, dateadd('d', -1, ordr.date_report) as minusday, dateadd('d', 1, date_report) as plusday, " +
@@ -697,6 +740,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test5GroupByWithNonAggregateExpressionUsingKeyColumn() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = """
@@ -740,6 +786,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test6GroupByWithNonAggregateExpressionUsingKeyColumn1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
             execute("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
@@ -795,6 +844,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test6GroupByWithNonAggregateExpressionUsingKeyColumn2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
             execute("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
@@ -810,6 +862,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test6GroupByWithNonAggregateExpressionUsingKeyColumn3() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
             execute("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
@@ -1038,6 +1093,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByExpressionAndLiteral() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t as (" +
                     "    select 1 as l, 'a' as s " +
@@ -1085,6 +1143,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByInterval1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         i\tcount
@@ -1103,6 +1164,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByInterval2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         i\ts\tcount
@@ -1164,6 +1228,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupBySingleVarcharKeyFromSampleByWithFill() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (vch varchar, l long, ts timestamp) timestamp(ts) partition by day;");
             execute("""
@@ -1295,6 +1362,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithAliasClash1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     "create table t as (" +
@@ -1336,6 +1406,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithAliasClash2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x, x%2 as y from long_sequence(2))");
             execute("create table t2 as (select x, x%2 as y from long_sequence(2))");
@@ -1362,6 +1435,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithAliasClash3() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x, x%2 as y from long_sequence(2))");
             execute("create table t2 as (select x, x%2 as y from long_sequence(2))");
@@ -1412,6 +1488,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithAliasClash4() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x, x%2 as y from long_sequence(2))");
             execute("create table t2 as (select x, x%2 as y from long_sequence(2))");
@@ -1458,6 +1537,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithAliasClash5() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
             execute("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
@@ -1507,6 +1589,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithAliasClash6() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
             execute("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
@@ -1574,6 +1659,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLeftJoin() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute(
                     "create table dim_apTemperature as (" +
@@ -1755,6 +1843,8 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithNonConstantSelectClauseExpression() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
         allowFunctionMemoization();
         assertMemoryLeak(() -> {
             execute("create table t as (" +
@@ -1791,6 +1881,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithTimestampKey() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE foo (
@@ -1820,6 +1913,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByImplicitGroupBy1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (s1 symbol, s2 symbol, l long, ts timestamp) timestamp(ts) partition by day;");
             execute(
@@ -1856,6 +1952,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByImplicitGroupBy2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
             execute(
@@ -1895,6 +1994,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByImplicitGroupBy3() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
             execute(
@@ -1931,6 +2033,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testLiftAliasesFromInnerSelect1() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
             execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
@@ -2102,7 +2207,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 GroupBy vectorized: false
                                   keys: [i]
                                   values: [last(ts),last(avg),last(sum),last(first_value)]
-                                    Limit lo: -100 skip-over-rows: 999900 limit: 100
+                                    Limit value: -100 skip-rows: 999900 take-rows: 100
                                         Window
                                           functions: [avg(j) over (partition by [i] range between 80000 preceding and current row),sum(j) over (partition by [i] range between 80000 preceding and current row),first_value(j) over (partition by [i] range between 80000 preceding and current row)]
                                             PageFrame
@@ -2193,6 +2298,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testLiftAliasesFromInnerSelect2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
             execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
@@ -2233,6 +2341,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testLiftAliasesFromInnerSelect3() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
             execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
@@ -2675,6 +2786,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testLimitedOrderByLongConstant() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table x (sym symbol, ts timestamp) timestamp(ts) partition by day;");
             execute("insert into x values ('1','2023-01-01T00:00:00'),('1','2023-01-01T00:00:01'),('2','2023-01-01T00:00:03')");
@@ -2748,6 +2862,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table tst ( ts timestamp ) timestamp(ts);");
             execute("insert into tst values ('2023-05-29T15:30:00.000000Z')");
@@ -2831,6 +2948,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinctOnAliasedColumnWithOrderBy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table tab (created timestamp, i int) timestamp(created)");
             execute("insert into tab select x::timestamp, x from long_sequence(3)");
@@ -2875,6 +2995,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinctOnExpressionWithOrderBy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table tab (created timestamp, i int) timestamp(created)");
             execute("insert into tab select x::timestamp, x from long_sequence(3)");
@@ -2920,6 +3043,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table tab (created timestamp, i int) timestamp(created)");
             execute("insert into tab select x::timestamp, x from long_sequence(3)");
@@ -2962,6 +3088,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSelectMatchingButInDifferentOrderThanGroupBy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table x (" +
                     "    sym symbol," +
@@ -3016,6 +3145,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSumOverSumColumn() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
         assertMemoryLeak(() -> {
             execute("create table \"avg\" as (" +
                     "select rnd_symbol('A', 'B', 'C') category, " +

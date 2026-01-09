@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -602,6 +602,126 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 "select x, x + 1 as a, a + 2 as b from data",
                 null,
                 null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTopDownDiamondProjectionReferences() throws Exception {
+        execute("CREATE TABLE data (x INT)");
+        execute("INSERT INTO data VALUES (10), (20), (30)");
+
+        assertQuery(
+                """
+                        sum
+                        129
+                        """,
+                "select sum(c) from (" +
+                        "select x, x + 1 as a, x + 2 as b, a + b as c from data" +
+                        ")",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTopDownMultipleColumnsReferenceSameColumn() throws Exception {
+        execute("CREATE TABLE data (x INT, y INT)");
+        execute("INSERT INTO data VALUES (10, 2), (20, 4), (30, 6)");
+        assertQuery(
+                """
+                        sum	sum1	sum2
+                        144	216	288
+                        """,
+                "select sum(b), sum(c), sum(d) from (" +
+                        "select x, x + y as a, a * 2 as b, a * 3 as c, a * 4 as d from data" +
+                        ")",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTopDownNestedSubqueries() throws Exception {
+        execute("CREATE TABLE data (x INT)");
+        execute("INSERT INTO data VALUES (1), (2), (3)");
+
+        assertQuery(
+                """
+                        sum
+                        18
+                        """,
+                "select sum(c) from (" +
+                        "select b, b + 1 as c from (" +
+                        "select x, x + 1 as a, a + 2 as b from data" +
+                        ")" +
+                        ")",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTopDownProjectionReferenceInSubquery() throws Exception {
+        execute("CREATE TABLE core_price (" +
+                "    timestamp TIMESTAMP," +
+                "    symbol SYMBOL," +
+                "    bid_price DOUBLE," +
+                "    bid_volume LONG," +
+                "    ask_price DOUBLE," +
+                "    ask_volume LONG" +
+                ") timestamp(timestamp)");
+        execute("INSERT INTO core_price VALUES " +
+                "('2025-01-01T00:00:00.000000Z', 'A', 100.0, 10, 101.0, 20)," +
+                "('2025-01-01T00:00:01.000000Z', 'B', 200.0, 30, 201.0, 40)");
+
+        assertQuery(
+                """
+                        avg
+                        100.0
+                        """,
+                "select avg(schmalolzers) from (" +
+                        "select timestamp, bid_volume * 1.0 / ask_volume as lolzings, lolzings * bid_price as schmalolzers from core_price" +
+                        ")",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTopDownProjectionWithFunction() throws Exception {
+        execute("CREATE TABLE data (x INT)");
+        execute("INSERT INTO data VALUES (4), (9), (16)");
+
+        assertQuery(
+                """
+                        sum
+                        18.0
+                        """,
+                "select sum(b) from (" +
+                        "select x, sqrt(x) as a, a * 2 as b from data" +
+                        ")",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTopDownSelectSpecificColumnsFromProjectionChain() throws Exception {
+        execute("CREATE TABLE data (x INT)");
+        execute("INSERT INTO data VALUES (1), (2), (3)");
+
+        assertQuery(
+                """
+                        x	b	d
+                        1	4	10
+                        2	5	11
+                        3	6	12
+                        """,
+                "select x, b, d from (" +
+                        "select x, x + 1 as a, a + 2 as b, b + 1 as c, c + 5 as d from data" +
+                        ")",
                 true,
                 true
         );

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,14 +41,44 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
+/**
+ * Abstract base class for page frame record cursor factories.
+ */
 abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+    /**
+     * The column indexes.
+     */
     protected final IntList columnIndexes;
+    /**
+     * The column size shifts.
+     */
     protected final IntList columnSizeShifts;
-    protected final int pageFrameMaxRows;
-    protected final int pageFrameMinRows;
+    /**
+     * The partition frame cursor factory.
+     */
     protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
+    /**
+     * The page frame cursor.
+     */
     protected TablePageFrameCursor pageFrameCursor;
+    /**
+     * Maximum rows per page frame.
+     */
+    protected int pageFrameMaxRows;
+    /**
+     * Minimum rows per page frame.
+     */
+    protected int pageFrameMinRows;
 
+    /**
+     * Constructs a new page frame record cursor factory.
+     *
+     * @param configuration               the Cairo configuration
+     * @param metadata                    the record metadata
+     * @param partitionFrameCursorFactory the partition frame cursor factory
+     * @param columnIndexes               the column indexes
+     * @param columnSizeShifts            the column size shifts
+     */
     public AbstractPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
@@ -62,6 +92,12 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         this.columnSizeShifts = columnSizeShifts;
         pageFrameMinRows = configuration.getSqlPageFrameMinRows();
         pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
+    }
+
+    @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        this.pageFrameMinRows = minRows;
+        this.pageFrameMaxRows = maxRows;
     }
 
     @Override
@@ -96,9 +132,16 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         Misc.free(partitionFrameCursorFactory);
     }
 
+    /**
+     * Initializes the page frame cursor.
+     *
+     * @param executionContext the SQL execution context
+     * @return the initialized page frame cursor
+     * @throws SqlException if initialization fails
+     */
     protected TablePageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = partitionFrameCursorFactory.getOrder();
-        PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
+        PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, ORDER_ANY);
         if (pageFrameCursor == null) {
             if (order == ORDER_ASC || order == ORDER_ANY) {
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(
@@ -121,6 +164,14 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         return pageFrameCursor.of(partitionFrameCursor);
     }
 
+    /**
+     * Initializes the record cursor from the page frame cursor.
+     *
+     * @param frameCursor      the page frame cursor
+     * @param executionContext the SQL execution context
+     * @return the initialized record cursor
+     * @throws SqlException if initialization fails
+     */
     protected abstract RecordCursor initRecordCursor(
             PageFrameCursor frameCursor,
             SqlExecutionContext executionContext

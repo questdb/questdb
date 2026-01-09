@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 
 public interface PGResponseSink extends Utf8Sink {
@@ -134,6 +135,16 @@ public interface PGResponseSink extends Utf8Sink {
      * @see #getSendBufferPtr() to retrieve a writable address
      */
     void putNetworkShort(long address, short value);
+
+    /**
+     * Writes a portion of a Utf8Sequence to the buffer, up to available capacity.
+     *
+     * @param us     the Utf8Sequence to copy from
+     * @param offset the byte offset to start copying from
+     * @param length the maximum number of bytes to copy
+     * @return the actual number of bytes written (may be less than length if buffer is full)
+     */
+    int putPartial(Utf8Sequence us, int offset, int length);
 
     void putZ(CharSequence value);
 

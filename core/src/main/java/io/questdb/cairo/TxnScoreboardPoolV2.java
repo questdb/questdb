@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,8 +31,6 @@ import org.jetbrains.annotations.NonNls;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.ENTRY_SIZE;
-
 public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
     private final BiFunction<CharSequence, ScoreboardPoolTenant, ScoreboardPoolTenant> getOrCreateScoreboard;
     private final ConcurrentHashMap<ScoreboardPoolTenant> pool = new ConcurrentHashMap<>();
@@ -41,7 +39,7 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
         getOrCreateScoreboard = (key, value) -> {
             if (value == null || !value.incrementRefCount()) {
                 //noinspection resource
-                value = new ScoreboardPoolTenant(configuration.getReaderPoolMaxSegments() * ENTRY_SIZE);
+                value = new ScoreboardPoolTenant(configuration.getReaderPoolMaxSegments() * configuration.getPoolSegmentSize());
             }
             return value;
         };

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -3854,13 +3855,31 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDependencyColumnsWithSameAliasError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            create table tab (
+                              x1 int,
+                              ts TIMESTAMP
+                            ) timestamp(ts);
+                            """
+            );
+
+            assertExceptionNoLeakCheck("select x1 as a, a as a from t", 18, "Duplicate column [name=a]");
+        });
+    }
+
+    @Test
     public void testDistinctDependencyColumnsThrowError() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table tab (" +
-                            "  x1 int," +
-                            "  ts TIMESTAMP" +
-                            ") timestamp(ts);"
+                    """
+                            create table tab (
+                              x1 int,
+                              ts TIMESTAMP
+                            ) timestamp(ts);
+                            """
             );
 
             assertExceptionNoLeakCheck("select distinct x1 as a, a from tab", 25, "Invalid column: a");
@@ -4014,7 +4033,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     Filter filter: T2.created in [now(),now()]
                                         Nested Loop Full Join
                                           filter: T1.created<T2.created
-                                            Limit lo: 0 skip-over-rows: 0 limit: 0
+                                            Limit value: 0 skip-rows-max: 0 take-rows-max: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
@@ -5618,7 +5637,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     Filter filter: T2.created in [now(),now()]
                                         Nested Loop Left Join
                                           filter: T1.created<T2.created
-                                            Limit lo: 0 skip-over-rows: 0 limit: 0
+                                            Limit value: 0 skip-rows-max: 0 take-rows-max: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
@@ -5665,7 +5684,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Left Join
                                       filter: T1.created<T2.created
-                                        Limit lo: -1 skip-over-rows: 2 limit: 1
+                                        Limit value: -1 skip-rows: 2 take-rows: 1
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -5841,7 +5860,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                           condition: T3.created=T2.created
                                             Nested Loop Left Join
                                               filter: T1.created<T2.created
-                                                Limit lo: 2 skip-over-rows: 0 limit: 2
+                                                Limit value: 2 skip-rows: 0 take-rows: 2
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
@@ -5849,11 +5868,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: tab
                                             Hash
-                                                Limit lo: 3 skip-over-rows: 0 limit: 3
+                                                Limit value: 3 skip-rows: 0 take-rows: 3
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
-                                        Limit lo: 4 skip-over-rows: 0 limit: 3
+                                        Limit value: 4 skip-rows: 0 take-rows: 3
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -6099,7 +6118,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.dropTableOrMatView(path, tt);
+                engine.dropTableOrViewOrMatView(path, tt);
             }
         });
     }
@@ -6336,7 +6355,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     Filter filter: T2.created in [now(),now()]
                                         Nested Loop Right Join
                                           filter: T1.created<T2.created
-                                            Limit lo: 0 skip-over-rows: 0 limit: 0
+                                            Limit value: 0 skip-rows-max: 0 take-rows-max: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
@@ -6383,7 +6402,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Right Join
                                       filter: T1.created<T2.created
-                                        Limit lo: -1 skip-over-rows: 2 limit: 1
+                                        Limit value: -1 skip-rows: 2 take-rows: 1
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -6567,7 +6586,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                           condition: T3.created=T2.created
                                             Nested Loop Right Join
                                               filter: T1.created<T2.created
-                                                Limit lo: 2 skip-over-rows: 0 limit: 2
+                                                Limit value: 2 skip-rows: 0 take-rows: 2
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
@@ -6575,11 +6594,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: tab
                                             Hash
-                                                Limit lo: 3 skip-over-rows: 0 limit: 3
+                                                Limit value: 3 skip-rows: 0 take-rows: 3
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
-                                        Limit lo: 4 skip-over-rows: 0 limit: 3
+                                        Limit value: 4 skip-rows: 0 take-rows: 3
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -7273,6 +7292,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createMatViewSuffixCalled);
                 }
+
+                try {
+                    execute(compiler, "create table price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create view price_view as (select sym, last(price) as price, ts from price sample by 1h) foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.createViewSuffixCalled);
+                }
             }
         });
     }
@@ -7612,6 +7639,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean compileDropTableExtCalled;
         boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
+        boolean createViewSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
@@ -7641,6 +7669,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         ) throws SqlException {
             createTableSuffixCalled = true;
             return super.parseCreateTableExt(lexer, securityContext, builder, tok);
+        }
+
+        @Override
+        public CreateViewOperationBuilder parseCreateViewExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateViewOperationBuilder builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            createViewSuffixCalled = true;
+            return super.parseCreateViewExt(lexer, securityContext, builder, tok);
         }
 
         @Override
