@@ -28,6 +28,7 @@ import io.questdb.Bootstrap;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDefinition;
@@ -42,6 +43,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -334,6 +336,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewDefinition definition2 = getViewDefinition(VIEW2);
 
             assertNotNull(definition1);
+            Assert.assertEquals(6, definition1.getViewToken().getTableId());
+            Assert.assertEquals(VIEW1, definition1.getViewToken().getTableName());
+            Assert.assertEquals(0, definition1.getSeqTxn());
             assertEquals(query1, definition1.getViewSql());
             Assert.assertEquals(1, definition1.getDependencies().size());
             assertTrue(definition1.getDependencies().contains(TABLE1));
@@ -344,6 +349,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
 
             assertNotNull(definition2);
+            Assert.assertEquals(7, definition2.getViewToken().getTableId());
+            Assert.assertEquals(VIEW2, definition2.getViewToken().getTableName());
+            Assert.assertEquals(0, definition2.getSeqTxn());
             assertEquals(query2, definition2.getViewSql());
             Assert.assertEquals(1, definition2.getDependencies().size());
             assertTrue(definition2.getDependencies().contains(TABLE2));
@@ -427,6 +435,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewDefinition definition2 = getViewDefinition(VIEW2);
 
             assertNotNull(definition1);
+            Assert.assertEquals(6, definition1.getViewToken().getTableId());
+            Assert.assertEquals(VIEW1, definition1.getViewToken().getTableName());
+            Assert.assertEquals(0, definition1.getSeqTxn());
             assertEquals(query1, definition1.getViewSql());
             Assert.assertEquals(1, definition1.getDependencies().size());
             assertTrue(definition1.getDependencies().contains(TABLE1));
@@ -437,6 +448,80 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
 
             assertNotNull(definition2);
+            Assert.assertEquals(7, definition2.getViewToken().getTableId());
+            Assert.assertEquals(VIEW2, definition2.getViewToken().getTableName());
+            Assert.assertEquals(0, definition2.getSeqTxn());
+            assertEquals(query2, definition2.getViewSql());
+            Assert.assertEquals(1, definition2.getDependencies().size());
+            assertTrue(definition2.getDependencies().contains(TABLE2));
+            // Check that column dependencies are collected for view2 (ts, k2, v from table2)
+            Assert.assertEquals(3, definition2.getDependencies().get(TABLE2).size());
+            Assert.assertTrue(definition2.getDependencies().get(TABLE2).contains("ts"));
+            Assert.assertTrue(definition2.getDependencies().get(TABLE2).contains("k2"));
+            Assert.assertTrue(definition2.getDependencies().get(TABLE2).contains("v"));
+
+            assertExecRequest(
+                    httpClient,
+                    "views()",
+                    "{" +
+                            "\"query\":\"views()\"," +
+                            "\"columns\":[" +
+                            "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_table_dir_name\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"invalidation_reason\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_status\",\"type\":\"STRING\"}," +
+                            "{\"name\":\"view_status_update_time\",\"type\":\"TIMESTAMP\"}" +
+                            "]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "]," +
+                            "\"count\":2" +
+                            "}"
+            );
+        }
+
+        // restart without tables.d file, and assert that view state is the same
+        final CairoConfiguration configuration = questdb.getEngine().getConfiguration();
+        try (Path path = new Path().of(configuration.getDbRoot()).concat("tables.d.0")) {
+            configuration.getFilesFacade().remove(path.$());
+        }
+
+        stopQuestDB();
+        startQuestDB();
+
+        drainWalQueue();
+        drainViewQueue();
+
+        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+            final ViewState state1 = getViewState(VIEW1);
+            final ViewState state2 = getViewState(VIEW2);
+
+            assertViewState(INVALID, state1);
+            assertViewState(VALID, state2);
+
+            final ViewDefinition definition1 = getViewDefinition(VIEW1);
+            final ViewDefinition definition2 = getViewDefinition(VIEW2);
+
+            assertNotNull(definition1);
+            Assert.assertEquals(6, definition1.getViewToken().getTableId());
+            Assert.assertEquals(VIEW1, definition1.getViewToken().getTableName());
+            Assert.assertEquals(0, definition1.getSeqTxn());
+            assertEquals(query1, definition1.getViewSql());
+            Assert.assertEquals(1, definition1.getDependencies().size());
+            assertTrue(definition1.getDependencies().contains(TABLE1));
+            // Check that column dependencies are collected for view1 (ts, k, v from table1)
+            Assert.assertEquals(3, definition1.getDependencies().get(TABLE1).size());
+            Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("ts"));
+            Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("k"));
+            Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
+
+            assertNotNull(definition2);
+            Assert.assertEquals(7, definition2.getViewToken().getTableId());
+            Assert.assertEquals(VIEW2, definition2.getViewToken().getTableName());
+            Assert.assertEquals(0, definition2.getSeqTxn());
             assertEquals(query2, definition2.getViewSql());
             Assert.assertEquals(1, definition2.getDependencies().size());
             assertTrue(definition2.getDependencies().contains(TABLE2));
@@ -612,6 +697,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         ));
         questdb = createServerMain();
         questdb.start();
+        questdb.awaitStartup();
     }
 
     private void stopQuestDB() {

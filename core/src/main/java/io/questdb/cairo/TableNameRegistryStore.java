@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -309,9 +310,18 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     }
 
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
-        path.of(configuration.getDbRoot()).concat(dirName).concat(META_FILE_NAME);
+        path.of(configuration.getDbRoot()).concat(dirName);
+        int pathLen = path.size();
+        path.concat(META_FILE_NAME);
         long fd = ff.openRO(path.$());
         if (fd < 1) {
+            // check if it is a view
+            path.trimTo(pathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+            if (ff.exists(path.$())) {
+                // negative table id means WAL table,
+                // views are considered to be WAL tables
+                return -getTableIdFromTableDir(dirName);
+            }
             return 0;
         }
 

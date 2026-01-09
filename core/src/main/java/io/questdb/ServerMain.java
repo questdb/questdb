@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
@@ -39,6 +40,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -49,6 +51,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.Clock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -68,6 +71,7 @@ public class ServerMain implements Closeable {
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     protected PGServer pgServer;
+    private Thread compileViewsThread;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
@@ -157,13 +161,8 @@ public class ServerMain implements Closeable {
      * with background hydration threads that may hold table metadata locks.
      */
     public void awaitStartup() {
-        if (hydrateMetadataThread != null) {
-            try {
-                hydrateMetadataThread.join();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        joinThread(hydrateMetadataThread, false);
+        joinThread(compileViewsThread, false);
     }
 
     public void awaitTable(String tableName) {
@@ -178,12 +177,8 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            if (hydrateMetadataThread != null) {
-                try {
-                    hydrateMetadataThread.join();
-                } catch (InterruptedException ignored) {
-                }
-            }
+            joinThread(hydrateMetadataThread, true);
+            joinThread(compileViewsThread, true);
             System.err.println("QuestDB is shutting down...");
             System.out.println("QuestDB is shutting down...");
             if (bootstrap != null && bootstrap.getLog() != null) {
@@ -361,8 +356,6 @@ public class ServerMain implements Closeable {
                                 exportWorkerPool.assign(i, copyExportRequestJob);
                                 exportWorkerPool.freeOnExit(copyExportRequestJob);
                             }
-
-                            log.info().$("export workers count: ").$(workerCount).$();
                         } else {
                             log.advisory().$("export is disabled; set ")
                                     .$(EXPORT_WORKER_COUNT.getPropertyPath())
@@ -386,7 +379,7 @@ public class ServerMain implements Closeable {
             }
         };
 
-        // make sure view definitions loaded before the view compiler job is started
+        // make sure view definitions are loaded before the view compiler job is started,
         // all views have to be loaded with their dependencies before the compiler starts processing notifications
         engine.buildViewGraphs();
 
@@ -479,8 +472,30 @@ public class ServerMain implements Closeable {
         });
         hydrateMetadataThread.start();
 
+        // populate view state store and hydrate metadata cache with view metadata
+        compileViewsThread = new Thread(() -> {
+            // temporary list to re-use for listing dependent views
+            ObjList<TableToken> tempSink = new ObjList<>();
+            try (SqlExecutionContext executionContext = engine.createViewCompilerContext(0)) {
+                ViewCompilerJob.compileAllViews(engine, executionContext, tempSink);
+            }
+        });
+        compileViewsThread.start();
+
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();
+    }
+
+    private void joinThread(Thread thread, boolean ignoreInterrupt) {
+        if (thread != null) {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                if (!ignoreInterrupt) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
     }
 
     protected <T extends Closeable> T freeOnExit(T closeable) {
