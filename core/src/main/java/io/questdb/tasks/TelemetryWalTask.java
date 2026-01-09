@@ -122,7 +122,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
         // for telemetry rate limiting purposes.
         // Note: With many tables, this produces many unique keys in lastEventTimestamps map.
         // By default, telemetry_wal deduplication is disabled (telemetry.wal.event.deduplication.interval=0).
-        return (event << 20) | (tableId & 0xFFFFF);
+        return ((event & 0xFFFF) << 20) | (tableId & 0xFFFFF);
     }
 
     public long getQueueCursor() {

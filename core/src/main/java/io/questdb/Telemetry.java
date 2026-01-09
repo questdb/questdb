@@ -72,7 +72,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
     private final TelemetryType<T> telemetryType;
-    private final int walWeeks;
+    private final int ttlWeeks;
     private long dbSizeEstimateStartTimestamp;
     private RingQueue<T> telemetryQueue;
     private TableWriter writer;
@@ -91,7 +91,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
             telemetrySubSeq = new SCSequence();
             telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
-            walWeeks = telemetryConfiguration.getTtlWeeks();
+            ttlWeeks = telemetryConfiguration.getTtlWeeks();
             deduplicationInterval = telemetryConfiguration.getDeduplicationIntervalMicros();
             lastEventTimestamps = new IntLongHashMap();
         } else {
@@ -102,7 +102,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             telemetryPubSeq = null;
             telemetrySubSeq = null;
             lastEventTimestamps = null;
-            walWeeks = 0;
+            ttlWeeks = 0;
             deduplicationInterval = 0;
         }
     }
@@ -161,7 +161,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                 int ttl = meta.getTtlHoursOrMonths();
                 if (ttl == 0) {
                     shouldDropTable = true;
-                } else if (walWeeks > 0 && ttl != walWeeks * 24 * 7) {
+                } else if (ttlWeeks > 0 && ttl > 0 && ttl != ttlWeeks * 24 * 7) {
                     shouldAlterTtl = true;
                 }
             }
@@ -177,7 +177,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                     .execute(sqlExecutionContext, null)
                     .await();
         } else if (shouldAlterTtl) {
-            compiler.query().$("ALTER TABLE '").$(tableName).$("' SET TTL ").$(walWeeks).$(" WEEKS")
+            compiler.query().$("ALTER TABLE '").$(tableName).$("' SET TTL ").$(ttlWeeks).$(" WEEKS")
                     .compile(sqlExecutionContext)
                     .execute(null)
                     .await();

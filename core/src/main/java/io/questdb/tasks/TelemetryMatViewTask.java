@@ -117,7 +117,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
         // for telemetry rate limiting purposes.
         // Note: With many views, this produces many unique keys in lastEventTimestamps map.
         // By default, telemetry_mat_view deduplication is disabled (telemetry.mat.view.event.deduplication.interval=0).
-        return (event << 20) | (viewTableId & 0xFFFFF);
+        return ((event & 0xFFFF) << 20) | (viewTableId & 0xFFFFF);
     }
 
     public long getQueueCursor() {
