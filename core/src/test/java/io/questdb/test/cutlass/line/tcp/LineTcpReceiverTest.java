@@ -72,6 +72,7 @@ import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -476,16 +477,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public void lockSegment(TableToken tableToken, int walId, int segmentId) {
+            public void lockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
                 if (
-                        Chars.equalsNc(tableToken.getTableName(), weather)
+                        Chars.contains(tableDirName, weather)
                                 && walId == 1
                                 && segmentId == 1
                                 && --count == 0
                 ) {
                     dropWeatherTable();
                 }
-                super.lockSegment(tableToken, walId, segmentId);
+                super.lockSegment(tableDirName, walId, segmentId);
             }
         };
 
@@ -856,12 +857,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public void lockSegment(TableToken tableToken, int walId, int segmentId) {
+            public void lockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
                 if (walId == 1 && segmentId == 1 && count.decrementAndGet() == 0) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
-                super.lockSegment(tableToken, walId, segmentId);
+                super.lockSegment(tableDirName, walId, segmentId);
             }
         };
 
@@ -914,11 +915,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public void lockSegment(TableToken tableToken, int walId, int segmentId) {
-                if (Chars.equalsNc(tableToken.getTableName(), weather) && walId == 1 && segmentId == 1 && --count == 0) {
+            public void lockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
+                if (Chars.contains(tableDirName, weather) && walId == 1 && segmentId == 1 && --count == 0) {
                     renameTable(weather, meteorology);
                 }
-                super.lockSegment(tableToken, walId, segmentId);
+                super.lockSegment(tableDirName, walId, segmentId);
             }
         };
 

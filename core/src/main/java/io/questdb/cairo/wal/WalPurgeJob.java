@@ -296,7 +296,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         try {
                             final int walId = Numbers.parseInt(walName, 3, walName.size());
                             onDiskWalIDSet.add(walId);
-                            boolean walLocked = walLockManager.tryLockWal(tableToken, walId);
+                            boolean walLocked = walLockManager.tryLockWal(tableToken.getDirName(), walId);
                             if (walLocked) {
                                 LOG.debug().$("locked WAL [walId=").$(walId).I$();
                             }
@@ -325,7 +325,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                                             ;
                                                 }
                                                 path.trimTo(walPathLen);
-                                                boolean segmentLocked = walLockManager.tryLockSegment(tableToken, walId, segmentId);
+                                                boolean segmentLocked = walLockManager.tryLockSegment(tableToken.getDirName(), walId, segmentId);
                                                 if (segmentLocked) {
                                                     LOG.debug().$("locked segment [table=").$(tableToken)
                                                             .$(", walId=").$(walId)
@@ -336,7 +336,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                                 final boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
                                                 if (pendingTasks) {
                                                     // Treat is as being locked.
-                                                    walLockManager.unlockSegment(tableToken, walId, segmentId);
+                                                    walLockManager.unlockSegment(tableToken.getDirName(), walId, segmentId);
                                                     LOG.debug().$("unlocked segment [table=").$(tableToken)
                                                             .$(", walId=").$(walId)
                                                             .$(", segmentId=").$(segmentId)
@@ -357,7 +357,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             if (walLocked && walHasPendingTasks) {
                                 // WAL dir cannot be deleted, there are busy segments.
                                 // Unlock it.
-                                walLockManager.unlockWal(tableToken, walId);
+                                walLockManager.unlockWal(tableToken.getDirName(), walId);
                                 LOG.debug().$("unlocked WAL [table=").$(tableToken)
                                         .$(", walId=").$(walId)
                                         .I$();
@@ -763,7 +763,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", segmentId=").$(segmentId)
                     .I$();
             recursiveDelete(setSegmentPath(tableToken, walId, segmentId));
-            walLockManager.unlockSegment(tableToken, walId, segmentId);
+            walLockManager.unlockSegment(tableToken.getDirName(), walId, segmentId);
             LOG.debug().$("unlocked segment [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
@@ -786,7 +786,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", walId=").$(walId)
                     .I$();
             recursiveDelete(setWalPath(tableToken, walId));
-            walLockManager.unlockWal(tableToken, walId);
+            walLockManager.unlockWal(tableToken.getDirName(), walId);
             LOG.debug().$("unlocked WAL [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .I$();
@@ -798,10 +798,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 // Determine if this is a WAL lock or segment lock
                 if (segmentId == WalUtils.SEG_NONE_ID) {
                     // WAL directory lock
-                    walLockManager.unlockWal(tableToken, walId);
+                    walLockManager.unlockWal(tableToken.getDirName(), walId);
                 } else {
                     // Segment lock
-                    walLockManager.unlockSegment(tableToken, walId, segmentId);
+                    walLockManager.unlockSegment(tableToken.getDirName(), walId, segmentId);
                 }
             }
             // For METADATA_WALID (sequencer parts), no lock to release

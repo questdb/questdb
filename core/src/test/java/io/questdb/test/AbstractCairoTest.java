@@ -2116,9 +2116,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertSegmentLockEngagement(boolean expectLocked, TableToken tableToken, int walId, int segmentId) {
         final WalLockManager lockManager = engine.getWalLockManager();
-        boolean locked = lockManager.tryLockSegment(tableToken, walId, segmentId);
+        boolean locked = lockManager.tryLockSegment(tableToken.getDirName(), walId, segmentId);
         if (locked) {
-            lockManager.unlockSegment(tableToken, walId, segmentId);
+            lockManager.unlockSegment(tableToken.getDirName(), walId, segmentId);
         }
         Assert.assertEquals(expectLocked, !locked);
     }
@@ -2126,7 +2126,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected void assertSegmentLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
         TableToken tableToken = engine.verifyTableName(tableName);
         final WalLockManager lockManager = engine.getWalLockManager();
-        Assert.assertEquals(expectExists, lockManager.isSegmentLocked(tableToken, walId, segmentId));
+        Assert.assertEquals(expectExists, lockManager.isSegmentLocked(tableToken.getDirName(), walId, segmentId));
     }
 
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
@@ -2218,9 +2218,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertWalLockEngagement(boolean expectLocked, TableToken tableToken, int walId) {
         final WalLockManager lockManager = engine.getWalLockManager();
-        boolean locked = lockManager.tryLockWal(tableToken, walId);
+        boolean locked = lockManager.tryLockWal(tableToken.getDirName(), walId);
         if (locked) {
-            lockManager.unlockWal(tableToken, walId);
+            lockManager.unlockWal(tableToken.getDirName(), walId);
         }
         Assert.assertEquals(expectLocked, !locked);
     }
@@ -2228,7 +2228,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected void assertWalLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
         TableToken tableToken = engine.verifyTableName(tableName);
         final WalLockManager lockManager = engine.getWalLockManager();
-        Assert.assertEquals(expectExists, lockManager.isWalLocked(tableToken, walId));
+        Assert.assertEquals(expectExists, lockManager.isWalLocked(tableToken.getDirName(), walId));
     }
 
     protected void configureForBackups() throws IOException {
