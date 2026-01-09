@@ -68,7 +68,7 @@ public final class ColumnType {
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
     public static final int LEGACY_VAR_SIZE_AUX_SHL = 3;
-    public static final int MIGRATION_VERSION = 427;
+    public static final int MIGRATION_VERSION = 426;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
     // our type system is absolutely ordered ranging
