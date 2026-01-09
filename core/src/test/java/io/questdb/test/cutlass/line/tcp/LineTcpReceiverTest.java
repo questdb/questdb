@@ -60,17 +60,13 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
@@ -482,7 +478,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             @Override
             public void lockSegment(TableToken tableToken, int walId, int segmentId) {
                 if (
-                        tableToken.getTableName().equals(weather)
+                        Chars.equalsNc(tableToken.getTableName(), weather)
                                 && walId == 1
                                 && segmentId == 1
                                 && --count == 0
@@ -914,23 +910,19 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+        var walSegmentLockManager = new WALSegmentLockManager() {
             private int count = 1;
 
             @Override
-            public long openRWNoCache(LPSZ name, int opts) {
-                if (
-                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && Utf8s.containsAscii(name, weather)
-                                && --count == 0
-                ) {
+            public void lockSegment(TableToken tableToken, int walId, int segmentId) {
+                if (Chars.equalsNc(tableToken.getTableName(), weather) && walId == 1 && segmentId == 1 && --count == 0) {
                     renameTable(weather, meteorology);
                 }
-                return super.openRWNoCache(name, opts);
+                super.lockSegment(tableToken, walId, segmentId);
             }
         };
 
-        runInContext(filesFacade, (receiver) -> {
+        runInContext(walSegmentLockManager, (receiver) -> {
             String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
