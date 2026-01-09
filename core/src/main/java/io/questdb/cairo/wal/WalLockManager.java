@@ -57,7 +57,6 @@ import java.util.concurrent.Semaphore;
  */
 public class WalLockManager {
     private static final Log LOG = LogFactory.getLog(WalLockManager.class);
-    private static final int WAL_LOCK_SENTINEL = WalUtils.SEG_NONE_ID;
     private static final ThreadLocal<StringSink> sinks = new ThreadLocal<>(StringSink::new);
     private final ConcurrentHashMap<Semaphore> locks = new ConcurrentHashMap<>();
 
@@ -88,7 +87,7 @@ public class WalLockManager {
      */
     @TestOnly
     public boolean isWalLocked(TableToken tableToken, int walId) {
-        final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
+        final CharSequence key = makeKey(tableToken, walId);
         Semaphore lock = locks.get(key);
         if (lock == null) {
             return false;
@@ -140,7 +139,7 @@ public class WalLockManager {
      * @throws CairoException if the thread is interrupted while waiting
      */
     public void lockWal(TableToken tableToken, int walId) {
-        final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
+        final CharSequence key = makeKey(tableToken, walId);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         LOG.debug().$("locking WAL [table=").$(tableToken).$(", wal=").$(walId).I$();
         try {
@@ -198,7 +197,7 @@ public class WalLockManager {
      * @return {@code true} if the lock was acquired, {@code false} if already held
      */
     public boolean tryLockWal(TableToken tableToken, int walId) {
-        final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
+        final CharSequence key = makeKey(tableToken, walId);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         boolean locked = lock.tryAcquire();
         if (locked) {
@@ -247,7 +246,7 @@ public class WalLockManager {
      * @param walId      the WAL identifier (e.g., 1 for wal1)
      */
     public void unlockWal(TableToken tableToken, int walId) {
-        final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
+        final CharSequence key = makeKey(tableToken, walId);
         Semaphore lock = locks.get(key);
         if (lock != null) {
             LOG.debug().$("unlock WAL [table=").$(tableToken).$(", wal=").$(walId).I$();
@@ -261,6 +260,13 @@ public class WalLockManager {
         final StringSink sink = sinks.get();
         sink.clear();
         sink.put(tableToken.getDirName()).put('/').put(walId).put('/').put(segmentId);
+        return sink;
+    }
+
+    private static CharSequence makeKey(TableToken tableToken, int walId) {
+        final StringSink sink = sinks.get();
+        sink.clear();
+        sink.put(tableToken.getDirName()).put('/').put(walId);
         return sink;
     }
 }
