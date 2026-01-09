@@ -170,11 +170,13 @@ function export_jemalloc() {
           exit 55
       fi
       jemalloc_so=$(ls $BASE/libjemalloc.so* 2>/dev/null | head -1)
-      if [[ -r "${jemalloc_so}" ]]; then
-          export QDB_JEMALLOC_LIB=${jemalloc_so}
+      jemalloc_preload_so=$(ls $BASE/libjemalloc_preload.so 2>/dev/null)
+      if [[ -r "${jemalloc_so}" && -r "${jemalloc_preload_so}" ]]; then
+          export QDB_JEMALLOC_LIB="${jemalloc_so}:${jemalloc_preload_so}"
           echo "Using jemalloc"
       else
-          echo "Error: QDB_JEMALLOC is enabled but jemalloc library not found in ${BASE}"
+          echo "Error: QDB_JEMALLOC is enabled but jemalloc libraries not found in ${BASE}"
+          echo "Both libjemalloc.so and libjemalloc_preload.so are required."
           echo "Your QuestDB distribution may not include jemalloc."
           echo "QuestDB works with the default system allocator too."
           echo ""

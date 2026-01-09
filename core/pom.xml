@@ -525,6 +525,7 @@
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
                 <platform.dir.name>linux-x86-64</platform.dir.name>
                 <jemalloc.so>libjemalloc.so</jemalloc.so>
+                <jemalloc_preload.so>libjemalloc_preload.so</jemalloc_preload.so>
             </properties>
         </profile>
         <profile>
@@ -555,6 +556,7 @@
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
                 <platform.dir.name>linux-aarch64</platform.dir.name>
                 <jemalloc.so>libjemalloc.so</jemalloc.so>
+                <jemalloc_preload.so>libjemalloc_preload.so</jemalloc_preload.so>
             </properties>
         </profile>
         <profile>
