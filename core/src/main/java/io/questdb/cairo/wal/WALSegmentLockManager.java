@@ -81,7 +81,9 @@ public class WALSegmentLockManager {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw CairoException.critical(0)
-                    .put("Interrupted while acquiring WAL segment lock [key=").put(key).put(']');
+                    .put("Interrupted while acquiring WAL segment lock [table=").put(tableToken)
+                    .put(", wal=").put(walId)
+                    .put(", segment=").put(segmentId).put(']');
         }
         LOG.debug().$("locked WAL segment [table=").$(tableToken)
                 .$(", wal=").$(walId)
