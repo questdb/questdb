@@ -39,7 +39,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.WALSegmentLockManager;
+import io.questdb.cairo.wal.WalLockManager;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.AbstractLineTcpSender;
 import io.questdb.cutlass.line.LineSenderException;
@@ -472,7 +472,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
-        var walSegmentLockManager = new WALSegmentLockManager() {
+        var walSegmentLockManager = new WalLockManager() {
             private int count = 1;
 
             @Override
@@ -852,7 +852,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        var walSegmentLockManager = new WALSegmentLockManager() {
+        var walSegmentLockManager = new WalLockManager() {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
@@ -910,7 +910,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        var walSegmentLockManager = new WALSegmentLockManager() {
+        var walSegmentLockManager = new WalLockManager() {
             private int count = 1;
 
             @Override

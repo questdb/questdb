@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ViewWalWriter;
-import io.questdb.cairo.wal.WALSegmentLockManager;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
+import io.questdb.cairo.wal.WalLockManager;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -65,7 +65,7 @@ public class ViewWalWriterPool extends AbstractMultiTenantPool<ViewWalWriterPool
                 tableToken,
                 engine.getTableSequencerAPI(),
                 engine.getWalDirectoryPolicy(),
-                engine.getWalSegmentLockManager()
+                engine.getWalLockManager()
         );
     }
 
@@ -83,9 +83,9 @@ public class ViewWalWriterPool extends AbstractMultiTenantPool<ViewWalWriterPool
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
                 WalDirectoryPolicy walDirectoryPolicy,
-                WALSegmentLockManager walSegmentLockManager
+                WalLockManager walLockManager
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, walDirectoryPolicy, walSegmentLockManager);
+            super(pool.getConfiguration(), tableToken, tableSequencerAPI, walDirectoryPolicy, walLockManager);
             this.pool = pool;
             this.rootEntry = rootEntry;
             this.entry = entry;
