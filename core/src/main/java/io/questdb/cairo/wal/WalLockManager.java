@@ -25,7 +25,6 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
@@ -65,8 +64,8 @@ public class WalLockManager {
      * Checks if a specific WAL segment is currently locked.
      *
      * @param tableDirName the table directory name identifying the table
-     * @param walId      the WAL identifier (e.g., 1 for wal1)
-     * @param segmentId  the segment identifier within the WAL
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId    the segment identifier within the WAL
      * @return {@code true} if the segment is locked, {@code false} otherwise
      */
     @TestOnly
@@ -83,7 +82,7 @@ public class WalLockManager {
      * Checks if a WAL directory is currently locked.
      *
      * @param tableDirName the table directory name identifying the table
-     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
      * @return {@code true} if the WAL is locked, {@code false} otherwise
      */
     @TestOnly
@@ -103,8 +102,8 @@ public class WalLockManager {
      * Use {@link #tryLockSegment} for non-blocking acquisition.
      *
      * @param tableDirName the table directory name identifying the table
-     * @param walId      the WAL identifier (e.g., 1 for wal1)
-     * @param segmentId  the segment identifier within the WAL
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId    the segment identifier within the WAL
      * @throws CairoException if the thread is interrupted while waiting
      */
     public void lockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
@@ -138,7 +137,7 @@ public class WalLockManager {
      * Use {@link #tryLockWal} for non-blocking acquisition.
      *
      * @param tableDirName the table directory name identifying the table
-     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
      * @throws CairoException if the thread is interrupted while waiting
      */
     public void lockWal(@NotNull CharSequence tableDirName, int walId) {
@@ -172,8 +171,8 @@ public class WalLockManager {
      * Attempts to acquire a lock on a specific WAL segment without blocking.
      *
      * @param tableDirName the table directory name identifying the table
-     * @param walId      the WAL identifier (e.g., 1 for wal1)
-     * @param segmentId  the segment identifier within the WAL
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId    the segment identifier within the WAL
      * @return {@code true} if the lock was acquired, {@code false} if already held
      */
     public boolean tryLockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
@@ -200,7 +199,7 @@ public class WalLockManager {
      * Attempts to acquire a lock on a WAL directory without blocking.
      *
      * @param tableDirName the table directory name identifying the table
-     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
      * @return {@code true} if the lock was acquired, {@code false} if already held
      */
     public boolean tryLockWal(@NotNull CharSequence tableDirName, int walId) {
@@ -224,8 +223,8 @@ public class WalLockManager {
      * but does not throw an exception.
      *
      * @param tableDirName the table directory name identifying the table
-     * @param walId      the WAL identifier (e.g., 1 for wal1)
-     * @param segmentId  the segment identifier within the WAL
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId    the segment identifier within the WAL
      */
     public void unlockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
         final CharSequence key = makeKey(tableDirName, walId, segmentId);
@@ -253,7 +252,7 @@ public class WalLockManager {
      * but does not throw an exception.
      *
      * @param tableDirName the table directory name identifying the table
-     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
      */
     public void unlockWal(@NotNull CharSequence tableDirName, int walId) {
         final CharSequence key = makeKey(tableDirName, walId);
