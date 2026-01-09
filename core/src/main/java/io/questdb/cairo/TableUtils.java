@@ -575,15 +575,15 @@ public final class TableUtils {
     ) {
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRONoCache(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
+            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            mem.jumpTo(0);
+            path.trimTo(rootLen);
+            writeMetadata(structure, tableVersion, tableId, mem);
+            mem.sync(false);
+
+            // create symbol maps
             int symbolMapCount = 0;
             if (!structure.isView()) {
-                mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                mem.jumpTo(0);
-                path.trimTo(rootLen);
-                writeMetadata(structure, tableVersion, tableId, mem);
-                mem.sync(false);
-
-                // create symbol maps
                 for (int i = 0, n = structure.getColumnCount(); i < n; i++) {
                     if (ColumnType.isSymbol(structure.getColumnType(i))) {
                         createSymbolMapFiles(

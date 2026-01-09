@@ -38,6 +38,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -992,6 +993,53 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertTrue("txn_seq/_meta file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
             execute("checkpoint release;");
+        });
+    }
+
+    @Test
+    public void testCheckpointWithViewAlters() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            execute("create view v as select * from test where val > 0;");
+            drainWalAndViewQueues();
+
+            execute("alter view v as select * from test where val > 18;");
+            drainWalAndViewQueues();
+
+            // sanity check: the view exists and works
+            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
+            assertSql("count\n1\n", "select count() from v;");
+
+            execute("checkpoint create;");
+
+            execute("alter view v as select * from test where val > 100;");
+            drainWalAndViewQueues();
+
+            assertSql("count\n0\n", "select count() from v;");
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // the dropped view should be restored
+            assertSql("count\n1\n", "select count() from v;");
+
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+            final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+            Assert.assertNotNull(viewDefinition);
+            Assert.assertEquals("select * from test where val > 18;", viewDefinition.getViewSql());
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken));
+
+            engine.checkpointRelease();
+            assertSql("count\n1\n", "select count() from v;");
         });
     }
 

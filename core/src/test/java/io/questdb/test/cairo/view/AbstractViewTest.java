@@ -141,6 +141,8 @@ class AbstractViewTest extends AbstractCairoTest {
 
     static void assertViewState(String name, String invalidationReason) {
         final TableToken viewToken = engine.getTableTokenIfExists(name);
+        assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken));
+
         final ViewState viewState = engine.getViewStateStore().getViewState(viewToken);
         assertNotNull(viewState);
 
