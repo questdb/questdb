@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WALSegmentLockManager;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.AbstractLineTcpSender;
 import io.questdb.cutlass.line.LineSenderException;
@@ -69,6 +70,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
@@ -474,23 +476,24 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+        var walSegmentLockManager = new WALSegmentLockManager() {
             private int count = 1;
 
             @Override
-            public long openRWNoCache(LPSZ name, int opts) {
+            public void lockSegment(TableToken tableToken, int walId, int segmentId) {
                 if (
-                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && Utf8s.containsAscii(name, weather)
+                        tableToken.getTableName().equals(weather)
+                                && walId == 1
+                                && segmentId == 1
                                 && --count == 0
                 ) {
                     dropWeatherTable();
                 }
-                return super.openRWNoCache(name, opts);
+                super.lockSegment(tableToken, walId, segmentId);
             }
         };
 
-        runInContext(filesFacade, (receiver) -> {
+        runInContext(walSegmentLockManager, (receiver) -> {
             String lineData = weather + ",location=us-midwest temperature=82 1465839830100400200\n" +
                     weather + ",location=us-midwest temperature=83 1465839830100500200\n" +
                     weather + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
@@ -853,23 +856,20 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+        var walSegmentLockManager = new WALSegmentLockManager() {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public long openRWNoCache(LPSZ name, int opts) {
-                if (
-                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && count.decrementAndGet() == 0
-                ) {
+            public void lockSegment(TableToken tableToken, int walId, int segmentId) {
+                if (walId == 1 && segmentId == 1 && count.decrementAndGet() == 0) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
-                return super.openRWNoCache(name, opts);
+                super.lockSegment(tableToken, walId, segmentId);
             }
         };
 
-        runInContext(filesFacade, (receiver) -> {
+        runInContext(walSegmentLockManager, (receiver) -> {
             final String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +

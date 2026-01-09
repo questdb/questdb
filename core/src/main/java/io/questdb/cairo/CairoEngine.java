@@ -77,10 +77,10 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.ViewWalWriter;
+import io.questdb.cairo.wal.WALSegmentLockManager;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalListener;
-import io.questdb.cairo.wal.WALSegmentLockManager;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -189,7 +189,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
-    protected WALSegmentLockManager walSegmentLockManager;
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
@@ -201,6 +200,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
+    private WALSegmentLockManager walSegmentLockManager;
 
     public CairoEngine(CairoConfiguration configuration) {
         try {
@@ -1174,10 +1174,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return walListener;
     }
 
-    public @NotNull WALSegmentLockManager getWalSegmentLockManager() {
-        return walSegmentLockManager;
-    }
-
     // For testing only
     @TestOnly
     public WalReader getWalReader(
@@ -1191,6 +1187,10 @@ public class CairoEngine implements Closeable, WriterSource {
             return new WalReader(configuration, tableToken, walName, segmentId, walRowCount);
         }
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken.getTableName());
+    }
+
+    public @NotNull WALSegmentLockManager getWalSegmentLockManager() {
+        return walSegmentLockManager;
     }
 
     public @NotNull WalWriter getWalWriter(TableToken tableToken) {
@@ -1745,6 +1745,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
         this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
+    }
+
+    @TestOnly
+    public void setWalSegmentLockManager(@NotNull WALSegmentLockManager walSegmentLockManager) {
+        this.walSegmentLockManager = walSegmentLockManager;
     }
 
     public void signalClose() {
