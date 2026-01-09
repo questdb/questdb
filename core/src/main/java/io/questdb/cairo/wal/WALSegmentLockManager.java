@@ -147,7 +147,7 @@ public class WALSegmentLockManager {
     private static CharSequence makeKey(TableToken tableToken, int walId, int segmentId) {
         final StringSink sink = sinks.get();
         sink.clear();
-        sink.put(tableToken.getTableId()).put('/').put(walId).put('/').put(segmentId);
+        sink.put(tableToken.getDirName()).put('/').put(walId).put('/').put(segmentId);
         return sink;
     }
 }
