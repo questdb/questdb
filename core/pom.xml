@@ -70,7 +70,7 @@
     <scm>
         <url>scm:git:https://github.com/questdb/questdb.git</url>
         <connection>scm:git:https://github.com/questdb/questdb.git</connection>
-        <tag>9.2.2</tag>
+        <tag>9.3.1-SNAPSHOT</tag>
     </scm>
 
 

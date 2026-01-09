@@ -35,7 +35,7 @@
         <connection>scm:git:https://github.com/questdb/questdb.git</connection>
         <developerConnection>scm:git:https://github.com/questdb/questdb.git</developerConnection>
         <url>https://github.com/questdb/questdb</url>
-        <tag>9.2.2</tag>
+        <tag>9.3.1-SNAPSHOT</tag>
     </scm>
 
     <build>
