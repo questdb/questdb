@@ -1409,7 +1409,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
 
-            this.viewCompilerWorkerCount = getInt(properties, env, PropertyKey.VIEW_COMPILER_WORKER_COUNT, 1);
+            this.viewCompilerWorkerCount = getInt(properties, env, PropertyKey.VIEW_COMPILER_WORKER_COUNT, 2);
             this.viewCompilerWorkerNapThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_NAP_THRESHOLD, 7_000);
             this.viewCompilerWorkerSleepThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_SLEEP_THRESHOLD, 10_000);
             this.viewCompilerSleepTimeout = getMillis(properties, env, PropertyKey.VIEW_COMPILER_WORKER_SLEEP_TIMEOUT, 10);
