@@ -346,17 +346,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     protected void runInContext(WalLockManager walLockManager, LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
         WalLockManager originalWalLockManager = engine.getWalLockManager();
-        Exception ex;
         engine.setWalLockManager(walLockManager);
         try {
             runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
-            ex = null;
-        } catch (Exception exception) {
-            ex = exception;
-        }
-        engine.setWalLockManager(originalWalLockManager);
-        if (ex != null) {
-            throw ex;
+        } finally {
+            engine.setWalLockManager(originalWalLockManager);
         }
     }
 
