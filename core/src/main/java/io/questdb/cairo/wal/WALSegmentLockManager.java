@@ -72,7 +72,10 @@ public class WALSegmentLockManager {
     public void lockSegment(TableToken tableToken, int walId, int segmentId) {
         final CharSequence key = makeKey(tableToken, walId, segmentId);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
-        LOG.debug().$("locking WAL segment [key=").$(key).I$();
+        LOG.debug().$("locking WAL segment [table=").$(tableToken)
+                .$(", wal=").$(walId)
+                .$(", segment=").$(segmentId)
+                .I$();
         try {
             lock.acquire();
         } catch (InterruptedException e) {
@@ -80,22 +83,26 @@ public class WALSegmentLockManager {
             throw CairoException.critical(0)
                     .put("Interrupted while acquiring WAL segment lock [key=").put(key).put(']');
         }
-        LOG.debug().$("locked WAL segment [key=").$(key).$(", semaphore=").$(lock).I$();
+        LOG.debug().$("locked WAL segment [table=").$(tableToken)
+                .$(", wal=").$(walId)
+                .$(", segment=").$(segmentId)
+                .I$();
     }
 
     // Lock entire WAL directory
     public void lockWal(TableToken tableToken, int walId) {
         final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
-        LOG.debug().$("locking WAL [key=").$(key).I$();
+        LOG.debug().$("locking WAL [table=").$(tableToken).$(", wal=").$(walId).I$();
         try {
             lock.acquire();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw CairoException.critical(0)
-                    .put("Interrupted while acquiring WAL lock [key=").put(key).put(']');
+                    .put("Interrupted while acquiring WAL lock [table=").put(tableToken)
+                    .put(", wal=").put(walId).put(']');
         }
-        LOG.debug().$("locked WAL [key=").$(key).$(", semaphore=").$(lock).I$();
+        LOG.debug().$("locked WAL [table=").$(tableToken).$(", wal=").$(walId).I$();
     }
 
     public boolean tryLockSegment(TableToken tableToken, int walId, int segmentId) {
@@ -103,9 +110,15 @@ public class WALSegmentLockManager {
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         boolean locked = lock.tryAcquire();
         if (locked) {
-            LOG.debug().$("lock WAL segment [key=").$(key).$(", semaphore=").$(lock).I$();
+            LOG.debug().$("lock WAL segment [table=").$(tableToken)
+                    .$(", wal=").$(walId)
+                    .$(", segment=").$(segmentId)
+                    .I$();
         } else {
-            LOG.debug().$("fail to lock WAL segment [key=").$(key).I$();
+            LOG.debug().$("fail to lock WAL segment [table=").$(tableToken)
+                    .$(", wal=").$(walId)
+                    .$(", segment=").$(segmentId)
+                    .I$();
         }
         return locked;
     }
@@ -115,9 +128,9 @@ public class WALSegmentLockManager {
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
         boolean locked = lock.tryAcquire();
         if (locked) {
-            LOG.debug().$("lock WAL [key=").$(key).$(", semaphore=").$(lock).I$();
+            LOG.debug().$("lock WAL [table=").$(tableToken).$(", wal=").$(walId).I$();
         } else {
-            LOG.debug().$("fail to lock WAL [key=").$(key).I$();
+            LOG.debug().$("fail to lock WAL [table=").$(tableToken).$(", wal=").$(walId).I$();
         }
         return locked;
     }
@@ -126,10 +139,17 @@ public class WALSegmentLockManager {
         final CharSequence key = makeKey(tableToken, walId, segmentId);
         Semaphore lock = locks.get(key);
         if (lock != null) {
-            LOG.debug().$("unlock WAL segment [key=").$(key).I$();
+            LOG.debug().$("unlock WAL segment [table=").$(tableToken)
+                    .$(", wal=").$(walId)
+                    .$(", segment=").$(segmentId)
+                    .I$();
             lock.release();
         } else {
-            LOG.debug().$("fail to unlock WAL segment: no lock [key=").$(key).I$();
+            LOG.debug()
+                    .$("fail to unlock WAL segment: no lock [table=").$(tableToken)
+                    .$(", wal=").$(walId)
+                    .$(", segment=").$(segmentId)
+                    .I$();
         }
     }
 
@@ -137,10 +157,10 @@ public class WALSegmentLockManager {
         final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
         Semaphore lock = locks.get(key);
         if (lock != null) {
-            LOG.debug().$("unlock WAL [key=").$(key).I$();
+            LOG.debug().$("unlock WAL [table=").$(tableToken).$(", wal=").$(walId).I$();
             lock.release();
         } else {
-            LOG.debug().$("fail to unlock WAL: no lock [key=").$(key).I$();
+            LOG.debug().$("fail to unlock WAL: no lock [table=").$(tableToken).$(", wal=").$(walId).I$();
         }
     }
 
