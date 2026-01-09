@@ -37,6 +37,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.sql.RandomSelectGenerator;
@@ -272,11 +273,15 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             selectGenerator.registerTable(baseTableName);
 
             final ObjList<String> viewSqls = new ObjList<>();
-            for (final String viewName : viewNames) {
-                final String viewSql = selectGenerator.generate();
-                viewSqls.add(viewSql);
-                createView(viewName, viewSql);
-                selectGenerator.registerTable(viewName);
+            try (ViewCompilerJob viewCompiler = new ViewCompilerJob(0, engine, 0)) {
+                for (final String viewName : viewNames) {
+                    final String viewSql = selectGenerator.generate();
+                    viewSqls.add(viewSql);
+                    createView(viewName, viewSql);
+                    LOG.info().$("created view ").$(viewName).$(" as ").$(viewSql).$();
+                    viewCompiler.run(0); // compile the view before registering it. so if there is a dependant view it gets to see this view's metadata
+                    selectGenerator.registerTable(viewName);
+                }
             }
 
             AtomicBoolean stop = new AtomicBoolean();
@@ -304,22 +309,29 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     final String viewName = viewNames[i];
                     final String viewSql = viewSqls.getQuick(i);
 
-                    int orderByColumnIndex = 0;
+                    // Order by ALL non-binary columns to ensure deterministic ordering.
+                    // Ordering by a single low-cardinality column can cause flaky failures
+                    // when multiple rows have the same value.
+                    StringSink orderByClause = new StringSink();
                     final TableToken viewToken = engine.getTableTokenIfExists(viewName);
                     try (TableMetadata metadata = engine.getTableMetadata(viewToken)) {
                         for (int j = 0; j < metadata.getColumnCount(); j++) {
                             if (metadata.getColumnType(j) != ColumnType.BINARY) {
-                                orderByColumnIndex = j + 1;
-                                break;
+                                if (!orderByClause.isEmpty()) {
+                                    orderByClause.put(", ");
+                                }
+                                orderByClause.put(j + 1);
                             }
                         }
                     }
+                    String orderBy = !orderByClause.isEmpty() ? " order by " + orderByClause : "";
 
+                    LOG.info().$("asserting view ").$(viewName).$(" against ").$(viewSql).$(", order-by: ").$(orderBy).I$();
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,
-                            orderByColumnIndex > 0 ? "(" + viewSql + ") order by " + orderByColumnIndex : viewSql,
-                            orderByColumnIndex > 0 ? "(" + viewName + ") order by " + orderByColumnIndex : viewName,
+                            "(" + viewSql + ")" + orderBy,
+                            "(" + viewName + ")" + orderBy,
                             LOG
                     );
                 }

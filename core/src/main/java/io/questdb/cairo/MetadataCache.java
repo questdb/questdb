@@ -151,6 +151,12 @@ public class MetadataCache implements QuietCloseable {
             return;
         }
 
+        if (token.isView()) {
+            // views do not have _meta file
+            // view metadata will be added to the cache when the view is compiled
+            return;
+        }
+
         Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
 
         // set up the dir path

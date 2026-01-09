@@ -126,7 +126,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public void close() {
-        LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
+        LOG.debug().$("materialized view refresh job closing [workerId=").$(workerId).I$();
         Misc.free(refreshSqlExecutionContext);
         Misc.free(txnRangeLoader);
     }

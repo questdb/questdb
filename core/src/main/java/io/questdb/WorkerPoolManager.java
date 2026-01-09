@@ -83,7 +83,7 @@ public abstract class WorkerPoolManager implements Target {
         }
 
         if (config.getWorkerCount() < 1) {
-            LOG.info().$("using SHARED pool [requester=").$(requester)
+            LOG.info().$("default thread pool [requester=").$(requester)
                     .$(", workers=").$(sharedPool.getWorkerCount())
                     .$(", pool=").$(sharedPool.getPoolName())
                     .I$();
@@ -96,7 +96,7 @@ public abstract class WorkerPoolManager implements Target {
             pool = new WorkerPool(config);
             dedicatedPools.put(poolName, pool);
         }
-        LOG.info().$("new DEDICATED pool [name=").$(poolName)
+        LOG.info().$("custom thread pool [name=").$(poolName)
                 .$(", requester=").$(requester)
                 .$(", workers=").$(pool.getWorkerCount())
                 .$(", priority=").$(config.workerPoolPriority())
@@ -156,7 +156,7 @@ public abstract class WorkerPoolManager implements Target {
     private static void startWorkerPool(Log sharedPoolLog, WorkerPool p, String msg) {
         if (p != null) {
             p.start(sharedPoolLog);
-            LOG.info().$(msg).$(p.getPoolName())
+            LOG.debug().$(msg).$(p.getPoolName())
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
         }
@@ -164,7 +164,7 @@ public abstract class WorkerPoolManager implements Target {
 
     private void closePool(WorkerPool p, String message) {
         if (p != null) {
-            LOG.info().$(message).$(p.getPoolName())
+            LOG.debug().$(message).$(p.getPoolName())
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
             p.halt();
