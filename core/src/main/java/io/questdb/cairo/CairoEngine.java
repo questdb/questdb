@@ -202,7 +202,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
-    private WalLockManager walLockManager;
+    private @NotNull WalLockManager walLockManager;
 
     public CairoEngine(CairoConfiguration configuration) {
         try {

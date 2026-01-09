@@ -37,17 +37,38 @@ import java.util.concurrent.Semaphore;
 
 /**
  * Manages in-memory locks for WAL directories and segments.
+ * <p>
  * This provides proper synchronization between Java and Rust code
  * for WAL operations, replacing file-based locking which has
  * platform-specific issues on Windows.
+ * <p>
+ * The manager maintains two types of locks:
+ * <ul>
+ *   <li><b>WAL locks</b> - Protect an entire WAL directory (e.g., wal1, wal2)</li>
+ *   <li><b>Segment locks</b> - Protect individual segments within a WAL (e.g., wal1/0, wal1/1)</li>
+ * </ul>
+ * <p>
+ * Locks are implemented using {@link Semaphore} with a single permit, providing
+ * mutual exclusion. The blocking methods ({@link #lockWal}, {@link #lockSegment})
+ * will wait indefinitely until the lock becomes available, while the try methods
+ * ({@link #tryLockWal}, {@link #tryLockSegment}) return immediately.
+ * <p>
+ * Thread safety: All methods are thread-safe and can be called concurrently.
  */
 public class WalLockManager {
     private static final Log LOG = LogFactory.getLog(WalLockManager.class);
-    // Use same sentinel as Rust for WAL directory locks (not actual segments)
     private static final int WAL_LOCK_SENTINEL = WalUtils.SEG_NONE_ID;
     private static final ThreadLocal<StringSink> sinks = new ThreadLocal<>(StringSink::new);
     private final ConcurrentHashMap<Semaphore> locks = new ConcurrentHashMap<>();
 
+    /**
+     * Checks if a specific WAL segment is currently locked.
+     *
+     * @param tableToken the table token identifying the table
+     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId  the segment identifier within the WAL
+     * @return {@code true} if the segment is locked, {@code false} otherwise
+     */
     @TestOnly
     public boolean isSegmentLocked(TableToken tableToken, int walId, int segmentId) {
         final CharSequence key = makeKey(tableToken, walId, segmentId);
@@ -58,6 +79,13 @@ public class WalLockManager {
         return lock.availablePermits() == 0;
     }
 
+    /**
+     * Checks if a WAL directory is currently locked.
+     *
+     * @param tableToken the table token identifying the table
+     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @return {@code true} if the WAL is locked, {@code false} otherwise
+     */
     @TestOnly
     public boolean isWalLocked(TableToken tableToken, int walId) {
         final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
@@ -68,7 +96,17 @@ public class WalLockManager {
         return lock.availablePermits() == 0;
     }
 
-    // Lock specific segment
+    /**
+     * Acquires a lock on a specific WAL segment, blocking until available.
+     * <p>
+     * This method blocks indefinitely until the lock can be acquired.
+     * Use {@link #tryLockSegment} for non-blocking acquisition.
+     *
+     * @param tableToken the table token identifying the table
+     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId  the segment identifier within the WAL
+     * @throws CairoException if the thread is interrupted while waiting
+     */
     public void lockSegment(TableToken tableToken, int walId, int segmentId) {
         final CharSequence key = makeKey(tableToken, walId, segmentId);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
@@ -91,7 +129,16 @@ public class WalLockManager {
                 .I$();
     }
 
-    // Lock entire WAL directory
+    /**
+     * Acquires a lock on an entire WAL directory, blocking until available.
+     * <p>
+     * This method blocks indefinitely until the lock can be acquired.
+     * Use {@link #tryLockWal} for non-blocking acquisition.
+     *
+     * @param tableToken the table token identifying the table
+     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @throws CairoException if the thread is interrupted while waiting
+     */
     public void lockWal(TableToken tableToken, int walId) {
         final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
@@ -107,6 +154,24 @@ public class WalLockManager {
         LOG.debug().$("locked WAL [table=").$(tableToken).$(", wal=").$(walId).I$();
     }
 
+    /**
+     * Clears all locks from the manager.
+     * <p>
+     * This method should only be used during testing or shutdown scenarios.
+     * Calling this while locks are held may lead to inconsistent state.
+     */
+    public void reset() {
+        locks.clear();
+    }
+
+    /**
+     * Attempts to acquire a lock on a specific WAL segment without blocking.
+     *
+     * @param tableToken the table token identifying the table
+     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId  the segment identifier within the WAL
+     * @return {@code true} if the lock was acquired, {@code false} if already held
+     */
     public boolean tryLockSegment(TableToken tableToken, int walId, int segmentId) {
         final CharSequence key = makeKey(tableToken, walId, segmentId);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
@@ -125,6 +190,13 @@ public class WalLockManager {
         return locked;
     }
 
+    /**
+     * Attempts to acquire a lock on a WAL directory without blocking.
+     *
+     * @param tableToken the table token identifying the table
+     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @return {@code true} if the lock was acquired, {@code false} if already held
+     */
     public boolean tryLockWal(TableToken tableToken, int walId) {
         final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
         Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
@@ -137,6 +209,16 @@ public class WalLockManager {
         return locked;
     }
 
+    /**
+     * Releases a lock on a specific WAL segment.
+     * <p>
+     * If the segment was not previously locked, this method logs a debug message
+     * but does not throw an exception.
+     *
+     * @param tableToken the table token identifying the table
+     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId  the segment identifier within the WAL
+     */
     public void unlockSegment(TableToken tableToken, int walId, int segmentId) {
         final CharSequence key = makeKey(tableToken, walId, segmentId);
         Semaphore lock = locks.get(key);
@@ -155,6 +237,15 @@ public class WalLockManager {
         }
     }
 
+    /**
+     * Releases a lock on a WAL directory.
+     * <p>
+     * If the WAL was not previously locked, this method logs a debug message
+     * but does not throw an exception.
+     *
+     * @param tableToken the table token identifying the table
+     * @param walId      the WAL identifier (e.g., 1 for wal1)
+     */
     public void unlockWal(TableToken tableToken, int walId) {
         final CharSequence key = makeKey(tableToken, walId, WAL_LOCK_SENTINEL);
         Semaphore lock = locks.get(key);

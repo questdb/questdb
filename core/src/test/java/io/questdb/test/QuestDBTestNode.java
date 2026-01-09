@@ -184,6 +184,7 @@ public class QuestDBTestNode {
             engine.getTableIdGenerator().open();
             engine.getTableIdGenerator().reset();
             engine.resetNameRegistryMemory();
+            engine.getWalLockManager().reset();
             engine.setUp();
         }
 
