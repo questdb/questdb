@@ -104,15 +104,16 @@ public class HTTPSerialParquetExporter {
                     // in security context that doesn't allow database modifications we would allow
                     // temp table creation and selection in this particular setting.
                     SecurityContext sec = sqlExecutionContext.getSecurityContext();
+                    PageFrameCursor pageFrameCursor;
                     try {
                         sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE);
                         CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
                         factory = cc.getRecordCursorFactory();
                         assert factory.supportsPageFrameCursor(); // simple temp table must support page frame cursor
+                        pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                     } finally {
                         sqlExecutionContext.with(sec);
                     }
-                    PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                     task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata(), descending);
                     factory = null; // transfer ownership to the task
                 }
