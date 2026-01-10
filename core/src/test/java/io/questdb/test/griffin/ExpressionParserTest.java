@@ -1644,6 +1644,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)");
     }
 
+    @Test
+    public void testWindowFunctionPartitionByFunctionCall() throws SqlException {
+        x("row_number over (partition by 'y' ts timestamp_floor order by temp desc)",
+                "row_number() over (partition by timestamp_floor('y', ts) order by temp desc)");
+    }
+
     // Window function tests
     @Test
     public void testWindowFunctionSimple() throws SqlException {

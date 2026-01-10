@@ -52,8 +52,11 @@ public class RpnBuilder implements ExpressionParserListener {
         if (node == null) {
             return;
         }
-        // For operations (binary operators like LIKE, +, -, etc.)
-        if (node.type == ExpressionNode.OPERATION) {
+        // Match PostOrderTreeTraversalAlgo's behavior:
+        // paramCount < 3: uses lhs/rhs
+        // paramCount >= 3: uses args
+        if (node.paramCount < 3) {
+            // Use lhs/rhs for operands
             if (node.lhs != null) {
                 serializeExpressionToRpn(node.lhs);
                 sink.put(' ');
@@ -63,17 +66,14 @@ public class RpnBuilder implements ExpressionParserListener {
                 sink.put(' ');
             }
             sink.put(node.token);
-        } else if (node.type == ExpressionNode.FUNCTION) {
-            // For functions, serialize args first then function name
+        } else {
+            // Use args for 3+ parameters
             ObjList<ExpressionNode> args = node.args;
             for (int i = 0, n = args.size(); i < n; i++) {
                 if (i > 0) sink.put(' ');
                 serializeExpressionToRpn(args.getQuick(i));
             }
             if (args.size() > 0) sink.put(' ');
-            sink.put(node.token);
-        } else {
-            // For literals, constants, etc. - just output the token
             sink.put(node.token);
         }
     }

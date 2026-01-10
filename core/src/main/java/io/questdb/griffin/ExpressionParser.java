@@ -2201,46 +2201,36 @@ public class ExpressionParser {
 
     /**
      * Tree builder for window clause expressions.
-     * Builds expression trees using RPN stack-based algorithm.
+     * Builds expression trees matching ExpressionTreeBuilder's behavior.
+     * Uses lhs/rhs for paramCount < 3, args for paramCount >= 3.
      */
     private static class WindowExprTreeBuilder implements ExpressionParserListener {
-        private final java.util.ArrayList<ExpressionNode> stack = new java.util.ArrayList<>();
+        private final java.util.ArrayDeque<ExpressionNode> stack = new java.util.ArrayDeque<>();
 
         public ExpressionNode getResult() {
-            return stack.size() > 0 ? stack.get(stack.size() - 1) : null;
+            return stack.peek();
         }
 
         @Override
         public void onNode(ExpressionNode node) {
-            // For operators/functions with arguments, pop operands from stack and link them
-            if (node.type == ExpressionNode.OPERATION || node.type == ExpressionNode.FUNCTION) {
-                int paramCount = node.paramCount;
-                if (paramCount == 0 && node.type == ExpressionNode.OPERATION) {
-                    // Binary operators have implicit param count of 2
-                    paramCount = 2;
-                }
-                // Link arguments based on the expression type
-                if (node.type == ExpressionNode.OPERATION && paramCount >= 2) {
-                    if (stack.size() >= 2) {
-                        node.rhs = stack.remove(stack.size() - 1);
-                        node.lhs = stack.remove(stack.size() - 1);
-                    } else if (stack.size() == 1) {
-                        // Unary operator
-                        node.rhs = stack.remove(stack.size() - 1);
+            // Match ExpressionTreeBuilder's behavior exactly
+            switch (node.paramCount) {
+                case 0:
+                    break;
+                case 1:
+                    node.rhs = stack.poll();
+                    break;
+                case 2:
+                    node.rhs = stack.poll();
+                    node.lhs = stack.poll();
+                    break;
+                default:
+                    for (int i = 0; i < node.paramCount; i++) {
+                        node.args.add(stack.poll());
                     }
-                } else if (node.type == ExpressionNode.FUNCTION && paramCount > 0) {
-                    // For functions, args are already populated by expression parser
-                    // But we may need to pop from stack if they were separate nodes
-                    for (int i = 0; i < paramCount && stack.size() > 0; i++) {
-                        // Only pop if args list is empty (not pre-populated)
-                        if (node.args.size() < paramCount) {
-                            ExpressionNode arg = stack.remove(stack.size() - 1);
-                            node.args.insert(0, node.args.size(), arg);
-                        }
-                    }
-                }
+                    break;
             }
-            stack.add(node);
+            stack.push(node);
         }
 
         public void reset() {
