@@ -1868,4 +1868,163 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
             });
         });
     }
+
+    // ========== LARGE BATCH BUFFER GROWTH TESTS ==========
+
+    /**
+     * Tests that the server can handle a single large batch that exceeds the initial recv buffer size.
+     * <p>
+     * The default recv buffer is 128KB. This test sends ~10,000 rows in a single flush,
+     * which produces a message of approximately 600KB+. This exercises the buffer growth
+     * code path in LineTcpConnectionContext.handleV4Protocol().
+     * <p>
+     * This is a regression test for the issue where large ILPv4 messages would cause
+     * an infinite loop because the buffer couldn't grow to accommodate the full message.
+     */
+    @Test
+    public void testLargeBatchExceedsInitialBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                // 10,000 rows with multiple columns produces a ~600KB message,
+                // which exceeds the default 128KB recv buffer
+                int rowCount = 10_000;
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    // NO autoFlushRows - send everything in a single batch
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("large_batch_test")
+                                .symbol("exchange", "NYSE")
+                                .symbol("currency", i % 2 == 0 ? "USD" : "EUR")
+                                .longColumn("trade_id", i)
+                                .longColumn("volume", 100 + (i % 10000))
+                                .doubleColumn("price", 100.0 + (i % 1000) * 0.01)
+                                .doubleColumn("bid", 99.5 + (i % 1000) * 0.01)
+                                .doubleColumn("ask", 100.5 + (i % 1000) * 0.01)
+                                .intColumn("sequence", i % 1000000)
+                                .floatColumn("spread", 0.5f + (i % 100) * 0.01f)
+                                .stringColumn("venue", "New York")
+                                .boolColumn("is_buy", i % 2 == 0)
+                                .at(1704067200000000L + i * 1000L);
+                    }
+                    // Single flush - creates one large message
+                    sender.flush();
+                }
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    try (TableReader reader = getReader("large_batch_test")) {
+                        Assert.assertEquals(rowCount, reader.size());
+                    }
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests an even larger batch (50K rows) to ensure buffer can grow multiple times if needed.
+     */
+    @Test
+    public void testVeryLargeBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                // 50,000 rows produces a ~3MB message
+                int rowCount = 50_000;
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    // NO autoFlushRows - send everything in a single batch
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("very_large_batch")
+                                .symbol("partition", "p" + (i % 10))
+                                .longColumn("id", i)
+                                .doubleColumn("value", i * 0.1)
+                                .stringColumn("data", "row_" + i)
+                                .at(1000000000000L + i * 1000000L);
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    try (TableReader reader = getReader("very_large_batch")) {
+                        Assert.assertEquals(rowCount, reader.size());
+                    }
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests large batch with long string values to maximize row size.
+     * This creates a message with larger per-row overhead.
+     */
+    @Test
+    public void testLargeBatchWithLongStrings() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                // Create a moderately long string (500 chars) to increase message size
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < 50; i++) {
+                    sb.append("0123456789");
+                }
+                String longString = sb.toString();
+
+                // 5,000 rows with 500-char strings = ~2.5MB of string data alone
+                int rowCount = 5_000;
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("large_strings_batch")
+                                .symbol("tag", "batch")
+                                .stringColumn("long_data", longString)
+                                .longColumn("id", i)
+                                .at(1000000000000L + i * 1000000L);
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    try (TableReader reader = getReader("large_strings_batch")) {
+                        Assert.assertEquals(rowCount, reader.size());
+                    }
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests multiple large batches in sequence without reconnecting.
+     * This ensures buffer handling works correctly across multiple messages.
+     */
+    @Test
+    public void testMultipleLargeBatchesSequential() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                int batchCount = 5;
+                int rowsPerBatch = 10_000;
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    for (int batch = 0; batch < batchCount; batch++) {
+                        for (int i = 0; i < rowsPerBatch; i++) {
+                            sender.table("multi_large_batch")
+                                    .symbol("batch", "b" + batch)
+                                    .longColumn("id", batch * rowsPerBatch + i)
+                                    .doubleColumn("value", i * 0.1)
+                                    .stringColumn("info", "batch" + batch + "_row" + i)
+                                    .at(1000000000000L + batch * 100000000000L + i * 1000000L);
+                        }
+                        // Flush each batch separately - each is a large message
+                        sender.flush();
+                    }
+                }
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    try (TableReader reader = getReader("multi_large_batch")) {
+                        Assert.assertEquals(batchCount * rowsPerBatch, reader.size());
+                    }
+                });
+            });
+        });
+    }
 }

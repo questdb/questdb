@@ -1518,4 +1518,199 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
+
+    // ==================== Large Batch Buffer Growth Tests ====================
+
+    /**
+     * Tests that HTTP transport can handle a single large batch that exceeds the initial receive buffer.
+     * <p>
+     * This test sends 10,000 rows in a single flush with multiple columns per row,
+     * producing a message of approximately 600KB+. This exercises the buffer growth
+     * and chunked transfer handling in the HTTP processor.
+     * <p>
+     * This is a regression test to ensure large ILPv4 HTTP messages are handled correctly.
+     */
+    @Test
+    public void testLargeBatchExceedsInitialBuffer() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "131072" // 128KB initial buffer
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                int rowCount = 10_000;
+
+                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    // NO autoFlushRows - send everything in a single batch
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("large_batch_test")
+                                .symbol("exchange", "NYSE")
+                                .symbol("currency", i % 2 == 0 ? "USD" : "EUR")
+                                .longColumn("trade_id", i)
+                                .longColumn("volume", 100 + (i % 10000))
+                                .doubleColumn("price", 100.0 + (i % 1000) * 0.01)
+                                .doubleColumn("bid", 99.5 + (i % 1000) * 0.01)
+                                .doubleColumn("ask", 100.5 + (i % 1000) * 0.01)
+                                .intColumn("sequence", i % 1000000)
+                                .floatColumn("spread", 0.5f + (i % 100) * 0.01f)
+                                .stringColumn("venue", "New York")
+                                .boolColumn("is_buy", i % 2 == 0)
+                                .at(1704067200000000L + i * 1000L);
+                    }
+                    // Single flush - creates one large HTTP request
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("large_batch_test");
+                serverMain.assertSql("select count() from large_batch_test", "count\n10000\n");
+            }
+        });
+    }
+
+    /**
+     * Tests an even larger batch (50K rows) to ensure HTTP can handle very large payloads.
+     */
+    @Test
+    public void testVeryLargeBatch() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "131072" // 128KB initial buffer
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                int rowCount = 50_000;
+
+                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    // NO autoFlushRows - send everything in a single batch
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("very_large_batch")
+                                .symbol("partition", "p" + (i % 10))
+                                .longColumn("id", i)
+                                .doubleColumn("value", i * 0.1)
+                                .stringColumn("data", "row_" + i)
+                                .at(1000000000000L + i * 1000000L);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("very_large_batch");
+                serverMain.assertSql("select count() from very_large_batch", "count\n50000\n");
+            }
+        });
+    }
+
+    /**
+     * Tests large batch with long string values to maximize row size.
+     * This creates a message with larger per-row overhead.
+     */
+    @Test
+    public void testLargeBatchWithLongStrings() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "131072" // 128KB initial buffer
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Create a moderately long string (500 chars) to increase message size
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < 50; i++) {
+                    sb.append("0123456789");
+                }
+                String longString = sb.toString();
+
+                // 5,000 rows with 500-char strings = ~2.5MB of string data alone
+                int rowCount = 5_000;
+
+                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("large_strings_batch")
+                                .symbol("tag", "batch")
+                                .stringColumn("long_data", longString)
+                                .longColumn("id", i)
+                                .at(1000000000000L + i * 1000000L);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("large_strings_batch");
+                serverMain.assertSql("select count() from large_strings_batch", "count\n5000\n");
+            }
+        });
+    }
+
+    /**
+     * Tests multiple large batches in sequence without reconnecting.
+     * This ensures HTTP connection handling works correctly across multiple large requests.
+     */
+    @Test
+    public void testMultipleLargeBatchesSequential() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "131072" // 128KB initial buffer
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                int batchCount = 5;
+                int rowsPerBatch = 10_000;
+
+                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    for (int batch = 0; batch < batchCount; batch++) {
+                        for (int i = 0; i < rowsPerBatch; i++) {
+                            sender.table("multi_large_batch")
+                                    .symbol("batch", "b" + batch)
+                                    .longColumn("id", batch * rowsPerBatch + i)
+                                    .doubleColumn("value", i * 0.1)
+                                    .stringColumn("info", "batch" + batch + "_row" + i)
+                                    .at(1000000000000L + batch * 100000000000L + i * 1000000L);
+                        }
+                        // Flush each batch separately - each is a large HTTP request
+                        sender.flush();
+                    }
+                }
+
+                serverMain.awaitTable("multi_large_batch");
+                serverMain.assertSql("select count() from multi_large_batch", "count\n50000\n");
+            }
+        });
+    }
+
+    /**
+     * Tests large batch with all column types to ensure comprehensive coverage.
+     */
+    @Test
+    public void testLargeBatchAllColumnTypes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "131072" // 128KB initial buffer
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                int rowCount = 10_000;
+
+                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("all_types_batch")
+                                // Multiple symbol columns
+                                .symbol("sym1", "s" + (i % 10))
+                                .symbol("sym2", "t" + (i % 5))
+                                // All numeric types
+                                .byteColumn("byte_col", (byte) (i % 128))
+                                .shortColumn("short_col", (short) (i % 32000))
+                                .intColumn("int_col", i)
+                                .longColumn("long_col", (long) i * 1000000L)
+                                .floatColumn("float_col", i * 0.1f)
+                                .doubleColumn("double_col", i * 0.001)
+                                // Boolean
+                                .boolColumn("bool_col", i % 2 == 0)
+                                // String
+                                .stringColumn("str_col", "value_" + i)
+                                // Timestamp column
+                                .timestampColumn("ts_col", 1704067200000000L + i * 1000L)
+                                // Designated timestamp
+                                .at(1704067200000000L + i * 1000L);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("all_types_batch");
+                serverMain.assertSql("select count() from all_types_batch", "count\n10000\n");
+            }
+        });
+    }
 }

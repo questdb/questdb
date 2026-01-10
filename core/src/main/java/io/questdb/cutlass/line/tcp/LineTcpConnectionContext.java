@@ -259,6 +259,20 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 if (peerDisconnected) {
                     return IOContextResult.NEEDS_DISCONNECT;
                 }
+                // Check if buffer is full and needs to grow
+                if (recvBuffer.getBufPos() == recvBuffer.getBufEnd()) {
+                    // First compact V4 buffer to move processed data out
+                    compactV4RecvBuffer();
+                    // Then try to grow if still needed
+                    if (recvBuffer.getBufPos() == recvBuffer.getBufEnd()) {
+                        if (!recvBuffer.tryCompactOrGrowBuffer()) {
+                            LOG.error().$('[').$(getFd()).$("] v4 message too large for buffer").$();
+                            return IOContextResult.NEEDS_DISCONNECT;
+                        }
+                        // Update handler's buffer pointer after growth
+                        v4Handler.setRecvBuffer(recvBuffer.getBufStart());
+                    }
+                }
                 return IOContextResult.NEEDS_READ;
 
             case IlpV4ProtocolHandler.RESULT_NEEDS_WRITE:
