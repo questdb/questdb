@@ -368,8 +368,6 @@ public class IlpV4HttpSender implements Closeable {
     }
 
     private void sendHttp(byte[] data) throws IOException {
-        System.out.println("[IlpV4HttpSender] Sending " + data.length + " bytes to http://" + host + ":" + port + WRITE_PATH);
-
         try {
             HttpClient.Request request = client.newRequest(host, port)
                     .POST()
