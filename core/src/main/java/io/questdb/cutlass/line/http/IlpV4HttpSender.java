@@ -95,7 +95,8 @@ public class IlpV4HttpSender implements Sender {
     private IlpV4HttpSender(String host, int port, HttpClientConfiguration clientConfiguration) {
         this.host = host;
         this.port = port;
-        this.encoder = new IlpV4MessageEncoder();
+        // Create encoder without its own buffer - we'll set the sink before each flush
+        this.encoder = new IlpV4MessageEncoder(null);
         this.tableBuffers = new HashMap<>();
         this.tableOrder = new ObjList<>();
         this.currentTable = null;
@@ -341,15 +342,24 @@ public class IlpV4HttpSender implements Sender {
         }
 
         try {
-            // Encode all tables
-            encoder.reset();
+            // Create HTTP request and prepare for content
+            HttpClient.Request request = client.newRequest(host, port)
+                    .POST()
+                    .url(WRITE_PATH)
+                    .header("Content-Type", CONTENT_TYPE);
+            request.withContent();
+
+            // Create sink that writes directly to the HTTP request buffer
+            IlpV4HttpRequestSink sink = new IlpV4HttpRequestSink(request);
+            encoder.setSink(sink);
             encoder.setGorillaEnabled(gorillaEnabled);
 
-            // Reserve space for header
-            int headerPos = encoder.getPosition();
-            encoder.setPosition(headerPos + HEADER_SIZE);
+            // Write placeholder header (will be patched later)
+            for (int i = 0; i < HEADER_SIZE; i++) {
+                sink.putByte((byte) 0);
+            }
 
-            // Encode each table
+            // Encode each table directly to the HTTP request buffer
             for (int i = 0, n = tableOrder.size(); i < n; i++) {
                 String tableName = tableOrder.get(i);
                 IlpV4TableBuffer buffer = tableBuffers.get(tableName);
@@ -358,13 +368,8 @@ public class IlpV4HttpSender implements Sender {
                 }
             }
 
-            // Calculate payload length
-            int payloadLength = encoder.getPosition() - headerPos - HEADER_SIZE;
-
-            // Write header at the beginning
-            int endPos = encoder.getPosition();
-            encoder.setPosition(headerPos);
-
+            // Calculate payload length and table count
+            int payloadLength = request.getContentLength() - HEADER_SIZE;
             int tableCount = 0;
             for (int i = 0, n = tableOrder.size(); i < n; i++) {
                 String tableName = tableOrder.get(i);
@@ -373,18 +378,53 @@ public class IlpV4HttpSender implements Sender {
                     tableCount++;
                 }
             }
-            encoder.writeHeader(tableCount, payloadLength);
-            encoder.setPosition(endPos);
 
-            // Send the message via HTTP - directly from encoder's native buffer
-            sendHttp(encoder.getBufferAddress(), encoder.getPosition());
+            // Get header address AFTER all encoding (in case buffer relocated)
+            long headerAddress = request.getContentStart();
+
+            // Patch header directly in the buffer
+            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress, (byte) 'I');
+            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 1, (byte) 'L');
+            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 2, (byte) 'P');
+            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 3, (byte) '4');
+            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 4, VERSION_1);
+            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 5, gorillaEnabled ? FLAG_GORILLA : 0);
+            io.questdb.std.Unsafe.getUnsafe().putShort(headerAddress + 6, (short) tableCount);
+            io.questdb.std.Unsafe.getUnsafe().putInt(headerAddress + 8, payloadLength);
+
+            // Send the request
+            HttpClient.ResponseHeaders response = request.send(timeoutMs);
+            response.await(timeoutMs);
+
+            DirectUtf8Sequence statusCode = response.getStatusCode();
+            if (statusCode == null || !Utf8s.equalsNcAscii("200", statusCode) && !Utf8s.equalsNcAscii("204", statusCode)) {
+                errorSink.clear();
+                errorSink.put("HTTP error: ");
+                if (statusCode != null) {
+                    errorSink.put(statusCode);
+                } else {
+                    errorSink.put("no status");
+                }
+
+                Response resp = response.getResponse();
+                if (resp != null) {
+                    Fragment fragment = resp.recv();
+                    if (fragment != null && fragment.lo() < fragment.hi()) {
+                        errorSink.put(" - ");
+                        for (long ptr = fragment.lo(); ptr < fragment.hi() && ptr < fragment.lo() + 200; ptr++) {
+                            errorSink.put((char) io.questdb.std.Unsafe.getUnsafe().getByte(ptr));
+                        }
+                    }
+                }
+                throw new LineSenderException(errorSink.toString());
+            }
 
             // Clear buffers
             for (int i = 0, n = tableOrder.size(); i < n; i++) {
                 tableBuffers.get(tableOrder.get(i)).reset();
             }
             pendingRows = 0;
-        } catch (IOException e) {
+        } catch (HttpClientException e) {
             throw new LineSenderException("Failed to flush: " + e.getMessage(), e);
         }
     }
@@ -476,99 +516,6 @@ public class IlpV4HttpSender implements Sender {
         }
     }
 
-    private void sendHttp(long bufferAddress, int length) throws IOException {
-        try {
-            HttpClient.Request request = client.newRequest(host, port)
-                    .POST()
-                    .url(WRITE_PATH)
-                    .header("Content-Type", CONTENT_TYPE);
-
-            request.withContent();
-
-            // Write the binary data directly from native memory to the request buffer
-            request.putNonAscii(bufferAddress, bufferAddress + length);
-
-            HttpClient.ResponseHeaders response = request.send(timeoutMs);
-            response.await(timeoutMs);
-
-            DirectUtf8Sequence statusCode = response.getStatusCode();
-
-            // Check for 204 No Content (success)
-            if (statusCode != null && statusCode.size() == 3
-                    && statusCode.byteAt(0) == '2' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4') {
-                return;
-            }
-
-            // Check for 200 OK (success with content)
-            if (statusCode != null && statusCode.size() == 3
-                    && statusCode.byteAt(0) == '2' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '0') {
-                // Read and parse response if chunked
-                if (response.isChunked()) {
-                    Response chunkedRsp = response.getResponse();
-                    Fragment fragment;
-                    int totalSize = 0;
-                    byte[] responseData = new byte[4096];
-                    while ((fragment = chunkedRsp.recv()) != null) {
-                        int fragmentSize = (int) (fragment.hi() - fragment.lo());
-                        if (totalSize + fragmentSize > responseData.length) {
-                            byte[] newData = new byte[responseData.length * 2];
-                            System.arraycopy(responseData, 0, newData, 0, totalSize);
-                            responseData = newData;
-                        }
-                        for (long addr = fragment.lo(); addr < fragment.hi(); addr++) {
-                            responseData[totalSize++] = io.questdb.std.Unsafe.getUnsafe().getByte(addr);
-                        }
-                    }
-                    if (totalSize > 0) {
-                        byte[] actualData = new byte[totalSize];
-                        System.arraycopy(responseData, 0, actualData, 0, totalSize);
-                        IlpV4Response ilpResponse = parseResponse(actualData);
-                        if (ilpResponse.getStatusCode() != IlpV4StatusCode.OK) {
-                            throw new IOException("Server error: " + IlpV4StatusCode.name(ilpResponse.getStatusCode()) +
-                                    " - " + ilpResponse.getErrorMessage());
-                        }
-                    }
-                }
-                return;
-            }
-
-            // Error response
-            errorSink.clear();
-            if (response.isChunked()) {
-                Response chunkedRsp = response.getResponse();
-                Fragment fragment;
-                while ((fragment = chunkedRsp.recv()) != null) {
-                    Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), errorSink);
-                }
-            }
-
-            String errorMessage = errorSink.length() > 0 ? errorSink.toString() :
-                    "HTTP " + (statusCode != null ? statusCode.toString() : "unknown");
-            throw new IOException("HTTP request failed: " +
-                    (statusCode != null ? statusCode.toString() : "unknown") + " - " + errorMessage);
-
-        } catch (HttpClientException e) {
-            throw new IOException("HTTP request failed: " + e.getMessage(), e);
-        }
-    }
-
-    private IlpV4Response parseResponse(byte[] data) {
-        if (data.length == 0) {
-            return IlpV4Response.ok();
-        }
-
-        byte statusCode = data[0];
-        if (statusCode == IlpV4StatusCode.OK) {
-            return IlpV4Response.ok();
-        }
-
-        // Parse error response
-        try {
-            return IlpV4ResponseEncoder.decode(data, 0, data.length);
-        } catch (IlpV4ParseException e) {
-            return IlpV4Response.error(statusCode, "Failed to parse response");
-        }
-    }
 
     private void checkCurrentTable() {
         if (currentTable == null) {

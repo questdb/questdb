@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp.v4;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
+import java.io.Closeable;
 import java.nio.charset.StandardCharsets;
 
 import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
@@ -36,32 +37,76 @@ import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
  * <p>
  * This encoder produces the binary wire format defined in the ILP v4 specification.
  * It handles message headers, table blocks, schemas, and column data.
+ * <p>
+ * The encoder writes to an {@link IlpV4OutputSink}, which can be backed by either
+ * a native memory buffer (for TCP) or an HTTP client request buffer (for HTTP).
  */
-public class IlpV4MessageEncoder {
+public class IlpV4MessageEncoder implements Closeable {
 
-    private long bufferAddress;
-    private int bufferCapacity;
-    private int position;
+    private static final int GORILLA_BUFFER_SIZE = 64 * 1024; // 64KB for Gorilla encoding
+
+    private IlpV4OutputSink sink;
+    private IlpV4NativeBufferSink ownedSink; // Only set if we own the sink
     private byte flags;
     // Pooled BitWriter to avoid allocation on every timestamp column
     private final IlpV4BitWriter bitWriter = new IlpV4BitWriter();
+    // Temporary buffer for Gorilla encoding (used when sink doesn't support direct writes)
+    private long gorillaBuffer;
+    private int gorillaBufferCapacity;
 
+    /**
+     * Creates an encoder with its own native buffer.
+     */
     public IlpV4MessageEncoder() {
         this(64 * 1024); // 64KB initial buffer
     }
 
+    /**
+     * Creates an encoder with its own native buffer of the specified initial capacity.
+     */
     public IlpV4MessageEncoder(int initialCapacity) {
-        this.bufferCapacity = initialCapacity;
-        this.bufferAddress = Unsafe.malloc(bufferCapacity, MemoryTag.NATIVE_DEFAULT);
-        this.position = 0;
+        this.ownedSink = new IlpV4NativeBufferSink(initialCapacity);
+        this.sink = this.ownedSink;
         this.flags = 0;
+    }
+
+    /**
+     * Creates an encoder that writes to the provided sink.
+     *
+     * @param sink the output sink to write to
+     */
+    public IlpV4MessageEncoder(IlpV4OutputSink sink) {
+        this.sink = sink;
+        this.ownedSink = null;
+        this.flags = 0;
+    }
+
+    /**
+     * Sets the output sink for this encoder.
+     * <p>
+     * This allows reusing the encoder with different sinks (e.g., for HTTP where
+     * each request has its own buffer).
+     *
+     * @param sink the output sink to write to
+     */
+    public void setSink(IlpV4OutputSink sink) {
+        this.sink = sink;
+    }
+
+    /**
+     * Returns the output sink.
+     */
+    public IlpV4OutputSink getSink() {
+        return sink;
     }
 
     /**
      * Resets the encoder for a new message.
      */
     public void reset() {
-        position = 0;
+        if (ownedSink != null) {
+            ownedSink.reset();
+        }
         flags = 0;
     }
 
@@ -90,27 +135,25 @@ public class IlpV4MessageEncoder {
      * @param payloadLength total payload length (not including header)
      */
     public void writeHeader(int tableCount, int payloadLength) {
-        ensureCapacity(HEADER_SIZE);
+        sink.ensureCapacity(HEADER_SIZE);
 
         // Magic "ILP4"
-        Unsafe.getUnsafe().putByte(bufferAddress + position, (byte) 'I');
-        Unsafe.getUnsafe().putByte(bufferAddress + position + 1, (byte) 'L');
-        Unsafe.getUnsafe().putByte(bufferAddress + position + 2, (byte) 'P');
-        Unsafe.getUnsafe().putByte(bufferAddress + position + 3, (byte) '4');
+        sink.putByte((byte) 'I');
+        sink.putByte((byte) 'L');
+        sink.putByte((byte) 'P');
+        sink.putByte((byte) '4');
 
         // Version
-        Unsafe.getUnsafe().putByte(bufferAddress + position + 4, VERSION_1);
+        sink.putByte(VERSION_1);
 
         // Flags
-        Unsafe.getUnsafe().putByte(bufferAddress + position + 5, flags);
+        sink.putByte(flags);
 
         // Table count (uint16)
-        Unsafe.getUnsafe().putShort(bufferAddress + position + 6, (short) tableCount);
+        sink.putShort((short) tableCount);
 
         // Payload length (uint32)
-        Unsafe.getUnsafe().putInt(bufferAddress + position + 8, payloadLength);
-
-        position += HEADER_SIZE;
+        sink.putInt(payloadLength);
     }
 
     /**
@@ -123,27 +166,11 @@ public class IlpV4MessageEncoder {
      */
     public void updatePayloadLength(int payloadLength) {
         // Payload length is at offset 8 in the header
-        Unsafe.getUnsafe().putInt(bufferAddress + 8, payloadLength);
+        Unsafe.getUnsafe().putInt(sink.addressAt(8), payloadLength);
     }
 
     /**
      * Writes a table header with full schema.
-     * <p>
-     * Format (per ILP v4 spec):
-     * <pre>
-     * TABLE HEADER:
-     *   Table name length: varint
-     *   Table name: UTF-8 bytes
-     *   Row count: varint
-     *   Column count: varint
-     *
-     * SCHEMA SECTION:
-     *   Schema mode: 0x00 (full)
-     *   For each column:
-     *     Column name length: varint
-     *     Column name: UTF-8 bytes
-     *     Column type: byte
-     * </pre>
      *
      * @param tableName  table name
      * @param rowCount   number of rows
@@ -171,19 +198,6 @@ public class IlpV4MessageEncoder {
 
     /**
      * Writes a table header with schema reference.
-     * <p>
-     * Format (per ILP v4 spec):
-     * <pre>
-     * TABLE HEADER:
-     *   Table name length: varint
-     *   Table name: UTF-8 bytes
-     *   Row count: varint
-     *   Column count: varint  (placeholder, will be looked up from cache)
-     *
-     * SCHEMA SECTION:
-     *   Schema mode: 0x01 (reference)
-     *   Schema hash: 8 bytes
-     * </pre>
      *
      * @param tableName   table name
      * @param rowCount    number of rows
@@ -215,7 +229,7 @@ public class IlpV4MessageEncoder {
      */
     public void writeNullBitmap(boolean[] nulls, int count) {
         int bitmapSize = (count + 7) / 8;
-        ensureCapacity(bitmapSize);
+        sink.ensureCapacity(bitmapSize);
 
         for (int i = 0; i < bitmapSize; i++) {
             byte b = 0;
@@ -225,40 +239,34 @@ public class IlpV4MessageEncoder {
                     b |= (1 << bit);
                 }
             }
-            Unsafe.getUnsafe().putByte(bufferAddress + position + i, b);
+            sink.putByte(b);
         }
-        position += bitmapSize;
     }
 
     /**
-     * Writes a null bitmap from bit-packed long array (more efficient than boolean[]).
-     * Each long contains 64 bits: bit 0 of long[0] = row 0, bit 1 = row 1, etc.
+     * Writes a null bitmap from bit-packed long array.
      *
      * @param nullsPacked  bit-packed null bitmap
      * @param count        number of values (rows)
      */
     public void writeNullBitmapPacked(long[] nullsPacked, int count) {
         int bitmapSize = (count + 7) / 8;
-        ensureCapacity(bitmapSize);
+        sink.ensureCapacity(bitmapSize);
 
         for (int byteIdx = 0; byteIdx < bitmapSize; byteIdx++) {
             int longIndex = byteIdx >>> 3;  // byteIdx / 8
             int byteInLong = byteIdx & 7;   // byteIdx % 8
             byte b = (byte) ((nullsPacked[longIndex] >>> (byteInLong * 8)) & 0xFF);
-            Unsafe.getUnsafe().putByte(bufferAddress + position + byteIdx, b);
+            sink.putByte(b);
         }
-        position += bitmapSize;
     }
 
     /**
      * Writes boolean column data (bit-packed).
-     *
-     * @param values boolean values
-     * @param count  number of values
      */
     public void writeBooleanColumn(boolean[] values, int count) {
         int packedSize = (count + 7) / 8;
-        ensureCapacity(packedSize);
+        sink.ensureCapacity(packedSize);
 
         for (int i = 0; i < packedSize; i++) {
             byte b = 0;
@@ -268,117 +276,95 @@ public class IlpV4MessageEncoder {
                     b |= (1 << bit);
                 }
             }
-            Unsafe.getUnsafe().putByte(bufferAddress + position + i, b);
+            sink.putByte(b);
         }
-        position += packedSize;
     }
 
     /**
      * Writes a byte column.
      */
     public void writeByteColumn(byte[] values, int count) {
-        ensureCapacity(count);
+        sink.ensureCapacity(count);
         for (int i = 0; i < count; i++) {
-            Unsafe.getUnsafe().putByte(bufferAddress + position + i, values[i]);
+            sink.putByte(values[i]);
         }
-        position += count;
     }
 
     /**
      * Writes a short column.
      */
     public void writeShortColumn(short[] values, int count) {
-        ensureCapacity(count * 2);
+        sink.ensureCapacity(count * 2);
         for (int i = 0; i < count; i++) {
-            Unsafe.getUnsafe().putShort(bufferAddress + position + i * 2, values[i]);
+            sink.putShort(values[i]);
         }
-        position += count * 2;
     }
 
     /**
      * Writes an int column.
      */
     public void writeIntColumn(int[] values, int count) {
-        ensureCapacity(count * 4);
+        sink.ensureCapacity(count * 4);
         for (int i = 0; i < count; i++) {
-            Unsafe.getUnsafe().putInt(bufferAddress + position + i * 4, values[i]);
+            sink.putInt(values[i]);
         }
-        position += count * 4;
     }
 
     /**
      * Writes a long column.
      */
     public void writeLongColumn(long[] values, int count) {
-        ensureCapacity(count * 8);
+        sink.ensureCapacity(count * 8);
         for (int i = 0; i < count; i++) {
-            Unsafe.getUnsafe().putLong(bufferAddress + position + i * 8, values[i]);
+            sink.putLong(values[i]);
         }
-        position += count * 8;
     }
 
     /**
      * Writes a float column.
      */
     public void writeFloatColumn(float[] values, int count) {
-        ensureCapacity(count * 4);
+        sink.ensureCapacity(count * 4);
         for (int i = 0; i < count; i++) {
-            Unsafe.getUnsafe().putFloat(bufferAddress + position + i * 4, values[i]);
+            sink.putFloat(values[i]);
         }
-        position += count * 4;
     }
 
     /**
      * Writes a double column.
      */
     public void writeDoubleColumn(double[] values, int count) {
-        ensureCapacity(count * 8);
+        sink.ensureCapacity(count * 8);
         for (int i = 0; i < count; i++) {
-            Unsafe.getUnsafe().putDouble(bufferAddress + position + i * 8, values[i]);
+            sink.putDouble(values[i]);
         }
-        position += count * 8;
     }
 
     /**
      * Writes a timestamp column with optional Gorilla encoding.
-     * <p>
-     * When Gorilla is enabled, writes Gorilla-encoded format with encoding flag.
-     * When Gorilla is disabled, writes raw long values (no encoding flag).
-     * <p>
-     * Note: null bitmap is written by caller (IlpV4TableBuffer.encode) for nullable columns.
-     *
-     * @param values     timestamp values (packed, only non-null values)
-     * @param nulls      null indicators (can be null if not nullable)
-     * @param rowCount   total number of rows (for null bitmap reference)
-     * @param valueCount number of actual non-null values
-     * @param useGorilla whether to use Gorilla encoding
      */
     public void writeTimestampColumn(long[] values, boolean[] nulls, int rowCount, int valueCount, boolean useGorilla) {
         if (useGorilla && valueCount > 2 && canUseGorilla(values, valueCount)) {
             // Use Gorilla encoding
-            // Write encoding flag
             writeByte(IlpV4TimestampDecoder.ENCODING_GORILLA);
 
             // Write first timestamp
-            ensureCapacity(8);
-            Unsafe.getUnsafe().putLong(bufferAddress + position, values[0]);
-            position += 8;
+            sink.putLong(values[0]);
 
             if (valueCount == 1) {
                 return;
             }
 
             // Write second timestamp
-            ensureCapacity(8);
-            Unsafe.getUnsafe().putLong(bufferAddress + position, values[1]);
-            position += 8;
+            sink.putLong(values[1]);
 
             if (valueCount == 2) {
                 return;
             }
 
-            // Encode remaining timestamps using delta-of-delta (using pooled bitWriter)
-            bitWriter.reset(bufferAddress + position, bufferCapacity - position);
+            // Encode remaining timestamps using delta-of-delta into temporary buffer
+            ensureGorillaBuffer();
+            bitWriter.reset(gorillaBuffer, gorillaBufferCapacity);
 
             long prevTimestamp = values[1];
             long prevDelta = values[1] - values[0];
@@ -393,14 +379,11 @@ public class IlpV4MessageEncoder {
                 prevTimestamp = values[i];
             }
 
-            // Flush and update position
+            // Flush and copy to sink
             int bytesWritten = bitWriter.finish();
-            position += bytesWritten;
+            sink.putBytes(gorillaBuffer, bytesWritten);
         } else {
-            // Use raw long array (no encoding flag when Gorilla is enabled, but data doesn't fit)
-            // Or when Gorilla is disabled
             if (useGorilla) {
-                // Gorilla enabled but can't use it - write uncompressed with encoding flag
                 writeByte(IlpV4TimestampDecoder.ENCODING_UNCOMPRESSED);
             }
             writeLongColumn(values, valueCount);
@@ -408,23 +391,27 @@ public class IlpV4MessageEncoder {
     }
 
     /**
+     * Ensures the Gorilla buffer is allocated.
+     */
+    private void ensureGorillaBuffer() {
+        if (gorillaBuffer == 0) {
+            gorillaBufferCapacity = GORILLA_BUFFER_SIZE;
+            gorillaBuffer = Unsafe.malloc(gorillaBufferCapacity, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
      * Checks if Gorilla encoding can be safely used for the given timestamps.
-     * Gorilla encoding can overflow if delta-of-delta values don't fit in 32 bits.
-     *
-     * @param values timestamp values
-     * @param count  number of values
-     * @return true if Gorilla encoding is safe
      */
     private boolean canUseGorilla(long[] values, int count) {
         if (count < 3) {
-            return true; // No delta-of-delta encoding needed
+            return true;
         }
 
         long prevDelta = values[1] - values[0];
         for (int i = 2; i < count; i++) {
             long delta = values[i] - values[i - 1];
             long deltaOfDelta = delta - prevDelta;
-            // Check if deltaOfDelta fits in 32-bit signed integer
             if (deltaOfDelta < Integer.MIN_VALUE || deltaOfDelta > Integer.MAX_VALUE) {
                 return false;
             }
@@ -435,38 +422,26 @@ public class IlpV4MessageEncoder {
 
     /**
      * Encodes a delta-of-delta value to the bit writer.
-     * <p>
-     * Format matches the Gorilla decoder expectations:
-     * - '0'    -> DoD is 0
-     * - '10'   -> 7-bit signed value
-     * - '110'  -> 9-bit signed value
-     * - '1110' -> 12-bit signed value
-     * - '1111' -> 32-bit signed value
      */
     private static void encodeDoD(IlpV4BitWriter writer, long deltaOfDelta) {
         if (deltaOfDelta == 0) {
-            // '0' = DoD is 0
             writer.writeBit(0);
         } else if (deltaOfDelta >= -63 && deltaOfDelta <= 64) {
-            // '10' prefix
             writer.writeBit(1);
             writer.writeBit(0);
             writer.writeSigned(deltaOfDelta, 7);
         } else if (deltaOfDelta >= -255 && deltaOfDelta <= 256) {
-            // '110' prefix
             writer.writeBit(1);
             writer.writeBit(1);
             writer.writeBit(0);
             writer.writeSigned(deltaOfDelta, 9);
         } else if (deltaOfDelta >= -2047 && deltaOfDelta <= 2048) {
-            // '1110' prefix
             writer.writeBit(1);
             writer.writeBit(1);
             writer.writeBit(1);
             writer.writeBit(0);
             writer.writeSigned(deltaOfDelta, 12);
         } else {
-            // '1111' prefix + 32-bit signed
             writer.writeBit(1);
             writer.writeBit(1);
             writer.writeBit(1);
@@ -477,27 +452,12 @@ public class IlpV4MessageEncoder {
 
     /**
      * Writes a string column with offset array.
-     * <p>
-     * Format:
-     * <pre>
-     * Offset array: (count + 1) * uint32 (4 bytes each)
-     *   offset[0] = 0
-     *   offset[i+1] = end position of string[i]
-     * String data: concatenated UTF-8 bytes
-     * </pre>
-     *
-     * @param strings string values
-     * @param count   number of values
      */
     public void writeStringColumn(String[] strings, int count) {
-        // Two-pass approach to avoid byte[][] allocation:
-        // Pass 1: Calculate UTF-8 lengths and write offsets directly to buffer
-        // Pass 2: Encode UTF-8 directly to buffer
-
         // Calculate total size needed for offset array
         int offsetArraySize = (count + 1) * 4;
 
-        // First, calculate total data length
+        // Calculate total data length
         int totalDataLen = 0;
         for (int i = 0; i < count; i++) {
             if (strings[i] != null) {
@@ -505,21 +465,19 @@ public class IlpV4MessageEncoder {
             }
         }
 
-        ensureCapacity(offsetArraySize + totalDataLen);
+        sink.ensureCapacity(offsetArraySize + totalDataLen);
 
-        // Write offset array (fixed uint32, NOT varints!)
+        // Write offset array
         int runningOffset = 0;
-        Unsafe.getUnsafe().putInt(bufferAddress + position, 0);
-        position += 4;
+        sink.putInt(0);
         for (int i = 0; i < count; i++) {
             if (strings[i] != null) {
                 runningOffset += utf8Length(strings[i]);
             }
-            Unsafe.getUnsafe().putInt(bufferAddress + position, runningOffset);
-            position += 4;
+            sink.putInt(runningOffset);
         }
 
-        // Write string data directly (no intermediate byte[] allocation)
+        // Write string data
         for (int i = 0; i < count; i++) {
             if (strings[i] != null) {
                 encodeUtf8Direct(strings[i]);
@@ -528,7 +486,7 @@ public class IlpV4MessageEncoder {
     }
 
     /**
-     * Calculates the UTF-8 encoded length of a string without allocating.
+     * Calculates the UTF-8 encoded length of a string.
      */
     private static int utf8Length(String s) {
         int len = 0;
@@ -539,7 +497,6 @@ public class IlpV4MessageEncoder {
             } else if (c < 0x800) {
                 len += 2;
             } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
-                // Surrogate pair
                 i++;
                 len += 4;
             } else {
@@ -550,38 +507,33 @@ public class IlpV4MessageEncoder {
     }
 
     /**
-     * Encodes a string as UTF-8 directly to the output buffer without intermediate allocation.
+     * Encodes a string as UTF-8 directly to the sink.
      */
     private void encodeUtf8Direct(String s) {
         for (int i = 0, n = s.length(); i < n; i++) {
             char c = s.charAt(i);
             if (c < 0x80) {
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) c);
+                sink.putByte((byte) c);
             } else if (c < 0x800) {
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0xC0 | (c >> 6)));
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | (c & 0x3F)));
+                sink.putByte((byte) (0xC0 | (c >> 6)));
+                sink.putByte((byte) (0x80 | (c & 0x3F)));
             } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
-                // Surrogate pair
                 char c2 = s.charAt(++i);
                 int codePoint = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0xF0 | (codePoint >> 18)));
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | ((codePoint >> 12) & 0x3F)));
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | ((codePoint >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | (codePoint & 0x3F)));
+                sink.putByte((byte) (0xF0 | (codePoint >> 18)));
+                sink.putByte((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
+                sink.putByte((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
+                sink.putByte((byte) (0x80 | (codePoint & 0x3F)));
             } else {
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0xE0 | (c >> 12)));
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | ((c >> 6) & 0x3F)));
-                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | (c & 0x3F)));
+                sink.putByte((byte) (0xE0 | (c >> 12)));
+                sink.putByte((byte) (0x80 | ((c >> 6) & 0x3F)));
+                sink.putByte((byte) (0x80 | (c & 0x3F)));
             }
         }
     }
 
     /**
      * Writes a symbol column with dictionary.
-     *
-     * @param symbolIndices indices into dictionary
-     * @param dictionary    unique symbol values
-     * @param count         number of values
      */
     public void writeSymbolColumn(int[] symbolIndices, String[] dictionary, int count) {
         // Write dictionary
@@ -600,11 +552,10 @@ public class IlpV4MessageEncoder {
      * Writes UUID column data (big-endian).
      */
     public void writeUuidColumn(long[] highBits, long[] lowBits, int count) {
-        ensureCapacity(count * 16);
+        sink.ensureCapacity(count * 16);
         for (int i = 0; i < count; i++) {
-            // UUID is big-endian
-            writeLongBigEndian(highBits[i]);
-            writeLongBigEndian(lowBits[i]);
+            sink.putLongBE(highBits[i]);
+            sink.putLongBE(lowBits[i]);
         }
     }
 
@@ -612,47 +563,35 @@ public class IlpV4MessageEncoder {
      * Writes a single byte.
      */
     public void writeByte(byte value) {
-        ensureCapacity(1);
-        Unsafe.getUnsafe().putByte(bufferAddress + position, value);
-        position++;
+        sink.putByte(value);
     }
 
     /**
      * Writes a short (little-endian).
      */
     public void writeShort(short value) {
-        ensureCapacity(2);
-        Unsafe.getUnsafe().putShort(bufferAddress + position, value);
-        position += 2;
+        sink.putShort(value);
     }
 
     /**
      * Writes an int (little-endian).
      */
     public void writeInt(int value) {
-        ensureCapacity(4);
-        Unsafe.getUnsafe().putInt(bufferAddress + position, value);
-        position += 4;
+        sink.putInt(value);
     }
 
     /**
      * Writes a long (little-endian).
      */
     public void writeLong(long value) {
-        ensureCapacity(8);
-        Unsafe.getUnsafe().putLong(bufferAddress + position, value);
-        position += 8;
+        sink.putLong(value);
     }
 
     /**
      * Writes a long in big-endian order.
      */
     public void writeLongBigEndian(long value) {
-        ensureCapacity(8);
-        for (int i = 7; i >= 0; i--) {
-            Unsafe.getUnsafe().putByte(bufferAddress + position + (7 - i), (byte) (value >> (i * 8)));
-        }
-        position += 8;
+        sink.putLongBE(value);
     }
 
     /**
@@ -666,10 +605,9 @@ public class IlpV4MessageEncoder {
 
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         writeVarint(bytes.length);
-        ensureCapacity(bytes.length);
+        sink.ensureCapacity(bytes.length);
         for (byte b : bytes) {
-            Unsafe.getUnsafe().putByte(bufferAddress + position, b);
-            position++;
+            sink.putByte(b);
         }
     }
 
@@ -677,76 +615,62 @@ public class IlpV4MessageEncoder {
      * Writes a varint (unsigned LEB128).
      */
     public void writeVarint(long value) {
-        ensureCapacity(10); // Max varint size
+        sink.ensureCapacity(10);
         while (value > 0x7F) {
-            Unsafe.getUnsafe().putByte(bufferAddress + position, (byte) ((value & 0x7F) | 0x80));
+            sink.putByte((byte) ((value & 0x7F) | 0x80));
             value >>>= 7;
-            position++;
         }
-        Unsafe.getUnsafe().putByte(bufferAddress + position, (byte) value);
-        position++;
-    }
-
-    /**
-     * Returns the current buffer address.
-     */
-    public long getBufferAddress() {
-        return bufferAddress;
+        sink.putByte((byte) value);
     }
 
     /**
      * Returns the current position (bytes written).
      */
     public int getPosition() {
-        return position;
+        return sink.position();
     }
 
     /**
      * Sets the position.
      */
     public void setPosition(int pos) {
-        this.position = pos;
+        sink.position(pos);
     }
 
     /**
      * Returns the buffer capacity.
      */
     public int getCapacity() {
-        return bufferCapacity;
+        return sink.capacity();
+    }
+
+    /**
+     * Returns the buffer address (for backward compatibility).
+     */
+    public long getBufferAddress() {
+        return sink.addressAt(0);
     }
 
     /**
      * Copies the encoded data to a byte array.
      */
     public byte[] toByteArray() {
-        byte[] result = new byte[position];
-        for (int i = 0; i < position; i++) {
-            result[i] = Unsafe.getUnsafe().getByte(bufferAddress + i);
+        if (sink instanceof IlpV4NativeBufferSink) {
+            return ((IlpV4NativeBufferSink) sink).toByteArray();
         }
-        return result;
+        throw new UnsupportedOperationException("toByteArray() only supported for native buffer sink");
     }
 
-    /**
-     * Ensures the buffer has enough capacity.
-     */
-    private void ensureCapacity(int required) {
-        if (position + required > bufferCapacity) {
-            int newCapacity = Math.max(bufferCapacity * 2, position + required);
-            long newAddress = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().copyMemory(bufferAddress, newAddress, position);
-            Unsafe.free(bufferAddress, bufferCapacity, MemoryTag.NATIVE_DEFAULT);
-            bufferAddress = newAddress;
-            bufferCapacity = newCapacity;
-        }
-    }
-
-    /**
-     * Closes the encoder and frees memory.
-     */
+    @Override
     public void close() {
-        if (bufferAddress != 0) {
-            Unsafe.free(bufferAddress, bufferCapacity, MemoryTag.NATIVE_DEFAULT);
-            bufferAddress = 0;
+        if (ownedSink != null) {
+            ownedSink.close();
+            ownedSink = null;
+            sink = null;
+        }
+        if (gorillaBuffer != 0) {
+            Unsafe.free(gorillaBuffer, gorillaBufferCapacity, MemoryTag.NATIVE_DEFAULT);
+            gorillaBuffer = 0;
         }
     }
 }
