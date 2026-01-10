@@ -56,6 +56,7 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
 
         // Parse null bitmap if nullable
         long nullBitmapAddress = 0;
+        int nullCount = 0;
         if (nullable) {
             int nullBitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
             if (offset + nullBitmapSize > sourceLength) {
@@ -65,11 +66,15 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
                 );
             }
             nullBitmapAddress = sourceAddress + offset;
+            nullCount = IlpV4NullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += nullBitmapSize;
         }
 
-        // Parse offset array: (rowCount + 1) * 4 bytes
-        int offsetArraySize = (rowCount + 1) * 4;
+        // Only non-null values have offset entries
+        int valueCount = rowCount - nullCount;
+
+        // Parse offset array: (valueCount + 1) * 4 bytes
+        int offsetArraySize = (valueCount + 1) * 4;
         if (offset + offsetArraySize > sourceLength) {
             throw IlpV4ParseException.create(
                     IlpV4ParseException.ErrorCode.INSUFFICIENT_DATA,
@@ -89,7 +94,7 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
         }
 
         // Get total string data size from last offset
-        int lastOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) rowCount * 4);
+        int lastOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueCount * 4);
         if (lastOffset < 0) {
             throw IlpV4ParseException.create(
                     IlpV4ParseException.ErrorCode.INVALID_OFFSET_ARRAY,
@@ -107,12 +112,13 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
         long stringDataAddress = sourceAddress + offset;
 
         // Decode strings
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) i * 4);
-                int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (i + 1) * 4);
+                int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueOffset * 4);
+                int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (valueOffset + 1) * 4);
 
                 // Validate offsets are monotonic
                 if (endOffset < startOffset) {
@@ -125,6 +131,7 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
                 int stringLength = endOffset - startOffset;
                 long stringAddress = stringDataAddress + startOffset;
                 ((StringColumnSink) sink).putString(i, stringAddress, stringLength);
+                valueOffset++;
             }
         }
 
@@ -207,6 +214,7 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes string values to direct memory.
+     * Only non-null values are encoded.
      *
      * @param destAddress destination address
      * @param values      string values to encode
@@ -230,30 +238,36 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
             pos += bitmapSize;
         }
 
-        // Convert strings to bytes
-        byte[][] stringBytes = new byte[rowCount][];
-        int totalLength = 0;
+        // Count non-null values and convert to bytes
+        int valueCount = 0;
         for (int i = 0; i < rowCount; i++) {
-            if (values[i] != null) {
-                stringBytes[i] = values[i].getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                totalLength += stringBytes[i].length;
-            } else {
-                stringBytes[i] = new byte[0];
-            }
+            if (!nullable || !nulls[i]) valueCount++;
         }
 
-        // Write offset array
+        byte[][] stringBytes = new byte[valueCount][];
+        int idx = 0;
+        for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
+            if (values[i] != null) {
+                stringBytes[idx] = values[i].getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            } else {
+                stringBytes[idx] = new byte[0];
+            }
+            idx++;
+        }
+
+        // Write offset array for non-null values only
         int currentOffset = 0;
-        for (int i = 0; i <= rowCount; i++) {
+        for (int i = 0; i <= valueCount; i++) {
             Unsafe.getUnsafe().putInt(pos, currentOffset);
             pos += 4;
-            if (i < rowCount) {
+            if (i < valueCount) {
                 currentOffset += stringBytes[i].length;
             }
         }
 
         // Write string data
-        for (int i = 0; i < rowCount; i++) {
+        for (int i = 0; i < valueCount; i++) {
             byte[] bytes = stringBytes[i];
             for (byte b : bytes) {
                 Unsafe.getUnsafe().putByte(pos++, b);
@@ -265,6 +279,7 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes string values to a byte array.
+     * Only non-null values are encoded.
      *
      * @param buf    destination buffer
      * @param offset starting offset
@@ -288,30 +303,38 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
             offset += bitmapSize;
         }
 
-        // Convert strings to bytes
-        byte[][] stringBytes = new byte[rowCount][];
+        // Count non-null values and convert to bytes
+        int valueCount = 0;
         for (int i = 0; i < rowCount; i++) {
-            if (values[i] != null) {
-                stringBytes[i] = values[i].getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            } else {
-                stringBytes[i] = new byte[0];
-            }
+            if (!nullable || !nulls[i]) valueCount++;
         }
 
-        // Write offset array
+        byte[][] stringBytes = new byte[valueCount][];
+        int idx = 0;
+        for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
+            if (values[i] != null) {
+                stringBytes[idx] = values[i].getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            } else {
+                stringBytes[idx] = new byte[0];
+            }
+            idx++;
+        }
+
+        // Write offset array for non-null values only
         int currentOffset = 0;
-        for (int i = 0; i <= rowCount; i++) {
+        for (int i = 0; i <= valueCount; i++) {
             buf[offset++] = (byte) (currentOffset & 0xFF);
             buf[offset++] = (byte) ((currentOffset >> 8) & 0xFF);
             buf[offset++] = (byte) ((currentOffset >> 16) & 0xFF);
             buf[offset++] = (byte) ((currentOffset >> 24) & 0xFF);
-            if (i < rowCount) {
+            if (i < valueCount) {
                 currentOffset += stringBytes[i].length;
             }
         }
 
         // Write string data
-        for (int i = 0; i < rowCount; i++) {
+        for (int i = 0; i < valueCount; i++) {
             byte[] bytes = stringBytes[i];
             System.arraycopy(bytes, 0, buf, offset, bytes.length);
             offset += bytes.length;
@@ -336,11 +359,18 @@ public final class IlpV4StringDecoder implements IlpV4ColumnDecoder {
             size += IlpV4NullBitmap.sizeInBytes(rowCount);
         }
 
-        size += (rowCount + 1) * 4; // offset array
+        // Count non-null values
+        int valueCount = 0;
+        for (int i = 0; i < rowCount; i++) {
+            if (!nullable || !nulls[i]) valueCount++;
+        }
 
-        for (String value : values) {
-            if (value != null) {
-                size += value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        size += (valueCount + 1) * 4; // offset array for non-null values
+
+        for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
+            if (values[i] != null) {
+                size += values[i].getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
             }
         }
 

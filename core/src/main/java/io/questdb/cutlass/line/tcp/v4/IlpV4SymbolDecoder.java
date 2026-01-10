@@ -127,19 +127,19 @@ public final class IlpV4SymbolDecoder implements IlpV4ColumnDecoder {
             offset += stringLength;
         }
 
-        // Parse value array (dictionary indices)
+        // Parse value array (dictionary indices) - only for non-null values
         SymbolColumnSink symbolSink = (SymbolColumnSink) sink;
         for (int i = 0; i < rowCount; i++) {
-            // Always parse symbol index (even for null rows, the encoder writes an index)
-            IlpV4Varint.decode(sourceAddress + offset, limit, decodeResult);
-            long index = decodeResult.value;
-            offset += decodeResult.bytesRead;
-
-            // Check null bitmap first
+            // Check null bitmap first - null values don't have an index
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
                 continue;
             }
+
+            // Parse symbol index for non-null row
+            IlpV4Varint.decode(sourceAddress + offset, limit, decodeResult);
+            long index = decodeResult.value;
+            offset += decodeResult.bytesRead;
 
             // Check for null index (max unsigned value treated as null)
             if (index == NULL_SYMBOL_INDEX || index < 0) {
@@ -238,6 +238,7 @@ public final class IlpV4SymbolDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes symbol values to direct memory.
+     * Only non-null values have indices written.
      *
      * @param destAddress destination address
      * @param values      symbol values to encode
@@ -261,11 +262,15 @@ public final class IlpV4SymbolDecoder implements IlpV4ColumnDecoder {
             pos += bitmapSize;
         }
 
-        // Build dictionary
+        // Build dictionary (only from non-null values)
         List<String> dictList = new ArrayList<>();
         int[] dictIndices = new int[rowCount];
         for (int i = 0; i < rowCount; i++) {
-            if (values[i] != null && (nulls == null || !nulls[i])) {
+            if (nullable && nulls[i]) {
+                dictIndices[i] = -1;
+                continue;
+            }
+            if (values[i] != null) {
                 int idx = dictList.indexOf(values[i]);
                 if (idx < 0) {
                     idx = dictList.size();
@@ -289,10 +294,11 @@ public final class IlpV4SymbolDecoder implements IlpV4ColumnDecoder {
             }
         }
 
-        // Write value indices
+        // Write value indices only for non-null values
         for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
             if (dictIndices[i] < 0) {
-                // Null - write max varint value
+                // Null value (not from bitmap) - write max varint value
                 pos = IlpV4Varint.encode(pos, NULL_SYMBOL_INDEX);
             } else {
                 pos = IlpV4Varint.encode(pos, dictIndices[i]);
@@ -304,6 +310,7 @@ public final class IlpV4SymbolDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes symbol values to a byte array.
+     * Only non-null values have indices written.
      *
      * @param buf    destination buffer
      * @param offset starting offset
@@ -327,11 +334,15 @@ public final class IlpV4SymbolDecoder implements IlpV4ColumnDecoder {
             offset += bitmapSize;
         }
 
-        // Build dictionary
+        // Build dictionary (only from non-null values)
         List<String> dictList = new ArrayList<>();
         int[] dictIndices = new int[rowCount];
         for (int i = 0; i < rowCount; i++) {
-            if (values[i] != null && (nulls == null || !nulls[i])) {
+            if (nullable && nulls[i]) {
+                dictIndices[i] = -1;
+                continue;
+            }
+            if (values[i] != null) {
                 int idx = dictList.indexOf(values[i]);
                 if (idx < 0) {
                     idx = dictList.size();
@@ -354,8 +365,9 @@ public final class IlpV4SymbolDecoder implements IlpV4ColumnDecoder {
             offset += bytes.length;
         }
 
-        // Write value indices
+        // Write value indices only for non-null values
         for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
             if (dictIndices[i] < 0) {
                 offset = IlpV4Varint.encode(buf, offset, NULL_SYMBOL_INDEX);
             } else {

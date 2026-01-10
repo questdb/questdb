@@ -149,21 +149,23 @@ public class IlpV4BooleanDecoderTest {
         boolean[] nulls = {true, true, true, true};
         int rowCount = values.length;
 
-        int bitmapSize = (rowCount + 7) / 8;
-        int size = bitmapSize * 2;
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        int nullBitmapSize = (rowCount + 7) / 8;
+        int valueBitmapSize = 0; // No non-null values, so 0 bytes for value bits
+        int size = nullBitmapSize + valueBitmapSize;
+        int bufferSize = nullBitmapSize * 2; // Allocate max possible
+        long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
             IlpV4BooleanDecoder.encode(address, values, nulls);
 
             IlpV4ColumnDecoder.ArrayColumnSink sink = new IlpV4ColumnDecoder.ArrayColumnSink(rowCount);
-            int consumed = IlpV4BooleanDecoder.INSTANCE.decode(address, size, rowCount, true, sink);
+            int consumed = IlpV4BooleanDecoder.INSTANCE.decode(address, bufferSize, rowCount, true, sink);
 
             Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {
                 Assert.assertTrue(sink.isNull(i));
             }
         } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

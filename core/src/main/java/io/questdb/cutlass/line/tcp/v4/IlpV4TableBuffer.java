@@ -200,6 +200,7 @@ public class IlpV4TableBuffer {
         // Write each column's data
         for (int i = 0; i < columns.size(); i++) {
             ColumnBuffer col = columns.get(i);
+            int valueCount = col.getValueCount();
 
             // Write null bitmap if column is nullable (ALWAYS write it, even if no nulls)
             if (col.nullable) {
@@ -212,52 +213,54 @@ public class IlpV4TableBuffer {
             }
 
             // Write column data based on type
+            // Note: we pass valueCount (not rowCount) because nulls don't take space in value buffer
             switch (col.type) {
                 case TYPE_BOOLEAN:
-                    encoder.writeBooleanColumn(col.getBooleanValues(), rowCount);
+                    encoder.writeBooleanColumn(col.getBooleanValues(), valueCount);
                     break;
                 case TYPE_BYTE:
-                    encoder.writeByteColumn(col.getByteValues(), rowCount);
+                    encoder.writeByteColumn(col.getByteValues(), valueCount);
                     break;
                 case TYPE_SHORT:
-                    encoder.writeShortColumn(col.getShortValues(), rowCount);
+                    encoder.writeShortColumn(col.getShortValues(), valueCount);
                     break;
                 case TYPE_INT:
-                    encoder.writeIntColumn(col.getIntValues(), rowCount);
+                    encoder.writeIntColumn(col.getIntValues(), valueCount);
                     break;
                 case TYPE_LONG:
-                    encoder.writeLongColumn(col.getLongValues(), rowCount);
+                    encoder.writeLongColumn(col.getLongValues(), valueCount);
                     break;
                 case TYPE_FLOAT:
-                    encoder.writeFloatColumn(col.getFloatValues(), rowCount);
+                    encoder.writeFloatColumn(col.getFloatValues(), valueCount);
                     break;
                 case TYPE_DOUBLE:
-                    encoder.writeDoubleColumn(col.getDoubleValues(), rowCount);
+                    encoder.writeDoubleColumn(col.getDoubleValues(), valueCount);
                     break;
                 case TYPE_TIMESTAMP:
                     encoder.writeTimestampColumn(
                             col.getLongValues(),
                             col.nullable ? col.getNullBitmap() : null,
                             rowCount,
+                            valueCount,
                             useGorilla
                     );
                     break;
                 case TYPE_DATE:
-                    encoder.writeLongColumn(col.getLongValues(), rowCount);
+                    encoder.writeLongColumn(col.getLongValues(), valueCount);
                     break;
                 case TYPE_STRING:
                 case TYPE_VARCHAR:
-                    encoder.writeStringColumn(col.getStringValues(), rowCount);
+                    encoder.writeStringColumn(col.getStringValues(), valueCount);
                     break;
                 case TYPE_SYMBOL:
-                    col.encodeSymbol(encoder, rowCount);
+                    col.encodeSymbol(encoder, valueCount);
                     break;
                 case TYPE_UUID:
-                    encoder.writeUuidColumn(col.getUuidHigh(), col.getUuidLow(), rowCount);
+                    encoder.writeUuidColumn(col.getUuidHigh(), col.getUuidLow(), valueCount);
                     break;
                 case TYPE_LONG256:
                     // Long256 is 4 longs (32 bytes)
-                    encodeLong256Column(encoder, col, rowCount);
+                    encodeLong256Column(encoder, col, valueCount);
                     break;
                 default:
                     throw new IllegalStateException("Unknown column type: " + col.type);
@@ -265,9 +268,9 @@ public class IlpV4TableBuffer {
         }
     }
 
-    private void encodeLong256Column(IlpV4MessageEncoder encoder, ColumnBuffer col, int count) {
+    private void encodeLong256Column(IlpV4MessageEncoder encoder, ColumnBuffer col, int valueCount) {
         long[][] values = col.getLong256Values();
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < valueCount; i++) {
             // Long256 is big-endian, 4 longs
             for (int j = 0; j < 4; j++) {
                 encoder.writeLongBigEndian(values[i][j]);
@@ -283,7 +286,8 @@ public class IlpV4TableBuffer {
         final byte type;
         final boolean nullable;
 
-        private int size;
+        private int size;         // Total row count (including nulls)
+        private int valueCount;   // Actual stored values (excludes nulls)
         private int capacity;
 
         // Storage for different types
@@ -313,6 +317,7 @@ public class IlpV4TableBuffer {
             this.type = type;
             this.nullable = nullable;
             this.size = 0;
+            this.valueCount = 0;
             this.capacity = 16;
             this.hasNulls = false;
 
@@ -332,6 +337,13 @@ public class IlpV4TableBuffer {
 
         public int getSize() {
             return size;
+        }
+
+        /**
+         * Returns the number of actual stored values (excludes nulls).
+         */
+        public int getValueCount() {
+            return valueCount;
         }
 
         public boolean hasNulls() {
@@ -388,54 +400,66 @@ public class IlpV4TableBuffer {
 
         public void addBoolean(boolean value) {
             ensureCapacity();
-            booleanValues[size++] = value;
+            booleanValues[valueCount++] = value;
+            size++;
         }
 
         public void addByte(byte value) {
             ensureCapacity();
-            byteValues[size++] = value;
+            byteValues[valueCount++] = value;
+            size++;
         }
 
         public void addShort(short value) {
             ensureCapacity();
-            shortValues[size++] = value;
+            shortValues[valueCount++] = value;
+            size++;
         }
 
         public void addInt(int value) {
             ensureCapacity();
-            intValues[size++] = value;
+            intValues[valueCount++] = value;
+            size++;
         }
 
         public void addLong(long value) {
             ensureCapacity();
-            longValues[size++] = value;
+            longValues[valueCount++] = value;
+            size++;
         }
 
         public void addFloat(float value) {
             ensureCapacity();
-            floatValues[size++] = value;
+            floatValues[valueCount++] = value;
+            size++;
         }
 
         public void addDouble(double value) {
             ensureCapacity();
-            doubleValues[size++] = value;
+            doubleValues[valueCount++] = value;
+            size++;
         }
 
         public void addString(String value) {
             ensureCapacity();
-            stringValues[size++] = value;
             if (value == null && nullable) {
-                markNull(size - 1);
+                markNull(size);
+                // Null strings don't take space in the value buffer
+                size++;
+            } else {
+                stringValues[valueCount++] = value;
+                size++;
             }
         }
 
         public void addSymbol(String value) {
             ensureCapacity();
             if (value == null) {
-                symbolIndices[size++] = -1; // Null symbol
                 if (nullable) {
-                    markNull(size - 1);
+                    markNull(size);
                 }
+                // Null symbols don't take space in the value buffer
+                size++;
             } else {
                 Integer idx = symbolDict.get(value);
                 if (idx == null) {
@@ -443,78 +467,86 @@ public class IlpV4TableBuffer {
                     symbolDict.put(value, idx);
                     symbolList.add(value);
                 }
-                symbolIndices[size++] = idx;
+                symbolIndices[valueCount++] = idx;
+                size++;
             }
         }
 
         public void addUuid(long high, long low) {
             ensureCapacity();
-            uuidHigh[size] = high;
-            uuidLow[size] = low;
+            uuidHigh[valueCount] = high;
+            uuidLow[valueCount] = low;
+            valueCount++;
             size++;
         }
 
         public void addLong256(long l0, long l1, long l2, long l3) {
             ensureCapacity();
-            if (long256Values[size] == null) {
-                long256Values[size] = new long[4];
+            if (long256Values[valueCount] == null) {
+                long256Values[valueCount] = new long[4];
             }
-            long256Values[size][0] = l0;
-            long256Values[size][1] = l1;
-            long256Values[size][2] = l2;
-            long256Values[size][3] = l3;
+            long256Values[valueCount][0] = l0;
+            long256Values[valueCount][1] = l1;
+            long256Values[valueCount][2] = l2;
+            long256Values[valueCount][3] = l3;
+            valueCount++;
             size++;
         }
 
         public void addNull() {
             ensureCapacity();
             if (nullable) {
+                // For nullable columns, mark null in bitmap but don't store a value
                 markNull(size);
-            }
-            // Add default/zero value
-            switch (type) {
-                case TYPE_BOOLEAN:
-                    booleanValues[size++] = false;
-                    break;
-                case TYPE_BYTE:
-                    byteValues[size++] = 0;
-                    break;
-                case TYPE_SHORT:
-                    shortValues[size++] = 0;
-                    break;
-                case TYPE_INT:
-                    intValues[size++] = 0;
-                    break;
-                case TYPE_LONG:
-                case TYPE_TIMESTAMP:
-                case TYPE_DATE:
-                    longValues[size++] = Long.MIN_VALUE;
-                    break;
-                case TYPE_FLOAT:
-                    floatValues[size++] = Float.NaN;
-                    break;
-                case TYPE_DOUBLE:
-                    doubleValues[size++] = Double.NaN;
-                    break;
-                case TYPE_STRING:
-                case TYPE_VARCHAR:
-                    stringValues[size++] = null;
-                    break;
-                case TYPE_SYMBOL:
-                    symbolIndices[size++] = -1;
-                    break;
-                case TYPE_UUID:
-                    uuidHigh[size] = Long.MIN_VALUE;
-                    uuidLow[size] = Long.MIN_VALUE;
-                    size++;
-                    break;
-                case TYPE_LONG256:
-                    if (long256Values[size] == null) {
-                        long256Values[size] = new long[4];
-                    }
-                    Arrays.fill(long256Values[size], Long.MIN_VALUE);
-                    size++;
-                    break;
+                size++;
+            } else {
+                // For non-nullable columns, we must store a sentinel/default value
+                // because no null bitmap will be written
+                switch (type) {
+                    case TYPE_BOOLEAN:
+                        booleanValues[valueCount++] = false;
+                        break;
+                    case TYPE_BYTE:
+                        byteValues[valueCount++] = 0;
+                        break;
+                    case TYPE_SHORT:
+                        shortValues[valueCount++] = 0;
+                        break;
+                    case TYPE_INT:
+                        intValues[valueCount++] = 0;
+                        break;
+                    case TYPE_LONG:
+                    case TYPE_TIMESTAMP:
+                    case TYPE_DATE:
+                        longValues[valueCount++] = Long.MIN_VALUE;
+                        break;
+                    case TYPE_FLOAT:
+                        floatValues[valueCount++] = Float.NaN;
+                        break;
+                    case TYPE_DOUBLE:
+                        doubleValues[valueCount++] = Double.NaN;
+                        break;
+                    case TYPE_STRING:
+                    case TYPE_VARCHAR:
+                        stringValues[valueCount++] = null;
+                        break;
+                    case TYPE_SYMBOL:
+                        symbolIndices[valueCount++] = -1;
+                        break;
+                    case TYPE_UUID:
+                        uuidHigh[valueCount] = Long.MIN_VALUE;
+                        uuidLow[valueCount] = Long.MIN_VALUE;
+                        valueCount++;
+                        break;
+                    case TYPE_LONG256:
+                        if (long256Values[valueCount] == null) {
+                            long256Values[valueCount] = new long[4];
+                        }
+                        Arrays.fill(long256Values[valueCount], Long.MIN_VALUE);
+                        valueCount++;
+                        break;
+                }
+                size++;
             }
         }
 
@@ -525,6 +557,7 @@ public class IlpV4TableBuffer {
 
         public void reset() {
             size = 0;
+            valueCount = 0;
             hasNulls = false;
             if (nullBitmap != null) {
                 Arrays.fill(nullBitmap, 0, Math.min(capacity, nullBitmap.length), false);

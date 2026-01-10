@@ -73,6 +73,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
 
         // Parse null bitmap if nullable
         long nullBitmapAddress = 0;
+        int nullCount = 0;
         if (nullable) {
             int nullBitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
             if (offset + nullBitmapSize > sourceLength) {
@@ -82,11 +83,14 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
                 );
             }
             nullBitmapAddress = sourceAddress + offset;
+            nullCount = IlpV4NullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += nullBitmapSize;
         }
 
         // Calculate and validate value array size
-        int valuesSize = rowCount * valueSize;
+        // Only non-null values are stored in the wire format
+        int valueCount = rowCount - nullCount;
+        int valuesSize = valueCount * valueSize;
         if (offset + valuesSize > sourceLength) {
             throw IlpV4ParseException.create(
                     IlpV4ParseException.ErrorCode.INSUFFICIENT_DATA,
@@ -134,101 +138,117 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
     }
 
     private void decodeBytes(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                byte value = Unsafe.getUnsafe().getByte(valuesAddress + i);
+                byte value = Unsafe.getUnsafe().getByte(valuesAddress + valueOffset);
                 sink.putByte(i, value);
+                valueOffset++;
             }
         }
     }
 
     private void decodeShorts(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                short value = Unsafe.getUnsafe().getShort(valuesAddress + (long) i * 2);
+                short value = Unsafe.getUnsafe().getShort(valuesAddress + (long) valueOffset * 2);
                 sink.putShort(i, value);
+                valueOffset++;
             }
         }
     }
 
     private void decodeInts(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                int value = Unsafe.getUnsafe().getInt(valuesAddress + (long) i * 4);
+                int value = Unsafe.getUnsafe().getInt(valuesAddress + (long) valueOffset * 4);
                 sink.putInt(i, value);
+                valueOffset++;
             }
         }
     }
 
     private void decodeLongs(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                long value = Unsafe.getUnsafe().getLong(valuesAddress + (long) i * 8);
+                long value = Unsafe.getUnsafe().getLong(valuesAddress + (long) valueOffset * 8);
                 sink.putLong(i, value);
+                valueOffset++;
             }
         }
     }
 
     private void decodeFloats(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                int bits = Unsafe.getUnsafe().getInt(valuesAddress + (long) i * 4);
+                int bits = Unsafe.getUnsafe().getInt(valuesAddress + (long) valueOffset * 4);
                 float value = Float.intBitsToFloat(bits);
                 sink.putFloat(i, value);
+                valueOffset++;
             }
         }
     }
 
     private void decodeDoubles(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                long bits = Unsafe.getUnsafe().getLong(valuesAddress + (long) i * 8);
+                long bits = Unsafe.getUnsafe().getLong(valuesAddress + (long) valueOffset * 8);
                 double value = Double.longBitsToDouble(bits);
                 sink.putDouble(i, value);
+                valueOffset++;
             }
         }
     }
 
     private void decodeUuids(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {
         // UUID is 16 bytes, big-endian
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                long addr = valuesAddress + (long) i * 16;
+                long addr = valuesAddress + (long) valueOffset * 16;
                 // Big-endian: read hi first, then lo
                 long hi = Long.reverseBytes(Unsafe.getUnsafe().getLong(addr));
                 long lo = Long.reverseBytes(Unsafe.getUnsafe().getLong(addr + 8));
                 sink.putUuid(i, hi, lo);
+                valueOffset++;
             }
         }
     }
 
     private void decodeLong256s(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {
         // LONG256 is 32 bytes, big-endian
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                long addr = valuesAddress + (long) i * 32;
+                long addr = valuesAddress + (long) valueOffset * 32;
                 // Big-endian: read most significant first
                 long l0 = Long.reverseBytes(Unsafe.getUnsafe().getLong(addr));
                 long l1 = Long.reverseBytes(Unsafe.getUnsafe().getLong(addr + 8));
                 long l2 = Long.reverseBytes(Unsafe.getUnsafe().getLong(addr + 16));
                 long l3 = Long.reverseBytes(Unsafe.getUnsafe().getLong(addr + 24));
                 sink.putLong256(i, l0, l1, l2, l3);
+                valueOffset++;
             }
         }
     }
@@ -261,6 +281,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes fixed-width values to direct memory.
+     * Only non-null values are written to the buffer.
      *
      * @param destAddress destination address
      * @param values      values to encode
@@ -285,15 +306,17 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
             pos += bitmapSize;
         }
 
-        // Write values
+        // Write only non-null values
         switch (typeCode & TYPE_MASK) {
             case TYPE_BYTE:
                 for (int i = 0; i < rowCount; i++) {
+                    if (nullable && nulls[i]) continue;
                     Unsafe.getUnsafe().putByte(pos++, (byte) values[i]);
                 }
                 break;
             case TYPE_SHORT:
                 for (int i = 0; i < rowCount; i++) {
+                    if (nullable && nulls[i]) continue;
                     Unsafe.getUnsafe().putShort(pos, (short) values[i]);
                     pos += 2;
                 }
@@ -301,6 +324,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
             case TYPE_INT:
             case TYPE_FLOAT:
                 for (int i = 0; i < rowCount; i++) {
+                    if (nullable && nulls[i]) continue;
                     Unsafe.getUnsafe().putInt(pos, (int) values[i]);
                     pos += 4;
                 }
@@ -310,6 +334,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
             case TYPE_TIMESTAMP:
             case TYPE_DATE:
                 for (int i = 0; i < rowCount; i++) {
+                    if (nullable && nulls[i]) continue;
                     Unsafe.getUnsafe().putLong(pos, values[i]);
                     pos += 8;
                 }
@@ -321,6 +346,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes double values to direct memory.
+     * Only non-null values are written to the buffer.
      *
      * @param destAddress destination address
      * @param values      values to encode
@@ -344,6 +370,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
         }
 
         for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
             Unsafe.getUnsafe().putLong(pos, Double.doubleToLongBits(values[i]));
             pos += 8;
         }
@@ -353,6 +380,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes float values to direct memory.
+     * Only non-null values are written to the buffer.
      *
      * @param destAddress destination address
      * @param values      values to encode
@@ -376,6 +404,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
         }
 
         for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
             Unsafe.getUnsafe().putInt(pos, Float.floatToIntBits(values[i]));
             pos += 4;
         }
@@ -385,6 +414,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes UUID values (big-endian) to direct memory.
+     * Only non-null values are written to the buffer.
      *
      * @param destAddress destination address
      * @param hiValues    high 64 bits of each UUID
@@ -408,8 +438,9 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
             pos += bitmapSize;
         }
 
-        // Big-endian: write hi first, then lo
+        // Big-endian: write hi first, then lo, only for non-null values
         for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
             Unsafe.getUnsafe().putLong(pos, Long.reverseBytes(hiValues[i]));
             Unsafe.getUnsafe().putLong(pos + 8, Long.reverseBytes(loValues[i]));
             pos += 16;

@@ -66,15 +66,23 @@ public class IlpV4TimestampDecoderTest {
         boolean[] nulls = {false, true, false, true, false};
         int rowCount = timestamps.length;
 
+        // Count non-null values
+        int nullCount = 0;
+        for (boolean isNull : nulls) {
+            if (isNull) nullCount++;
+        }
+        int valueCount = rowCount - nullCount;
+
         int bitmapSize = (rowCount + 7) / 8;
-        int size = bitmapSize + 1 + rowCount * 8; // bitmap + encoding flag + values
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        int size = bitmapSize + 1 + valueCount * 8; // bitmap + encoding flag + non-null values only
+        int bufferSize = bitmapSize + 1 + rowCount * 8; // Allocate max possible
+        long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
             long end = IlpV4TimestampDecoder.encodeUncompressed(address, timestamps, nulls);
             Assert.assertEquals(size, end - address);
 
             IlpV4ColumnDecoder.ArrayColumnSink sink = new IlpV4ColumnDecoder.ArrayColumnSink(rowCount);
-            int consumed = IlpV4TimestampDecoder.INSTANCE.decode(address, size, rowCount, true, sink);
+            int consumed = IlpV4TimestampDecoder.INSTANCE.decode(address, bufferSize, rowCount, true, sink);
 
             Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {
@@ -86,7 +94,7 @@ public class IlpV4TimestampDecoderTest {
                 }
             }
         } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

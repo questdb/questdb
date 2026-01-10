@@ -53,23 +53,29 @@ public final class IlpV4BooleanDecoder implements IlpV4ColumnDecoder {
         }
 
         int offset = 0;
-        int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
 
         // Parse null bitmap if nullable
         long nullBitmapAddress = 0;
+        int nullCount = 0;
         if (nullable) {
-            if (offset + bitmapSize > sourceLength) {
+            int nullBitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            if (offset + nullBitmapSize > sourceLength) {
                 throw IlpV4ParseException.create(
                         IlpV4ParseException.ErrorCode.INSUFFICIENT_DATA,
                         "insufficient data for null bitmap"
                 );
             }
             nullBitmapAddress = sourceAddress + offset;
-            offset += bitmapSize;
+            nullCount = IlpV4NullBitmap.countNulls(nullBitmapAddress, rowCount);
+            offset += nullBitmapSize;
         }
 
+        // Value bits only for non-null values
+        int valueCount = rowCount - nullCount;
+        int valueBitmapSize = IlpV4NullBitmap.sizeInBytes(valueCount);
+
         // Validate value bits size
-        if (offset + bitmapSize > sourceLength) {
+        if (offset + valueBitmapSize > sourceLength) {
             throw IlpV4ParseException.create(
                     IlpV4ParseException.ErrorCode.INSUFFICIENT_DATA,
                     "insufficient data for boolean values"
@@ -77,15 +83,17 @@ public final class IlpV4BooleanDecoder implements IlpV4ColumnDecoder {
         }
 
         long valueBitsAddress = sourceAddress + offset;
-        offset += bitmapSize;
+        offset += valueBitmapSize;
 
         // Decode boolean values
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                boolean value = getBit(valueBitsAddress, i);
+                boolean value = getBit(valueBitsAddress, valueOffset);
                 sink.putBoolean(i, value);
+                valueOffset++;
             }
         }
 
@@ -116,6 +124,7 @@ public final class IlpV4BooleanDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes boolean values to direct memory.
+     * Only non-null values are bit-packed.
      *
      * @param destAddress destination address
      * @param values      boolean values to encode
@@ -125,32 +134,44 @@ public final class IlpV4BooleanDecoder implements IlpV4ColumnDecoder {
     public static long encode(long destAddress, boolean[] values, boolean[] nulls) {
         int rowCount = values.length;
         boolean nullable = nulls != null;
-        int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
         long pos = destAddress;
+
+        // Count non-null values
+        int valueCount = rowCount;
+        if (nullable) {
+            valueCount = 0;
+            for (int i = 0; i < rowCount; i++) {
+                if (!nulls[i]) valueCount++;
+            }
+        }
 
         // Write null bitmap if nullable
         if (nullable) {
+            int nullBitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
             IlpV4NullBitmap.fillNoneNull(pos, rowCount);
             for (int i = 0; i < rowCount; i++) {
                 if (nulls[i]) {
                     IlpV4NullBitmap.setNull(pos, i);
                 }
             }
-            pos += bitmapSize;
+            pos += nullBitmapSize;
         }
 
-        // Write value bits
-        // Initialize to zeros
-        for (int i = 0; i < bitmapSize; i++) {
+        // Write value bits (only for non-null values)
+        int valueBitmapSize = IlpV4NullBitmap.sizeInBytes(valueCount);
+        for (int i = 0; i < valueBitmapSize; i++) {
             Unsafe.getUnsafe().putByte(pos + i, (byte) 0);
         }
 
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
             if (values[i]) {
-                setBit(pos, i);
+                setBit(pos, valueOffset);
             }
+            valueOffset++;
         }
-        pos += bitmapSize;
+        pos += valueBitmapSize;
 
         return pos;
     }
@@ -169,6 +190,7 @@ public final class IlpV4BooleanDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes boolean values to a byte array.
+     * Only non-null values are bit-packed.
      *
      * @param buf    destination buffer
      * @param offset starting offset
@@ -179,33 +201,46 @@ public final class IlpV4BooleanDecoder implements IlpV4ColumnDecoder {
     public static int encode(byte[] buf, int offset, boolean[] values, boolean[] nulls) {
         int rowCount = values.length;
         boolean nullable = nulls != null;
-        int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+
+        // Count non-null values
+        int valueCount = rowCount;
+        if (nullable) {
+            valueCount = 0;
+            for (int i = 0; i < rowCount; i++) {
+                if (!nulls[i]) valueCount++;
+            }
+        }
 
         // Write null bitmap if nullable
         if (nullable) {
+            int nullBitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
             IlpV4NullBitmap.fillNoneNull(buf, offset, rowCount);
             for (int i = 0; i < rowCount; i++) {
                 if (nulls[i]) {
                     IlpV4NullBitmap.setNull(buf, offset, i);
                 }
             }
-            offset += bitmapSize;
+            offset += nullBitmapSize;
         }
 
-        // Initialize value bits to zeros
-        for (int i = 0; i < bitmapSize; i++) {
+        // Initialize value bits to zeros (only for non-null values)
+        int valueBitmapSize = IlpV4NullBitmap.sizeInBytes(valueCount);
+        for (int i = 0; i < valueBitmapSize; i++) {
             buf[offset + i] = 0;
         }
 
-        // Set true values
+        // Set true values (only non-null)
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
             if (values[i]) {
-                int byteIndex = i >>> 3;
-                int bitOffset = i & 7;
+                int byteIndex = valueOffset >>> 3;
+                int bitOffset = valueOffset & 7;
                 buf[offset + byteIndex] |= (1 << bitOffset);
             }
+            valueOffset++;
         }
-        offset += bitmapSize;
+        offset += valueBitmapSize;
 
         return offset;
     }

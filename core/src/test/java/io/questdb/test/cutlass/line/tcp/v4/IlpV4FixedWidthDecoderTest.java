@@ -77,16 +77,24 @@ public class IlpV4FixedWidthDecoderTest {
             longValues[i] = values[i];
         }
 
+        // Count non-null values
+        int nullCount = 0;
+        for (boolean isNull : nulls) {
+            if (isNull) nullCount++;
+        }
+        int valueCount = rowCount - nullCount;
+
         int bitmapSize = (rowCount + 7) / 8;
-        int size = bitmapSize + rowCount;
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        int size = bitmapSize + valueCount; // Only non-null values take space
+        int bufferSize = bitmapSize + rowCount; // Allocate max possible
+        long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
             long end = IlpV4FixedWidthDecoder.encode(address, longValues, nulls, TYPE_BYTE);
             Assert.assertEquals(size, end - address);
 
             IlpV4FixedWidthDecoder decoder = new IlpV4FixedWidthDecoder(TYPE_BYTE);
             IlpV4ColumnDecoder.ArrayColumnSink sink = new IlpV4ColumnDecoder.ArrayColumnSink(rowCount);
-            int consumed = decoder.decode(address, size, rowCount, true, sink);
+            int consumed = decoder.decode(address, bufferSize, rowCount, true, sink);
 
             Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {
@@ -98,7 +106,7 @@ public class IlpV4FixedWidthDecoderTest {
                 }
             }
         } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

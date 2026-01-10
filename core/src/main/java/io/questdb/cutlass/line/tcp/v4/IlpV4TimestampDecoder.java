@@ -110,8 +110,15 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
 
     private int decodeUncompressed(long sourceAddress, int sourceLength, int offset, int rowCount,
                                    boolean nullable, long nullBitmapAddress, ColumnSink sink) throws IlpV4ParseException {
-        // Uncompressed: rowCount * 8 bytes
-        int valuesSize = rowCount * 8;
+        // Count nulls to determine actual value count
+        int nullCount = 0;
+        if (nullable) {
+            nullCount = IlpV4NullBitmap.countNulls(nullBitmapAddress, rowCount);
+        }
+        int valueCount = rowCount - nullCount;
+
+        // Uncompressed: valueCount * 8 bytes
+        int valuesSize = valueCount * 8;
         if (offset + valuesSize > sourceLength) {
             throw IlpV4ParseException.create(
                     IlpV4ParseException.ErrorCode.INSUFFICIENT_DATA,
@@ -120,12 +127,14 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
         }
 
         long valuesAddress = sourceAddress + offset;
+        int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                long value = Unsafe.getUnsafe().getLong(valuesAddress + (long) i * 8);
+                long value = Unsafe.getUnsafe().getLong(valuesAddress + (long) valueOffset * 8);
                 sink.putLong(i, value);
+                valueOffset++;
             }
         }
 
@@ -134,6 +143,21 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
 
     private int decodeGorilla(long sourceAddress, int sourceLength, int offset, int rowCount,
                               boolean nullable, long nullBitmapAddress, ColumnSink sink) throws IlpV4ParseException {
+        // Count nulls to determine actual value count
+        int nullCount = 0;
+        if (nullable) {
+            nullCount = IlpV4NullBitmap.countNulls(nullBitmapAddress, rowCount);
+        }
+        int valueCount = rowCount - nullCount;
+
+        if (valueCount == 0) {
+            // All nulls
+            for (int i = 0; i < rowCount; i++) {
+                sink.putNull(i);
+            }
+            return offset;
+        }
+
         // First timestamp: 8 bytes
         if (offset + 8 > sourceLength) {
             throw IlpV4ParseException.create(
@@ -144,12 +168,14 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
         long firstTimestamp = Unsafe.getUnsafe().getLong(sourceAddress + offset);
         offset += 8;
 
-        if (rowCount == 1) {
-            // Only one row, just output the first timestamp
-            if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, 0)) {
-                sink.putNull(0);
-            } else {
-                sink.putLong(0, firstTimestamp);
+        if (valueCount == 1) {
+            // Only one non-null value, output it at the appropriate row position
+            for (int i = 0; i < rowCount; i++) {
+                if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
+                    sink.putNull(i);
+                } else {
+                    sink.putLong(i, firstTimestamp);
+                }
             }
             return offset;
         }
@@ -164,21 +190,17 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
         long secondTimestamp = Unsafe.getUnsafe().getLong(sourceAddress + offset);
         offset += 8;
 
-        // Output first two timestamps
-        if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, 0)) {
-            sink.putNull(0);
-        } else {
-            sink.putLong(0, firstTimestamp);
-        }
-
-        if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, 1)) {
-            sink.putNull(1);
-        } else {
-            sink.putLong(1, secondTimestamp);
-        }
-
-        if (rowCount == 2) {
-            // Only two rows, no delta-of-delta encoding needed
+        if (valueCount == 2) {
+            // Two non-null values
+            int valueIdx = 0;
+            for (int i = 0; i < rowCount; i++) {
+                if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
+                    sink.putNull(i);
+                } else {
+                    sink.putLong(i, valueIdx == 0 ? firstTimestamp : secondTimestamp);
+                    valueIdx++;
+                }
+            }
             return offset;
         }
 
@@ -190,13 +212,22 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
         int remainingBytes = sourceLength - offset;
         gorillaDecoder.resetReader(sourceAddress + offset, remainingBytes);
 
-        // Decode remaining timestamps
-        for (int i = 2; i < rowCount; i++) {
-            long timestamp = gorillaDecoder.decodeNext();
+        // Decode timestamps and distribute to rows
+        int valueIdx = 0;
+        for (int i = 0; i < rowCount; i++) {
             if (nullable && IlpV4NullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
+                long timestamp;
+                if (valueIdx == 0) {
+                    timestamp = firstTimestamp;
+                } else if (valueIdx == 1) {
+                    timestamp = secondTimestamp;
+                } else {
+                    timestamp = gorillaDecoder.decodeNext();
+                }
                 sink.putLong(i, timestamp);
+                valueIdx++;
             }
         }
 
@@ -225,6 +256,7 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes timestamps in uncompressed format to direct memory.
+     * Only non-null values are written.
      *
      * @param destAddress destination address
      * @param timestamps  timestamp values
@@ -251,8 +283,9 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
         // Write encoding flag
         Unsafe.getUnsafe().putByte(pos++, ENCODING_UNCOMPRESSED);
 
-        // Write timestamps
+        // Write only non-null timestamps
         for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
             Unsafe.getUnsafe().putLong(pos, timestamps[i]);
             pos += 8;
         }
@@ -262,6 +295,7 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
 
     /**
      * Encodes timestamps in Gorilla format to direct memory.
+     * Only non-null values are encoded.
      *
      * @param destAddress destination address
      * @param timestamps  timestamp values
@@ -285,26 +319,40 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
             pos += bitmapSize;
         }
 
+        // Count non-null values
+        int valueCount = 0;
+        for (int i = 0; i < rowCount; i++) {
+            if (!nullable || !nulls[i]) valueCount++;
+        }
+
         // Write encoding flag
         Unsafe.getUnsafe().putByte(pos++, ENCODING_GORILLA);
 
-        if (rowCount == 0) {
+        if (valueCount == 0) {
             return pos;
         }
 
+        // Build array of non-null values
+        long[] nonNullValues = new long[valueCount];
+        int idx = 0;
+        for (int i = 0; i < rowCount; i++) {
+            if (nullable && nulls[i]) continue;
+            nonNullValues[idx++] = timestamps[i];
+        }
+
         // Write first timestamp
-        Unsafe.getUnsafe().putLong(pos, timestamps[0]);
+        Unsafe.getUnsafe().putLong(pos, nonNullValues[0]);
         pos += 8;
 
-        if (rowCount == 1) {
+        if (valueCount == 1) {
             return pos;
         }
 
         // Write second timestamp
-        Unsafe.getUnsafe().putLong(pos, timestamps[1]);
+        Unsafe.getUnsafe().putLong(pos, nonNullValues[1]);
         pos += 8;
 
-        if (rowCount == 2) {
+        if (valueCount == 2) {
             return pos;
         }
 
@@ -312,17 +360,17 @@ public final class IlpV4TimestampDecoder implements IlpV4ColumnDecoder {
         IlpV4BitWriter bitWriter = new IlpV4BitWriter();
         bitWriter.reset(pos, 1024 * 1024); // 1MB max for bit data
 
-        long prevTimestamp = timestamps[1];
-        long prevDelta = timestamps[1] - timestamps[0];
+        long prevTimestamp = nonNullValues[1];
+        long prevDelta = nonNullValues[1] - nonNullValues[0];
 
-        for (int i = 2; i < rowCount; i++) {
-            long delta = timestamps[i] - prevTimestamp;
+        for (int i = 2; i < valueCount; i++) {
+            long delta = nonNullValues[i] - prevTimestamp;
             long deltaOfDelta = delta - prevDelta;
 
             encodeDoD(bitWriter, deltaOfDelta);
 
             prevDelta = delta;
-            prevTimestamp = timestamps[i];
+            prevTimestamp = nonNullValues[i];
         }
 
         // Flush remaining bits

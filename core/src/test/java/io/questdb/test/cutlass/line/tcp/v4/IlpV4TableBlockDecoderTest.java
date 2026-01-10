@@ -429,15 +429,13 @@ public class IlpV4TableBlockDecoderTest {
             Unsafe.getUnsafe().putByte(pos, (byte) 0x0A);
             pos += 1;
 
-            // Then ALL values in row order (including placeholders for nulls)
+            // Only NON-NULL values are written (no placeholders for nulls)
             Unsafe.getUnsafe().putLong(pos, 100L);  // row 0
             pos += 8;
-            Unsafe.getUnsafe().putLong(pos, 0L);    // row 1 (null - placeholder)
-            pos += 8;
+            // row 1 is null - NO space used
             Unsafe.getUnsafe().putLong(pos, 300L);  // row 2
             pos += 8;
-            Unsafe.getUnsafe().putLong(pos, 0L);    // row 3 (null - placeholder)
-            pos += 8;
+            // row 3 is null - NO space used
 
             int length = (int) (pos - address);
 

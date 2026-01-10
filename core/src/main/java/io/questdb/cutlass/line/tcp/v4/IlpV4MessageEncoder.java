@@ -325,13 +325,14 @@ public class IlpV4MessageEncoder {
      * <p>
      * Note: null bitmap is written by caller (IlpV4TableBuffer.encode) for nullable columns.
      *
-     * @param values     timestamp values
+     * @param values     timestamp values (packed, only non-null values)
      * @param nulls      null indicators (can be null if not nullable)
-     * @param count      number of values
+     * @param rowCount   total number of rows (for null bitmap reference)
+     * @param valueCount number of actual non-null values
      * @param useGorilla whether to use Gorilla encoding
      */
-    public void writeTimestampColumn(long[] values, boolean[] nulls, int count, boolean useGorilla) {
-        if (useGorilla && count > 2 && canUseGorilla(values, count)) {
+    public void writeTimestampColumn(long[] values, boolean[] nulls, int rowCount, int valueCount, boolean useGorilla) {
+        if (useGorilla && valueCount > 2 && canUseGorilla(values, valueCount)) {
             // Use Gorilla encoding
             // Write encoding flag
             writeByte(IlpV4TimestampDecoder.ENCODING_GORILLA);
@@ -341,7 +342,7 @@ public class IlpV4MessageEncoder {
             Unsafe.getUnsafe().putLong(bufferAddress + position, values[0]);
             position += 8;
 
-            if (count == 1) {
+            if (valueCount == 1) {
                 return;
             }
 
@@ -350,7 +351,7 @@ public class IlpV4MessageEncoder {
             Unsafe.getUnsafe().putLong(bufferAddress + position, values[1]);
             position += 8;
 
-            if (count == 2) {
+            if (valueCount == 2) {
                 return;
             }
 
@@ -361,7 +362,7 @@ public class IlpV4MessageEncoder {
             long prevTimestamp = values[1];
             long prevDelta = values[1] - values[0];
 
-            for (int i = 2; i < count; i++) {
+            for (int i = 2; i < valueCount; i++) {
                 long delta = values[i] - prevTimestamp;
                 long deltaOfDelta = delta - prevDelta;
 
@@ -381,7 +382,7 @@ public class IlpV4MessageEncoder {
                 // Gorilla enabled but can't use it - write uncompressed with encoding flag
                 writeByte(IlpV4TimestampDecoder.ENCODING_UNCOMPRESSED);
             }
-            writeLongColumn(values, count);
+            writeLongColumn(values, valueCount);
         }
     }
 
