@@ -24,15 +24,22 @@
 
 package io.questdb.cutlass.line.http;
 
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.HttpClientConfiguration;
+import io.questdb.cutlass.http.client.Fragment;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
+import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.line.tcp.v4.*;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -67,6 +74,8 @@ public class IlpV4HttpSender implements Closeable {
     private final IlpV4MessageEncoder encoder;
     private final Map<String, IlpV4TableBuffer> tableBuffers;
     private final ObjList<String> tableOrder;
+    private final HttpClient client;
+    private final StringSink errorSink;
 
     private IlpV4TableBuffer currentTable;
     private boolean gorillaEnabled;
@@ -75,7 +84,7 @@ public class IlpV4HttpSender implements Closeable {
     private int pendingRows;
     private int timeoutMs;
 
-    private IlpV4HttpSender(String host, int port) {
+    private IlpV4HttpSender(String host, int port, HttpClientConfiguration clientConfiguration) {
         this.host = host;
         this.port = port;
         this.encoder = new IlpV4MessageEncoder();
@@ -87,6 +96,8 @@ public class IlpV4HttpSender implements Closeable {
         this.autoFlushRows = 0;
         this.pendingRows = 0;
         this.timeoutMs = DEFAULT_TIMEOUT_MS;
+        this.client = HttpClientFactory.newPlainTextInstance(clientConfiguration);
+        this.errorSink = new StringSink();
     }
 
     /**
@@ -97,7 +108,7 @@ public class IlpV4HttpSender implements Closeable {
      * @return connected sender
      */
     public static IlpV4HttpSender connect(String host, int port) {
-        return new IlpV4HttpSender(host, port);
+        return new IlpV4HttpSender(host, port, DefaultHttpClientConfiguration.INSTANCE);
     }
 
     /**
@@ -357,39 +368,59 @@ public class IlpV4HttpSender implements Closeable {
     }
 
     private void sendHttp(byte[] data) throws IOException {
-        URL url = new URL("http", host, port, WRITE_PATH);
-        System.out.println("[IlpV4HttpSender] Sending " + data.length + " bytes to " + url);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        try {
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true);
-            conn.setConnectTimeout(timeoutMs);
-            conn.setReadTimeout(timeoutMs);
-            conn.setRequestProperty("Content-Type", CONTENT_TYPE);
-            conn.setRequestProperty("Content-Length", String.valueOf(data.length));
+        System.out.println("[IlpV4HttpSender] Sending " + data.length + " bytes to http://" + host + ":" + port + WRITE_PATH);
 
-            // Send data
-            try (OutputStream out = conn.getOutputStream()) {
-                out.write(data);
-                out.flush();
+        try {
+            HttpClient.Request request = client.newRequest(host, port)
+                    .POST()
+                    .url(WRITE_PATH)
+                    .header("Content-Type", CONTENT_TYPE);
+
+            request.withContent();
+
+            // Write the binary data to the request
+            for (byte b : data) {
+                request.put(b);
             }
 
-            // Check response
-            int responseCode = conn.getResponseCode();
-            if (responseCode == 204) {
-                // Success - no content
+            HttpClient.ResponseHeaders response = request.send(timeoutMs);
+            response.await(timeoutMs);
+
+            DirectUtf8Sequence statusCode = response.getStatusCode();
+
+            // Check for 204 No Content (success)
+            if (statusCode != null && statusCode.size() == 3
+                    && statusCode.byteAt(0) == '2' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4') {
                 return;
             }
 
-            if (responseCode == 200) {
-                // Success with content - read response
-                try (InputStream in = conn.getInputStream()) {
-                    byte[] responseData = in.readAllBytes();
-                    if (responseData.length > 0) {
-                        IlpV4Response response = parseResponse(responseData);
-                        if (response.getStatusCode() != IlpV4StatusCode.OK) {
-                            throw new IOException("Server error: " + IlpV4StatusCode.name(response.getStatusCode()) +
-                                    " - " + response.getErrorMessage());
+            // Check for 200 OK (success with content)
+            if (statusCode != null && statusCode.size() == 3
+                    && statusCode.byteAt(0) == '2' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '0') {
+                // Read and parse response if chunked
+                if (response.isChunked()) {
+                    Response chunkedRsp = response.getResponse();
+                    Fragment fragment;
+                    int totalSize = 0;
+                    byte[] responseData = new byte[4096];
+                    while ((fragment = chunkedRsp.recv()) != null) {
+                        int fragmentSize = (int) (fragment.hi() - fragment.lo());
+                        if (totalSize + fragmentSize > responseData.length) {
+                            byte[] newData = new byte[responseData.length * 2];
+                            System.arraycopy(responseData, 0, newData, 0, totalSize);
+                            responseData = newData;
+                        }
+                        for (long addr = fragment.lo(); addr < fragment.hi(); addr++) {
+                            responseData[totalSize++] = io.questdb.std.Unsafe.getUnsafe().getByte(addr);
+                        }
+                    }
+                    if (totalSize > 0) {
+                        byte[] actualData = new byte[totalSize];
+                        System.arraycopy(responseData, 0, actualData, 0, totalSize);
+                        IlpV4Response ilpResponse = parseResponse(actualData);
+                        if (ilpResponse.getStatusCode() != IlpV4StatusCode.OK) {
+                            throw new IOException("Server error: " + IlpV4StatusCode.name(ilpResponse.getStatusCode()) +
+                                    " - " + ilpResponse.getErrorMessage());
                         }
                     }
                 }
@@ -397,18 +428,22 @@ public class IlpV4HttpSender implements Closeable {
             }
 
             // Error response
-            String errorMessage;
-            try (InputStream err = conn.getErrorStream()) {
-                if (err != null) {
-                    byte[] errorData = err.readAllBytes();
-                    errorMessage = new String(errorData);
-                } else {
-                    errorMessage = "HTTP " + responseCode;
+            errorSink.clear();
+            if (response.isChunked()) {
+                Response chunkedRsp = response.getResponse();
+                Fragment fragment;
+                while ((fragment = chunkedRsp.recv()) != null) {
+                    Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), errorSink);
                 }
             }
-            throw new IOException("HTTP request failed: " + responseCode + " - " + errorMessage);
-        } finally {
-            conn.disconnect();
+
+            String errorMessage = errorSink.length() > 0 ? errorSink.toString() :
+                    "HTTP " + (statusCode != null ? statusCode.toString() : "unknown");
+            throw new IOException("HTTP request failed: " +
+                    (statusCode != null ? statusCode.toString() : "unknown") + " - " + errorMessage);
+
+        } catch (HttpClientException e) {
+            throw new IOException("HTTP request failed: " + e.getMessage(), e);
         }
     }
 
@@ -453,5 +488,6 @@ public class IlpV4HttpSender implements Closeable {
     @Override
     public void close() {
         encoder.close();
+        Misc.free(client);
     }
 }
