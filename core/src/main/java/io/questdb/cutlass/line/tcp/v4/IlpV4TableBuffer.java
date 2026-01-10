@@ -144,6 +144,20 @@ public class IlpV4TableBuffer {
     }
 
     /**
+     * Cancels the current in-progress row.
+     * <p>
+     * This removes any column values added since the last {@link #nextRow()} call.
+     * If no values have been added for the current row, this is a no-op.
+     */
+    public void cancelCurrentRow() {
+        // Truncate each column back to the committed row count
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            ColumnBuffer col = columns.get(i);
+            col.truncateTo(rowCount);
+        }
+    }
+
+    /**
      * Returns the schema hash for this table.
      * <p>
      * The hash is computed to match what IlpV4Schema.computeSchemaHash() produces:
@@ -609,6 +623,50 @@ public class IlpV4TableBuffer {
                 symbolDict.clear();
                 symbolList.clear();
             }
+        }
+
+        /**
+         * Truncates the column to the specified size.
+         * This is used to cancel uncommitted row values.
+         *
+         * @param newSize the target size (number of rows)
+         */
+        public void truncateTo(int newSize) {
+            if (newSize >= size) {
+                return; // Nothing to truncate
+            }
+
+            // Count non-null values up to newSize
+            int newValueCount = 0;
+            if (nullable && nullBitmapPacked != null) {
+                for (int i = 0; i < newSize; i++) {
+                    int longIndex = i >>> 6;
+                    int bitIndex = i & 63;
+                    if ((nullBitmapPacked[longIndex] & (1L << bitIndex)) == 0) {
+                        newValueCount++;
+                    }
+                }
+                // Clear null bits for truncated rows
+                for (int i = newSize; i < size; i++) {
+                    int longIndex = i >>> 6;
+                    int bitIndex = i & 63;
+                    nullBitmapPacked[longIndex] &= ~(1L << bitIndex);
+                }
+                // Recompute hasNulls
+                hasNulls = false;
+                for (int i = 0; i < newSize && !hasNulls; i++) {
+                    int longIndex = i >>> 6;
+                    int bitIndex = i & 63;
+                    if ((nullBitmapPacked[longIndex] & (1L << bitIndex)) != 0) {
+                        hasNulls = true;
+                    }
+                }
+            } else {
+                newValueCount = newSize;
+            }
+
+            size = newSize;
+            valueCount = newValueCount;
         }
 
         void encodeSymbol(IlpV4MessageEncoder encoder, int count) {

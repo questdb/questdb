@@ -26,13 +26,16 @@ package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
+import io.questdb.client.Sender;
 import io.questdb.cutlass.line.http.IlpV4HttpSender;
 import io.questdb.test.AbstractBootstrapTest;
+import java.time.temporal.ChronoUnit;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import java.time.temporal.ChronoUnit;
 
 /**
  * End-to-end integration tests for ILP v4 HTTP sender and receiver.
@@ -59,12 +62,12 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
                 System.out.println("Starting HTTP test on port: " + httpPort);
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("test_single")
                             .symbol("city", "London")
                             .doubleColumn("temperature", 23.5)
                             .longColumn("humidity", 65)
-                            .at(1000000000000L); // Fixed timestamp
+                            .at(1000000000000L, ChronoUnit.MICROS); // Fixed timestamp
                     System.out.println("About to flush...");
                     sender.flush();
                     System.out.println("Flush completed");
@@ -84,12 +87,12 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     for (int i = 0; i < 100; i++) {
                         sender.table("test_batch")
                                 .symbol("id", "row" + i)
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -108,27 +111,27 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Write to multiple tables in a single batch
                     sender.table("weather")
                             .symbol("city", "London")
                             .doubleColumn("temp", 20.0)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("sensors")
                             .symbol("id", "S1")
                             .longColumn("reading", 100)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("weather")
                             .symbol("city", "Paris")
                             .doubleColumn("temp", 22.0)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("sensors")
                             .symbol("id", "S2")
                             .longColumn("reading", 200)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -159,7 +162,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                             .stringColumn("string_col", "hello world")
                             .symbol("symbol_col", "sym_value")
                             .timestampColumn("ts_col", 1609459200000000L)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -177,20 +180,20 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // First row with all values
                     sender.table("test_nulls")
                             .symbol("tag", "full")
                             .doubleColumn("value", 1.0)
                             .stringColumn("name", "first")
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     // Second row with some nulls (missing columns)
                     sender.table("test_nulls")
                             .symbol("tag", "partial")
                             .doubleColumn("value", 2.0)
                             // name is missing - should be null
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -219,7 +222,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                                 .longColumn("id", i)
                                 .doubleColumn("value", i * 0.1)
                                 .stringColumn("data", "row_" + i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush(); // Final flush for remaining rows
                 }
@@ -239,11 +242,11 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 // First write with initial schema
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("evolving")
                             .symbol("tag", "v1")
                             .longColumn("value", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -251,12 +254,12 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 serverMain.assertSql("select count() from evolving", "count\n1\n");
 
                 // Add new column in second write
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("evolving")
                             .symbol("tag", "v2")
                             .longColumn("value", 2)
                             .stringColumn("new_col", "added") // New column
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -274,17 +277,17 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Send out-of-order timestamps
                     sender.table("ts_order")
                             .longColumn("seq", 3)
-                            .at(3000000000000L);
+                            .at(3000000000000L, ChronoUnit.MICROS);
                     sender.table("ts_order")
                             .longColumn("seq", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.table("ts_order")
                             .longColumn("seq", 2)
-                            .at(2000000000000L);
+                            .at(2000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -302,13 +305,13 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Write many rows with repeated symbol values
                     for (int i = 0; i < 1000; i++) {
                         sender.table("symbol_test")
                                 .symbol("category", "cat_" + (i % 5)) // Only 5 unique values
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -327,21 +330,21 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("unicode_test")
                             .symbol("lang", "Japanese")
                             .stringColumn("text", "Hello World")
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_test")
                             .symbol("lang", "Chinese")
                             .stringColumn("text", "Hello World")
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_test")
                             .symbol("lang", "Emoji")
                             .stringColumn("text", "Hello World")
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -387,14 +390,14 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Multiple flush cycles
                     for (int batch = 0; batch < 5; batch++) {
                         for (int i = 0; i < 100; i++) {
                             sender.table("multi_flush")
                                     .longColumn("batch", batch)
                                     .longColumn("row", i)
-                                    .at(1000000000000L + batch * 100000000L + i * 1000000L);
+                                    .at(1000000000000L + batch * 100000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         sender.flush();
                     }
@@ -414,18 +417,18 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("empty_strings")
                             .symbol("sym", "")
                             .stringColumn("str", "")
                             .longColumn("id", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("empty_strings")
                             .symbol("sym", "non-empty")
                             .stringColumn("str", "has value")
                             .longColumn("id", 2)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -444,7 +447,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("special_nums")
                             .longColumn("max_long", Long.MAX_VALUE)
                             .longColumn("min_long", Long.MIN_VALUE)
@@ -453,7 +456,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                             .doubleColumn("nan", Double.NaN)
                             .doubleColumn("max_double", Double.MAX_VALUE)
                             .doubleColumn("min_double", Double.MIN_VALUE)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -472,10 +475,10 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 // First connection
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("reconnect_test")
                             .longColumn("conn", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -483,10 +486,10 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 serverMain.assertSql("select count() from reconnect_test", "count\n1\n");
 
                 // Second connection (simulates reconnection)
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("reconnect_test")
                             .longColumn("conn", 2)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -507,11 +510,11 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 // First write with minimal schema
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("schema_multi")
                             .symbol("tag", "v1")
                             .longColumn("a", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -519,12 +522,12 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 serverMain.assertSql("select count() from schema_multi", "count\n1\n");
 
                 // Add column b
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("schema_multi")
                             .symbol("tag", "v2")
                             .longColumn("a", 2)
                             .doubleColumn("b", 2.0)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -532,14 +535,14 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 serverMain.assertSql("select count() from schema_multi", "count\n2\n");
 
                 // Add columns c and d
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("schema_multi")
                             .symbol("tag", "v3")
                             .longColumn("a", 3)
                             .doubleColumn("b", 3.0)
                             .stringColumn("c", "hello")
                             .boolColumn("d", true)
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -559,7 +562,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
 
                 // Multiple separate connections each adding columns
                 for (int round = 0; round < 5; round++) {
-                    try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                         sender.table("schema_conn");
                         sender.symbol("round", "r" + round);
 
@@ -567,7 +570,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                         for (int col = 0; col <= round; col++) {
                             sender.longColumn("col_" + col, col);
                         }
-                        sender.at(1000000000000L + round * 1000000L);
+                        sender.at(1000000000000L + round * 1000000L, ChronoUnit.MICROS);
                         sender.flush();
                     }
 
@@ -587,7 +590,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Create table with many columns
                     sender.table("sparse")
                             .longColumn("a", 1)
@@ -595,22 +598,22 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                             .longColumn("c", 3)
                             .longColumn("d", 4)
                             .longColumn("e", 5)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     // Write rows with only some columns (sparse)
                     sender.table("sparse")
                             .longColumn("a", 10)
                             .longColumn("c", 30)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("sparse")
                             .longColumn("b", 20)
                             .longColumn("e", 50)
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     sender.table("sparse")
                             .longColumn("d", 40)
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -637,28 +640,28 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                             .longColumn("max_long", Long.MAX_VALUE)
                             .longColumn("min_long", Long.MIN_VALUE)
                             .longColumn("zero_long", 0L)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     // Integer boundaries
                     sender.table("numeric_bounds")
                             .intColumn("max_int", Integer.MAX_VALUE)
                             .intColumn("min_int", Integer.MIN_VALUE)
                             .intColumn("zero_int", 0)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     // Short boundaries
                     sender.table("numeric_bounds")
                             .shortColumn("max_short", Short.MAX_VALUE)
                             .shortColumn("min_short", Short.MIN_VALUE)
                             .shortColumn("zero_short", (short) 0)
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     // Byte boundaries
                     sender.table("numeric_bounds")
                             .byteColumn("max_byte", Byte.MAX_VALUE)
                             .byteColumn("min_byte", Byte.MIN_VALUE)
                             .byteColumn("zero_byte", (byte) 0)
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -685,7 +688,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                             .floatColumn("nan", Float.NaN)
                             .floatColumn("max", Float.MAX_VALUE)
                             .floatColumn("min", Float.MIN_VALUE)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     // Double special values
                     sender.table("float_special")
@@ -694,7 +697,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                             .doubleColumn("d_nan", Double.NaN)
                             .doubleColumn("d_max", Double.MAX_VALUE)
                             .doubleColumn("d_min", Double.MIN_VALUE)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -713,20 +716,20 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("bool_test")
                             .boolColumn("val", true)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("bool_test")
                             .boolColumn("val", false)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     // Alternating pattern
                     for (int i = 0; i < 10; i++) {
                         sender.table("bool_test")
                                 .boolColumn("val", i % 2 == 0)
-                                .at(1000002000000L + i * 1000000L);
+                                .at(1000002000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
 
                     sender.flush();
@@ -755,7 +758,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                                 .longColumn("long_col", (long) i * 100000000L)
                                 .floatColumn("float_col", i * 1.1f)
                                 .doubleColumn("double_col", i * 1.111111)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -776,7 +779,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Create strings of various lengths
                     StringBuilder sb = new StringBuilder();
                     for (int len = 1; len <= 1000; len *= 10) {
@@ -787,7 +790,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                         sender.table("long_strings")
                                 .longColumn("len", len)
                                 .stringColumn("str", sb.toString())
-                                .at(1000000000000L + len * 1000000L);
+                                .at(1000000000000L + len * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -806,35 +809,35 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Various Unicode edge cases
                     sender.table("unicode_edge")
                             .stringColumn("ascii", "hello")
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_edge")
                             .stringColumn("latin", "caf\u00e9") // café
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_edge")
                             .stringColumn("cyrillic", "\u041f\u0440\u0438\u0432\u0435\u0442") // Привет
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_edge")
                             .stringColumn("arabic", "\u0645\u0631\u062d\u0628\u0627") // مرحبا
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_edge")
                             .stringColumn("cjk", "\u4f60\u597d") // 你好
-                            .at(1000004000000L);
+                            .at(1000004000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_edge")
                             .stringColumn("emoji", "\uD83D\uDE00\uD83C\uDF89") // 😀🎉
-                            .at(1000005000000L);
+                            .at(1000005000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_edge")
                             .stringColumn("mixed", "Hello \u4e16\u754c \uD83C\uDF0D") // Hello 世界 🌍
-                            .at(1000006000000L);
+                            .at(1000006000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -853,13 +856,13 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Write many rows with unique symbol values
                     for (int i = 0; i < 1000; i++) {
                         sender.table("many_symbols")
                                 .symbol("unique_sym", "sym_" + i)
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -879,36 +882,36 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("special_symbols")
                             .symbol("sym", "with-dash")
                             .longColumn("id", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("sym", "with_underscore")
                             .longColumn("id", 2)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("sym", "with.dot")
                             .longColumn("id", 3)
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("sym", "with spaces")
                             .longColumn("id", 4)
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("sym", "CamelCase")
                             .longColumn("id", 5)
-                            .at(1000004000000L);
+                            .at(1000004000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("sym", "ALLCAPS")
                             .longColumn("id", 6)
-                            .at(1000005000000L);
+                            .at(1000005000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -927,14 +930,14 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     for (int i = 0; i < 100; i++) {
                         sender.table("multi_sym")
                                 .symbol("sym1", "a" + (i % 5))
                                 .symbol("sym2", "b" + (i % 10))
                                 .symbol("sym3", "c" + (i % 3))
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -955,21 +958,21 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Very old timestamp
                     sender.table("ts_bounds")
                             .longColumn("id", 1)
-                            .at(1000000L); // 1970
+                            .at(1000000L, ChronoUnit.MICROS); // 1970
 
                     // Recent timestamp
                     sender.table("ts_bounds")
                             .longColumn("id", 2)
-                            .at(1609459200000000L); // 2021
+                            .at(1609459200000000L, ChronoUnit.MICROS); // 2021
 
                     // Far future
                     sender.table("ts_bounds")
                             .longColumn("id", 3)
-                            .at(4102444800000000L); // 2100
+                            .at(4102444800000000L, ChronoUnit.MICROS); // 2100
 
                     sender.flush();
                 }
@@ -988,12 +991,12 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     long baseTs = 1000000000000L;
                     for (int i = 0; i < 100; i++) {
                         sender.table("micro_precision")
                                 .longColumn("seq", i)
-                                .at(baseTs + i); // Increment by 1 microsecond
+                                .at(baseTs + i, ChronoUnit.MICROS); // Increment by 1 microsecond
                     }
                     sender.flush();
                 }
@@ -1012,12 +1015,12 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     long baseTs = 2000000000000L;
                     for (int i = 0; i < 100; i++) {
                         sender.table("dec_ts")
                                 .longColumn("seq", i)
-                                .at(baseTs - i * 1000000L);
+                                .at(baseTs - i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1036,13 +1039,13 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     long ts = 1000000000000L;
                     for (int i = 0; i < 100; i++) {
                         sender.table("same_ts")
                                 .symbol("id", "row" + i)
                                 .longColumn("seq", i)
-                                .at(ts); // Same timestamp for all rows
+                                .at(ts, ChronoUnit.MICROS); // Same timestamp for all rows
                     }
                     sender.flush();
                 }
@@ -1061,14 +1064,14 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Write data spanning multiple days (multiple partitions)
                     for (int day = 0; day < 10; day++) {
                         for (int i = 0; i < 10; i++) {
                             sender.table("multi_part")
                                     .symbol("day", "d" + day)
                                     .longColumn("seq", day * 10 + i)
-                                    .at(1000000000000L + day * 86400000000L + i * 1000000L);
+                                    .at(1000000000000L + day * 86400000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                     }
                     sender.flush();
@@ -1090,12 +1093,12 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Flush after every single row
                     for (int i = 0; i < 50; i++) {
                         sender.table("small_batch")
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                         sender.flush();
                     }
                 }
@@ -1114,14 +1117,14 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Many small batches
                     for (int batch = 0; batch < 100; batch++) {
                         for (int i = 0; i < 5; i++) {
                             sender.table("many_small")
                                     .longColumn("batch", batch)
                                     .longColumn("row", i)
-                                    .at(1000000000000L + batch * 10000000L + i * 1000000L);
+                                    .at(1000000000000L + batch * 10000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         sender.flush();
                     }
@@ -1141,7 +1144,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     StringBuilder sb = new StringBuilder();
                     for (int i = 0; i < 100; i++) {
                         // Create variable-length strings
@@ -1154,7 +1157,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                                 .symbol("id", "r" + i)
                                 .stringColumn("data", sb.toString())
                                 .longColumn("len", sb.length())
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1175,26 +1178,26 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("lower_case")
                             .longColumn("id", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("UPPER_CASE")
                             .longColumn("id", 2)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("MixedCase")
                             .longColumn("id", 3)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("with_underscore")
                             .longColumn("id", 4)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("with123numbers")
                             .longColumn("id", 5)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -1218,14 +1221,14 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     sender.table("col_names")
                             .longColumn("lower", 1)
                             .longColumn("UPPER", 2)
                             .longColumn("MixedCase", 3)
                             .longColumn("with_underscore", 4)
                             .longColumn("col123", 5)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -1243,14 +1246,14 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Create table with many columns
                     for (int row = 0; row < 10; row++) {
                         sender.table("wide_table");
                         for (int col = 0; col < 100; col++) {
                             sender.longColumn("col_" + col, row * 100 + col);
                         }
-                        sender.at(1000000000000L + row * 1000000L);
+                        sender.at(1000000000000L + row * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1273,12 +1276,12 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
 
                 // Multiple sequential connections to same table
                 for (int conn = 0; conn < 10; conn++) {
-                    try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                         for (int i = 0; i < 10; i++) {
                             sender.table("multi_conn")
                                     .longColumn("conn", conn)
                                     .longColumn("row", i)
-                                    .at(1000000000000L + conn * 100000000L + i * 1000000L);
+                                    .at(1000000000000L + conn * 100000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         sender.flush();
                     }
@@ -1300,11 +1303,11 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
 
                 // Each connection writes to a different table
                 for (int conn = 0; conn < 5; conn++) {
-                    try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                         for (int i = 0; i < 20; i++) {
                             sender.table("table_" + conn)
                                     .longColumn("row", i)
-                                    .at(1000000000000L + i * 1000000L);
+                                    .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         sender.flush();
                     }
@@ -1328,10 +1331,10 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
 
                 // Rapid connect/write/disconnect cycles
                 for (int i = 0; i < 50; i++) {
-                    try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                         sender.table("rapid_reconnect")
                                 .longColumn("seq", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                         sender.flush();
                     }
                 }
@@ -1361,7 +1364,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                                 .symbol("partition", "p" + (i % 20))
                                 .longColumn("id", i)
                                 .doubleColumn("value", i * 0.1)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1387,7 +1390,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                     for (int i = 0; i < 100000; i++) {
                         sender.table("high_throughput")
                                 .longColumn("id", i)
-                                .at(1000000000000L + i);
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1408,20 +1411,20 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // Interleave writes to multiple tables
                     for (int i = 0; i < 100; i++) {
                         sender.table("interleaved_a")
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
 
                         sender.table("interleaved_b")
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
 
                         sender.table("interleaved_c")
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1444,7 +1447,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     for (int i = 0; i < 100; i++) {
                         sender.table("mixed_str_sym")
                                 .symbol("sym1", "s" + (i % 5))
@@ -1452,7 +1455,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                                 .symbol("sym2", "t" + (i % 3))
                                 .stringColumn("str2", "data_" + (i * 2))
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1471,14 +1474,14 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // All rows have same column values, only timestamp differs
                     for (int i = 0; i < 100; i++) {
                         sender.table("dup_values")
                                 .symbol("tag", "same")
                                 .longColumn("value", 42)
                                 .stringColumn("str", "constant")
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1497,7 +1500,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     int rowsPerFlush = 100;
                     int flushCount = 20;
 
@@ -1507,7 +1510,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                             sender.table("continuous_write")
                                     .longColumn("flush", f)
                                     .longColumn("row", i)
-                                    .at(1000000000000L + rowNum * 1000000L);
+                                    .at(1000000000000L + rowNum * 1000000L, ChronoUnit.MICROS);
                         }
                         sender.flush();
                     }
@@ -1554,7 +1557,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                                 .floatColumn("spread", 0.5f + (i % 100) * 0.01f)
                                 .stringColumn("venue", "New York")
                                 .boolColumn("is_buy", i % 2 == 0)
-                                .at(1704067200000000L + i * 1000L);
+                                .at(1704067200000000L + i * 1000L, ChronoUnit.MICROS);
                     }
                     // Single flush - creates one large HTTP request
                     sender.flush();
@@ -1578,7 +1581,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
                 int rowCount = 50_000;
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     // NO autoFlushRows - send everything in a single batch
                     for (int i = 0; i < rowCount; i++) {
                         sender.table("very_large_batch")
@@ -1586,7 +1589,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                                 .longColumn("id", i)
                                 .doubleColumn("value", i * 0.1)
                                 .stringColumn("data", "row_" + i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1619,13 +1622,13 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 // 5,000 rows with 500-char strings = ~2.5MB of string data alone
                 int rowCount = 5_000;
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     for (int i = 0; i < rowCount; i++) {
                         sender.table("large_strings_batch")
                                 .symbol("tag", "batch")
                                 .stringColumn("long_data", longString)
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1650,7 +1653,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                 int batchCount = 5;
                 int rowsPerBatch = 10_000;
 
-                try (IlpV4HttpSender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
                     for (int batch = 0; batch < batchCount; batch++) {
                         for (int i = 0; i < rowsPerBatch; i++) {
                             sender.table("multi_large_batch")
@@ -1658,7 +1661,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                                     .longColumn("id", batch * rowsPerBatch + i)
                                     .doubleColumn("value", i * 0.1)
                                     .stringColumn("info", "batch" + batch + "_row" + i)
-                                    .at(1000000000000L + batch * 100000000000L + i * 1000000L);
+                                    .at(1000000000000L + batch * 100000000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         // Flush each batch separately - each is a large HTTP request
                         sender.flush();
@@ -1703,7 +1706,7 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                                 // Timestamp column
                                 .timestampColumn("ts_col", 1704067200000000L + i * 1000L)
                                 // Designated timestamp
-                                .at(1704067200000000L + i * 1000L);
+                                .at(1704067200000000L + i * 1000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }

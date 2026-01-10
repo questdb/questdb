@@ -26,20 +26,27 @@ package io.questdb.cutlass.line.http;
 
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.v4.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
 import java.io.IOException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -49,7 +56,8 @@ import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
  * ILP v4 HTTP client sender for sending binary data to QuestDB over HTTP.
  * <p>
  * This class provides a fluent API identical to IlpV4Sender but uses HTTP
- * transport instead of TCP. The binary protocol is the same.
+ * transport instead of TCP. The binary protocol is the same. It implements
+ * the standard {@link Sender} interface.
  * <p>
  * Example usage:
  * <pre>
@@ -58,12 +66,12 @@ import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
  *           .symbol("city", "London")
  *           .doubleColumn("temperature", 23.5)
  *           .longColumn("humidity", 65)
- *           .at(timestamp);
+ *           .at(timestamp, ChronoUnit.MICROS);
  *     sender.flush();
  * }
  * </pre>
  */
-public class IlpV4HttpSender implements Closeable {
+public class IlpV4HttpSender implements Sender {
 
     private static final String WRITE_PATH = "/write/v4";
     private static final String CONTENT_TYPE = "application/x-ilp-v4";
@@ -150,48 +158,41 @@ public class IlpV4HttpSender implements Closeable {
         return this;
     }
 
-    /**
-     * Starts a new row for the specified table.
-     *
-     * @param tableName table name
-     * @return this sender for chaining
-     */
-    public IlpV4HttpSender table(String tableName) {
-        currentTable = tableBuffers.get(tableName);
+    // ==================== Sender interface implementation ====================
+    // Note: Methods return IlpV4HttpSender (covariant return) to enable chaining with ILPv4-specific methods
+
+    @Override
+    public IlpV4HttpSender table(CharSequence tableName) {
+        String name = tableName.toString();
+        currentTable = tableBuffers.get(name);
         if (currentTable == null) {
-            currentTable = new IlpV4TableBuffer(tableName);
-            tableBuffers.put(tableName, currentTable);
-            tableOrder.add(tableName);
+            currentTable = new IlpV4TableBuffer(name);
+            tableBuffers.put(name, currentTable);
+            tableOrder.add(name);
         }
         return this;
     }
 
-    /**
-     * Adds a symbol column value.
-     */
-    public IlpV4HttpSender symbol(String columnName, String value) {
+    @Override
+    public IlpV4HttpSender symbol(CharSequence columnName, CharSequence value) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_SYMBOL, true);
-        col.addSymbol(value);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_SYMBOL, true);
+        col.addSymbol(value.toString());
         return this;
     }
 
-    /**
-     * Adds a boolean column value.
-     */
-    public IlpV4HttpSender boolColumn(String columnName, boolean value) {
+    @Override
+    public IlpV4HttpSender boolColumn(CharSequence columnName, boolean value) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_BOOLEAN, false);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_BOOLEAN, false);
         col.addBoolean(value);
         return this;
     }
 
-    /**
-     * Adds a long column value.
-     */
-    public IlpV4HttpSender longColumn(String columnName, long value) {
+    @Override
+    public IlpV4HttpSender longColumn(CharSequence columnName, long value) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_LONG, false);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_LONG, false);
         col.addLong(value);
         return this;
     }
@@ -199,9 +200,9 @@ public class IlpV4HttpSender implements Closeable {
     /**
      * Adds a byte column value.
      */
-    public IlpV4HttpSender byteColumn(String columnName, byte value) {
+    public IlpV4HttpSender byteColumn(CharSequence columnName, byte value) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_BYTE, false);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_BYTE, false);
         col.addByte(value);
         return this;
     }
@@ -209,9 +210,9 @@ public class IlpV4HttpSender implements Closeable {
     /**
      * Adds a short column value.
      */
-    public IlpV4HttpSender shortColumn(String columnName, short value) {
+    public IlpV4HttpSender shortColumn(CharSequence columnName, short value) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_SHORT, false);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_SHORT, false);
         col.addShort(value);
         return this;
     }
@@ -219,19 +220,17 @@ public class IlpV4HttpSender implements Closeable {
     /**
      * Adds an int column value.
      */
-    public IlpV4HttpSender intColumn(String columnName, int value) {
+    public IlpV4HttpSender intColumn(CharSequence columnName, int value) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_INT, false);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_INT, false);
         col.addInt(value);
         return this;
     }
 
-    /**
-     * Adds a double column value.
-     */
-    public IlpV4HttpSender doubleColumn(String columnName, double value) {
+    @Override
+    public IlpV4HttpSender doubleColumn(CharSequence columnName, double value) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_DOUBLE, false);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_DOUBLE, false);
         col.addDouble(value);
         return this;
     }
@@ -239,68 +238,93 @@ public class IlpV4HttpSender implements Closeable {
     /**
      * Adds a float column value.
      */
-    public IlpV4HttpSender floatColumn(String columnName, float value) {
+    public IlpV4HttpSender floatColumn(CharSequence columnName, float value) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_FLOAT, false);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_FLOAT, false);
         col.addFloat(value);
         return this;
     }
 
-    /**
-     * Adds a string column value.
-     */
-    public IlpV4HttpSender stringColumn(String columnName, String value) {
+    @Override
+    public IlpV4HttpSender stringColumn(CharSequence columnName, CharSequence value) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_STRING, true);
-        col.addString(value);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_STRING, true);
+        col.addString(value.toString());
+        return this;
+    }
+
+    @Override
+    public IlpV4HttpSender timestampColumn(CharSequence columnName, long value, ChronoUnit unit) {
+        long micros = toMicros(value, unit);
+        checkCurrentTable();
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_TIMESTAMP, true);
+        col.addLong(micros);
+        return this;
+    }
+
+    @Override
+    public IlpV4HttpSender timestampColumn(CharSequence columnName, Instant value) {
+        long micros = value.getEpochSecond() * 1_000_000L + value.getNano() / 1000L;
+        checkCurrentTable();
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_TIMESTAMP, true);
+        col.addLong(micros);
         return this;
     }
 
     /**
      * Adds a timestamp column value (microseconds since epoch).
      */
-    public IlpV4HttpSender timestampColumn(String columnName, long value) {
+    public IlpV4HttpSender timestampColumn(CharSequence columnName, long valueMicros) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_TIMESTAMP, true);
-        col.addLong(value);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_TIMESTAMP, true);
+        col.addLong(valueMicros);
         return this;
     }
 
     /**
      * Adds a UUID column value.
      */
-    public IlpV4HttpSender uuidColumn(String columnName, long high, long low) {
+    public IlpV4HttpSender uuidColumn(CharSequence columnName, long high, long low) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName, TYPE_UUID, true);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_UUID, true);
         col.addUuid(high, low);
         return this;
+    }
+
+    @Override
+    public void at(long timestamp, ChronoUnit unit) {
+        long micros = toMicros(timestamp, unit);
+        atMicros(micros);
+    }
+
+    @Override
+    public void at(Instant timestamp) {
+        long micros = timestamp.getEpochSecond() * 1_000_000L + timestamp.getNano() / 1000L;
+        atMicros(micros);
     }
 
     /**
      * Sets the designated timestamp and completes the row.
      *
      * @param timestampMicros timestamp in microseconds since epoch
-     * @return this sender for chaining
-     * @throws IOException if auto-flush fails
      */
-    public IlpV4HttpSender at(long timestampMicros) throws IOException {
+    public void at(long timestampMicros) {
+        atMicros(timestampMicros);
+    }
+
+    private void atMicros(long timestampMicros) {
         checkCurrentTable();
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn("timestamp", TYPE_TIMESTAMP, false);
         col.addLong(timestampMicros);
-        return finishRow();
+        finishRow();
     }
 
-    /**
-     * Uses server timestamp and completes the row.
-     *
-     * @return this sender for chaining
-     * @throws IOException if auto-flush fails
-     */
-    public IlpV4HttpSender atNow() throws IOException {
-        return at(System.currentTimeMillis() * 1000L);
+    @Override
+    public void atNow() {
+        atMicros(System.currentTimeMillis() * 1000L);
     }
 
-    private IlpV4HttpSender finishRow() throws IOException {
+    private void finishRow() {
         checkCurrentTable();
         currentTable.nextRow();
         pendingRows++;
@@ -308,63 +332,149 @@ public class IlpV4HttpSender implements Closeable {
         if (autoFlushRows > 0 && pendingRows >= autoFlushRows) {
             flush();
         }
-        return this;
     }
 
-    /**
-     * Flushes all pending data to the server via HTTP POST.
-     *
-     * @throws IOException if sending fails
-     */
-    public void flush() throws IOException {
+    @Override
+    public void flush() {
         if (tableOrder.size() == 0) {
             return;
         }
 
-        // Encode all tables
-        encoder.reset();
-        encoder.setGorillaEnabled(gorillaEnabled);
+        try {
+            // Encode all tables
+            encoder.reset();
+            encoder.setGorillaEnabled(gorillaEnabled);
 
-        // Reserve space for header
-        int headerPos = encoder.getPosition();
-        encoder.setPosition(headerPos + HEADER_SIZE);
+            // Reserve space for header
+            int headerPos = encoder.getPosition();
+            encoder.setPosition(headerPos + HEADER_SIZE);
 
-        // Encode each table
-        for (int i = 0, n = tableOrder.size(); i < n; i++) {
-            String tableName = tableOrder.get(i);
-            IlpV4TableBuffer buffer = tableBuffers.get(tableName);
-            if (buffer.getRowCount() > 0) {
-                buffer.encode(encoder, useSchemaRef, gorillaEnabled);
+            // Encode each table
+            for (int i = 0, n = tableOrder.size(); i < n; i++) {
+                String tableName = tableOrder.get(i);
+                IlpV4TableBuffer buffer = tableBuffers.get(tableName);
+                if (buffer.getRowCount() > 0) {
+                    buffer.encode(encoder, useSchemaRef, gorillaEnabled);
+                }
             }
-        }
 
-        // Calculate payload length
-        int payloadLength = encoder.getPosition() - headerPos - HEADER_SIZE;
+            // Calculate payload length
+            int payloadLength = encoder.getPosition() - headerPos - HEADER_SIZE;
 
-        // Write header at the beginning
-        int endPos = encoder.getPosition();
-        encoder.setPosition(headerPos);
+            // Write header at the beginning
+            int endPos = encoder.getPosition();
+            encoder.setPosition(headerPos);
 
-        int tableCount = 0;
-        for (int i = 0, n = tableOrder.size(); i < n; i++) {
-            String tableName = tableOrder.get(i);
-            IlpV4TableBuffer buffer = tableBuffers.get(tableName);
-            if (buffer.getRowCount() > 0) {
-                tableCount++;
+            int tableCount = 0;
+            for (int i = 0, n = tableOrder.size(); i < n; i++) {
+                String tableName = tableOrder.get(i);
+                IlpV4TableBuffer buffer = tableBuffers.get(tableName);
+                if (buffer.getRowCount() > 0) {
+                    tableCount++;
+                }
             }
+            encoder.writeHeader(tableCount, payloadLength);
+            encoder.setPosition(endPos);
+
+            // Send the message via HTTP
+            byte[] data = encoder.toByteArray();
+            sendHttp(data);
+
+            // Clear buffers
+            for (int i = 0, n = tableOrder.size(); i < n; i++) {
+                tableBuffers.get(tableOrder.get(i)).reset();
+            }
+            pendingRows = 0;
+        } catch (IOException e) {
+            throw new LineSenderException("Failed to flush: " + e.getMessage(), e);
         }
-        encoder.writeHeader(tableCount, payloadLength);
-        encoder.setPosition(endPos);
+    }
 
-        // Send the message via HTTP
-        byte[] data = encoder.toByteArray();
-        sendHttp(data);
+    @Override
+    public DirectByteSlice bufferView() {
+        throw new LineSenderException("bufferView() is not supported for ILPv4 HTTP sender");
+    }
 
-        // Clear buffers
+    @Override
+    public void cancelRow() {
+        // HTTP supports cancelRow - just reset current table's last row
+        if (currentTable != null) {
+            currentTable.cancelCurrentRow();
+        }
+    }
+
+    @Override
+    public void reset() {
         for (int i = 0, n = tableOrder.size(); i < n; i++) {
             tableBuffers.get(tableOrder.get(i)).reset();
         }
         pendingRows = 0;
+        currentTable = null;
+    }
+
+    // ==================== Array methods (not supported in ILPv4) ====================
+
+    @Override
+    public Sender doubleArray(@NotNull CharSequence name, double[] values) {
+        throw new LineSenderException("Array columns are not supported in ILPv4");
+    }
+
+    @Override
+    public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
+        throw new LineSenderException("Array columns are not supported in ILPv4");
+    }
+
+    @Override
+    public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
+        throw new LineSenderException("Array columns are not supported in ILPv4");
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, DoubleArray array) {
+        throw new LineSenderException("Array columns are not supported in ILPv4");
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, long[] values) {
+        throw new LineSenderException("Array columns are not supported in ILPv4");
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, long[][] values) {
+        throw new LineSenderException("Array columns are not supported in ILPv4");
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, long[][][] values) {
+        throw new LineSenderException("Array columns are not supported in ILPv4");
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, LongArray array) {
+        throw new LineSenderException("Array columns are not supported in ILPv4");
+    }
+
+    // ==================== Helper methods ====================
+
+    private long toMicros(long value, ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return value / 1000L;
+            case MICROS:
+                return value;
+            case MILLIS:
+                return value * 1000L;
+            case SECONDS:
+                return value * 1_000_000L;
+            case MINUTES:
+                return value * 60_000_000L;
+            case HOURS:
+                return value * 3_600_000_000L;
+            case DAYS:
+                return value * 86_400_000_000L;
+            default:
+                throw new LineSenderException("Unsupported time unit: " + unit);
+        }
     }
 
     private void sendHttp(byte[] data) throws IOException {
@@ -465,7 +575,7 @@ public class IlpV4HttpSender implements Closeable {
 
     private void checkCurrentTable() {
         if (currentTable == null) {
-            throw new IllegalStateException("No table selected. Call table() first.");
+            throw new LineSenderException("No table selected. Call table() first.");
         }
     }
 

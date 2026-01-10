@@ -32,6 +32,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.time.temporal.ChronoUnit;
+
 /**
  * End-to-end integration tests for ILP v4 sender and receiver.
  * <p>
@@ -49,7 +51,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .symbol("city", "London")
                             .doubleColumn("temperature", 23.5)
                             .longColumn("humidity", 65)
-                            .at(1000000000000L); // Fixed timestamp
+                            .at(1000000000000L, ChronoUnit.MICROS); // Fixed timestamp
                     sender.flush();
                 }
 
@@ -72,7 +74,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.table("test_batch")
                                 .symbol("id", "row" + i)
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -97,22 +99,22 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     sender.table("weather")
                             .symbol("city", "London")
                             .doubleColumn("temp", 20.0)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("sensors")
                             .symbol("id", "S1")
                             .longColumn("reading", 100)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("weather")
                             .symbol("city", "Paris")
                             .doubleColumn("temp", 22.0)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("sensors")
                             .symbol("id", "S2")
                             .longColumn("reading", 200)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -147,7 +149,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .stringColumn("string_col", "hello world")
                             .symbol("symbol_col", "sym_value")
                             .timestampColumn("ts_col", 1609459200000000L)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -172,14 +174,14 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .symbol("tag", "full")
                             .doubleColumn("value", 1.0)
                             .stringColumn("name", "first")
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     // Second row with some nulls (missing columns)
                     sender.table("test_nulls")
                             .symbol("tag", "partial")
                             .doubleColumn("value", 2.0)
                             // name is missing - should be null
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -210,7 +212,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .longColumn("id", i)
                                 .doubleColumn("value", i * 0.1)
                                 .stringColumn("data", "row_" + i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush(); // Final flush for remaining rows
                 }
@@ -234,7 +236,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     sender.table("evolving")
                             .symbol("tag", "v1")
                             .longColumn("value", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -252,7 +254,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .symbol("tag", "v2")
                             .longColumn("value", 2)
                             .stringColumn("new_col", "added") // New column
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -277,13 +279,13 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     // Send out-of-order timestamps
                     sender.table("ts_order")
                             .longColumn("seq", 3)
-                            .at(3000000000000L);
+                            .at(3000000000000L, ChronoUnit.MICROS);
                     sender.table("ts_order")
                             .longColumn("seq", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.table("ts_order")
                             .longColumn("seq", 2)
-                            .at(2000000000000L);
+                            .at(2000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -310,7 +312,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.table("symbol_test")
                                 .symbol("category", "cat_" + (i % 5)) // Only 5 unique values
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -336,17 +338,17 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     sender.table("unicode_test")
                             .symbol("lang", "Japanese")
                             .stringColumn("text", "こんにちは世界")
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_test")
                             .symbol("lang", "Chinese")
                             .stringColumn("text", "你好世界")
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("unicode_test")
                             .symbol("lang", "Emoji")
                             .stringColumn("text", "Hello 🌍🎉")
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -399,7 +401,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             sender.table("multi_flush")
                                     .longColumn("batch", batch)
                                     .longColumn("row", i)
-                                    .at(1000000000000L + batch * 100000000L + i * 1000000L);
+                                    .at(1000000000000L + batch * 100000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         sender.flush();
                     }
@@ -424,13 +426,13 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .symbol("sym", "")
                             .stringColumn("str", "")
                             .longColumn("id", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("empty_strings")
                             .symbol("sym", "non-empty")
                             .stringColumn("str", "has value")
                             .longColumn("id", 2)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -458,7 +460,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .doubleColumn("nan", Double.NaN)
                             .doubleColumn("max_double", Double.MAX_VALUE)
                             .doubleColumn("min_double", Double.MIN_VALUE)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -480,7 +482,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                 try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
                     sender.table("reconnect_test")
                             .longColumn("conn", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -496,7 +498,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                 try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
                     sender.table("reconnect_test")
                             .longColumn("conn", 2)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -521,7 +523,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     sender.table(uniqueTableName)
                             .symbol("tag", "test")
                             .doubleColumn("value", 42.0)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -548,7 +550,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     for (int i = 0; i < 100; i++) {
                         sender.table("persistence_test")
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -584,7 +586,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .symbol("partition", "p" + (i % 100))
                                 .longColumn("id", i)
                                 .doubleColumn("value", i * 0.001)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -612,7 +614,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             sender.table("many_batches")
                                     .longColumn("batch", batch)
                                     .longColumn("row", i)
-                                    .at(1000000000000L + batch * 1000000000L + i * 1000000L);
+                                    .at(1000000000000L + batch * 1000000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         sender.flush();
                     }
@@ -643,7 +645,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                         for (int col = 0; col < columnCount; col++) {
                             sender.longColumn("col_" + col, row * columnCount + col);
                         }
-                        sender.at(1000000000000L + row * 1000000L);
+                        sender.at(1000000000000L + row * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -671,7 +673,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     sender.table("schema_multi")
                             .symbol("tag", "v1")
                             .longColumn("value", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -691,7 +693,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .stringColumn("str_col", "new string")
                             .doubleColumn("dbl_col", 3.14)
                             .boolColumn("bool_col", true)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -713,7 +715,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .boolColumn("bool_col", false)
                             .floatColumn("flt_col", 1.5f)
                             .intColumn("int_col", 42)
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -740,26 +742,26 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .longColumn("b", 2)
                             .longColumn("c", 3)
                             .longColumn("d", 4)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     // Row 2: Only a and c
                     sender.table("sparse")
                             .symbol("tag", "ac")
                             .longColumn("a", 10)
                             .longColumn("c", 30)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     // Row 3: Only b and d
                     sender.table("sparse")
                             .symbol("tag", "bd")
                             .longColumn("b", 20)
                             .longColumn("d", 40)
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     // Row 4: Only tag (all other columns null)
                     sender.table("sparse")
                             .symbol("tag", "empty")
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -785,7 +787,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.table("evolve_conn")
                                 .symbol("source", "conn1")
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -804,7 +806,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .symbol("source", "conn2")
                                 .longColumn("value", i + 100)
                                 .stringColumn("new_str", "str_" + i)
-                                .at(1000100000000L + i * 1000000L);
+                                .at(1000100000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -825,7 +827,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .longColumn("value", i + 200)
                                 .stringColumn("new_str", "str_" + i)
                                 .doubleColumn("another", i * 0.5)
-                                .at(1000200000000L + i * 1000000L);
+                                .at(1000200000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -859,7 +861,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 sender.table("concurrent_same")
                                         .longColumn("conn", connId)
                                         .longColumn("row", i)
-                                        .at(1000000000000L + connId * 1000000000L + i * 1000000L);
+                                        .at(1000000000000L + connId * 1000000000L + i * 1000000L, ChronoUnit.MICROS);
                             }
                             sender.flush();
                         } catch (Exception e) {
@@ -900,7 +902,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             for (int i = 0; i < rowsPerTable; i++) {
                                 sender.table("table_" + tableId)
                                         .longColumn("value", i)
-                                        .at(1000000000000L + i * 1000000L);
+                                        .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                             }
                             sender.flush();
                         } catch (Exception e) {
@@ -941,7 +943,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             sender.table("rapid_reconnect")
                                     .longColumn("conn", r)
                                     .longColumn("row", i)
-                                    .at(1000000000000L + r * 1000000000L + i * 1000000L);
+                                    .at(1000000000000L + r * 1000000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         sender.flush();
                     }
@@ -974,7 +976,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .stringColumn("short", "hello")
                             .stringColumn("medium", longString.substring(0, 1000))
                             .stringColumn("long", longString)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -1000,7 +1002,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .intColumn("integer", Integer.MAX_VALUE)
                             .doubleColumn("dbl", Double.MAX_VALUE)
                             .floatColumn("flt", Float.MAX_VALUE)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     // Row with min values
                     sender.table("boundaries")
@@ -1009,7 +1011,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .intColumn("integer", Integer.MIN_VALUE)
                             .doubleColumn("dbl", Double.MIN_VALUE)
                             .floatColumn("flt", Float.MIN_VALUE)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     // Row with zero
                     sender.table("boundaries")
@@ -1018,7 +1020,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .intColumn("integer", 0)
                             .doubleColumn("dbl", 0.0)
                             .floatColumn("flt", 0.0f)
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     // Row with negative zero
                     sender.table("boundaries")
@@ -1027,7 +1029,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .intColumn("integer", -0)
                             .doubleColumn("dbl", -0.0)
                             .floatColumn("flt", -0.0f)
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -1051,25 +1053,25 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .symbol("type", "positive_infinity")
                             .doubleColumn("dbl", Double.POSITIVE_INFINITY)
                             .floatColumn("flt", Float.POSITIVE_INFINITY)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("special_floats")
                             .symbol("type", "negative_infinity")
                             .doubleColumn("dbl", Double.NEGATIVE_INFINITY)
                             .floatColumn("flt", Float.NEGATIVE_INFINITY)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("special_floats")
                             .symbol("type", "nan")
                             .doubleColumn("dbl", Double.NaN)
                             .floatColumn("flt", Float.NaN)
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     sender.table("special_floats")
                             .symbol("type", "subnormal")
                             .doubleColumn("dbl", Double.MIN_NORMAL / 2)
                             .floatColumn("flt", Float.MIN_NORMAL / 2)
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -1093,43 +1095,43 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     sender.table("unicode_edge")
                             .symbol("type", "basic")
                             .stringColumn("text", "Hello World")
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     // CJK characters
                     sender.table("unicode_edge")
                             .symbol("type", "cjk")
                             .stringColumn("text", "日本語中文한국어")
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     // Emoji (supplementary plane)
                     sender.table("unicode_edge")
                             .symbol("type", "emoji")
                             .stringColumn("text", "🎉🚀💻🌍")
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     // Mixed scripts
                     sender.table("unicode_edge")
                             .symbol("type", "mixed")
                             .stringColumn("text", "Hello 世界 مرحبا 🌍")
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     // RTL text (Arabic)
                     sender.table("unicode_edge")
                             .symbol("type", "rtl")
                             .stringColumn("text", "مرحبا بالعالم")
-                            .at(1000004000000L);
+                            .at(1000004000000L, ChronoUnit.MICROS);
 
                     // Combining characters
                     sender.table("unicode_edge")
                             .symbol("type", "combining")
                             .stringColumn("text", "e\u0301")  // é as e + combining accent
-                            .at(1000005000000L);
+                            .at(1000005000000L, ChronoUnit.MICROS);
 
                     // Zero-width characters
                     sender.table("unicode_edge")
                             .symbol("type", "zero_width")
                             .stringColumn("text", "hello\u200Bworld")  // zero-width space
-                            .at(1000006000000L);
+                            .at(1000006000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -1248,7 +1250,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.table("many_symbols")
                                 .symbol("unique_sym", "sym_" + i)
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1270,27 +1272,27 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                 try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
                     sender.table("special_symbols")
                             .symbol("tag", "normal")
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("tag", "with space")
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("tag", "with-dash")
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("tag", "with_underscore")
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("tag", "with.dot")
-                            .at(1000004000000L);
+                            .at(1000004000000L, ChronoUnit.MICROS);
 
                     sender.table("special_symbols")
                             .symbol("tag", "日本語")
-                            .at(1000005000000L);
+                            .at(1000005000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -1315,17 +1317,17 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     // Very early timestamp
                     sender.table("ts_boundaries")
                             .symbol("type", "early")
-                            .at(1000000L); // 1970-01-01 00:00:01
+                            .at(1000000L, ChronoUnit.MICROS); // 1970-01-01 00:00:01
 
                     // Recent timestamp
                     sender.table("ts_boundaries")
                             .symbol("type", "recent")
-                            .at(1704067200000000L); // 2024-01-01 00:00:00
+                            .at(1704067200000000L, ChronoUnit.MICROS); // 2024-01-01 00:00:00
 
                     // Future timestamp
                     sender.table("ts_boundaries")
                             .symbol("type", "future")
-                            .at(2000000000000000L); // Far future
+                            .at(2000000000000000L, ChronoUnit.MICROS); // Far future
 
                     sender.flush();
                 }
@@ -1379,7 +1381,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.table("mixed_" + tableNum)
                                 .symbol("source", "interleaved")
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1412,7 +1414,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             sender.longColumn("extra_" + c, i * 100 + c);
                         }
 
-                        sender.at(1000000000000L + i * 1000000L);
+                        sender.at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1447,7 +1449,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.table("integrity_test")
                                 .longColumn("value", testValues[i])
                                 .longColumn("expected_index", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1474,7 +1476,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .boolColumn("divisible_by_3", i % 3 == 0)
                                 .boolColumn("divisible_by_5", i % 5 == 0)
                                 .longColumn("value", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1506,7 +1508,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .symbol("partition", "p" + (i % 10))
                                 .longColumn("id", i)
                                 .doubleColumn("value", i * 0.1)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                     long endTime = System.nanoTime();
@@ -1540,7 +1542,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                     .longColumn("batch", batch)
                                     .longColumn("row", i)
                                     .doubleColumn("value", batch * 1000 + i)
-                                    .at(1000000000000L + batch * 1000000000L + i * 1000000L);
+                                    .at(1000000000000L + batch * 1000000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         sender.flush();
                         // Verify data after each batch
@@ -1568,7 +1570,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     for (int i = 0; i < 100; i++) {
                         sender.table("single_row_batches")
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                         sender.flush();
                     }
                 }
@@ -1591,19 +1593,19 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                     // Various valid table names
                     sender.table("simple")
                             .longColumn("id", 1)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
 
                     sender.table("with_underscore")
                             .longColumn("id", 2)
-                            .at(1000001000000L);
+                            .at(1000001000000L, ChronoUnit.MICROS);
 
                     sender.table("CamelCase")
                             .longColumn("id", 3)
-                            .at(1000002000000L);
+                            .at(1000002000000L, ChronoUnit.MICROS);
 
                     sender.table("MixedCase_123")
                             .longColumn("id", 4)
-                            .at(1000003000000L);
+                            .at(1000003000000L, ChronoUnit.MICROS);
 
                     sender.flush();
                 }
@@ -1637,7 +1639,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                             .longColumn("with_underscore", 2)
                             .longColumn("CamelCase", 3)
                             .longColumn("lower123", 4)
-                            .at(1000000000000L);
+                            .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
@@ -1667,7 +1669,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .longColumn("same_long", 42)
                                 .doubleColumn("same_double", 3.14)
                                 .stringColumn("same_string", "constant")
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1692,7 +1694,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.table("alternating")
                                 .symbol("toggle", i % 2 == 0 ? "A" : "B")
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1801,7 +1803,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .intColumn("int_val", i * 1000)
                                 .doubleColumn("double_val", i * 0.123456789)
                                 .floatColumn("float_val", i * 0.5f)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1828,7 +1830,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .symbol("sym2", "b" + (i % 20))
                                 .symbol("sym3", "c" + (i % 5))
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1854,7 +1856,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .stringColumn("description", "This is row number " + i)  // High cardinality -> string
                                 .symbol("status", i % 2 == 0 ? "active" : "inactive")  // 2 values -> symbol
                                 .stringColumn("uuid", java.util.UUID.randomUUID().toString())  // All unique -> string
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1904,7 +1906,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .floatColumn("spread", 0.5f + (i % 100) * 0.01f)
                                 .stringColumn("venue", "New York")
                                 .boolColumn("is_buy", i % 2 == 0)
-                                .at(1704067200000000L + i * 1000L);
+                                .at(1704067200000000L + i * 1000L, ChronoUnit.MICROS);
                     }
                     // Single flush - creates one large message
                     sender.flush();
@@ -1938,7 +1940,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .longColumn("id", i)
                                 .doubleColumn("value", i * 0.1)
                                 .stringColumn("data", "row_" + i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1977,7 +1979,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                 .symbol("tag", "batch")
                                 .stringColumn("long_data", longString)
                                 .longColumn("id", i)
-                                .at(1000000000000L + i * 1000000L);
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -2011,7 +2013,7 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
                                     .longColumn("id", batch * rowsPerBatch + i)
                                     .doubleColumn("value", i * 0.1)
                                     .stringColumn("info", "batch" + batch + "_row" + i)
-                                    .at(1000000000000L + batch * 100000000000L + i * 1000000L);
+                                    .at(1000000000000L + batch * 100000000000L + i * 1000000L, ChronoUnit.MICROS);
                         }
                         // Flush each batch separately - each is a large message
                         sender.flush();
