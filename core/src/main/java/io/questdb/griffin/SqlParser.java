@@ -186,7 +186,8 @@ public class SqlParser {
                     OperatorExpression.getRegistry(),
                     expressionNodePool,
                     this,
-                    characterStore
+                    characterStore,
+                    windowColumnPool
             );
         } else {
             this.expressionParser = new ExpressionParser(
@@ -194,7 +195,8 @@ public class SqlParser {
                     null,
                     expressionNodePool,
                     this,
-                    characterStore
+                    characterStore,
+                    windowColumnPool
             );
         }
         this.digit = 1;
@@ -3638,29 +3640,34 @@ public class SqlParser {
                 QueryColumn col;
                 final int colPosition = lexer.lastTokenPosition();
 
-                // windowIgnoreNulls is 0 --> non-window context or default
-                // windowIgnoreNulls is 1 --> ignore nulls
-                // windowIgnoreNulls is 2 --> respect nulls
-                byte windowNullsDesc = 0;
-                if (tok != null) {
-                    if (isIgnoreWord(tok)) {
-                        windowNullsDesc = 1;
-                    } else if (isRespectWord(tok)) {
-                        windowNullsDesc = 2;
+                // Check if ExpressionParser already parsed the window context
+                if (expr.windowContext != null) {
+                    // Window function was already parsed by ExpressionParser
+                    col = expr.windowContext;
+                } else {
+                    // windowIgnoreNulls is 0 --> non-window context or default
+                    // windowIgnoreNulls is 1 --> ignore nulls
+                    // windowIgnoreNulls is 2 --> respect nulls
+                    byte windowNullsDesc = 0;
+                    if (tok != null) {
+                        if (isIgnoreWord(tok)) {
+                            windowNullsDesc = 1;
+                        } else if (isRespectWord(tok)) {
+                            windowNullsDesc = 2;
+                        }
                     }
-                }
 
-                if (tok != null && windowNullsDesc > 0) {
-                    CharSequence next = optTok(lexer);
-                    if (next != null && isNullsWord(next)) {
-                        expectTok(lexer, "over");
-                    } else {
-                        windowNullsDesc = 0;
-                        lexer.backTo(colPosition, tok);
+                    if (tok != null && windowNullsDesc > 0) {
+                        CharSequence next = optTok(lexer);
+                        if (next != null && isNullsWord(next)) {
+                            expectTok(lexer, "over");
+                        } else {
+                            windowNullsDesc = 0;
+                            lexer.backTo(colPosition, tok);
+                        }
                     }
-                }
 
-                if ((tok != null && isOverKeyword(tok)) || windowNullsDesc > 0) {
+                    if ((tok != null && isOverKeyword(tok)) || windowNullsDesc > 0) {
                     // window function
                     expectTok(lexer, '(');
                     overClauseMode = true;//prevent lexer returning ')' ending over clause as null in a sub-query
@@ -3925,12 +3932,13 @@ public class SqlParser {
                     }
                     tok = optTok(lexer);
 
-                } else {
-                    if (expr.type == ExpressionNode.QUERY) {
-                        throw SqlException.$(expr.position, "query is not expected, did you mean column?");
+                    } else {
+                        if (expr.type == ExpressionNode.QUERY) {
+                            throw SqlException.$(expr.position, "query is not expected, did you mean column?");
+                        }
+                        col = queryColumnPool.next().of(null, expr);
                     }
-                    col = queryColumnPool.next().of(null, expr);
-                }
+                } // end of else block for expr.windowContext == null
 
                 final CharSequence alias;
                 final int aliasPosition;

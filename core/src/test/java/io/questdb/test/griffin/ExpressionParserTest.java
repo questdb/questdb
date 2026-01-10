@@ -836,8 +836,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testDecimalWithNewlines() throws SqlException {
-        x("DECIMAL_10_2", " DECIMAL\r\n  (\n 10\n,\n 2\n" +
-                "       )  ");
+        x("DECIMAL_10_2", """
+                 DECIMAL\r
+                  (
+                 10
+                ,
+                 2
+                       ) \s""");
     }
 
     @Test
@@ -1100,16 +1105,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHash4() throws SqlException {
-        x("geohash6c", "geohash ( 6c" +
-                "-- this is a comment, as you can see" +
-                "\n\n\r)");
+        x("geohash6c", """
+                geohash ( 6c\
+                -- this is a comment, as you can see\
+                
+                
+                \r)""");
     }
 
     @Test
     public void testGeoHash5() throws SqlException {
-        x("geohash6c", " geohash\r\n  (\n 6c\n" +
-                "-- this is a comment, as you can see" +
-                "\n\n\r)-- my tralala");
+        x("geohash6c", """
+                 geohash\r
+                  (
+                 6c
+                -- this is a comment, as you can see\
+                
+                
+                \r)-- my tralala""");
     }
 
     @Test
@@ -1123,9 +1136,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashConstantValid() throws SqlException {
-        x("#sp052w92p1p8/7", " #sp052w92p1p8\r\n  / 7\n 6c\n" +
-                "-- this is a comment, as you can see" +
-                "\n\n\r-- my tralala");
+        x("#sp052w92p1p8/7", """
+                 #sp052w92p1p8\r
+                  / 7
+                 6c
+                -- this is a comment, as you can see\
+                
+                
+                \r-- my tralala""");
         x("#sp052w92p1p8/7", "#sp052w92p1p8 / 7");
         x("#sp052w92p1p8", "#sp052w92p1p8");
         x("#sp052w92p1p8/0", "#sp052w92p1p8 / 0"); // valid at the expression level

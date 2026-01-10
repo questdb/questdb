@@ -66,6 +66,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public ExpressionNode rhs;
     public CharSequence token;
     public int type;
+    public WindowColumn windowContext;
 
     // IMPORTANT: update deepClone method after adding a new field
     private ExpressionNode() {
@@ -140,6 +141,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.intrinsicValue = node.intrinsicValue;
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
+        copy.windowContext = node.windowContext; // shallow copy - WindowColumn is pooled
         return copy;
     }
 
@@ -156,6 +158,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         queryModel = null;
         innerPredicate = false;
         implemented = false;
+        windowContext = null;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {
@@ -173,6 +176,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.paramCount = other.paramCount;
         this.intrinsicValue = other.intrinsicValue;
         this.innerPredicate = other.innerPredicate;
+        this.windowContext = other.windowContext;
         return this;
     }
 
@@ -192,12 +196,13 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && Objects.equals(token, that.token)
                 && Objects.equals(queryModel, that.queryModel)
                 && Objects.equals(lhs, that.lhs)
-                && Objects.equals(rhs, that.rhs);
+                && Objects.equals(rhs, that.rhs)
+                && Objects.equals(windowContext, that.windowContext);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate, implemented);
+        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate, implemented, windowContext);
     }
 
     public boolean isWildcard() {
