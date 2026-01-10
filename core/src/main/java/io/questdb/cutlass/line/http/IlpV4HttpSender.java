@@ -256,10 +256,17 @@ public class IlpV4HttpSender implements Sender {
 
     @Override
     public IlpV4HttpSender timestampColumn(CharSequence columnName, long value, ChronoUnit unit) {
-        long micros = toMicros(value, unit);
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_TIMESTAMP, true);
-        col.addLong(micros);
+        if (unit == ChronoUnit.NANOS) {
+            // Send nanoseconds with full precision using TYPE_TIMESTAMP_NANOS
+            IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_TIMESTAMP_NANOS, true);
+            col.addLong(value);
+        } else {
+            // Convert to microseconds for TYPE_TIMESTAMP
+            long micros = toMicros(value, unit);
+            IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_TIMESTAMP, true);
+            col.addLong(micros);
+        }
         return this;
     }
 
@@ -294,8 +301,14 @@ public class IlpV4HttpSender implements Sender {
 
     @Override
     public void at(long timestamp, ChronoUnit unit) {
-        long micros = toMicros(timestamp, unit);
-        atMicros(micros);
+        if (unit == ChronoUnit.NANOS) {
+            // Send nanoseconds with full precision using TYPE_TIMESTAMP_NANOS
+            atNanos(timestamp);
+        } else {
+            // Convert to microseconds for TYPE_TIMESTAMP
+            long micros = toMicros(timestamp, unit);
+            atMicros(micros);
+        }
     }
 
     @Override
@@ -322,6 +335,15 @@ public class IlpV4HttpSender implements Sender {
         // Must be nullable to support atNow() with server-assigned timestamps.
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn("", TYPE_TIMESTAMP, true);
         col.addLong(timestampMicros);
+        finishRow();
+    }
+
+    private void atNanos(long timestampNanos) {
+        checkCurrentTable();
+        // Use empty column name with TYPE_TIMESTAMP_NANOS to indicate designated timestamp
+        // with full nanosecond precision.
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn("", TYPE_TIMESTAMP_NANOS, true);
+        col.addLong(timestampNanos);
         finishRow();
     }
 

@@ -161,8 +161,15 @@ public final class IlpV4Constants {
 
     /**
      * Column type: TIMESTAMP (int64 microseconds since epoch).
+     * Use this for timestamps beyond nanosecond range (year > 2262).
      */
     public static final byte TYPE_TIMESTAMP = 0x0A;
+
+    /**
+     * Column type: TIMESTAMP_NANOS (int64 nanoseconds since epoch).
+     * Use this for full nanosecond precision (limited to years 1677-2262).
+     */
+    public static final byte TYPE_TIMESTAMP_NANOS = 0x10;
 
     /**
      * Column type: DATE (int64 milliseconds since epoch).
@@ -332,6 +339,7 @@ public final class IlpV4Constants {
                 code == TYPE_FLOAT ||
                 code == TYPE_DOUBLE ||
                 code == TYPE_TIMESTAMP ||
+                code == TYPE_TIMESTAMP_NANOS ||
                 code == TYPE_DATE ||
                 code == TYPE_UUID ||
                 code == TYPE_LONG256;
@@ -358,6 +366,7 @@ public final class IlpV4Constants {
             case TYPE_LONG:
             case TYPE_DOUBLE:
             case TYPE_TIMESTAMP:
+            case TYPE_TIMESTAMP_NANOS:
             case TYPE_DATE:
                 return 8;
             case TYPE_UUID:
@@ -409,6 +418,9 @@ public final class IlpV4Constants {
                 break;
             case TYPE_TIMESTAMP:
                 name = "TIMESTAMP";
+                break;
+            case TYPE_TIMESTAMP_NANOS:
+                name = "TIMESTAMP_NANOS";
                 break;
             case TYPE_DATE:
                 name = "DATE";

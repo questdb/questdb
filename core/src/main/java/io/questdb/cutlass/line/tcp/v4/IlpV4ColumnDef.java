@@ -126,7 +126,9 @@ public final class IlpV4ColumnDef {
      * @throws IlpV4ParseException if type code is invalid
      */
     public void validate() throws IlpV4ParseException {
-        if (typeCode < TYPE_BOOLEAN || typeCode > TYPE_VARCHAR) {
+        boolean valid = (typeCode >= TYPE_BOOLEAN && typeCode <= TYPE_VARCHAR)
+                || typeCode == TYPE_TIMESTAMP_NANOS;
+        if (!valid) {
             throw IlpV4ParseException.create(
                     IlpV4ParseException.ErrorCode.INVALID_COLUMN_TYPE,
                     "invalid column type code: 0x" + Integer.toHexString(typeCode)

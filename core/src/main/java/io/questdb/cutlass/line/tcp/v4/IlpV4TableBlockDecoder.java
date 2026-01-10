@@ -201,6 +201,7 @@ public class IlpV4TableBlockDecoder {
                 return fixedDecoder.decode(address, maxLength, rowCount, nullable, sink);
 
             case TYPE_TIMESTAMP:
+            case TYPE_TIMESTAMP_NANOS:
                 // Use Gorilla decoder if enabled, otherwise fixed-width
                 if (gorillaEnabled) {
                     return timestampDecoder.decode(address, maxLength, rowCount, nullable, sink);

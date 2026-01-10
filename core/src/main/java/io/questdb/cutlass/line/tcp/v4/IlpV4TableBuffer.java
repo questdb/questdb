@@ -248,6 +248,7 @@ public class IlpV4TableBuffer {
                     encoder.writeDoubleColumn(col.getDoubleValues(), valueCount);
                     break;
                 case TYPE_TIMESTAMP:
+                case TYPE_TIMESTAMP_NANOS:
                     // Note: nulls parameter is unused in writeTimestampColumn
                     encoder.writeTimestampColumn(
                             col.getLongValues(),
@@ -571,6 +572,7 @@ public class IlpV4TableBuffer {
                         break;
                     case TYPE_LONG:
                     case TYPE_TIMESTAMP:
+                    case TYPE_TIMESTAMP_NANOS:
                     case TYPE_DATE:
                         longValues[valueCount++] = Long.MIN_VALUE;
                         break;
@@ -706,6 +708,7 @@ public class IlpV4TableBuffer {
                     break;
                 case TYPE_LONG:
                 case TYPE_TIMESTAMP:
+                case TYPE_TIMESTAMP_NANOS:
                 case TYPE_DATE:
                     longValues = new long[cap];
                     break;
@@ -751,6 +754,7 @@ public class IlpV4TableBuffer {
                     break;
                 case TYPE_LONG:
                 case TYPE_TIMESTAMP:
+                case TYPE_TIMESTAMP_NANOS:
                 case TYPE_DATE:
                     longValues = Arrays.copyOf(longValues, newCap);
                     break;

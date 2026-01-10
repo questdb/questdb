@@ -76,6 +76,7 @@ public class IlpV4DecodedColumn {
             case IlpV4Constants.TYPE_LONG:
             case IlpV4Constants.TYPE_DATE:
             case IlpV4Constants.TYPE_TIMESTAMP:
+            case IlpV4Constants.TYPE_TIMESTAMP_NANOS:
                 longValues = new long[rowCount];
                 break;
             case IlpV4Constants.TYPE_FLOAT:

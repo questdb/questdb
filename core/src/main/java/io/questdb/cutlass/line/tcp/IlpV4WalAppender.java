@@ -126,10 +126,11 @@ public class IlpV4WalAppender {
 
             int columnWriterIndex;
 
-            // Empty column name with TIMESTAMP type indicates the designated timestamp.
+            // Empty column name with TIMESTAMP or TIMESTAMP_NANOS type indicates the designated timestamp.
             // This is sent by at() and maps directly to the table's designated timestamp
             // column, regardless of its actual name.
-            if (columnName.isEmpty() && colDef.getTypeCode() == TYPE_TIMESTAMP) {
+            byte colType = colDef.getTypeCode();
+            if (columnName.isEmpty() && (colType == TYPE_TIMESTAMP || colType == TYPE_TIMESTAMP_NANOS)) {
                 if (timestampIndex < 0) {
                     throw CairoException.nonCritical()
                             .put("designated timestamp provided but table has no designated timestamp [table=")
@@ -190,6 +191,7 @@ public class IlpV4WalAppender {
 
         for (int row = 0; row < rowCount; row++) {
             // Get timestamp for this row
+            // Value is already in the correct unit (nanos for TYPE_TIMESTAMP_NANOS, micros for TYPE_TIMESTAMP)
             long timestamp;
             if (timestampColumn != null && !timestampColumn.isNull(row)) {
                 timestamp = timestampColumn.getTimestamp(row);
@@ -269,7 +271,17 @@ public class IlpV4WalAppender {
                 break;
 
             case ColumnType.TIMESTAMP:
-                r.putTimestamp(columnIndex, column.getTimestamp(row));
+                // Both TIMESTAMP (micros) and TIMESTAMP_NANO (nanos) have the same tag.
+                // Need to handle conversion when ILP type doesn't match column type.
+                long tsValue = column.getTimestamp(row);
+                if (ilpType == TYPE_TIMESTAMP_NANOS && columnType == ColumnType.TIMESTAMP) {
+                    // Wire is nanos, column is micros - convert by dividing by 1000
+                    tsValue = tsValue / 1000;
+                } else if (ilpType == TYPE_TIMESTAMP && columnType == ColumnType.TIMESTAMP_NANO) {
+                    // Wire is micros, column is nanos - convert by multiplying by 1000
+                    tsValue = tsValue * 1000;
+                }
+                r.putTimestamp(columnIndex, tsValue);
                 break;
 
             case ColumnType.STRING:
@@ -342,6 +354,8 @@ public class IlpV4WalAppender {
                 return ColumnType.SYMBOL;
             case TYPE_TIMESTAMP:
                 return ColumnType.TIMESTAMP;
+            case TYPE_TIMESTAMP_NANOS:
+                return ColumnType.TIMESTAMP_NANO;
             case TYPE_DATE:
                 return ColumnType.DATE;
             case TYPE_UUID:

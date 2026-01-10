@@ -2236,4 +2236,178 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
             });
         });
     }
+
+    /**
+     * Tests nanosecond timestamp accuracy.
+     * <p>
+     * Verifies that nanosecond precision is correctly handled:
+     * - Values differing by single nanoseconds are correctly truncated to microseconds
+     * - Sub-microsecond precision is preserved as much as QuestDB allows (microseconds)
+     */
+    @Test
+    public void testNanosecondAccuracy() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                // Test nanosecond precision - values that differ by 1 nanosecond
+                // 1700000000000000000 nanos = 2023-11-14T22:13:20.000000000Z
+                // 1700000000000000001 nanos = 2023-11-14T22:13:20.000000001Z (1ns later)
+                // 1700000000000000999 nanos = 2023-11-14T22:13:20.000000999Z (999ns later)
+                // 1700000000000001000 nanos = 2023-11-14T22:13:20.000001000Z (1000ns = 1 micro later)
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    // These are all distinct nanosecond values that should be preserved
+                    sender.table("test_nanos_accuracy")
+                            .symbol("label", "base")
+                            .longColumn("nanos_value", 1700000000000000000L)
+                            .at(1700000000000000000L, ChronoUnit.NANOS);
+
+                    sender.table("test_nanos_accuracy")
+                            .symbol("label", "plus_1ns")
+                            .longColumn("nanos_value", 1700000000000000001L)
+                            .at(1700000000000000001L, ChronoUnit.NANOS);
+
+                    sender.table("test_nanos_accuracy")
+                            .symbol("label", "plus_999ns")
+                            .longColumn("nanos_value", 1700000000000000999L)
+                            .at(1700000000000000999L, ChronoUnit.NANOS);
+
+                    // This should map to the NEXT microsecond
+                    sender.table("test_nanos_accuracy")
+                            .symbol("label", "plus_1000ns")
+                            .longColumn("nanos_value", 1700000000000001000L)
+                            .at(1700000000000001000L, ChronoUnit.NANOS);
+
+                    // Test with sub-microsecond precision in the middle of a second
+                    // 1700000000123456789 nanos is fully preserved with TIMESTAMP_NS
+                    sender.table("test_nanos_accuracy")
+                            .symbol("label", "with_submicros")
+                            .longColumn("nanos_value", 1700000000123456789L)
+                            .at(1700000000123456789L, ChronoUnit.NANOS);
+
+                    sender.flush();
+                }
+
+                // Verify full nanosecond precision is preserved
+                // TYPE_TIMESTAMP_NANOS creates TIMESTAMP_NS columns which store nanos natively
+                String expected = "label\ttimestamp\n" +
+                        "base\t2023-11-14T22:13:20.000000000Z\n" +
+                        "plus_1ns\t2023-11-14T22:13:20.000000001Z\n" +
+                        "plus_999ns\t2023-11-14T22:13:20.000000999Z\n" +
+                        "plus_1000ns\t2023-11-14T22:13:20.000001000Z\n" +
+                        "with_submicros\t2023-11-14T22:13:20.123456789Z\n";
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    assertSql(expected, "select label, \"timestamp\" from \"test_nanos_accuracy\" order by nanos_value");
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests microsecond timestamps beyond nanosecond range.
+     * <p>
+     * Year 3000 cannot be represented in nanoseconds (would overflow 64-bit signed long),
+     * but can be represented in microseconds. This test verifies that ILP v4 can handle
+     * such far-future dates when sent as microseconds.
+     * <p>
+     * Max nanoseconds: ~292 years from epoch (year ~2262)
+     * Max microseconds: ~292,000 years from epoch
+     */
+    @Test
+    public void testMicrosecondRangeBeyondNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                // Year 3000: approximately 1030 years from 1970
+                // In microseconds: 1030 * 365.25 * 24 * 60 * 60 * 1_000_000 ≈ 32.5 * 10^15
+                // This fits in a long (max ~9.2 * 10^18) but would overflow if converted to nanos
+
+                // 3000-01-01T00:00:00Z in microseconds
+                long year3000Micros = 32503680000000000L; // ~Jan 1, 3000
+
+                // Verify this would overflow in nanos
+                // year3000Micros * 1000 would overflow
+                assert year3000Micros > Long.MAX_VALUE / 1000 : "Test value should overflow if converted to nanos";
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    sender.table("test_future_date")
+                            .symbol("era", "far_future")
+                            .longColumn("value", 42)
+                            .at(year3000Micros, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                // Verify the far-future timestamp is correctly stored
+                String expected = "timestamp\n3000-01-01T00:00:00.000000Z\n";
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    assertSql(expected, "select \"timestamp\" from \"test_future_date\"");
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests timestampColumn() with nanosecond precision for a regular timestamp column.
+     */
+    @Test
+    public void testTimestampColumnWithNanoseconds() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                // Create table with a regular timestamp column (not designated)
+                engine.execute("CREATE TABLE test_ts_col (sym SYMBOL, event_time TIMESTAMP, value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Timestamp with nanosecond precision
+                long nanosTimestamp = 1700000000123456789L;
+                long designatedTs = 1700000000000000L; // micros
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    sender.table("test_ts_col")
+                            .symbol("sym", "test")
+                            .timestampColumn("event_time", nanosTimestamp, ChronoUnit.NANOS)
+                            .longColumn("value", 42)
+                            .at(designatedTs, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                // Verify the nanosecond precision is preserved (converted to micros)
+                String expected = "event_time\n2023-11-14T22:13:20.123456Z\n";
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    assertSql(expected, "select event_time from \"test_ts_col\"");
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests timestampColumn() with microsecond value beyond nanosecond range.
+     */
+    @Test
+    public void testTimestampColumnBeyondNanosRange() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                // Create table with a regular timestamp column
+                engine.execute("CREATE TABLE test_ts_col_future (sym SYMBOL, event_time TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Year 3000 in microseconds - beyond nanos range
+                long year3000Micros = 32503680000000000L;
+                long designatedTs = 1700000000000000L; // 2023 in micros
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    sender.table("test_ts_col_future")
+                            .symbol("sym", "future")
+                            .timestampColumn("event_time", year3000Micros, ChronoUnit.MICROS)
+                            .at(designatedTs, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                String expected = "event_time\n3000-01-01T00:00:00.000000Z\n";
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    assertSql(expected, "select event_time from \"test_ts_col_future\"");
+                });
+            });
+        });
+    }
 }

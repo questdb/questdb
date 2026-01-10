@@ -119,6 +119,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
                 break;
             case TYPE_LONG:
             case TYPE_TIMESTAMP:
+            case TYPE_TIMESTAMP_NANOS:
             case TYPE_DATE:
                 decodeLongs(valuesAddress, nullBitmapAddress, rowCount, nullable, sink);
                 break;
@@ -332,6 +333,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
             case TYPE_LONG:
             case TYPE_DOUBLE:
             case TYPE_TIMESTAMP:
+            case TYPE_TIMESTAMP_NANOS:
             case TYPE_DATE:
                 for (int i = 0; i < rowCount; i++) {
                     if (nullable && nulls[i]) continue;

@@ -65,10 +65,11 @@ public class IlpV4TableStructureAdapter implements TableStructure {
         this.columns = columns;
         this.timestampIndex = -1;
 
-        // Find the designated timestamp column - empty name with TIMESTAMP type
+        // Find the designated timestamp column - empty name with TIMESTAMP or TIMESTAMP_NANOS type
         for (int i = 0; i < columns.length; i++) {
+            byte typeCode = (byte) (columns[i].getTypeCode() & 0x7F);
             if (columns[i].getName().isEmpty() &&
-                    (columns[i].getTypeCode() & 0x7F) == IlpV4Constants.TYPE_TIMESTAMP) {
+                    (typeCode == IlpV4Constants.TYPE_TIMESTAMP || typeCode == IlpV4Constants.TYPE_TIMESTAMP_NANOS)) {
                 timestampIndex = i;
                 break;
             }
@@ -103,6 +104,13 @@ public class IlpV4TableStructureAdapter implements TableStructure {
     @Override
     public int getColumnType(int columnIndex) {
         if (columnIndex == getTimestampIndex()) {
+            // For designated timestamp, use the wire type to determine TIMESTAMP vs TIMESTAMP_NANO
+            if (timestampIndex >= 0 && timestampIndex < columns.length) {
+                byte typeCode = (byte) (columns[timestampIndex].getTypeCode() & 0x7F);
+                if (typeCode == IlpV4Constants.TYPE_TIMESTAMP_NANOS) {
+                    return ColumnType.TIMESTAMP_NANO;
+                }
+            }
             return ColumnType.TIMESTAMP;
         }
         if (columnIndex >= columns.length) {

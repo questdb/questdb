@@ -253,10 +253,11 @@ public class IlpV4HttpTudCache implements QuietCloseable {
             this.schema = schema;
             this.partitionBy = partitionBy;
 
-            // Find designated timestamp column - empty name with TIMESTAMP type
+            // Find designated timestamp column - empty name with TIMESTAMP or TIMESTAMP_NANOS type
             for (int i = 0; i < schema.length; i++) {
+                byte typeCode = schema[i].getTypeCode();
                 if (schema[i].getName().isEmpty() &&
-                        schema[i].getTypeCode() == IlpV4Constants.TYPE_TIMESTAMP) {
+                        (typeCode == IlpV4Constants.TYPE_TIMESTAMP || typeCode == IlpV4Constants.TYPE_TIMESTAMP_NANOS)) {
                     timestampIndex = i;
                     break;
                 }
