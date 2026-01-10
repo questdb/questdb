@@ -1,0 +1,175 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.http.processors;
+
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.http.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.str.Utf8String;
+
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
+import static io.questdb.cutlass.http.HttpRequestValidator.*;
+
+/**
+ * HTTP processor for ILP v4 binary protocol.
+ * <p>
+ * Handles POST requests to /write/v4 endpoint with binary ILP v4 data.
+ */
+public class IlpV4HttpProcessor implements HttpPostPutProcessor, HttpRequestHandler {
+    private static final Log LOG = LogFactory.getLog(IlpV4HttpProcessor.class);
+    private static final LocalValue<IlpV4HttpProcessorState> LV = new LocalValue<>();
+    private static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
+
+    private final CairoEngine engine;
+    private final HttpFullFatServerConfiguration httpConfiguration;
+    private final LineHttpProcessorConfiguration lineConfiguration;
+    private final int recvBufferSize;
+    private final int maxResponseContentLength;
+    private IlpV4HttpProcessorState state;
+
+    public IlpV4HttpProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
+        this.engine = engine;
+        this.recvBufferSize = httpConfiguration.getRecvBufferSize();
+        this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
+        this.lineConfiguration = httpConfiguration.getLineHttpProcessorConfiguration();
+        this.httpConfiguration = httpConfiguration;
+    }
+
+    @Override
+    public String getName() {
+        return ActiveConnectionTracker.PROCESSOR_ILP_HTTP;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public short getSupportedRequestTypes() {
+        return METHOD_POST | NON_MULTIPART_REQUEST | MULTIPART_REQUEST;
+    }
+
+    @Override
+    public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        if (state.isOk()) {
+            state.addData(lo, hi);
+        }
+    }
+
+    @Override
+    public void onConnectionClosed(HttpConnectionContext context) {
+        state = LV.get(context);
+        if (state != null) {
+            state.onDisconnected();
+        }
+    }
+
+    @Override
+    public void onHeadersReady(HttpConnectionContext context) {
+        state = LV.get(context);
+        if (state == null) {
+            state = new IlpV4HttpProcessorState(recvBufferSize, maxResponseContentLength, engine, lineConfiguration);
+            LV.set(context, state);
+        } else {
+            state.clear();
+        }
+
+        if (!httpConfiguration.isAcceptingWrites()) {
+            state.reject(IlpV4HttpProcessorState.Status.NOT_ACCEPTING_WRITES, "this instance cannot receive writes", context.getFd());
+            return;
+        }
+
+        state.of(context.getFd(), context.getSecurityContext());
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        try {
+            state.processMessage();
+            if (state.isOk()) {
+                state.commit();
+            }
+
+            if (state.isOk()) {
+                state.setSendStatus(SendStatus.HEADER);
+                context.simpleResponse().sendStatusNoContent(204);
+            } else {
+                state.setSendStatus(SendStatus.HEADER);
+                sendErrorHeader(context);
+                state.setSendStatus(SendStatus.CONTENT);
+                sendErrorContent(context);
+            }
+            engine.getMetrics().lineMetrics().totalIlpHttpBytesGauge().add(context.getTotalReceived());
+        } catch (Throwable t) {
+            LOG.error().$('[').$(context.getFd()).$("] error in onRequestComplete: ").$(t).$();
+            throw t;
+        }
+    }
+
+    @Override
+    public void resumeRecv(HttpConnectionContext context) {
+        state = LV.get(context);
+    }
+
+    @Override
+    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        state = LV.get(context);
+        assert state != null;
+
+        switch (state.getSendStatus()) {
+            case HEADER:
+                context.resumeResponseSend();
+                if (!state.isOk()) {
+                    state.setSendStatus(SendStatus.CONTENT);
+                    sendErrorContent(context);
+                }
+                break;
+
+            case CONTENT:
+                context.resumeResponseSend();
+                break;
+
+            default:
+                throw HttpException.instance("unexpected send status: " + state.getSendStatus());
+        }
+    }
+
+    private void sendErrorContent(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        HttpChunkedResponse response = context.getChunkedResponse();
+        state.formatError(response);
+        response.sendChunk(true);
+    }
+
+    private void sendErrorHeader(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        HttpChunkedResponse response = context.getChunkedResponse();
+        response.status(state.getHttpResponseCode(), CONTENT_TYPE_JSON);
+        response.sendHeader();
+    }
+}

@@ -1,0 +1,433 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.tcp.v4;
+
+/**
+ * Constants for the ILP v4 binary protocol.
+ */
+public final class IlpV4Constants {
+
+    // ==================== Magic Bytes ====================
+
+    /**
+     * Magic bytes for ILP v4 message: "ILP4" (ASCII).
+     */
+    public static final int MAGIC_MESSAGE = 0x34504C49; // "ILP4" in little-endian
+
+    /**
+     * Magic bytes for capability request: "ILP?" (ASCII).
+     */
+    public static final int MAGIC_CAPABILITY_REQUEST = 0x3F504C49; // "ILP?" in little-endian
+
+    /**
+     * Magic bytes for capability response: "ILP!" (ASCII).
+     */
+    public static final int MAGIC_CAPABILITY_RESPONSE = 0x21504C49; // "ILP!" in little-endian
+
+    /**
+     * Magic bytes for fallback response (old server): "ILP0" (ASCII).
+     */
+    public static final int MAGIC_FALLBACK = 0x30504C49; // "ILP0" in little-endian
+
+    // ==================== Header Structure ====================
+
+    /**
+     * Size of the message header in bytes.
+     */
+    public static final int HEADER_SIZE = 12;
+
+    /**
+     * Offset of magic bytes in header (4 bytes).
+     */
+    public static final int HEADER_OFFSET_MAGIC = 0;
+
+    /**
+     * Offset of version byte in header.
+     */
+    public static final int HEADER_OFFSET_VERSION = 4;
+
+    /**
+     * Offset of flags byte in header.
+     */
+    public static final int HEADER_OFFSET_FLAGS = 5;
+
+    /**
+     * Offset of table count (uint16, little-endian) in header.
+     */
+    public static final int HEADER_OFFSET_TABLE_COUNT = 6;
+
+    /**
+     * Offset of payload length (uint32, little-endian) in header.
+     */
+    public static final int HEADER_OFFSET_PAYLOAD_LENGTH = 8;
+
+    // ==================== Protocol Version ====================
+
+    /**
+     * Current protocol version.
+     */
+    public static final byte VERSION_1 = 1;
+
+    // ==================== Flag Bits ====================
+
+    /**
+     * Flag bit: LZ4 compression enabled.
+     */
+    public static final byte FLAG_LZ4 = 0x01;
+
+    /**
+     * Flag bit: Zstd compression enabled.
+     */
+    public static final byte FLAG_ZSTD = 0x02;
+
+    /**
+     * Flag bit: Gorilla timestamp encoding enabled.
+     */
+    public static final byte FLAG_GORILLA = 0x04;
+
+    /**
+     * Mask for compression flags (bits 0-1).
+     */
+    public static final byte FLAG_COMPRESSION_MASK = FLAG_LZ4 | FLAG_ZSTD;
+
+    // ==================== Column Type Codes ====================
+
+    /**
+     * Column type: BOOLEAN (1 bit per value, packed).
+     */
+    public static final byte TYPE_BOOLEAN = 0x01;
+
+    /**
+     * Column type: BYTE (int8).
+     */
+    public static final byte TYPE_BYTE = 0x02;
+
+    /**
+     * Column type: SHORT (int16, little-endian).
+     */
+    public static final byte TYPE_SHORT = 0x03;
+
+    /**
+     * Column type: INT (int32, little-endian).
+     */
+    public static final byte TYPE_INT = 0x04;
+
+    /**
+     * Column type: LONG (int64, little-endian).
+     */
+    public static final byte TYPE_LONG = 0x05;
+
+    /**
+     * Column type: FLOAT (IEEE 754 float32).
+     */
+    public static final byte TYPE_FLOAT = 0x06;
+
+    /**
+     * Column type: DOUBLE (IEEE 754 float64).
+     */
+    public static final byte TYPE_DOUBLE = 0x07;
+
+    /**
+     * Column type: STRING (length-prefixed UTF-8).
+     */
+    public static final byte TYPE_STRING = 0x08;
+
+    /**
+     * Column type: SYMBOL (dictionary-encoded string).
+     */
+    public static final byte TYPE_SYMBOL = 0x09;
+
+    /**
+     * Column type: TIMESTAMP (int64 microseconds since epoch).
+     */
+    public static final byte TYPE_TIMESTAMP = 0x0A;
+
+    /**
+     * Column type: DATE (int64 milliseconds since epoch).
+     */
+    public static final byte TYPE_DATE = 0x0B;
+
+    /**
+     * Column type: UUID (16 bytes, big-endian).
+     */
+    public static final byte TYPE_UUID = 0x0C;
+
+    /**
+     * Column type: LONG256 (32 bytes, big-endian).
+     */
+    public static final byte TYPE_LONG256 = 0x0D;
+
+    /**
+     * Column type: GEOHASH (varint bits + packed geohash).
+     */
+    public static final byte TYPE_GEOHASH = 0x0E;
+
+    /**
+     * Column type: VARCHAR (length-prefixed UTF-8, aux storage).
+     */
+    public static final byte TYPE_VARCHAR = 0x0F;
+
+    /**
+     * High bit indicating nullable column.
+     */
+    public static final byte TYPE_NULLABLE_FLAG = (byte) 0x80;
+
+    /**
+     * Mask for type code without nullable flag.
+     */
+    public static final byte TYPE_MASK = 0x7F;
+
+    // ==================== Schema Mode ====================
+
+    /**
+     * Schema mode: Full schema included.
+     */
+    public static final byte SCHEMA_MODE_FULL = 0x00;
+
+    /**
+     * Schema mode: Schema reference (hash lookup).
+     */
+    public static final byte SCHEMA_MODE_REFERENCE = 0x01;
+
+    // ==================== Response Status Codes ====================
+
+    /**
+     * Status: Batch accepted successfully.
+     */
+    public static final byte STATUS_OK = 0x00;
+
+    /**
+     * Status: Some rows failed (partial failure).
+     */
+    public static final byte STATUS_PARTIAL = 0x01;
+
+    /**
+     * Status: Schema hash not recognized.
+     */
+    public static final byte STATUS_SCHEMA_REQUIRED = 0x02;
+
+    /**
+     * Status: Column type incompatible.
+     */
+    public static final byte STATUS_SCHEMA_MISMATCH = 0x03;
+
+    /**
+     * Status: Table doesn't exist (auto-create disabled).
+     */
+    public static final byte STATUS_TABLE_NOT_FOUND = 0x04;
+
+    /**
+     * Status: Malformed message.
+     */
+    public static final byte STATUS_PARSE_ERROR = 0x05;
+
+    /**
+     * Status: Server error.
+     */
+    public static final byte STATUS_INTERNAL_ERROR = 0x06;
+
+    /**
+     * Status: Back-pressure, retry later.
+     */
+    public static final byte STATUS_OVERLOADED = 0x07;
+
+    // ==================== Default Limits ====================
+
+    /**
+     * Default maximum batch size in bytes (16 MB).
+     */
+    public static final int DEFAULT_MAX_BATCH_SIZE = 16 * 1024 * 1024;
+
+    /**
+     * Default maximum tables per batch.
+     */
+    public static final int DEFAULT_MAX_TABLES_PER_BATCH = 256;
+
+    /**
+     * Default maximum rows per table in a batch.
+     */
+    public static final int DEFAULT_MAX_ROWS_PER_TABLE = 1_000_000;
+
+    /**
+     * Maximum columns per table (QuestDB limit).
+     */
+    public static final int MAX_COLUMNS_PER_TABLE = 2048;
+
+    /**
+     * Maximum table name length in bytes.
+     */
+    public static final int MAX_TABLE_NAME_LENGTH = 127;
+
+    /**
+     * Maximum column name length in bytes.
+     */
+    public static final int MAX_COLUMN_NAME_LENGTH = 127;
+
+    /**
+     * Default maximum string length in bytes (1 MB).
+     */
+    public static final int DEFAULT_MAX_STRING_LENGTH = 1024 * 1024;
+
+    /**
+     * Default initial receive buffer size (64 KB).
+     */
+    public static final int DEFAULT_INITIAL_RECV_BUFFER_SIZE = 64 * 1024;
+
+    /**
+     * Maximum in-flight batches for pipelining.
+     */
+    public static final int DEFAULT_MAX_IN_FLIGHT_BATCHES = 4;
+
+    // ==================== Capability Negotiation ====================
+
+    /**
+     * Size of capability request in bytes.
+     */
+    public static final int CAPABILITY_REQUEST_SIZE = 8;
+
+    /**
+     * Size of capability response in bytes.
+     */
+    public static final int CAPABILITY_RESPONSE_SIZE = 8;
+
+    private IlpV4Constants() {
+        // utility class
+    }
+
+    /**
+     * Returns true if the type code represents a fixed-width type.
+     *
+     * @param typeCode the column type code (without nullable flag)
+     * @return true if fixed-width
+     */
+    public static boolean isFixedWidthType(byte typeCode) {
+        int code = typeCode & TYPE_MASK;
+        return code == TYPE_BOOLEAN ||
+                code == TYPE_BYTE ||
+                code == TYPE_SHORT ||
+                code == TYPE_INT ||
+                code == TYPE_LONG ||
+                code == TYPE_FLOAT ||
+                code == TYPE_DOUBLE ||
+                code == TYPE_TIMESTAMP ||
+                code == TYPE_DATE ||
+                code == TYPE_UUID ||
+                code == TYPE_LONG256;
+    }
+
+    /**
+     * Returns the size in bytes for fixed-width types.
+     *
+     * @param typeCode the column type code (without nullable flag)
+     * @return size in bytes, or -1 for variable-width types
+     */
+    public static int getFixedTypeSize(byte typeCode) {
+        int code = typeCode & TYPE_MASK;
+        switch (code) {
+            case TYPE_BOOLEAN:
+                return 0; // Special: bit-packed
+            case TYPE_BYTE:
+                return 1;
+            case TYPE_SHORT:
+                return 2;
+            case TYPE_INT:
+            case TYPE_FLOAT:
+                return 4;
+            case TYPE_LONG:
+            case TYPE_DOUBLE:
+            case TYPE_TIMESTAMP:
+            case TYPE_DATE:
+                return 8;
+            case TYPE_UUID:
+                return 16;
+            case TYPE_LONG256:
+                return 32;
+            default:
+                return -1; // Variable width
+        }
+    }
+
+    /**
+     * Returns a human-readable name for the type code.
+     *
+     * @param typeCode the column type code
+     * @return type name
+     */
+    public static String getTypeName(byte typeCode) {
+        int code = typeCode & TYPE_MASK;
+        boolean nullable = (typeCode & TYPE_NULLABLE_FLAG) != 0;
+        String name;
+        switch (code) {
+            case TYPE_BOOLEAN:
+                name = "BOOLEAN";
+                break;
+            case TYPE_BYTE:
+                name = "BYTE";
+                break;
+            case TYPE_SHORT:
+                name = "SHORT";
+                break;
+            case TYPE_INT:
+                name = "INT";
+                break;
+            case TYPE_LONG:
+                name = "LONG";
+                break;
+            case TYPE_FLOAT:
+                name = "FLOAT";
+                break;
+            case TYPE_DOUBLE:
+                name = "DOUBLE";
+                break;
+            case TYPE_STRING:
+                name = "STRING";
+                break;
+            case TYPE_SYMBOL:
+                name = "SYMBOL";
+                break;
+            case TYPE_TIMESTAMP:
+                name = "TIMESTAMP";
+                break;
+            case TYPE_DATE:
+                name = "DATE";
+                break;
+            case TYPE_UUID:
+                name = "UUID";
+                break;
+            case TYPE_LONG256:
+                name = "LONG256";
+                break;
+            case TYPE_GEOHASH:
+                name = "GEOHASH";
+                break;
+            case TYPE_VARCHAR:
+                name = "VARCHAR";
+                break;
+            default:
+                name = "UNKNOWN(" + code + ")";
+        }
+        return nullable ? name + "?" : name;
+    }
+}
