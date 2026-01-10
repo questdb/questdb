@@ -376,9 +376,8 @@ public class IlpV4HttpSender implements Sender {
             encoder.writeHeader(tableCount, payloadLength);
             encoder.setPosition(endPos);
 
-            // Send the message via HTTP
-            byte[] data = encoder.toByteArray();
-            sendHttp(data);
+            // Send the message via HTTP - directly from encoder's native buffer
+            sendHttp(encoder.getBufferAddress(), encoder.getPosition());
 
             // Clear buffers
             for (int i = 0, n = tableOrder.size(); i < n; i++) {
@@ -477,7 +476,7 @@ public class IlpV4HttpSender implements Sender {
         }
     }
 
-    private void sendHttp(byte[] data) throws IOException {
+    private void sendHttp(long bufferAddress, int length) throws IOException {
         try {
             HttpClient.Request request = client.newRequest(host, port)
                     .POST()
@@ -486,10 +485,8 @@ public class IlpV4HttpSender implements Sender {
 
             request.withContent();
 
-            // Write the binary data to the request
-            for (byte b : data) {
-                request.put(b);
-            }
+            // Write the binary data directly from native memory to the request buffer
+            request.putNonAscii(bufferAddress, bufferAddress + length);
 
             HttpClient.ResponseHeaders response = request.send(timeoutMs);
             response.await(timeoutMs);
