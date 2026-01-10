@@ -2029,4 +2029,211 @@ public class IlpV4SenderReceiverTest extends AbstractLineTcpReceiverTest {
             });
         });
     }
+
+    // ==================== Server-Assigned Timestamp Tests ====================
+
+    /**
+     * Tests that atNow() results in server-assigned timestamps.
+     * <p>
+     * When atNow() is called, the client should NOT send a timestamp value.
+     * Instead, the server should assign the timestamp when the row is received.
+     * This matches the behavior of the old ILP protocol.
+     */
+    @Test
+    public void testAtNowServerAssignedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    sender.table("test_at_now")
+                            .symbol("tag", "row1")
+                            .longColumn("value", 100)
+                            .atNow();
+                    sender.flush();
+                }
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    try (TableReader reader = getReader("test_at_now")) {
+                        Assert.assertEquals(1, reader.size());
+                        // Verify a timestamp column was auto-created
+                        Assert.assertTrue("Should have timestamp column",
+                                reader.getMetadata().getColumnIndex("timestamp") >= 0);
+                        // Verify the timestamp is the designated timestamp
+                        Assert.assertEquals("timestamp should be designated timestamp",
+                                reader.getMetadata().getColumnIndex("timestamp"),
+                                reader.getMetadata().getTimestampIndex());
+                    }
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests mixing at() and atNow() in the same batch.
+     * <p>
+     * Rows with at() should have client-specified timestamps.
+     * Rows with atNow() should have server-assigned timestamps.
+     */
+    @Test
+    public void testMixedAtAndAtNow() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                long fixedTimestamp = 1704067200000000L; // 2024-01-01 00:00:00 UTC in micros
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    // Row 1: client-specified timestamp
+                    sender.table("test_mixed_ts")
+                            .symbol("type", "fixed")
+                            .longColumn("value", 1)
+                            .at(fixedTimestamp, ChronoUnit.MICROS);
+
+                    // Row 2: server-assigned timestamp
+                    sender.table("test_mixed_ts")
+                            .symbol("type", "server")
+                            .longColumn("value", 2)
+                            .atNow();
+
+                    // Row 3: another client-specified timestamp
+                    sender.table("test_mixed_ts")
+                            .symbol("type", "fixed")
+                            .longColumn("value", 3)
+                            .at(fixedTimestamp + 1000000L, ChronoUnit.MICROS);
+
+                    sender.flush();
+                }
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    try (TableReader reader = getReader("test_mixed_ts")) {
+                        Assert.assertEquals(3, reader.size());
+                    }
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests multiple consecutive atNow() calls.
+     */
+    @Test
+    public void testMultipleAtNow() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                int rowCount = 100;
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("test_multi_at_now")
+                                .longColumn("id", i)
+                                .atNow();
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    try (TableReader reader = getReader("test_multi_at_now")) {
+                        Assert.assertEquals(rowCount, reader.size());
+                    }
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests atNow() with a table that has a custom designated timestamp column name.
+     * <p>
+     * The designated timestamp column is NOT always named "timestamp" - it can be
+     * any name when the table is created explicitly via SQL.
+     * <p>
+     * This test verifies that:
+     * 1. atNow() works with custom timestamp column names
+     * 2. No spurious "timestamp" column is created
+     */
+    @Test
+    public void testAtNowWithCustomTimestampColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                // Create table with custom designated timestamp column named 'ts'
+                engine.execute("CREATE TABLE custom_ts_table (sym SYMBOL, value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    sender.table("custom_ts_table")
+                            .symbol("sym", "test")
+                            .longColumn("value", 42)
+                            .atNow();
+                    sender.flush();
+                }
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    try (TableReader reader = getReader("custom_ts_table")) {
+                        Assert.assertEquals(1, reader.size());
+                        // Verify the table has ONLY the expected columns (sym, value, ts)
+                        // There should be NO "timestamp" column created
+                        Assert.assertEquals("Should have exactly 3 columns", 3, reader.getMetadata().getColumnCount());
+                        Assert.assertTrue("Should have sym column", reader.getMetadata().getColumnIndexQuiet("sym") >= 0);
+                        Assert.assertTrue("Should have value column", reader.getMetadata().getColumnIndexQuiet("value") >= 0);
+                        Assert.assertTrue("Should have ts column", reader.getMetadata().getColumnIndexQuiet("ts") >= 0);
+                        Assert.assertEquals("ts should be designated timestamp",
+                                reader.getMetadata().getColumnIndexQuiet("ts"),
+                                reader.getMetadata().getTimestampIndex());
+                        // Verify NO "timestamp" column exists
+                        Assert.assertEquals("Should NOT have timestamp column", -1,
+                                reader.getMetadata().getColumnIndexQuiet("timestamp"));
+                    }
+                });
+            });
+        });
+    }
+
+    /**
+     * Tests at() with explicit timestamp on a table with custom designated timestamp column name.
+     * <p>
+     * The designated timestamp column is NOT always named "timestamp" - it can be
+     * any name when the table is created explicitly via SQL.
+     * <p>
+     * This test verifies that:
+     * 1. at() with explicit timestamp works with custom timestamp column names
+     * 2. No spurious "timestamp" column is created
+     * 3. The explicit timestamp value is correctly stored in the designated timestamp column
+     */
+    @Test
+    public void testAtWithCustomTimestampColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            runInContext(receiver -> {
+                // Create table with custom designated timestamp column named 'ts'
+                engine.execute("CREATE TABLE custom_ts_at_table (sym SYMBOL, value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Ingest data using at() with explicit timestamp
+                long explicitTimestamp = 1700000000000000L; // 2023-11-14T22:13:20Z in micros
+                try (IlpV4Sender sender = IlpV4Sender.connect("127.0.0.1", bindPort)) {
+                    sender.table("custom_ts_at_table")
+                            .symbol("sym", "test")
+                            .longColumn("value", 42)
+                            .at(explicitTimestamp, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    try (TableReader reader = getReader("custom_ts_at_table")) {
+                        Assert.assertEquals(1, reader.size());
+                        // Verify the table has ONLY the expected columns (sym, value, ts)
+                        // There should be NO "timestamp" column created
+                        Assert.assertEquals("Should have exactly 3 columns", 3, reader.getMetadata().getColumnCount());
+                        Assert.assertTrue("Should have sym column", reader.getMetadata().getColumnIndexQuiet("sym") >= 0);
+                        Assert.assertTrue("Should have value column", reader.getMetadata().getColumnIndexQuiet("value") >= 0);
+                        Assert.assertTrue("Should have ts column", reader.getMetadata().getColumnIndexQuiet("ts") >= 0);
+                        Assert.assertEquals("ts should be designated timestamp",
+                                reader.getMetadata().getColumnIndexQuiet("ts"),
+                                reader.getMetadata().getTimestampIndex());
+                        // Verify NO "timestamp" column exists
+                        Assert.assertEquals("Should NOT have timestamp column", -1,
+                                reader.getMetadata().getColumnIndexQuiet("timestamp"));
+                    }
+                });
+            });
+        });
+    }
 }

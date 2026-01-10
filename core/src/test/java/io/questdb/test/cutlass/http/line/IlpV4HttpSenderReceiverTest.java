@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.TableReader;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.http.IlpV4HttpSender;
 import io.questdb.test.AbstractBootstrapTest;
@@ -1713,6 +1712,242 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("all_types_batch");
                 serverMain.assertSql("select count() from all_types_batch", "count\n10000\n");
+            }
+        });
+    }
+
+    // ==================== Server-Assigned Timestamp Tests ====================
+
+    /**
+     * Tests that atNow() results in server-assigned timestamps.
+     * <p>
+     * When atNow() is called, the client should NOT send a timestamp value.
+     * Instead, the server should assign the timestamp when the row is received.
+     * This matches the behavior of the old ILP protocol.
+     */
+    @Test
+    public void testAtNowServerAssignedTimestamp() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    sender.table("test_at_now")
+                            .symbol("tag", "row1")
+                            .longColumn("value", 100)
+                            .atNow();
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_at_now");
+                serverMain.assertSql("select count() from test_at_now", "count\n1\n");
+
+                // Verify a timestamp column was auto-created
+                serverMain.assertSql(
+                        "select \"column\" from table_columns('test_at_now') order by \"column\"",
+                        "column\ntag\ntimestamp\nvalue\n"
+                );
+
+                // Verify the timestamp was assigned by the server (should be recent)
+                serverMain.assertSql(
+                        "select count() from test_at_now where timestamp >= '2025-01-01'",
+                        "count\n1\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests mixing at() and atNow() in the same batch.
+     * <p>
+     * Rows with at() should have client-specified timestamps.
+     * Rows with atNow() should have server-assigned timestamps.
+     */
+    @Test
+    public void testMixedAtAndAtNow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                long fixedTimestamp = 1704067200000000L; // 2024-01-01 00:00:00 UTC in micros
+
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    // Row 1: client-specified timestamp
+                    sender.table("test_mixed_ts")
+                            .symbol("type", "fixed")
+                            .longColumn("value", 1)
+                            .at(fixedTimestamp, ChronoUnit.MICROS);
+
+                    // Row 2: server-assigned timestamp
+                    sender.table("test_mixed_ts")
+                            .symbol("type", "server")
+                            .longColumn("value", 2)
+                            .atNow();
+
+                    // Row 3: another client-specified timestamp
+                    sender.table("test_mixed_ts")
+                            .symbol("type", "fixed")
+                            .longColumn("value", 3)
+                            .at(fixedTimestamp + 1000000L, ChronoUnit.MICROS);
+
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_mixed_ts");
+                serverMain.assertSql("select count() from test_mixed_ts", "count\n3\n");
+
+                // Verify the fixed timestamps (2024-01-01)
+                serverMain.assertSql(
+                        "select count() from test_mixed_ts where type = 'fixed' and timestamp >= '2024-01-01' and timestamp < '2024-01-02'",
+                        "count\n2\n"
+                );
+
+                // Verify the server-assigned timestamp is recent (not in 2024, should be 2025+)
+                serverMain.assertSql(
+                        "select count() from test_mixed_ts where type = 'server' and timestamp >= '2025-01-01'",
+                        "count\n1\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests multiple consecutive atNow() calls.
+     */
+    @Test
+    public void testMultipleAtNow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                int rowCount = 100;
+
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("test_multi_at_now")
+                                .longColumn("id", i)
+                                .atNow();
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_multi_at_now");
+                serverMain.assertSql("select count() from test_multi_at_now", "count\n" + rowCount + "\n");
+
+                // All timestamps should be server-assigned (recent - 2025+)
+                serverMain.assertSql(
+                        "select count() from test_multi_at_now where timestamp >= '2025-01-01'",
+                        "count\n" + rowCount + "\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests atNow() with a table that has a custom designated timestamp column name.
+     * <p>
+     * The designated timestamp column is NOT always named "timestamp" - it can be
+     * any name when the table is created explicitly via SQL.
+     * <p>
+     * This test verifies that:
+     * 1. atNow() works with custom timestamp column names
+     * 2. No spurious "timestamp" column is created
+     */
+    @Test
+    public void testAtNowWithCustomTimestampColumnName() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Create table with custom designated timestamp column named 'ts'
+                serverMain.execute("CREATE TABLE custom_ts_table (sym SYMBOL, value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Ingest data using atNow()
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    sender.table("custom_ts_table")
+                            .symbol("sym", "test")
+                            .longColumn("value", 42)
+                            .atNow();
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("custom_ts_table");
+
+                // Verify row was inserted
+                serverMain.assertSql("select count() from custom_ts_table", "count\n1\n");
+
+                // Verify the table has ONLY the expected columns (sym, value, ts)
+                // There should be NO "timestamp" column created
+                serverMain.assertSql(
+                        "select \"column\" from table_columns('custom_ts_table') order by \"column\"",
+                        "column\nsym\nts\nvalue\n"
+                );
+
+                // Verify the timestamp was assigned by the server (should be recent)
+                serverMain.assertSql(
+                        "select count() from custom_ts_table where ts >= '2025-01-01'",
+                        "count\n1\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests at() with explicit timestamp on a table with custom designated timestamp column name.
+     * <p>
+     * The designated timestamp column is NOT always named "timestamp" - it can be
+     * any name when the table is created explicitly via SQL.
+     * <p>
+     * This test verifies that:
+     * 1. at() with explicit timestamp works with custom timestamp column names
+     * 2. No spurious "timestamp" column is created
+     * 3. The explicit timestamp value is correctly stored in the designated timestamp column
+     */
+    @Test
+    public void testAtWithCustomTimestampColumnName() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Create table with custom designated timestamp column named 'ts'
+                serverMain.execute("CREATE TABLE custom_ts_at_table (sym SYMBOL, value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Ingest data using at() with explicit timestamp
+                long explicitTimestamp = 1700000000000000L; // 2023-11-14T22:13:20Z in micros
+                try (Sender sender = IlpV4HttpSender.connect("localhost", httpPort)) {
+                    sender.table("custom_ts_at_table")
+                            .symbol("sym", "test")
+                            .longColumn("value", 42)
+                            .at(explicitTimestamp, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("custom_ts_at_table");
+
+                // Verify row was inserted
+                serverMain.assertSql("select count() from custom_ts_at_table", "count\n1\n");
+
+                // Verify the table has ONLY the expected columns (sym, value, ts)
+                // There should be NO "timestamp" column created
+                serverMain.assertSql(
+                        "select \"column\" from table_columns('custom_ts_at_table') order by \"column\"",
+                        "column\nsym\nts\nvalue\n"
+                );
+
+                // Verify the explicit timestamp was correctly stored
+                serverMain.assertSql(
+                        "select ts from custom_ts_at_table",
+                        "ts\n2023-11-14T22:13:20.000000Z\n"
+                );
             }
         });
     }

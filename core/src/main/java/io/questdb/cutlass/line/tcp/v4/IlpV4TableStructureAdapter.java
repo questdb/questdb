@@ -65,24 +65,15 @@ public class IlpV4TableStructureAdapter implements TableStructure {
         this.columns = columns;
         this.timestampIndex = -1;
 
-        // Find the designated timestamp column - prefer "timestamp" name over just type
-        int firstTimestampTypeIndex = -1;
+        // Find the designated timestamp column - empty name with TIMESTAMP type
         for (int i = 0; i < columns.length; i++) {
-            if (columns[i].getName().equals(DEFAULT_TIMESTAMP_FIELD)) {
-                // Prefer the column explicitly named "timestamp"
+            if (columns[i].getName().isEmpty() &&
+                    (columns[i].getTypeCode() & 0x7F) == IlpV4Constants.TYPE_TIMESTAMP) {
                 timestampIndex = i;
                 break;
             }
-            if (firstTimestampTypeIndex == -1 && (columns[i].getTypeCode() & 0x7F) == IlpV4Constants.TYPE_TIMESTAMP) {
-                // Remember the first TIMESTAMP type column as fallback
-                firstTimestampTypeIndex = i;
-            }
         }
-
-        // If no "timestamp" column found, use the first TIMESTAMP type column
-        if (timestampIndex == -1) {
-            timestampIndex = firstTimestampTypeIndex;
-        }
+        // If no designated timestamp found, we'll add one automatically (see getColumnCount)
 
         return this;
     }

@@ -35,6 +35,7 @@ import io.questdb.cutlass.line.tcp.IlpV4WalAppender;
 import io.questdb.cutlass.line.tcp.SymbolCache;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.line.tcp.v4.IlpV4ColumnDef;
+import io.questdb.cutlass.line.tcp.v4.IlpV4Constants;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -233,8 +234,13 @@ public class IlpV4HttpTudCache implements QuietCloseable {
 
     /**
      * Table structure adapter for ILP v4 schema.
+     * <p>
+     * When no timestamp column is provided in the schema, this adapter automatically
+     * adds a "timestamp" column as the designated timestamp. This matches the behavior
+     * of the old ILP text protocol.
      */
     private static class IlpV4TableStructureAdapter implements TableStructure {
+        private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
         private final CairoConfiguration configuration;
         private final String tableName;
         private final IlpV4ColumnDef[] schema;
@@ -247,28 +253,43 @@ public class IlpV4HttpTudCache implements QuietCloseable {
             this.schema = schema;
             this.partitionBy = partitionBy;
 
-            // Find timestamp column
+            // Find designated timestamp column - empty name with TIMESTAMP type
             for (int i = 0; i < schema.length; i++) {
-                if ("timestamp".equals(schema[i].getName()) &&
-                        IlpV4WalAppender.mapIlpV4TypeToQuestDB(schema[i].getTypeCode()) == ColumnType.TIMESTAMP) {
+                if (schema[i].getName().isEmpty() &&
+                        schema[i].getTypeCode() == IlpV4Constants.TYPE_TIMESTAMP) {
                     timestampIndex = i;
                     break;
                 }
             }
+            // If no designated timestamp found, we'll add one automatically (see getColumnCount)
         }
 
         @Override
         public int getColumnCount() {
-            return schema.length;
+            // If no timestamp column in schema, add one automatically
+            return timestampIndex == -1 ? schema.length + 1 : schema.length;
         }
 
         @Override
         public CharSequence getColumnName(int columnIndex) {
+            // If this is the auto-added timestamp column (no designated timestamp in schema)
+            if (columnIndex == getTimestampIndex() && timestampIndex == -1) {
+                return DEFAULT_TIMESTAMP_FIELD;
+            }
+            // If this is the designated timestamp column from schema, use default name
+            // (the schema column name is empty for TYPE_DESIGNATED_TIMESTAMP)
+            if (columnIndex == timestampIndex) {
+                return DEFAULT_TIMESTAMP_FIELD;
+            }
             return schema[columnIndex].getName();
         }
 
         @Override
         public int getColumnType(int columnIndex) {
+            // If this is the auto-added timestamp column
+            if (columnIndex == getTimestampIndex() && timestampIndex == -1) {
+                return ColumnType.TIMESTAMP;
+            }
             return IlpV4WalAppender.mapIlpV4TypeToQuestDB(schema[columnIndex].getTypeCode());
         }
 
@@ -319,7 +340,8 @@ public class IlpV4HttpTudCache implements QuietCloseable {
 
         @Override
         public int getTimestampIndex() {
-            return timestampIndex;
+            // If no timestamp column in schema, it's the auto-added one at the end
+            return timestampIndex == -1 ? schema.length : timestampIndex;
         }
 
         @Override

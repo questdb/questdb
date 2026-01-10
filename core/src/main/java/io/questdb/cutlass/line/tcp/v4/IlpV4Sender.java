@@ -350,14 +350,26 @@ public class IlpV4Sender implements Sender {
 
     private void atMicros(long timestampMicros) {
         checkCurrentTable();
-        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn("timestamp", TYPE_TIMESTAMP, false);
+        // Use empty column name to indicate this is the designated timestamp.
+        // Empty string is invalid for user columns, so it uniquely identifies the
+        // designated timestamp. The server maps this value to the table's designated
+        // timestamp column, regardless of its actual name.
+        // Must be nullable to support atNow() with server-assigned timestamps.
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn("", TYPE_TIMESTAMP, true);
         col.addLong(timestampMicros);
         finishRow();
     }
 
     @Override
     public void atNow() {
-        atMicros(System.currentTimeMillis() * 1000L);
+        // Server-assigned timestamp: don't send any timestamp column.
+        // The server will detect that no designated timestamp was provided
+        // and use its own clock. This matches the old ILP protocol behavior.
+        //
+        // We cannot simply create a column named "timestamp" because:
+        // 1. The table's designated timestamp column might have a different name
+        // 2. Creating "timestamp" would add a spurious column to the table
+        finishRow();
     }
 
     private void finishRow() {

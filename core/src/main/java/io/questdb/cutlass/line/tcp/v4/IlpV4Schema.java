@@ -201,10 +201,11 @@ public final class IlpV4Schema {
             offset += decodeResult.bytesRead;
 
             int nameLenInt = (int) decodeResult.value;
-            if (nameLenInt <= 0) {
+            // Empty column names are allowed for designated timestamp (empty name + TIMESTAMP type)
+            if (nameLenInt < 0) {
                 throw IlpV4ParseException.create(
                         IlpV4ParseException.ErrorCode.INVALID_COLUMN_NAME,
-                        "empty column name at column " + i
+                        "negative column name length at column " + i
                 );
             }
             if (nameLenInt > MAX_COLUMN_NAME_LENGTH) {
@@ -254,10 +255,11 @@ public final class IlpV4Schema {
             offset += decodeResult.bytesRead;
 
             int nameLenInt = (int) decodeResult.value;
-            if (nameLenInt <= 0) {
+            // Empty column names are allowed for designated timestamp (empty name + TIMESTAMP type)
+            if (nameLenInt < 0) {
                 throw IlpV4ParseException.create(
                         IlpV4ParseException.ErrorCode.INVALID_COLUMN_NAME,
-                        "empty column name at column " + i
+                        "negative column name length at column " + i
                 );
             }
             if (nameLenInt > MAX_COLUMN_NAME_LENGTH) {

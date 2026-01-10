@@ -150,20 +150,17 @@ public class IlpV4SchemaTest {
     }
 
     @Test
-    public void testColumnNameEmpty() {
-        // Manually encode a schema with empty column name
+    public void testColumnNameEmpty() throws IlpV4ParseException {
+        // Empty column name with TIMESTAMP type is valid - used for designated timestamp
         byte[] buf = new byte[10];
         int offset = 0;
         buf[offset++] = IlpV4Schema.SCHEMA_MODE_FULL;
         offset = IlpV4Varint.encode(buf, offset, 0); // empty name length
-        buf[offset++] = IlpV4Constants.TYPE_INT;
+        buf[offset++] = IlpV4Constants.TYPE_TIMESTAMP;
 
-        try {
-            IlpV4Schema.parse(buf, 0, offset, 1);
-            Assert.fail("Expected exception for empty column name");
-        } catch (IlpV4ParseException e) {
-            Assert.assertTrue(e.getMessage().contains("empty column name"));
-        }
+        IlpV4Schema.ParseResult result = IlpV4Schema.parse(buf, 0, offset, 1);
+        Assert.assertEquals("", result.schema.getColumn(0).getName());
+        Assert.assertEquals(IlpV4Constants.TYPE_TIMESTAMP, result.schema.getColumn(0).getTypeCode());
     }
 
     @Test

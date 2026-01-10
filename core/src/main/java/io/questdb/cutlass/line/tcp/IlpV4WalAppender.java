@@ -124,48 +124,64 @@ public class IlpV4WalAppender {
             IlpV4ColumnDef colDef = tableBlock.getSchema()[i];
             String columnName = colDef.getName();
 
-            int columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+            int columnWriterIndex;
 
-            if (columnWriterIndex < 0) {
-                // Column doesn't exist
-                if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
-                    securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
-                    try {
-                        int newColumnType = mapIlpV4TypeToQuestDB(colDef.getTypeCode());
-                        writer.addColumn(columnName, newColumnType, securityContext);
-                        columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnName));
-                    } catch (CairoException e) {
-                        columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
-                        if (columnWriterIndex < 0) {
-                            throw e;
+            // Empty column name with TIMESTAMP type indicates the designated timestamp.
+            // This is sent by at() and maps directly to the table's designated timestamp
+            // column, regardless of its actual name.
+            if (columnName.isEmpty() && colDef.getTypeCode() == TYPE_TIMESTAMP) {
+                if (timestampIndex < 0) {
+                    throw CairoException.nonCritical()
+                            .put("designated timestamp provided but table has no designated timestamp [table=")
+                            .put(tud.getTableNameUtf16())
+                            .put(']');
+                }
+                columnWriterIndex = timestampIndex;
+                timestampColumnInBlock = i;
+            } else {
+                columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+
+                if (columnWriterIndex < 0) {
+                    // Column doesn't exist
+                    if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
+                        securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
+                        try {
+                            int newColumnType = mapIlpV4TypeToQuestDB(colDef.getTypeCode());
+                            writer.addColumn(columnName, newColumnType, securityContext);
+                            columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnName));
+                        } catch (CairoException e) {
+                            columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+                            if (columnWriterIndex < 0) {
+                                throw e;
+                            }
+                            // Column was added concurrently
                         }
-                        // Column was added concurrently
+                    } else if (!autoCreateNewColumns) {
+                        throw CairoException.nonCritical()
+                                .put("new columns not allowed [table=")
+                                .put(tud.getTableNameUtf16())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    } else {
+                        throw CairoException.nonCritical()
+                                .put("invalid column name [table=")
+                                .put(tud.getTableNameUtf16())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
                     }
-                } else if (!autoCreateNewColumns) {
-                    throw CairoException.nonCritical()
-                            .put("new columns not allowed [table=")
-                            .put(tud.getTableNameUtf16())
-                            .put(", column=")
-                            .put(columnName)
-                            .put(']');
-                } else {
-                    throw CairoException.nonCritical()
-                            .put("invalid column name [table=")
-                            .put(tud.getTableNameUtf16())
-                            .put(", column=")
-                            .put(columnName)
-                            .put(']');
+                }
+
+                // Track if this regular column happens to be the timestamp column
+                if (columnWriterIndex == timestampIndex) {
+                    timestampColumnInBlock = i;
                 }
             }
 
             int columnType = metadata.getColumnType(columnWriterIndex);
             columnIndexMap[i] = metadata.getWriterIndex(columnWriterIndex);
             columnTypeMap[i] = columnType;
-
-            // Track if this is the timestamp column
-            if (columnWriterIndex == timestampIndex) {
-                timestampColumnInBlock = i;
-            }
         }
 
         // Phase 2: Write rows
