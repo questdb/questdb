@@ -411,7 +411,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     static boolean isCompatibleCast(int from, int to) {
-        if (from == to || isIPv4Cast(from, to)) {
+        if (from == to || isIPv4Cast(from, to) || ColumnType.isVarchar(to)) {
             return true;
         }
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
