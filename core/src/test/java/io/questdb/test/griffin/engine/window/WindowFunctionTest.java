@@ -2258,7 +2258,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 assertWindowException(
                         "select a,b, #FUNCT_NAME over (partition by b order by ts #FRAME BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW) from xyz"
                                 .replace("#FUNCT_NAME", function).replace("#COLUMN", "c"),
-                        141,
+                        133,
                         "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary"
                 );
             }
@@ -8179,8 +8179,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         execute("select #FUNCTION from trades".replace("#FUNCTION", function), sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
-                        Assert.assertEquals(38, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "'over' expected");
+                        Assert.assertEquals(7, e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "window function called in non-window context, make sure to add OVER clause");
                     }
                 } else {
                     try {

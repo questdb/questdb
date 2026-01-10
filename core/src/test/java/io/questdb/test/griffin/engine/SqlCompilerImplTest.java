@@ -171,17 +171,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             for (String frameType : Arrays.asList("rows ", "range")) {
                 String queryPrefix = prefix + frameType;
 
-                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "Expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "'preceding' or 'following' expected");
 
                 assertExceptionNoLeakCheck(queryPrefix + " between '' preceding and current row)  from trips", 60, "integer expression expected");
 

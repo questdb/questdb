@@ -12758,6 +12758,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowExcludeGroupNotSupported() throws Exception {
+        assertException(
+                "select a,b, avg(c)                       over (partition by b order by ts rows   UNBOUNDED PRECEDING EXCLUDE GROUP) from xyz",
+                109,
+                "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported"
+        );
+    }
+
+    @Test
     public void testWithDuplicateName() throws Exception {
         assertSyntaxError(
                 "with x as (tab), x as (tab2) x",

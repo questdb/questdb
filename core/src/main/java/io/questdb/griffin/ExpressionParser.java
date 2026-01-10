@@ -877,6 +877,11 @@ public class ExpressionParser {
 
         int pos = lexer.lastTokenPosition();
 
+        // Check for common error: PRECEDING/FOLLOWING without a value
+        if (SqlKeywords.isPrecedingKeyword(tok) || SqlKeywords.isFollowingKeyword(tok)) {
+            throw SqlException.$(pos, "frame bound value expected before '").put(tok).put('\'');
+        }
+
         if (SqlKeywords.isUnboundedKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
             if (tok != null && SqlKeywords.isPrecedingKeyword(tok)) {
@@ -981,7 +986,7 @@ public class ExpressionParser {
             int excludePos = lexer.lastTokenPosition();
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
+                throw SqlException.$(lexer.lastTokenPosition(), "'current row' or 'no others' expected after 'exclude'");
             }
 
             if (SqlKeywords.isCurrentKeyword(tok)) {
@@ -991,12 +996,9 @@ public class ExpressionParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "'row' expected after 'current'");
                 }
                 windowCol.setExclusionKind(WindowColumn.EXCLUDE_CURRENT_ROW, excludePos);
-            } else if (SqlKeywords.isGroupKeyword(tok)) {
-                // EXCLUDE GROUP
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_GROUP, excludePos);
-            } else if (SqlKeywords.isTiesKeyword(tok)) {
-                // EXCLUDE TIES
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_TIES, excludePos);
+            } else if (SqlKeywords.isGroupKeyword(tok) || SqlKeywords.isTiesKeyword(tok)) {
+                // EXCLUDE GROUP and EXCLUDE TIES are not supported
+                throw SqlException.$(lexer.lastTokenPosition(), "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
             } else if (SqlKeywords.isNoKeyword(tok)) {
                 // EXCLUDE NO OTHERS
                 tok = SqlUtil.fetchNext(lexer);
@@ -1005,7 +1007,7 @@ public class ExpressionParser {
                 }
                 windowCol.setExclusionKind(WindowColumn.EXCLUDE_NO_OTHERS, excludePos);
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
+                throw SqlException.$(lexer.lastTokenPosition(), "'current row' or 'no others' expected after 'exclude'");
             }
             tok = SqlUtil.fetchNext(lexer);
         }

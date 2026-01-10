@@ -1675,4 +1675,44 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testWindowFunctionWithPartitionBy() throws SqlException {
         x("x row_number over (partition by x)", "row_number(x) over (partition by x)");
     }
+
+    @Test
+    public void testWindowFrameExcludeGroupNotSupported() {
+        // EXCLUDE GROUP is not supported - error points to 'GROUP'
+        assertFail(
+                "avg(c) over (partition by b order by ts rows UNBOUNDED PRECEDING EXCLUDE GROUP)",
+                73,
+                "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported"
+        );
+    }
+
+    @Test
+    public void testWindowFrameExcludeTiesNotSupported() {
+        // EXCLUDE TIES is not supported - error points to 'TIES'
+        assertFail(
+                "avg(c) over (partition by b order by ts rows UNBOUNDED PRECEDING EXCLUDE TIES)",
+                73,
+                "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported"
+        );
+    }
+
+    @Test
+    public void testWindowFrameMissingLowerBoundValue() {
+        // Missing value before PRECEDING in lower bound
+        assertFail(
+                "avg(a) over(partition by b order by ts rows between preceding and current row)",
+                52,
+                "frame bound value expected before 'preceding'"
+        );
+    }
+
+    @Test
+    public void testWindowFrameMissingUpperBoundValue() {
+        // Missing value before PRECEDING in upper bound
+        assertFail(
+                "avg(a) over(partition by b order by ts rows between 10 preceding and preceding)",
+                69,
+                "frame bound value expected before 'preceding'"
+        );
+    }
 }
