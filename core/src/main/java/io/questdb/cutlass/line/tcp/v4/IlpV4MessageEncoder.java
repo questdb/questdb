@@ -490,34 +490,88 @@ public class IlpV4MessageEncoder {
      * @param count   number of values
      */
     public void writeStringColumn(String[] strings, int count) {
-        // Calculate total data size and build offsets
-        int[] offsets = new int[count + 1];
-        offsets[0] = 0;
-        int totalDataLen = 0;
-        byte[][] encodedStrings = new byte[count][];
+        // Two-pass approach to avoid byte[][] allocation:
+        // Pass 1: Calculate UTF-8 lengths and write offsets directly to buffer
+        // Pass 2: Encode UTF-8 directly to buffer
 
+        // Calculate total size needed for offset array
+        int offsetArraySize = (count + 1) * 4;
+
+        // First, calculate total data length
+        int totalDataLen = 0;
         for (int i = 0; i < count; i++) {
             if (strings[i] != null) {
-                encodedStrings[i] = strings[i].getBytes(StandardCharsets.UTF_8);
-                totalDataLen += encodedStrings[i].length;
-            } else {
-                encodedStrings[i] = new byte[0];
+                totalDataLen += utf8Length(strings[i]);
             }
-            offsets[i + 1] = totalDataLen;
         }
 
+        ensureCapacity(offsetArraySize + totalDataLen);
+
         // Write offset array (fixed uint32, NOT varints!)
-        ensureCapacity((count + 1) * 4 + totalDataLen);
-        for (int i = 0; i <= count; i++) {
-            Unsafe.getUnsafe().putInt(bufferAddress + position, offsets[i]);
+        int runningOffset = 0;
+        Unsafe.getUnsafe().putInt(bufferAddress + position, 0);
+        position += 4;
+        for (int i = 0; i < count; i++) {
+            if (strings[i] != null) {
+                runningOffset += utf8Length(strings[i]);
+            }
+            Unsafe.getUnsafe().putInt(bufferAddress + position, runningOffset);
             position += 4;
         }
 
-        // Write string data
+        // Write string data directly (no intermediate byte[] allocation)
         for (int i = 0; i < count; i++) {
-            for (byte b : encodedStrings[i]) {
-                Unsafe.getUnsafe().putByte(bufferAddress + position, b);
-                position++;
+            if (strings[i] != null) {
+                encodeUtf8Direct(strings[i]);
+            }
+        }
+    }
+
+    /**
+     * Calculates the UTF-8 encoded length of a string without allocating.
+     */
+    private static int utf8Length(String s) {
+        int len = 0;
+        for (int i = 0, n = s.length(); i < n; i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) {
+                len++;
+            } else if (c < 0x800) {
+                len += 2;
+            } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
+                // Surrogate pair
+                i++;
+                len += 4;
+            } else {
+                len += 3;
+            }
+        }
+        return len;
+    }
+
+    /**
+     * Encodes a string as UTF-8 directly to the output buffer without intermediate allocation.
+     */
+    private void encodeUtf8Direct(String s) {
+        for (int i = 0, n = s.length(); i < n; i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) {
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) c);
+            } else if (c < 0x800) {
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0xC0 | (c >> 6)));
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | (c & 0x3F)));
+            } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
+                // Surrogate pair
+                char c2 = s.charAt(++i);
+                int codePoint = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0xF0 | (codePoint >> 18)));
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | ((codePoint >> 12) & 0x3F)));
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | ((codePoint >> 6) & 0x3F)));
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | (codePoint & 0x3F)));
+            } else {
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0xE0 | (c >> 12)));
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | ((c >> 6) & 0x3F)));
+                Unsafe.getUnsafe().putByte(bufferAddress + position++, (byte) (0x80 | (c & 0x3F)));
             }
         }
     }

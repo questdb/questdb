@@ -152,15 +152,8 @@ public class IlpV4TableBuffer {
      */
     public long getSchemaHash() {
         if (!schemaHashComputed) {
-            IlpV4ColumnDef[] defs = getColumnDefs();
-            String[] names = new String[defs.length];
-            byte[] types = new byte[defs.length];
-            for (int i = 0; i < defs.length; i++) {
-                names[i] = defs[i].getName();
-                // Use wire type code (includes nullable bit) to match IlpV4Schema
-                types[i] = defs[i].getWireTypeCode();
-            }
-            schemaHash = IlpV4SchemaHash.computeSchemaHash(names, types);
+            // Compute hash directly from column buffers without intermediate arrays
+            schemaHash = IlpV4SchemaHash.computeSchemaHashDirect(columns);
             schemaHashComputed = true;
         }
         return schemaHash;
@@ -274,12 +267,10 @@ public class IlpV4TableBuffer {
     }
 
     private void encodeLong256Column(IlpV4MessageEncoder encoder, ColumnBuffer col, int valueCount) {
-        long[][] values = col.getLong256Values();
-        for (int i = 0; i < valueCount; i++) {
-            // Long256 is big-endian, 4 longs
-            for (int j = 0; j < 4; j++) {
-                encoder.writeLongBigEndian(values[i][j]);
-            }
+        long[] values = col.getLong256Values();
+        // Flat array: 4 longs per value, iterate in order (big-endian)
+        for (int i = 0; i < valueCount * 4; i++) {
+            encoder.writeLongBigEndian(values[i]);
         }
     }
 
@@ -306,7 +297,8 @@ public class IlpV4TableBuffer {
         private String[] stringValues;
         private long[] uuidHigh;
         private long[] uuidLow;
-        private long[][] long256Values;
+        // Long256 stored as flat array: 4 longs per value (avoids inner array allocation)
+        private long[] long256Values;
 
         // Null tracking - bit-packed for memory efficiency (1 bit per row vs 8 bits with boolean[])
         private long[] nullBitmapPacked;
@@ -431,8 +423,21 @@ public class IlpV4TableBuffer {
             return uuidLow;
         }
 
-        public long[][] getLong256Values() {
+        /**
+         * Returns Long256 values as flat array (4 longs per value).
+         * Use getLong256Value(index, component) for indexed access.
+         */
+        public long[] getLong256Values() {
             return long256Values;
+        }
+
+        /**
+         * Returns a component of a Long256 value.
+         * @param index value index
+         * @param component component 0-3
+         */
+        public long getLong256Value(int index, int component) {
+            return long256Values[index * 4 + component];
         }
 
         public void addBoolean(boolean value) {
@@ -519,13 +524,11 @@ public class IlpV4TableBuffer {
 
         public void addLong256(long l0, long l1, long l2, long l3) {
             ensureCapacity();
-            if (long256Values[valueCount] == null) {
-                long256Values[valueCount] = new long[4];
-            }
-            long256Values[valueCount][0] = l0;
-            long256Values[valueCount][1] = l1;
-            long256Values[valueCount][2] = l2;
-            long256Values[valueCount][3] = l3;
+            int offset = valueCount * 4;
+            long256Values[offset] = l0;
+            long256Values[offset + 1] = l1;
+            long256Values[offset + 2] = l2;
+            long256Values[offset + 3] = l3;
             valueCount++;
             size++;
         }
@@ -576,10 +579,11 @@ public class IlpV4TableBuffer {
                         valueCount++;
                         break;
                     case TYPE_LONG256:
-                        if (long256Values[valueCount] == null) {
-                            long256Values[valueCount] = new long[4];
-                        }
-                        Arrays.fill(long256Values[valueCount], Long.MIN_VALUE);
+                        int offset = valueCount * 4;
+                        long256Values[offset] = Long.MIN_VALUE;
+                        long256Values[offset + 1] = Long.MIN_VALUE;
+                        long256Values[offset + 2] = Long.MIN_VALUE;
+                        long256Values[offset + 3] = Long.MIN_VALUE;
                         valueCount++;
                         break;
                 }
@@ -667,7 +671,8 @@ public class IlpV4TableBuffer {
                     uuidLow = new long[cap];
                     break;
                 case TYPE_LONG256:
-                    long256Values = new long[cap][];
+                    // Flat array: 4 longs per value
+                    long256Values = new long[cap * 4];
                     break;
             }
         }
@@ -709,7 +714,8 @@ public class IlpV4TableBuffer {
                     uuidLow = Arrays.copyOf(uuidLow, newCap);
                     break;
                 case TYPE_LONG256:
-                    long256Values = Arrays.copyOf(long256Values, newCap);
+                    // Flat array: 4 longs per value
+                    long256Values = Arrays.copyOf(long256Values, newCap * 4);
                     break;
             }
         }

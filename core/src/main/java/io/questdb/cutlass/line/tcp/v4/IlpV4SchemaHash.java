@@ -54,6 +54,9 @@ public final class IlpV4SchemaHash {
     // Default seed (0 for ILP v4)
     private static final long DEFAULT_SEED = 0L;
 
+    // Thread-local Hasher to avoid allocation on every computeSchemaHash call
+    private static final ThreadLocal<Hasher> HASHER_POOL = ThreadLocal.withInitial(Hasher::new);
+
     private IlpV4SchemaHash() {
         // utility class
     }
@@ -245,8 +248,8 @@ public final class IlpV4SchemaHash {
      * @return the schema hash
      */
     public static long computeSchemaHash(Utf8Sequence[] columnNames, byte[] columnTypes) {
-        // Create a hasher that can accumulate multiple columns
-        Hasher hasher = new Hasher();
+        // Use pooled hasher to avoid allocation
+        Hasher hasher = HASHER_POOL.get();
         hasher.reset(DEFAULT_SEED);
 
         for (int i = 0; i < columnNames.length; i++) {
@@ -262,19 +265,43 @@ public final class IlpV4SchemaHash {
 
     /**
      * Computes the schema hash for ILP v4 using String column names.
+     * Note: Iterates over String chars and converts to UTF-8 bytes directly to avoid getBytes() allocation.
      *
      * @param columnNames array of column names
      * @param columnTypes array of type codes
      * @return the schema hash
      */
     public static long computeSchemaHash(String[] columnNames, byte[] columnTypes) {
-        Hasher hasher = new Hasher();
+        // Use pooled hasher to avoid allocation
+        Hasher hasher = HASHER_POOL.get();
         hasher.reset(DEFAULT_SEED);
 
         for (int i = 0; i < columnNames.length; i++) {
-            byte[] nameBytes = columnNames[i].getBytes(StandardCharsets.UTF_8);
-            for (byte b : nameBytes) {
-                hasher.update(b);
+            String name = columnNames[i];
+            // Encode UTF-8 directly without allocating byte array
+            for (int j = 0, len = name.length(); j < len; j++) {
+                char c = name.charAt(j);
+                if (c < 0x80) {
+                    // Single byte (ASCII)
+                    hasher.update((byte) c);
+                } else if (c < 0x800) {
+                    // Two bytes
+                    hasher.update((byte) (0xC0 | (c >> 6)));
+                    hasher.update((byte) (0x80 | (c & 0x3F)));
+                } else if (c >= 0xD800 && c <= 0xDBFF && j + 1 < len) {
+                    // Surrogate pair (4 bytes)
+                    char c2 = name.charAt(++j);
+                    int codePoint = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+                    hasher.update((byte) (0xF0 | (codePoint >> 18)));
+                    hasher.update((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
+                    hasher.update((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
+                    hasher.update((byte) (0x80 | (codePoint & 0x3F)));
+                } else {
+                    // Three bytes
+                    hasher.update((byte) (0xE0 | (c >> 12)));
+                    hasher.update((byte) (0x80 | ((c >> 6) & 0x3F)));
+                    hasher.update((byte) (0x80 | (c & 0x3F)));
+                }
             }
             hasher.update(columnTypes[i]);
         }
@@ -290,7 +317,8 @@ public final class IlpV4SchemaHash {
      * @return the schema hash
      */
     public static long computeSchemaHash(DirectUtf8Sequence[] columnNames, byte[] columnTypes) {
-        Hasher hasher = new Hasher();
+        // Use pooled hasher to avoid allocation
+        Hasher hasher = HASHER_POOL.get();
         hasher.reset(DEFAULT_SEED);
 
         for (int i = 0; i < columnNames.length; i++) {
@@ -301,6 +329,50 @@ public final class IlpV4SchemaHash {
                 hasher.update(Unsafe.getUnsafe().getByte(addr + j));
             }
             hasher.update(columnTypes[i]);
+        }
+
+        return hasher.getValue();
+    }
+
+    /**
+     * Computes the schema hash directly from column buffers without intermediate arrays.
+     * This is the most efficient method when column data is already available.
+     *
+     * @param columns list of column buffers
+     * @return the schema hash
+     */
+    public static long computeSchemaHashDirect(io.questdb.std.ObjList<IlpV4TableBuffer.ColumnBuffer> columns) {
+        // Use pooled hasher to avoid allocation
+        Hasher hasher = HASHER_POOL.get();
+        hasher.reset(DEFAULT_SEED);
+
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            IlpV4TableBuffer.ColumnBuffer col = columns.get(i);
+            String name = col.getName();
+            // Encode UTF-8 directly without allocating byte array
+            for (int j = 0, len = name.length(); j < len; j++) {
+                char c = name.charAt(j);
+                if (c < 0x80) {
+                    hasher.update((byte) c);
+                } else if (c < 0x800) {
+                    hasher.update((byte) (0xC0 | (c >> 6)));
+                    hasher.update((byte) (0x80 | (c & 0x3F)));
+                } else if (c >= 0xD800 && c <= 0xDBFF && j + 1 < len) {
+                    char c2 = name.charAt(++j);
+                    int codePoint = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+                    hasher.update((byte) (0xF0 | (codePoint >> 18)));
+                    hasher.update((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
+                    hasher.update((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
+                    hasher.update((byte) (0x80 | (codePoint & 0x3F)));
+                } else {
+                    hasher.update((byte) (0xE0 | (c >> 12)));
+                    hasher.update((byte) (0x80 | ((c >> 6) & 0x3F)));
+                    hasher.update((byte) (0x80 | (c & 0x3F)));
+                }
+            }
+            // Wire type code: type | (nullable ? 0x80 : 0)
+            byte wireType = (byte) (col.getType() | (col.nullable ? 0x80 : 0));
+            hasher.update(wireType);
         }
 
         return hasher.getValue();
