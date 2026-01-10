@@ -24,11 +24,10 @@
 
 package io.questdb.cutlass.line.tcp.v4;
 
+import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
 
 import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
 
@@ -42,18 +41,21 @@ public class IlpV4TableBuffer {
 
     private final String tableName;
     private final ObjList<ColumnBuffer> columns;
-    private final Map<String, Integer> columnNameToIndex;
+    private final CharSequenceIntHashMap columnNameToIndex;
     private int rowCount;
     private long schemaHash;
     private boolean schemaHashComputed;
+    private IlpV4ColumnDef[] cachedColumnDefs;
+    private boolean columnDefsCacheValid;
 
     public IlpV4TableBuffer(String tableName) {
         this.tableName = tableName;
         this.columns = new ObjList<>();
-        this.columnNameToIndex = new HashMap<>();
+        this.columnNameToIndex = new CharSequenceIntHashMap();
         this.rowCount = 0;
         this.schemaHash = 0;
         this.schemaHashComputed = false;
+        this.columnDefsCacheValid = false;
     }
 
     /**
@@ -85,23 +87,26 @@ public class IlpV4TableBuffer {
     }
 
     /**
-     * Returns the column definitions.
+     * Returns the column definitions (cached for efficiency).
      */
     public IlpV4ColumnDef[] getColumnDefs() {
-        IlpV4ColumnDef[] defs = new IlpV4ColumnDef[columns.size()];
-        for (int i = 0; i < columns.size(); i++) {
-            ColumnBuffer col = columns.get(i);
-            defs[i] = new IlpV4ColumnDef(col.name, col.type, col.nullable);
+        if (!columnDefsCacheValid || cachedColumnDefs == null || cachedColumnDefs.length != columns.size()) {
+            cachedColumnDefs = new IlpV4ColumnDef[columns.size()];
+            for (int i = 0; i < columns.size(); i++) {
+                ColumnBuffer col = columns.get(i);
+                cachedColumnDefs[i] = new IlpV4ColumnDef(col.name, col.type, col.nullable);
+            }
+            columnDefsCacheValid = true;
         }
-        return defs;
+        return cachedColumnDefs;
     }
 
     /**
      * Gets or creates a column with the given name and type.
      */
     public ColumnBuffer getOrCreateColumn(String name, byte type, boolean nullable) {
-        Integer idx = columnNameToIndex.get(name);
-        if (idx != null) {
+        int idx = columnNameToIndex.get(name);
+        if (idx != CharSequenceIntHashMap.NO_ENTRY_VALUE) {
             ColumnBuffer existing = columns.get(idx);
             if (existing.type != type) {
                 throw new IllegalArgumentException(
@@ -117,6 +122,7 @@ public class IlpV4TableBuffer {
         columns.add(col);
         columnNameToIndex.put(name, index);
         schemaHashComputed = false;
+        columnDefsCacheValid = false;
         return col;
     }
 
@@ -179,6 +185,8 @@ public class IlpV4TableBuffer {
         rowCount = 0;
         schemaHash = 0;
         schemaHashComputed = false;
+        columnDefsCacheValid = false;
+        cachedColumnDefs = null;
     }
 
     /**
@@ -204,12 +212,8 @@ public class IlpV4TableBuffer {
 
             // Write null bitmap if column is nullable (ALWAYS write it, even if no nulls)
             if (col.nullable) {
-                if (col.hasNulls()) {
-                    encoder.writeNullBitmap(col.getNullBitmap(), rowCount);
-                } else {
-                    // Write empty null bitmap (all zeros)
-                    encoder.writeNullBitmap(new boolean[rowCount], rowCount);
-                }
+                // Use bit-packed format for efficiency
+                encoder.writeNullBitmapPacked(col.getNullBitmapPacked(), rowCount);
             }
 
             // Write column data based on type
@@ -237,9 +241,10 @@ public class IlpV4TableBuffer {
                     encoder.writeDoubleColumn(col.getDoubleValues(), valueCount);
                     break;
                 case TYPE_TIMESTAMP:
+                    // Note: nulls parameter is unused in writeTimestampColumn
                     encoder.writeTimestampColumn(
                             col.getLongValues(),
-                            col.nullable ? col.getNullBitmap() : null,
+                            null,
                             rowCount,
                             valueCount,
                             useGorilla
@@ -303,12 +308,12 @@ public class IlpV4TableBuffer {
         private long[] uuidLow;
         private long[][] long256Values;
 
-        // Null tracking
-        private boolean[] nullBitmap;
+        // Null tracking - bit-packed for memory efficiency (1 bit per row vs 8 bits with boolean[])
+        private long[] nullBitmapPacked;
         private boolean hasNulls;
 
         // Symbol specific
-        private Map<String, Integer> symbolDict;
+        private CharSequenceIntHashMap symbolDict;
         private ObjList<String> symbolList;
         private int[] symbolIndices;
 
@@ -323,7 +328,8 @@ public class IlpV4TableBuffer {
 
             allocateStorage(type, capacity);
             if (nullable) {
-                nullBitmap = new boolean[capacity];
+                // Bit-packed: 64 bits per long, so we need (capacity + 63) / 64 longs
+                nullBitmapPacked = new long[(capacity + 63) >>> 6];
             }
         }
 
@@ -350,8 +356,39 @@ public class IlpV4TableBuffer {
             return hasNulls;
         }
 
+        /**
+         * Returns the bit-packed null bitmap.
+         * Each long contains 64 bits, bit 0 of long 0 = row 0, bit 1 of long 0 = row 1, etc.
+         */
+        public long[] getNullBitmapPacked() {
+            return nullBitmapPacked;
+        }
+
+        /**
+         * Returns the null bitmap as boolean array (for backward compatibility).
+         * This creates a new array, so prefer getNullBitmapPacked() for efficiency.
+         */
         public boolean[] getNullBitmap() {
-            return nullBitmap;
+            if (nullBitmapPacked == null) {
+                return null;
+            }
+            boolean[] result = new boolean[size];
+            for (int i = 0; i < size; i++) {
+                result[i] = isNull(i);
+            }
+            return result;
+        }
+
+        /**
+         * Checks if the row at the given index is null.
+         */
+        public boolean isNull(int index) {
+            if (nullBitmapPacked == null) {
+                return false;
+            }
+            int longIndex = index >>> 6;
+            int bitIndex = index & 63;
+            return (nullBitmapPacked[longIndex] & (1L << bitIndex)) != 0;
         }
 
         public boolean[] getBooleanValues() {
@@ -461,8 +498,8 @@ public class IlpV4TableBuffer {
                 // Null symbols don't take space in the value buffer
                 size++;
             } else {
-                Integer idx = symbolDict.get(value);
-                if (idx == null) {
+                int idx = symbolDict.get(value);
+                if (idx == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
                     idx = symbolList.size();
                     symbolDict.put(value, idx);
                     symbolList.add(value);
@@ -551,7 +588,9 @@ public class IlpV4TableBuffer {
         }
 
         private void markNull(int index) {
-            nullBitmap[index] = true;
+            int longIndex = index >>> 6;
+            int bitIndex = index & 63;
+            nullBitmapPacked[longIndex] |= (1L << bitIndex);
             hasNulls = true;
         }
 
@@ -559,8 +598,8 @@ public class IlpV4TableBuffer {
             size = 0;
             valueCount = 0;
             hasNulls = false;
-            if (nullBitmap != null) {
-                Arrays.fill(nullBitmap, 0, Math.min(capacity, nullBitmap.length), false);
+            if (nullBitmapPacked != null) {
+                Arrays.fill(nullBitmapPacked, 0L);
             }
             if (symbolDict != null) {
                 symbolDict.clear();
@@ -581,8 +620,9 @@ public class IlpV4TableBuffer {
             if (size >= capacity) {
                 int newCapacity = capacity * 2;
                 growStorage(type, newCapacity);
-                if (nullable && nullBitmap != null) {
-                    nullBitmap = Arrays.copyOf(nullBitmap, newCapacity);
+                if (nullable && nullBitmapPacked != null) {
+                    int newLongCount = (newCapacity + 63) >>> 6;
+                    nullBitmapPacked = Arrays.copyOf(nullBitmapPacked, newLongCount);
                 }
                 capacity = newCapacity;
             }
@@ -619,7 +659,7 @@ public class IlpV4TableBuffer {
                     break;
                 case TYPE_SYMBOL:
                     symbolIndices = new int[cap];
-                    symbolDict = new HashMap<>();
+                    symbolDict = new CharSequenceIntHashMap();
                     symbolList = new ObjList<>();
                     break;
                 case TYPE_UUID:

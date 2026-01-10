@@ -43,6 +43,8 @@ public class IlpV4MessageEncoder {
     private int bufferCapacity;
     private int position;
     private byte flags;
+    // Pooled BitWriter to avoid allocation on every timestamp column
+    private final IlpV4BitWriter bitWriter = new IlpV4BitWriter();
 
     public IlpV4MessageEncoder() {
         this(64 * 1024); // 64KB initial buffer
@@ -229,6 +231,26 @@ public class IlpV4MessageEncoder {
     }
 
     /**
+     * Writes a null bitmap from bit-packed long array (more efficient than boolean[]).
+     * Each long contains 64 bits: bit 0 of long[0] = row 0, bit 1 = row 1, etc.
+     *
+     * @param nullsPacked  bit-packed null bitmap
+     * @param count        number of values (rows)
+     */
+    public void writeNullBitmapPacked(long[] nullsPacked, int count) {
+        int bitmapSize = (count + 7) / 8;
+        ensureCapacity(bitmapSize);
+
+        for (int byteIdx = 0; byteIdx < bitmapSize; byteIdx++) {
+            int longIndex = byteIdx >>> 3;  // byteIdx / 8
+            int byteInLong = byteIdx & 7;   // byteIdx % 8
+            byte b = (byte) ((nullsPacked[longIndex] >>> (byteInLong * 8)) & 0xFF);
+            Unsafe.getUnsafe().putByte(bufferAddress + position + byteIdx, b);
+        }
+        position += bitmapSize;
+    }
+
+    /**
      * Writes boolean column data (bit-packed).
      *
      * @param values boolean values
@@ -355,8 +377,7 @@ public class IlpV4MessageEncoder {
                 return;
             }
 
-            // Encode remaining timestamps using delta-of-delta
-            IlpV4BitWriter bitWriter = new IlpV4BitWriter();
+            // Encode remaining timestamps using delta-of-delta (using pooled bitWriter)
             bitWriter.reset(bufferAddress + position, bufferCapacity - position);
 
             long prevTimestamp = values[1];
