@@ -26,6 +26,9 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.ExpressionParserListener;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.WindowColumn;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class RpnBuilder implements ExpressionParserListener {
@@ -36,8 +39,174 @@ public class RpnBuilder implements ExpressionParserListener {
         if (node.queryModel != null) {
             sink.put('(').put(node.queryModel).put(')').put(' ');
         } else {
-            sink.put(node.token).put(' ');
+            sink.put(node.token);
+            // Serialize window context if present
+            if (node.windowContext != null) {
+                serializeWindowContext(node.windowContext);
+            }
+            sink.put(' ');
         }
+    }
+
+    private void serializeExpressionToRpn(ExpressionNode node) {
+        if (node == null) {
+            return;
+        }
+        // For operations (binary operators like LIKE, +, -, etc.)
+        if (node.type == ExpressionNode.OPERATION) {
+            if (node.lhs != null) {
+                serializeExpressionToRpn(node.lhs);
+                sink.put(' ');
+            }
+            if (node.rhs != null) {
+                serializeExpressionToRpn(node.rhs);
+                sink.put(' ');
+            }
+            sink.put(node.token);
+        } else if (node.type == ExpressionNode.FUNCTION) {
+            // For functions, serialize args first then function name
+            ObjList<ExpressionNode> args = node.args;
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) sink.put(' ');
+                serializeExpressionToRpn(args.getQuick(i));
+            }
+            if (args.size() > 0) sink.put(' ');
+            sink.put(node.token);
+        } else {
+            // For literals, constants, etc. - just output the token
+            sink.put(node.token);
+        }
+    }
+
+    private void serializeFrameBound(ExpressionNode expr, int kind, char timeUnit, boolean isLower) {
+        if (expr != null) {
+            sink.put(expr.token);
+            if (timeUnit != 0) {
+                sink.put(' ');
+                switch (timeUnit) {
+                    case WindowColumn.TIME_UNIT_HOUR:
+                        sink.put("hour");
+                        break;
+                    case WindowColumn.TIME_UNIT_MINUTE:
+                        sink.put("minute");
+                        break;
+                    case WindowColumn.TIME_UNIT_SECOND:
+                        sink.put("second");
+                        break;
+                    case WindowColumn.TIME_UNIT_MILLISECOND:
+                        sink.put("millisecond");
+                        break;
+                    case WindowColumn.TIME_UNIT_MICROSECOND:
+                        sink.put("microsecond");
+                        break;
+                    case WindowColumn.TIME_UNIT_NANOSECOND:
+                        sink.put("nanosecond");
+                        break;
+                    case WindowColumn.TIME_UNIT_DAY:
+                        sink.put("day");
+                        break;
+                    default:
+                        sink.put(timeUnit);
+                        break;
+                }
+            }
+            sink.put(' ');
+        }
+
+        switch (kind) {
+            case WindowColumn.PRECEDING:
+                if (expr == null && isLower) {
+                    sink.put("unbounded ");
+                }
+                sink.put("preceding");
+                break;
+            case WindowColumn.FOLLOWING:
+                if (expr == null && !isLower) {
+                    sink.put("unbounded ");
+                }
+                sink.put("following");
+                break;
+            case WindowColumn.CURRENT:
+                sink.put("current row");
+                break;
+        }
+    }
+
+    private void serializeWindowContext(WindowColumn wc) {
+        if (wc.isIgnoreNulls()) {
+            sink.put(" ignore nulls");
+        }
+        sink.put(" over (");
+
+        boolean needSpace = false;
+
+        // Partition by
+        ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
+        if (partitionBy.size() > 0) {
+            sink.put("partition by ");
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                if (i > 0) sink.put(", ");
+                serializeExpressionToRpn(partitionBy.getQuick(i));
+            }
+            needSpace = true;
+        }
+
+        // Order by
+        ObjList<ExpressionNode> orderBy = wc.getOrderBy();
+        if (orderBy.size() > 0) {
+            if (needSpace) sink.put(' ');
+            sink.put("order by ");
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                if (i > 0) sink.put(", ");
+                serializeExpressionToRpn(orderBy.getQuick(i));
+                int dir = wc.getOrderByDirection().getQuick(i);
+                if (dir == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                    sink.put(" desc");
+                }
+            }
+            needSpace = true;
+        }
+
+        // Frame specification (only if non-default)
+        if (wc.isNonDefaultFrame()) {
+            if (needSpace) sink.put(' ');
+
+            // Frame mode
+            switch (wc.getFramingMode()) {
+                case WindowColumn.FRAMING_ROWS:
+                    sink.put("rows ");
+                    break;
+                case WindowColumn.FRAMING_RANGE:
+                    sink.put("range ");
+                    break;
+                case WindowColumn.FRAMING_GROUPS:
+                    sink.put("groups ");
+                    break;
+            }
+
+            sink.put("between ");
+            serializeFrameBound(wc.getRowsLoExpr(), wc.getRowsLoKind(), wc.getRowsLoExprTimeUnit(), true);
+            sink.put(" and ");
+            serializeFrameBound(wc.getRowsHiExpr(), wc.getRowsHiKind(), wc.getRowsHiExprTimeUnit(), false);
+
+            // Exclusion
+            if (wc.getExclusionKind() != WindowColumn.EXCLUDE_NO_OTHERS) {
+                sink.put(" exclude ");
+                switch (wc.getExclusionKind()) {
+                    case WindowColumn.EXCLUDE_CURRENT_ROW:
+                        sink.put("current row");
+                        break;
+                    case WindowColumn.EXCLUDE_GROUP:
+                        sink.put("group");
+                        break;
+                    case WindowColumn.EXCLUDE_TIES:
+                        sink.put("ties");
+                        break;
+                }
+            }
+        }
+
+        sink.put(')');
     }
 
     public void reset() {

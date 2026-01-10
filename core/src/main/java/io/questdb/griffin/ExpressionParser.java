@@ -695,6 +695,38 @@ public class ExpressionParser {
     }
 
     /**
+     * Parses a time unit keyword (HOUR, MINUTE, SECOND, etc.) and returns the corresponding constant.
+     * Returns 0 if the token is not a time unit.
+     */
+    private char parseTimeUnit(CharSequence tok) {
+        if (tok == null) {
+            return 0;
+        }
+        if (SqlKeywords.isHourKeyword(tok) || SqlKeywords.isHoursKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_HOUR;
+        }
+        if (SqlKeywords.isMinuteKeyword(tok) || SqlKeywords.isMinutesKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_MINUTE;
+        }
+        if (SqlKeywords.isSecondKeyword(tok) || SqlKeywords.isSecondsKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_SECOND;
+        }
+        if (SqlKeywords.isMillisecondKeyword(tok) || SqlKeywords.isMillisecondsKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_MILLISECOND;
+        }
+        if (SqlKeywords.isMicrosecondKeyword(tok) || SqlKeywords.isMicrosecondsKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_MICROSECOND;
+        }
+        if (SqlKeywords.isNanosecondKeyword(tok) || SqlKeywords.isNanosecondsKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_NANOSECOND;
+        }
+        if (SqlKeywords.isDayKeyword(tok) || SqlKeywords.isDaysKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_DAY;
+        }
+        return 0;
+    }
+
+    /**
      * Parses window function OVER clause and attaches the WindowColumn to the function node.
      * Expected to be called when we've just finished parsing a function call and peeked OVER keyword.
      *
@@ -702,12 +734,16 @@ public class ExpressionParser {
      * @param functionNode      the function node to attach window context to
      * @param sqlParserCallback callback for nested expression parsing
      * @param decls             declarations for expression parsing
+     * @param ignoreNulls       true if IGNORE NULLS was specified before OVER
+     * @param nullsDescPos      position of IGNORE/RESPECT keyword (0 if not specified)
      */
     private void parseWindowClause(
             GenericLexer lexer,
             ExpressionNode functionNode,
             SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean ignoreNulls,
+            int nullsDescPos
     ) throws SqlException {
         // OVER keyword already consumed, expect '('
         CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -716,6 +752,8 @@ public class ExpressionParser {
         }
 
         WindowColumn windowCol = windowColumnPool.next().of(null, functionNode);
+        windowCol.setIgnoreNulls(ignoreNulls);
+        windowCol.setNullsDescPos(nullsDescPos);
         functionNode.windowContext = windowCol;
 
         tok = SqlUtil.fetchNext(lexer);
@@ -749,7 +787,7 @@ public class ExpressionParser {
         }
 
         // Handle ORDER BY
-        if (tok != null && SqlKeywords.isOrderKeyword(tok)) {
+        if (SqlKeywords.isOrderKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null || !SqlKeywords.isByKeyword(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "'by' expected after 'order'");
@@ -775,7 +813,7 @@ public class ExpressionParser {
         }
 
         // Handle ROWS/RANGE/GROUPS frame specification
-        if (tok != null && !Chars.equals(tok, ')')) {
+        if (!Chars.equals(tok, ')')) {
             int framingMode = -1;
             if (SqlKeywords.isRowsKeyword(tok)) {
                 framingMode = WindowColumn.FRAMING_ROWS;
@@ -798,15 +836,28 @@ public class ExpressionParser {
 
     /**
      * Parses an expression within a window clause context.
-     * This is a simplified expression parsing that stops at window clause keywords.
+     * Uses a separate tree builder to avoid state conflicts with the outer expression parsing.
+     * Saves and restores parser state since we're calling parseExpr recursively.
      */
     private ExpressionNode parseWindowExpr(
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        // Use sqlParser to parse the expression - it will call back into expression parser
-        return sqlParser.expr(lexer, null, sqlParserCallback, decls);
+        // Save opStack state - we're in the middle of parsing the outer expression
+        int opStackSize = opStack.size();
+
+        try {
+            // Use a separate tree builder to avoid state conflicts
+            WindowExprTreeBuilder treeBuilder = new WindowExprTreeBuilder();
+            parseExpr(lexer, treeBuilder, sqlParserCallback, decls);
+            return treeBuilder.getResult();
+        } finally {
+            // Restore opStack state
+            while (opStack.size() > opStackSize) {
+                opStack.pop();
+            }
+        }
     }
 
     /**
@@ -854,11 +905,22 @@ public class ExpressionParser {
                 windowCol.setRowsHiKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
             }
         } else {
-            // Expression followed by PRECEDING or FOLLOWING
+            // Expression followed by optional time unit and PRECEDING or FOLLOWING
             lexer.unparseLast();
             ExpressionNode boundExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
 
+            // Check for optional time unit (HOUR, MINUTE, SECOND, etc.)
             tok = SqlUtil.fetchNext(lexer);
+            char timeUnit = parseTimeUnit(tok);
+            if (timeUnit != 0) {
+                if (isLowerBound) {
+                    windowCol.setRowsLoExprTimeUnit(timeUnit);
+                } else {
+                    windowCol.setRowsHiExprTimeUnit(timeUnit);
+                }
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
             if (tok != null && SqlKeywords.isPrecedingKeyword(tok)) {
                 if (isLowerBound) {
                     windowCol.setRowsLoExpr(boundExpr, pos);
@@ -908,10 +970,43 @@ public class ExpressionParser {
             tok = SqlUtil.fetchNext(lexer);
             parseWindowFrameBound(lexer, windowCol, tok, false, sqlParserCallback, decls);
 
-            tok = SqlUtil.fetchNext(lexer);
         } else {
             // Single bound - defaults to CURRENT ROW for upper bound
             parseWindowFrameBound(lexer, windowCol, tok, true, sqlParserCallback, decls);
+        }
+
+        // Check for EXCLUDE clause
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && SqlKeywords.isExcludeKeyword(tok)) {
+            int excludePos = lexer.lastTokenPosition();
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
+            }
+
+            if (SqlKeywords.isCurrentKeyword(tok)) {
+                // EXCLUDE CURRENT ROW
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !SqlKeywords.isRowKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'row' expected after 'current'");
+                }
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_CURRENT_ROW, excludePos);
+            } else if (SqlKeywords.isGroupKeyword(tok)) {
+                // EXCLUDE GROUP
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_GROUP, excludePos);
+            } else if (SqlKeywords.isTiesKeyword(tok)) {
+                // EXCLUDE TIES
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_TIES, excludePos);
+            } else if (SqlKeywords.isNoKeyword(tok)) {
+                // EXCLUDE NO OTHERS
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !SqlKeywords.isOthersKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'others' expected after 'no'");
+                }
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_NO_OTHERS, excludePos);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
+            }
             tok = SqlUtil.fetchNext(lexer);
         }
 
@@ -1243,17 +1338,41 @@ public class ExpressionParser {
                                     throw SqlException.$(lastPos, "no function or operator?");
                                 }
 
-                                // Check for window function OVER clause
+                                // Check for window function OVER clause (including IGNORE/RESPECT NULLS)
                                 if (node.type == ExpressionNode.LITERAL) {
                                     CharSequence nextTok = SqlUtil.fetchNext(lexer);
+
+                                    // Check for IGNORE NULLS or RESPECT NULLS before OVER
+                                    boolean ignoreNulls = false;
+                                    int nullsDescPos = 0;
+                                    if (nextTok != null && (SqlKeywords.isIgnoreWord(nextTok) || SqlKeywords.isRespectWord(nextTok))) {
+                                        ignoreNulls = SqlKeywords.isIgnoreWord(nextTok);
+                                        nullsDescPos = lexer.lastTokenPosition();
+                                        CharSequence nullsWord = SqlUtil.fetchNext(lexer);
+                                        if (nullsWord != null && SqlKeywords.isNullsWord(nullsWord)) {
+                                            nextTok = SqlUtil.fetchNext(lexer);
+                                        } else {
+                                            // Not IGNORE/RESPECT NULLS pattern, restore tokens
+                                            if (nullsWord != null) {
+                                                lexer.unparseLast();
+                                            }
+                                            lexer.unparseLast();
+                                            nextTok = SqlUtil.fetchNext(lexer);
+                                            ignoreNulls = false;
+                                            nullsDescPos = 0;
+                                        }
+                                    }
+
                                     if (nextTok != null && SqlKeywords.isOverKeyword(nextTok)) {
                                         // This is a window function - parse the OVER clause
                                         // First, update node to be a function
                                         node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
                                         node.type = ExpressionNode.FUNCTION;
-                                        parseWindowClause(lexer, node, sqlParserCallback, decls);
-                                        argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
+                                        // Pop the function node before parsing OVER clause
+                                        // to prevent inner expression parsing from interfering with it
                                         opStack.pop();
+                                        parseWindowClause(lexer, node, sqlParserCallback, decls, ignoreNulls, nullsDescPos);
+                                        argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         break;
                                     } else if (nextTok != null) {
                                         lexer.unparseLast();
@@ -2077,6 +2196,55 @@ public class ExpressionParser {
             scopeStack.setBottom(savedScopeStackBottom);
             argStackDepthStack.popAll();
             paramCountStack.popAll();
+        }
+    }
+
+    /**
+     * Tree builder for window clause expressions.
+     * Builds expression trees using RPN stack-based algorithm.
+     */
+    private static class WindowExprTreeBuilder implements ExpressionParserListener {
+        private final java.util.ArrayList<ExpressionNode> stack = new java.util.ArrayList<>();
+
+        public ExpressionNode getResult() {
+            return stack.size() > 0 ? stack.get(stack.size() - 1) : null;
+        }
+
+        @Override
+        public void onNode(ExpressionNode node) {
+            // For operators/functions with arguments, pop operands from stack and link them
+            if (node.type == ExpressionNode.OPERATION || node.type == ExpressionNode.FUNCTION) {
+                int paramCount = node.paramCount;
+                if (paramCount == 0 && node.type == ExpressionNode.OPERATION) {
+                    // Binary operators have implicit param count of 2
+                    paramCount = 2;
+                }
+                // Link arguments based on the expression type
+                if (node.type == ExpressionNode.OPERATION && paramCount >= 2) {
+                    if (stack.size() >= 2) {
+                        node.rhs = stack.remove(stack.size() - 1);
+                        node.lhs = stack.remove(stack.size() - 1);
+                    } else if (stack.size() == 1) {
+                        // Unary operator
+                        node.rhs = stack.remove(stack.size() - 1);
+                    }
+                } else if (node.type == ExpressionNode.FUNCTION && paramCount > 0) {
+                    // For functions, args are already populated by expression parser
+                    // But we may need to pop from stack if they were separate nodes
+                    for (int i = 0; i < paramCount && stack.size() > 0; i++) {
+                        // Only pop if args list is empty (not pre-populated)
+                        if (node.args.size() < paramCount) {
+                            ExpressionNode arg = stack.remove(stack.size() - 1);
+                            node.args.insert(0, node.args.size(), arg);
+                        }
+                    }
+                }
+            }
+            stack.add(node);
+        }
+
+        public void reset() {
+            stack.clear();
         }
     }
 

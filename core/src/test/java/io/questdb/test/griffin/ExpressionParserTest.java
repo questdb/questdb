@@ -1603,4 +1603,70 @@ public class ExpressionParserTest extends AbstractCairoTest {
         }
         TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
+
+    @Test
+    public void testWindowFunctionArithmetic() throws SqlException {
+        // RPN: left operand, right operand, operator
+        x("row_number over () 1 +", "row_number() over () + 1");
+    }
+
+    @Test
+    public void testWindowFunctionIgnoreNulls() throws SqlException {
+        x("i first_value ignore nulls over (order by ts)", "first_value(i) ignore nulls over (order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionIgnoreNullsWithExclude() throws SqlException {
+        x("j first_value ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)",
+                "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)");
+    }
+
+    @Test
+    public void testWindowFunctionPartitionByExpression() throws SqlException {
+        x("i avg over (partition by sym '%aaa%' like order by ts)", "avg(i) over (partition by sym like '%aaa%' order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionRangeFrameWithTimeUnit() throws SqlException {
+        x("ts max over (order by ts range between '12' hour preceding and current row)",
+                "max(ts) over (order by ts range between '12' hour preceding and current row)");
+    }
+
+    @Test
+    public void testWindowFunctionRowsFrame() throws SqlException {
+        x("ts max over (order by ts rows between unbounded preceding and current row)",
+                "max(ts) over (order by ts rows between unbounded preceding and current row)");
+    }
+
+    @Test
+    public void testWindowFunctionRowsFrameExcludeCurrentRow() throws SqlException {
+        x("j avg over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)",
+                "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)");
+    }
+
+    // Window function tests
+    @Test
+    public void testWindowFunctionSimple() throws SqlException {
+        x("row_number over ()", "row_number() over ()");
+    }
+
+    @Test
+    public void testWindowFunctionWithOrderBy() throws SqlException {
+        x("ts max over (order by ts)", "max(ts) over (order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionWithOrderByDesc() throws SqlException {
+        x("ts max over (order by ts desc)", "max(ts) over (order by ts desc)");
+    }
+
+    @Test
+    public void testWindowFunctionWithPartitionAndOrder() throws SqlException {
+        x("x row_number over (partition by sym order by ts)", "row_number(x) over (partition by sym order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionWithPartitionBy() throws SqlException {
+        x("x row_number over (partition by x)", "row_number(x) over (partition by x)");
+    }
 }
