@@ -1,721 +1,673 @@
-# ILP v4 Protocol Specification
+# ILPv4 Binary Wire Protocol Specification
 
-QuestDB's columnar binary wire protocol for high-throughput time-series ingestion.
+This document describes the ILPv4 (InfluxDB Line Protocol version 4) binary wire format as implemented in QuestDB. This specification is intended to enable alternative implementations to interoperate with QuestDB.
+
+## Table of Contents
+
+1. [Overview](#1-overview)
+2. [Byte Ordering](#2-byte-ordering)
+3. [Variable-Length Integer Encoding (Varint)](#3-variable-length-integer-encoding-varint)
+4. [Message Structure](#4-message-structure)
+5. [Table Block Structure](#5-table-block-structure)
+6. [Schema Definition](#6-schema-definition)
+7. [Column Types](#7-column-types)
+8. [Null Bitmap](#8-null-bitmap)
+9. [Column Data Encoding](#9-column-data-encoding)
+10. [Compression](#10-compression)
+11. [Response Format](#11-response-format)
+12. [Protocol Limits](#12-protocol-limits)
+13. [Examples](#13-examples)
+
+---
 
 ## 1. Overview
 
-### 1.1 Goals
+ILPv4 is a binary protocol for high-performance time-series data ingestion. Key features:
 
-- **Bandwidth efficiency**: Columnar layout eliminates repeated column names; binary encoding reduces size
-- **Server CPU reduction**: Pre-transposed data requires no parsing or row-to-column conversion
-- **Multi-table batching**: Single network round-trip for writes to multiple tables
-- **Zero external dependencies**: Self-contained format, no FlatBuffers/Protobuf/Arrow libraries required
-- **Backward compatibility**: Existing sender API preserved; wire format change is internal
+- **Column-oriented encoding**: All values for a column are stored contiguously
+- **Batch processing**: Multiple tables and rows per message
+- **Optional compression**: LZ4 or Zstd at the message level
+- **Gorilla timestamp compression**: Delta-of-delta encoding for timestamps
+- **Schema caching**: Reference previously sent schemas by hash
 
-### 1.2 Non-Goals
+### Magic Bytes
 
-- Zero-copy decoding (acceptable to copy into WAL buffers)
-- Streaming within a batch (entire batch must arrive before processing)
-- Query responses (this protocol is ingestion-only)
-
----
-
-## 2. Protocol Negotiation
-
-### 2.1 Connection Handshake
-
-ILP v4 uses a capability-based handshake on connection establishment.
-
-```
-Client → Server: CAPABILITY_REQUEST
-Server → Client: CAPABILITY_RESPONSE
-```
-
-**CAPABILITY_REQUEST** (8 bytes):
-```
-┌────────────────────────────────────────────┐
-│ Magic: "ILP?" (4 bytes)                    │
-│ Min version supported: uint8               │
-│ Max version supported: uint8               │
-│ Flags: uint16                              │
-│   bit 0: supports LZ4                      │
-│   bit 1: supports Zstd                     │
-│   bit 2: supports Gorilla timestamps       │
-│   bits 3-15: reserved                      │
-└────────────────────────────────────────────┘
-```
-
-**CAPABILITY_RESPONSE** (8 bytes):
-```
-┌────────────────────────────────────────────┐
-│ Magic: "ILP!" (4 bytes)                    │
-│ Negotiated version: uint8                  │
-│ Reserved: uint8                            │
-│ Flags: uint16 (server capabilities)        │
-└────────────────────────────────────────────┘
-```
-
-If the server does not support ILP v4, it responds with `"ILP0"` magic, signaling fallback to text protocol.
-
-### 2.2 Version Selection
-
-The server selects the highest mutually supported version:
-```
-negotiated_version = min(client_max_version, server_max_version)
-```
-
-If `negotiated_version < client_min_version`, the connection fails.
+| Magic | Hex Value | Description |
+|-------|-----------|-------------|
+| `ILP4` | `0x34504C49` | Standard message (little-endian int32) |
+| `ILP?` | `0x3F504C49` | Capability request |
+| `ILP!` | `0x21504C49` | Capability response |
+| `ILP0` | `0x30504C49` | Fallback (server doesn't support v4) |
 
 ---
 
-## 3. Wire Format
+## 2. Byte Ordering
 
-### 3.1 Message Structure
+### Little-Endian (default)
 
-Each ILP v4 message is a self-contained batch:
+Most numeric types use **little-endian** byte ordering:
+- Message header fields
+- `BYTE`, `SHORT`, `INT`, `LONG`
+- `FLOAT`, `DOUBLE`
+- `TIMESTAMP`, `TIMESTAMP_NANOS`, `DATE`
+- Array dimension lengths and values
+- String offset arrays
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ MESSAGE HEADER (12 bytes)                                   │
-├─────────────────────────────────────────────────────────────┤
-│ TABLE BLOCK 1                                               │
-├─────────────────────────────────────────────────────────────┤
-│ TABLE BLOCK 2                                               │
-├─────────────────────────────────────────────────────────────┤
-│ ...                                                         │
-├─────────────────────────────────────────────────────────────┤
-│ TABLE BLOCK N                                               │
-└─────────────────────────────────────────────────────────────┘
-```
+### Big-Endian (exceptions)
 
-### 3.2 Message Header
+The following types use **big-endian** byte ordering:
+- `UUID` (16 bytes)
+- `LONG256` (32 bytes)
+- `DECIMAL64`, `DECIMAL128`, `DECIMAL256` (unscaled values)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Offset │ Size    │ Field                                    │
-├────────┼─────────┼──────────────────────────────────────────┤
-│ 0      │ 4 bytes │ Magic: "ILP4"                            │
-│ 4      │ 1 byte  │ Version: uint8 (current: 1)              │
-│ 5      │ 1 byte  │ Flags: uint8                             │
-│        │         │   bit 0: compressed (LZ4)                │
-│        │         │   bit 1: compressed (Zstd)               │
-│        │         │   bit 2: Gorilla timestamps enabled      │
-│        │         │   bits 3-7: reserved                     │
-│ 6      │ 2 bytes │ Table count: uint16 (little-endian)      │
-│ 8      │ 4 bytes │ Payload length: uint32 (little-endian)   │
-└─────────────────────────────────────────────────────────────┘
-```
+---
 
-If compression flag is set, bytes 12 onwards are compressed. Decompress before parsing table blocks.
+## 3. Variable-Length Integer Encoding (Varint)
 
-### 3.3 Table Block
+ILPv4 uses **unsigned LEB128** (Little Endian Base 128) encoding for variable-length integers.
 
-Each table block contains all rows for a single table:
+### Encoding Rules
+
+- Values are split into 7-bit groups, LSB first
+- Each byte uses the high bit (`0x80`) as a continuation flag
+- If high bit is set (1), more bytes follow
+- If high bit is clear (0), this is the last byte
+- Maximum: 10 bytes for 64-bit values
+
+### Encoding Algorithm
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ TABLE HEADER                                                │
-├─────────────────────────────────────────────────────────────┤
-│ SCHEMA SECTION                                              │
-├─────────────────────────────────────────────────────────────┤
-│ COLUMN DATA SECTION                                         │
-└─────────────────────────────────────────────────────────────┘
+while (value & ~0x7F) != 0:
+    output_byte((value & 0x7F) | 0x80)
+    value >>>= 7
+output_byte(value)
 ```
 
-#### 3.3.1 Table Header
+### Examples
+
+| Value | Encoded Bytes |
+|-------|---------------|
+| 0 | `0x00` |
+| 1 | `0x01` |
+| 127 | `0x7F` |
+| 128 | `0x80 0x01` |
+| 255 | `0xFF 0x01` |
+| 300 | `0xAC 0x02` |
+| 16384 | `0x80 0x80 0x01` |
+
+### Decoding Algorithm
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Table name length: varint                                   │
-│ Table name: UTF-8 bytes                                     │
-│ Row count: varint                                           │
-│ Column count: varint                                        │
-└─────────────────────────────────────────────────────────────┘
+result = 0
+shift = 0
+do:
+    byte = read_byte()
+    result |= (byte & 0x7F) << shift
+    shift += 7
+while (byte & 0x80) != 0
+return result
 ```
 
-#### 3.3.2 Schema Section
+---
 
-The schema section defines column metadata. Two modes:
+## 4. Message Structure
 
-**Full Schema** (schema_mode = 0x00):
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Schema mode: 0x00 (1 byte)                                  │
-│ For each column:                                            │
-│   Column name length: varint                                │
-│   Column name: UTF-8 bytes                                  │
-│   Column type: uint8 (see type codes)                       │
-└─────────────────────────────────────────────────────────────┘
-```
+### Message Header (12 bytes, fixed)
 
-**Schema Reference** (schema_mode = 0x01):
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Schema mode: 0x01 (1 byte)                                  │
-│ Schema hash: uint64 (little-endian)                         │
-└─────────────────────────────────────────────────────────────┘
+Offset  Size  Type    Field           Description
+──────────────────────────────────────────────────────────
+0       4     int32   magic           "ILP4" (0x34504C49, LE)
+4       1     uint8   version         Protocol version (0x01)
+5       1     uint8   flags           Compression/encoding flags
+6       2     uint16  table_count     Number of table blocks (LE)
+8       4     uint32  payload_length  Payload size in bytes (LE)
 ```
 
-Schema hash is computed as XXH64 over the full schema bytes. Server caches schemas by (table_name, hash). If server doesn't recognize the hash, it responds with `SCHEMA_REQUIRED` error.
+### Flags Byte
 
-#### 3.3.3 Column Type Codes
+| Bit | Mask | Description |
+|-----|------|-------------|
+| 0 | `0x01` | LZ4 compression enabled |
+| 1 | `0x02` | Zstd compression enabled |
+| 2 | `0x04` | Gorilla timestamp encoding enabled |
+| 3-7 | | Reserved (must be 0) |
 
-| Code | Type | Description |
+**Constraint**: Bits 0 and 1 are mutually exclusive (cannot have both LZ4 and Zstd).
+
+### Complete Message Layout
+
+```
+┌─────────────────────────────────────────┐
+│ Message Header (12 bytes)               │
+├─────────────────────────────────────────┤
+│ Payload (variable)                      │
+│   ├─ Table Block 0                      │
+│   ├─ Table Block 1                      │
+│   └─ ... Table Block N-1                │
+└─────────────────────────────────────────┘
+```
+
+If compression is enabled, the entire payload is compressed as one unit.
+
+---
+
+## 5. Table Block Structure
+
+Each table block contains data for a single table.
+
+```
+┌─────────────────────────────────────────┐
+│ Table Header (variable)                 │
+├─────────────────────────────────────────┤
+│ Schema Section (variable)               │
+├─────────────────────────────────────────┤
+│ Column Data (variable)                  │
+│   ├─ Column 0 data                      │
+│   ├─ Column 1 data                      │
+│   └─ ... Column N-1 data                │
+└─────────────────────────────────────────┘
+```
+
+### Table Header
+
+| Field | Type | Description |
+|-------|------|-------------|
+| name_length | varint | Table name length in bytes |
+| name | UTF-8 | Table name (max 127 bytes) |
+| row_count | varint | Number of rows in this block |
+| column_count | varint | Number of columns |
+
+---
+
+## 6. Schema Definition
+
+### Schema Mode Byte
+
+| Value | Mode | Description |
+|-------|------|-------------|
+| `0x00` | Full | Complete schema follows inline |
+| `0x01` | Reference | Schema hash lookup (8-byte hash) |
+
+### Full Schema Mode (`0x00`)
+
+```
+┌─────────────────────────────────────────┐
+│ mode_byte: 0x00                         │
+├─────────────────────────────────────────┤
+│ Column Definition 0                     │
+│   ├─ name_length: varint                │
+│   ├─ name: UTF-8 bytes                  │
+│   └─ type_code: uint8                   │
+├─────────────────────────────────────────┤
+│ Column Definition 1 ...                 │
+└─────────────────────────────────────────┘
+```
+
+### Reference Schema Mode (`0x01`)
+
+```
+┌─────────────────────────────────────────┐
+│ mode_byte: 0x01                         │
+├─────────────────────────────────────────┤
+│ schema_hash: int64 (LE)                 │
+└─────────────────────────────────────────┘
+```
+
+The server caches schemas by XXH64 hash. If the hash is not found, the server responds with `STATUS_SCHEMA_REQUIRED (0x02)`.
+
+---
+
+## 7. Column Types
+
+### Type Code Table
+
+| Code | Hex | Type | Size | Endian | Description |
+|------|-----|------|------|--------|-------------|
+| 1 | `0x01` | BOOLEAN | 1 bit | N/A | Bit-packed boolean |
+| 2 | `0x02` | BYTE | 1 | N/A | Signed 8-bit integer |
+| 3 | `0x03` | SHORT | 2 | LE | Signed 16-bit integer |
+| 4 | `0x04` | INT | 4 | LE | Signed 32-bit integer |
+| 5 | `0x05` | LONG | 8 | LE | Signed 64-bit integer |
+| 6 | `0x06` | FLOAT | 4 | LE | IEEE 754 single precision |
+| 7 | `0x07` | DOUBLE | 8 | LE | IEEE 754 double precision |
+| 8 | `0x08` | STRING | var | N/A | Length-prefixed UTF-8 |
+| 9 | `0x09` | SYMBOL | var | N/A | Dictionary-encoded string |
+| 10 | `0x0A` | TIMESTAMP | 8 | LE | Microseconds since epoch |
+| 11 | `0x0B` | DATE | 8 | LE | Milliseconds since epoch |
+| 12 | `0x0C` | UUID | 16 | **BE** | RFC 4122 UUID |
+| 13 | `0x0D` | LONG256 | 32 | **BE** | 256-bit integer |
+| 14 | `0x0E` | GEOHASH | var | N/A | Geospatial hash |
+| 15 | `0x0F` | VARCHAR | var | N/A | Length-prefixed UTF-8 (aux storage) |
+| 16 | `0x10` | TIMESTAMP_NANOS | 8 | LE | Nanoseconds since epoch |
+| 17 | `0x11` | DOUBLE_ARRAY | var | LE | N-dimensional double array |
+| 18 | `0x12` | LONG_ARRAY | var | LE | N-dimensional long array |
+| 19 | `0x13` | DECIMAL64 | 8 | **BE** | Decimal (18 digits precision) |
+| 20 | `0x14` | DECIMAL128 | 16 | **BE** | Decimal (38 digits precision) |
+| 21 | `0x15` | DECIMAL256 | 32 | **BE** | Decimal (77 digits precision) |
+
+> **Note**: Type codes 0x11-0x15 (arrays and decimals) are defined in the protocol constants but may have limited support in current implementations. Check server capabilities before using these types.
+
+### Nullable Flag
+
+The high bit (`0x80`) of the type code indicates a nullable column:
+
+```
+type_code = base_type | 0x80  // nullable
+type_code = base_type         // not nullable
+```
+
+To extract the base type: `base_type = type_code & 0x7F`
+
+---
+
+## 8. Null Bitmap
+
+For nullable columns, a null bitmap precedes the column data.
+
+### Format
+
+- **Size**: `ceil(row_count / 8)` bytes
+- **Bit order**: LSB first within each byte
+- **Semantics**: bit = 1 means row is NULL, bit = 0 means row has value
+
+### Layout
+
+```
+Byte 0:  [row7][row6][row5][row4][row3][row2][row1][row0]
+Byte 1:  [row15][row14][row13][row12][row11][row10][row9][row8]
+...
+```
+
+### Example
+
+For 10 rows where rows 0, 2, and 9 are null:
+
+```
+Byte 0: 0b00000101 = 0x05  (bits 0 and 2 set)
+Byte 1: 0b00000010 = 0x02  (bit 1 set = row 9)
+```
+
+### Accessing Null Status
+
+```
+byte_index = row_index / 8
+bit_index = row_index % 8
+is_null = (bitmap[byte_index] & (1 << bit_index)) != 0
+```
+
+---
+
+## 9. Column Data Encoding
+
+### Fixed-Width Types
+
+For BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, TIMESTAMP, TIMESTAMP_NANOS, DATE, UUID, LONG256:
+
+```
+┌─────────────────────────────────────────┐
+│ [Null bitmap if nullable]               │
+├─────────────────────────────────────────┤
+│ Values (only non-null rows)             │
+│   value[0], value[1], ... value[N-1]    │
+│   where N = row_count - null_count      │
+└─────────────────────────────────────────┘
+```
+
+**Important**: Only non-null values are stored. The null bitmap indicates which row indices are null.
+
+### Boolean Type (`0x01`)
+
+Booleans are bit-packed, 8 values per byte, LSB first:
+
+```
+┌─────────────────────────────────────────┐
+│ [Null bitmap if nullable]               │
+├─────────────────────────────────────────┤
+│ Packed boolean values                   │
+│   Size: ceil((row_count - null_count) / 8) bytes │
+└─────────────────────────────────────────┘
+```
+
+### String Type (`0x08`)
+
+```
+┌─────────────────────────────────────────┐
+│ [Null bitmap if nullable]               │
+├─────────────────────────────────────────┤
+│ Offset array: (value_count + 1) × 4 bytes │
+│   offset[0] = 0                         │
+│   offset[i+1] = end of string[i]        │
+├─────────────────────────────────────────┤
+│ String data: concatenated UTF-8 bytes   │
+└─────────────────────────────────────────┘
+```
+
+- `value_count = row_count - null_count`
+- Offsets are uint32, little-endian
+- String `i` spans bytes `[offset[i], offset[i+1])`
+
+### Symbol Type (`0x09`)
+
+Dictionary-encoded strings for low-cardinality columns:
+
+```
+┌─────────────────────────────────────────┐
+│ [Null bitmap if nullable]               │
+├─────────────────────────────────────────┤
+│ dictionary_size: varint                 │
+├─────────────────────────────────────────┤
+│ Dictionary entries:                     │
+│   For each entry:                       │
+│     entry_length: varint                │
+│     entry_data: UTF-8 bytes             │
+├─────────────────────────────────────────┤
+│ Value indices:                          │
+│   For each non-null row:                │
+│     dict_index: varint                  │
+└─────────────────────────────────────────┘
+```
+
+- Dictionary indices are 0-based
+- When a null bitmap is present, only non-null rows have indices written
+- Without a null bitmap, `Long.MAX_VALUE` as an index indicates null
+
+### Timestamp Type (`0x0A`)
+
+Timestamps support two encoding modes indicated by a flag byte:
+
+| Flag | Mode | Description |
 |------|------|-------------|
-| 0x01 | BOOLEAN | 1 bit per value (packed) |
-| 0x02 | BYTE | int8 |
-| 0x03 | SHORT | int16 little-endian |
-| 0x04 | INT | int32 little-endian |
-| 0x05 | LONG | int64 little-endian |
-| 0x06 | FLOAT | IEEE 754 float32 |
-| 0x07 | DOUBLE | IEEE 754 float64 |
-| 0x08 | STRING | Length-prefixed UTF-8 |
-| 0x09 | SYMBOL | Dictionary-encoded string |
-| 0x0A | TIMESTAMP | int64 microseconds since epoch |
-| 0x0B | DATE | int64 milliseconds since epoch |
-| 0x0C | UUID | 16 bytes (big-endian) |
-| 0x0D | LONG256 | 32 bytes (big-endian) |
-| 0x0E | GEOHASH | varint bits + packed geohash |
-| 0x0F | VARCHAR | Length-prefixed UTF-8 (aux storage) |
+| `0x00` | Uncompressed | Array of int64 values (only non-null values) |
+| `0x01` | Gorilla | Delta-of-delta compressed |
 
-High bit (0x80) indicates nullable column.
+**Uncompressed mode (`0x00`):**
+
+```
+┌─────────────────────────────────────────┐
+│ [Null bitmap if nullable]               │
+├─────────────────────────────────────────┤
+│ encoding_flag: uint8 (0x00)             │
+├─────────────────────────────────────────┤
+│ Timestamp values (non-null only):       │
+│   value_count × int64 (LE)              │
+└─────────────────────────────────────────┘
+```
+
+**Gorilla mode (`0x01`):**
+
+```
+┌─────────────────────────────────────────┐
+│ [Null bitmap if nullable]               │
+├─────────────────────────────────────────┤
+│ encoding_flag: uint8 (0x01)             │
+├─────────────────────────────────────────┤
+│ first_timestamp: int64 (LE)             │
+├─────────────────────────────────────────┤
+│ second_timestamp: int64 (LE)            │
+├─────────────────────────────────────────┤
+│ Bit-packed delta-of-deltas:             │
+│   For timestamps 3..N                   │
+└─────────────────────────────────────────┘
+```
+
+#### Gorilla Delta-of-Delta Encoding
+
+```
+D = (t[n] - t[n-1]) - (t[n-1] - t[n-2])
+
+Encoding:
+  D == 0:              '0'                    (1 bit)
+  D in [-63, 64]:      '10' + 7-bit signed    (9 bits)
+  D in [-255, 256]:    '110' + 9-bit signed   (12 bits)
+  D in [-2047, 2048]:  '1110' + 12-bit signed (16 bits)
+  otherwise:           '1111' + 32-bit signed (36 bits)
+```
+
+### Array Types (`0x11`, `0x12`)
+
+N-dimensional arrays of DOUBLE or LONG:
+
+```
+┌─────────────────────────────────────────┐
+│ element_type: uint8                     │
+├─────────────────────────────────────────┤
+│ n_dims: uint8 (1-255)                   │
+├─────────────────────────────────────────┤
+│ shape: n_dims × int32 (LE)              │
+│   dim_0_length, dim_1_length, ...       │
+├─────────────────────────────────────────┤
+│ Flattened values (row-major order)      │
+│   total = product(shape) × elem_size    │
+└─────────────────────────────────────────┘
+```
+
+### Decimal Types (`0x13`, `0x14`, `0x15`)
+
+> **Implementation Status**: Decimal types are defined in the protocol but may have limited support. The scale handling described below is the intended design; check actual implementation for current support.
+
+```
+┌─────────────────────────────────────────┐
+│ [Null bitmap if nullable]               │
+├─────────────────────────────────────────┤
+│ Unscaled values (big-endian):           │
+│   DECIMAL64:  8 bytes × value_count     │
+│   DECIMAL128: 16 bytes × value_count    │
+│   DECIMAL256: 32 bytes × value_count    │
+└─────────────────────────────────────────┘
+```
+
+Decimal values are stored as big-endian two's complement integers. The scale (number of decimal places) must be agreed upon out-of-band or via table schema.
+
+### GeoHash Type (`0x0E`)
+
+```
+┌─────────────────────────────────────────┐
+│ [Null bitmap if nullable]               │
+├─────────────────────────────────────────┤
+│ precision_bits: varint (1-60)           │
+├─────────────────────────────────────────┤
+│ Packed geohash values:                  │
+│   bytes_per_value = ceil(precision/8)   │
+│   total = bytes_per_value × row_count   │
+└─────────────────────────────────────────┘
+```
+
+> **Note**: Unlike other types, GeoHash stores values for ALL rows (including nulls). The null bitmap only indicates which values should be treated as null when reading.
 
 ---
 
-## 4. Column Encoding
+## 10. Compression
 
-### 4.1 Null Bitmap
+### LZ4 Compression (flag `0x01`)
 
-For nullable columns, a null bitmap precedes the data:
+When LZ4 flag is set:
+- The entire payload after the 12-byte header is LZ4 compressed
+- Use standard LZ4 frame format
+- Decompress before parsing table blocks
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Null bitmap: ceil(row_count / 8) bytes                      │
-│   bit[i] = 1 means row[i] is NULL                           │
-│   Bit order: LSB first within each byte                     │
-└─────────────────────────────────────────────────────────────┘
-```
+### Zstd Compression (flag `0x02`)
 
-### 4.2 Fixed-Width Types
+When Zstd flag is set:
+- The entire payload after the 12-byte header is Zstd compressed
+- Use standard Zstd frame format
+- Decompress before parsing table blocks
 
-BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, UUID, LONG256:
+---
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ [Null bitmap if nullable]                                   │
-│ Values: row_count * sizeof(type) bytes                      │
-│   All little-endian                                         │
-│   NULL positions contain undefined bytes (skip via bitmap)  │
-└─────────────────────────────────────────────────────────────┘
-```
+## 11. Response Format
 
-### 4.3 Boolean
+### Response Header
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ [Null bitmap if nullable]                                   │
-│ Value bits: ceil(row_count / 8) bytes                       │
-│   bit[i] = boolean value for row[i]                         │
-│   LSB first within each byte                                │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│ status_code: uint8                      │
+├─────────────────────────────────────────┤
+│ [Error payload if status != 0x00]       │
+└─────────────────────────────────────────┘
 ```
 
-### 4.4 Timestamp (Gorilla Encoding)
+### Status Codes
 
-When Gorilla timestamps are enabled (flag bit 2):
+| Code | Hex | Name | Description | Retriable |
+|------|-----|------|-------------|-----------|
+| 0 | `0x00` | OK | Batch accepted | N/A |
+| 1 | `0x01` | PARTIAL | Some rows failed | No |
+| 2 | `0x02` | SCHEMA_REQUIRED | Schema hash not found | Yes |
+| 3 | `0x03` | SCHEMA_MISMATCH | Column type incompatible | No |
+| 4 | `0x04` | TABLE_NOT_FOUND | Table doesn't exist | No |
+| 5 | `0x05` | PARSE_ERROR | Malformed message | No |
+| 6 | `0x06` | INTERNAL_ERROR | Server error | No |
+| 7 | `0x07` | OVERLOADED | Back-pressure | Yes |
 
+### Error Payload (status != 0x00)
+
+For non-partial errors:
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ [Null bitmap if nullable]                                   │
-│ First timestamp: int64 (8 bytes, little-endian)             │
-│ Second timestamp: int64 (8 bytes, little-endian)            │
-│ Remaining timestamps: bit-packed delta-of-delta             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Delta-of-delta encoding:**
-
-```
-Let D = (t[n] - t[n-1]) - (t[n-1] - t[n-2])
-
-if D == 0:
-    write '0'                          (1 bit)
-elif D in [-63, 64]:
-    write '10' + signed 7-bit value    (9 bits)
-elif D in [-255, 256]:
-    write '110' + signed 9-bit value   (12 bits)
-elif D in [-2047, 2048]:
-    write '1110' + signed 12-bit value (16 bits)
-else:
-    write '1111' + signed 32-bit value (36 bits)
+error_message_length: varint
+error_message: UTF-8 bytes
 ```
 
-Signed values use two's complement. Bits are packed LSB-first, spanning byte boundaries.
-
-**Fallback for irregular data:**
-
-If delta-of-delta would exceed 32 bits, or data is out-of-order, fall back to uncompressed int64 array and clear the Gorilla flag for that column:
-
+For PARTIAL status (0x01):
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Encoding flag: 0x00 (uncompressed) or 0x01 (Gorilla)        │
-│ [Data according to flag]                                    │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 4.5 String / VARCHAR
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ [Null bitmap if nullable]                                   │
-│ Offset array: (row_count + 1) * uint32                      │
-│   offset[0] = 0                                             │
-│   offset[i+1] = end position of string[i]                   │
-│   string[i] bytes = data[offset[i]..offset[i+1]]            │
-│ String data: concatenated UTF-8 bytes                       │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 4.6 Symbol (Dictionary Encoding)
-
-Symbols use a per-batch dictionary:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ [Null bitmap if nullable]                                   │
-│ Dictionary size: varint                                     │
-│ For each dictionary entry:                                  │
-│   String length: varint                                     │
-│   String data: UTF-8 bytes                                  │
-│ Value array: row_count * varint (dictionary indices)        │
-│   Index 0 = first dictionary entry                          │
-│   Index -1 (max varint) = NULL (alternative to bitmap)      │
-└─────────────────────────────────────────────────────────────┘
+failed_table_count: varint
+For each failed table:
+    table_index: varint
+    error_code: uint8
+    error_message_length: varint
+    error_message: UTF-8 bytes
 ```
 
 ---
 
-## 5. Varint Encoding
+## 12. Protocol Limits
 
-Variable-length integer encoding (unsigned):
-
-```
-while value >= 0x80:
-    write (value & 0x7F) | 0x80
-    value >>= 7
-write value & 0x7F
-```
-
-| Value Range | Bytes |
-|-------------|-------|
-| 0 - 127 | 1 |
-| 128 - 16383 | 2 |
-| 16384 - 2097151 | 3 |
-| 2097152 - 268435455 | 4 |
-| larger | 5+ |
-
-For signed integers, use ZigZag encoding before varint:
-```
-zigzag(n) = (n << 1) ^ (n >> 63)
-```
+| Limit | Default Value |
+|-------|---------------|
+| Maximum batch size | 16 MB |
+| Maximum tables per batch | 256 |
+| Maximum rows per table | 1,000,000 |
+| Maximum columns per table | 2,048 |
+| Maximum table name length | 127 bytes (UTF-8) |
+| Maximum column name length | 127 bytes (UTF-8) |
+| Maximum string length | 1 MB |
+| Maximum in-flight batches | 4 |
+| Initial receive buffer | 64 KB |
 
 ---
 
-## 6. Compression
+## 13. Examples
 
-### 6.1 LZ4 (Flag bit 0)
+### Example 1: Simple Message with One Table
 
-When LZ4 compression is enabled:
+Table: `sensors`, 2 rows, 3 columns: `id` (LONG), `value` (DOUBLE), `ts` (TIMESTAMP)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ MESSAGE HEADER (12 bytes, uncompressed)                     │
-├─────────────────────────────────────────────────────────────┤
-│ Uncompressed size: uint32 (little-endian)                   │
-│ LZ4 compressed payload                                      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-Use LZ4 block format (not frame format) for minimal overhead.
-
-### 6.2 Zstd (Flag bit 1)
-
-Same structure as LZ4, using Zstd block compression. Prefer compression level 1-3 for speed.
-
-### 6.3 Compression Selection
-
-Recommended heuristics:
-- Batch < 1KB: no compression (overhead exceeds benefit)
-- Batch 1KB - 64KB: LZ4
-- Batch > 64KB: Zstd level 1
-
----
-
-## 7. Schema Evolution
-
-### 7.1 Adding Columns
-
-New columns can be added by sending full schema with additional columns. Server auto-creates missing columns with NULL for existing rows.
-
-### 7.2 Column Type Mismatch
-
-If sent type differs from table schema:
-- Implicit widening allowed: BYTE→SHORT→INT→LONG, FLOAT→DOUBLE
-- Other mismatches: `SCHEMA_MISMATCH` error, batch rejected
-
-### 7.3 Missing Columns
-
-Columns present in table but absent from batch: filled with NULL.
-
-### 7.4 Schema Hash Invalidation
-
-Server invalidates cached schema hash when:
-- Table schema changes (DDL)
-- Table is dropped and recreated
-- Server restart
-
-Client should handle `SCHEMA_REQUIRED` by re-sending full schema.
-
----
-
-## 8. Error Handling
-
-### 8.1 Response Format
-
-After each batch, server sends a response:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Status code: uint8                                          │
-│ [Error payload if status != 0]                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 8.2 Status Codes
-
-| Code | Name | Description |
-|------|------|-------------|
-| 0x00 | OK | Batch accepted |
-| 0x01 | PARTIAL | Some rows failed (see payload) |
-| 0x02 | SCHEMA_REQUIRED | Schema hash not recognized |
-| 0x03 | SCHEMA_MISMATCH | Column type incompatible |
-| 0x04 | TABLE_NOT_FOUND | Table doesn't exist (if auto-create disabled) |
-| 0x05 | PARSE_ERROR | Malformed message |
-| 0x06 | INTERNAL_ERROR | Server error |
-| 0x07 | OVERLOADED | Back-pressure, retry later |
-
-### 8.3 Partial Failure
-
-For PARTIAL status:
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Failed table count: varint                                  │
-│ For each failed table:                                      │
-│   Table index: varint (0-based index in batch)              │
-│   Error code: uint8                                         │
-│   Error message length: varint                              │
-│   Error message: UTF-8 bytes                                │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 8.4 Retry Semantics
-
-- `SCHEMA_REQUIRED`: Retry with full schema
-- `OVERLOADED`: Exponential backoff, retry same batch
-- `PARTIAL`: Log failed tables, continue with next batch
-- Other errors: Log and optionally retry
-
----
-
-## 9. Flow Control
-
-### 9.1 Batch Size Limits
-
-| Limit | Default | Configurable |
-|-------|---------|--------------|
-| Max batch size | 16 MB | Yes |
-| Max tables per batch | 256 | Yes |
-| Max rows per table | 1,000,000 | Yes |
-| Max columns per table | 2,048 | No (QuestDB limit) |
-
-### 9.2 Back-Pressure
-
-When server returns `OVERLOADED`:
-1. Client waits `min(retry_delay * 2^attempt, max_delay)`
-2. Default: `retry_delay=100ms`, `max_delay=10s`
-3. After `max_retries` (default: 10), fail the batch
-
-### 9.3 Pipelining
-
-Clients MAY send multiple batches before receiving responses. Server processes in order and responds in order. Recommended max in-flight batches: 4.
-
----
-
-## 10. Examples
-
-### 10.1 Simple Batch
-
-Two rows to `trades` table:
-
-```
-trades,symbol=ETH-USD price=2615.54 1704067200000000
-trades,symbol=BTC-USD price=42000.00 1704067200000001
-```
-
-ILP v4 encoding (hex, annotated):
+**Wire format (hex):**
 
 ```
 # Header (12 bytes)
-49 4C 50 34          # Magic: "ILP4"
-01                   # Version: 1
-04                   # Flags: Gorilla timestamps
-01 00                # Table count: 1
-XX XX XX XX          # Payload length
+49 4C 50 34  # Magic: "ILP4" (LE)
+01           # Version: 1
+00           # Flags: none
+01 00        # Table count: 1 (LE uint16)
+XX XX XX XX  # Payload length (LE uint32)
 
-# Table block
-06                   # Table name length: 6
-74 72 61 64 65 73    # Table name: "trades"
-02                   # Row count: 2
-03                   # Column count: 3
+# Table Block
+07           # Table name length: 7
+73 65 6E 73 6F 72 73  # "sensors" UTF-8
+02           # Row count: 2
+03           # Column count: 3
 
-# Schema (full)
-00                   # Schema mode: full
-06 73 79 6D 62 6F 6C # Column: "symbol", length 6
-09                   # Type: SYMBOL
-05 70 72 69 63 65    # Column: "price", length 5
-07                   # Type: DOUBLE
-09 74 69 6D 65 73 74 61 6D 70  # Column: "timestamp", length 9
-0A                   # Type: TIMESTAMP
+# Schema (full mode)
+00           # Schema mode: full
 
-# Column: symbol (dictionary encoded)
-02                   # Dictionary size: 2
-07 45 54 48 2D 55 53 44  # "ETH-USD"
-07 42 54 43 2D 55 53 44  # "BTC-USD"
-00                   # Row 0 → index 0
-01                   # Row 1 → index 1
+# Column 0: id
+02           # Name length: 2
+69 64        # "id" UTF-8
+05           # Type: LONG (not nullable)
 
-# Column: price (double, 8 bytes each)
-71 3D 0A D7 A3 70 A4 40  # 2615.54
-00 00 00 00 00 80 E4 40  # 42000.00
+# Column 1: value
+05           # Name length: 5
+76 61 6C 75 65  # "value" UTF-8
+07           # Type: DOUBLE (not nullable)
 
-# Column: timestamp (Gorilla encoded)
-01                   # Encoding: Gorilla
-00 80 1E 4C 54 86 05 00  # First timestamp: 1704067200000000
-01 80 1E 4C 54 86 05 00  # Second timestamp: 1704067200000001
-                         # (only 2 rows, no delta-of-delta needed)
+# Column 2: ts
+02           # Name length: 2
+74 73        # "ts" UTF-8
+0A           # Type: TIMESTAMP (not nullable)
+
+# Column 0 data (LONG, 2 values, 16 bytes)
+01 00 00 00 00 00 00 00  # id=1
+02 00 00 00 00 00 00 00  # id=2
+
+# Column 1 data (DOUBLE, 2 values, 16 bytes)
+CD CC CC CC CC CC F4 3F  # value=1.3
+9A 99 99 99 99 99 01 40  # value=2.2
+
+# Column 2 data (TIMESTAMP, 2 values, 17 bytes)
+00                       # encoding_flag: 0x00 (uncompressed)
+00 E4 0B 54 02 00 00 00  # ts=10000000000 microseconds
+80 1A 06 00 00 00 00 00  # ts=400000 microseconds
 ```
 
-### 10.2 Multi-Table Batch
+### Example 2: Nullable Column
+
+Table with nullable STRING column, 4 rows where row 1 is null:
 
 ```
-trades,symbol=ETH-USD price=2615.54 1704067200000000
-metrics,host=server1 cpu=45.2,mem=8192 1704067200000000
+# Null bitmap for 4 rows where row 1 is null
+02           # 0b00000010 - bit 1 set
+
+# Offset array (3 non-null values = 4 offsets)
+00 00 00 00  # offset[0] = 0  (start of "foo")
+03 00 00 00  # offset[1] = 3  (end of "foo", start of "bar")
+06 00 00 00  # offset[2] = 6  (end of "bar", start of "baz")
+09 00 00 00  # offset[3] = 9  (end of "baz")
+
+# String data (concatenated UTF-8)
+66 6F 6F     # "foo" (row 0)
+62 61 72     # "bar" (row 2, since row 1 is null)
+62 61 7A     # "baz" (row 3)
 ```
 
-Header table count = 2, followed by two table blocks.
+### Example 3: Symbol Column
 
----
-
-## 11. Implementation Notes
-
-### 11.1 Client-Side Buffering
-
-Recommended client implementation:
+3 rows with values: "us", "eu", "us"
 
 ```
-class ILP4Sender:
-    buffers: Map<TableName, TableBuffer>
+# Dictionary
+02           # Dictionary size: 2 entries
 
-    def table(name):
-        return buffers.getOrCreate(name)
+02           # Entry 0 length: 2
+75 73        # "us"
 
-    def flush():
-        batch = encode_batch(buffers)
-        send(batch)
-        response = receive()
-        handle_response(response)
-        buffers.clear()
-```
+02           # Entry 1 length: 2
+65 75        # "eu"
 
-Each `TableBuffer` accumulates rows in columnar form:
-- Symbol columns: maintain local dictionary
-- Other columns: append to typed arrays
-- Timestamps: store raw values, encode on flush
-
-### 11.2 Server-Side Processing
-
-```
-def process_batch(batch):
-    for table_block in batch.tables:
-        schema = resolve_schema(table_block)
-        writer = get_wal_writer(table_block.table_name)
-        writer.write_columnar(table_block.columns, schema)
-```
-
-Key optimization: columnar data can be memcpy'd directly to WAL segments when types match.
-
-### 11.3 Memory Estimation
-
-Client-side buffer memory per table:
-```
-memory = sum(column_size * row_count for column in columns)
-       + dictionary_overhead  # ~50 bytes per unique symbol
-       + offset_arrays        # 4 bytes per string per row
+# Value indices
+00           # Row 0: index 0 ("us")
+01           # Row 1: index 1 ("eu")
+00           # Row 2: index 0 ("us")
 ```
 
 ---
 
-## 12. Security Considerations
+## Reference Implementation
 
-### 12.1 Input Validation
+The authoritative implementation is in QuestDB's Java codebase:
 
-Server MUST validate:
-- Magic bytes match expected value
-- Payload length ≤ max_batch_size
-- Table count ≤ max_tables_per_batch
-- Row count ≤ max_rows_per_table
-- Column count ≤ 2048
-- String lengths ≤ max_string_length (default 1MB)
-- UTF-8 validity for all strings
-
-### 12.2 Resource Exhaustion
-
-- Decompression bombs: check uncompressed size before decompressing
-- Dictionary attacks: limit symbol dictionary size per batch
-- Memory: pre-allocate based on header sizes, reject oversized batches early
-
-### 12.3 Authentication
-
-ILP v4 uses the same authentication as ILP/TCP:
-- TLS for transport encryption
-- Token-based authentication in connection handshake
-- Existing `ilp.auth` configuration applies
+- `core/src/main/java/io/questdb/cutlass/http/ilpv4/IlpV4Constants.java` - Protocol constants
+- `core/src/main/java/io/questdb/cutlass/http/ilpv4/IlpV4MessageHeader.java` - Header parsing
+- `core/src/main/java/io/questdb/cutlass/http/ilpv4/IlpV4TableHeader.java` - Table header parsing
+- `core/src/main/java/io/questdb/cutlass/http/ilpv4/IlpV4Varint.java` - Varint encoding/decoding
+- `core/src/main/java/io/questdb/cutlass/http/ilpv4/IlpV4NullBitmap.java` - Null bitmap utilities
+- `core/src/main/java/io/questdb/cutlass/http/ilpv4/IlpV4*Decoder.java` - Type-specific decoders
+- `core/src/main/java/io/questdb/cutlass/line/tcp/ArrayBinaryFormatParser.java` - Array parsing
 
 ---
 
-## 13. Migration Path
+## Version History
 
-### 13.1 Protocol Detection
-
-Server listens on same port for both protocols:
-- ILP v4: starts with `"ILP?"` (capability request) or `"ILP4"` (direct batch)
-- ILP v1-v3 (text): starts with table name (alphanumeric)
-
-### 13.2 Client Upgrade
-
-Recommended rollout:
-1. Server upgrade: add ILP v4 support alongside text protocol
-2. Client libraries: add ILP v4 encoder behind feature flag
-3. Gradual enablement: test with non-critical workloads
-4. Default switch: make ILP v4 default in next major version
-
-### 13.3 Fallback
-
-If capability negotiation fails (old server), client falls back to text protocol automatically.
-
----
-
-## 14. Performance Expectations
-
-### 14.1 Wire Size Reduction
-
-Compared to text ILP (baseline 100%):
-
-| Scenario | Text ILP | ILP v4 | ILP v4 + LZ4 |
-|----------|----------|--------|--------------|
-| Numeric-heavy (sensors) | 100% | ~35% | ~25% |
-| String-heavy (logs) | 100% | ~60% | ~40% |
-| Symbol-heavy (trades) | 100% | ~30% | ~22% |
-| Timestamp-regular (1s interval) | 100% | ~20% | ~18% |
-
-### 14.2 CPU Impact
-
-| Operation | Text ILP | ILP v4 |
-|-----------|----------|--------|
-| Client encode | 1x | 1.5x (columnar transpose) |
-| Network transfer | 1x | 0.3x (smaller payload) |
-| Server decode | 1x | 0.2x (no parsing) |
-| WAL write | 1x | 0.8x (columnar memcpy) |
-| **Total** | 1x | ~0.5x |
-
-Note: Actual results depend on workload. Benchmark with representative data.
-
----
-
-## Appendix A: Varint Reference Implementation
-
-```java
-public static int writeVarint(byte[] buf, int pos, long value) {
-    while ((value & ~0x7FL) != 0) {
-        buf[pos++] = (byte) ((value & 0x7F) | 0x80);
-        value >>>= 7;
-    }
-    buf[pos++] = (byte) value;
-    return pos;
-}
-
-public static long readVarint(ByteBuffer buf) {
-    long result = 0;
-    int shift = 0;
-    byte b;
-    do {
-        b = buf.get();
-        result |= (long) (b & 0x7F) << shift;
-        shift += 7;
-    } while ((b & 0x80) != 0);
-    return result;
-}
-```
-
----
-
-## Appendix B: Gorilla Timestamp Reference Implementation
-
-```java
-public class GorillaTimestampEncoder {
-    private long prevTimestamp;
-    private long prevDelta;
-    private BitWriter bits;
-
-    public void encode(long timestamp) {
-        long delta = timestamp - prevTimestamp;
-        long deltaOfDelta = delta - prevDelta;
-
-        if (deltaOfDelta == 0) {
-            bits.write(0, 1);  // '0'
-        } else if (deltaOfDelta >= -63 && deltaOfDelta <= 64) {
-            bits.write(0b10, 2);
-            bits.writeSigned(deltaOfDelta, 7);
-        } else if (deltaOfDelta >= -255 && deltaOfDelta <= 256) {
-            bits.write(0b110, 3);
-            bits.writeSigned(deltaOfDelta, 9);
-        } else if (deltaOfDelta >= -2047 && deltaOfDelta <= 2048) {
-            bits.write(0b1110, 4);
-            bits.writeSigned(deltaOfDelta, 12);
-        } else {
-            bits.write(0b1111, 4);
-            bits.writeSigned(deltaOfDelta, 32);
-        }
-
-        prevDelta = delta;
-        prevTimestamp = timestamp;
-    }
-}
-```
-
----
-
-## Appendix C: Schema Hash Computation
-
-```java
-public static long computeSchemaHash(List<Column> columns) {
-    XXHash64 hasher = XXHash64.create();
-    for (Column col : columns) {
-        hasher.update(col.name.getBytes(UTF_8));
-        hasher.update((byte) col.type);
-    }
-    return hasher.getValue();
-}
-```
-
-Use XXH64 for speed. Schema hash is for caching optimization only; collisions are handled by re-sending full schema.
+| Version | Description |
+|---------|-------------|
+| 1 (`0x01`) | Initial binary protocol release |
