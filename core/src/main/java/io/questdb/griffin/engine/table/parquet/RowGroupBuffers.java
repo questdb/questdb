@@ -44,6 +44,13 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
     }
 
+    public RowGroupBuffers(int memoryTag, boolean keepClosed) {
+        this.memoryTag = memoryTag;
+        if (!keepClosed) {
+            this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
+        }
+    }
+
     @Override
     public void close() {
         if (ptr != 0) {

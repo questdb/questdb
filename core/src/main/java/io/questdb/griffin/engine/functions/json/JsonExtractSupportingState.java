@@ -94,8 +94,8 @@ public class JsonExtractSupportingState implements QuietCloseable {
     }
 
     public void reopen() {
-        if (this.destUtf8Sink != null) {
-            this.destUtf8Sink.reopen();
+        if (destUtf8Sink != null) {
+            destUtf8Sink.reopen();
         }
     }
 

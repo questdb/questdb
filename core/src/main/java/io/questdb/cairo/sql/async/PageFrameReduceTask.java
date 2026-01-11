@@ -273,7 +273,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         // we assume that frame indexes are published in ascending order
         // and when we see the last index, we would free up the remaining resources
         if (frameIndex + 1 == frameCount) {
-            frameSequence.reset();
+            frameSequence.markAsDone();
         }
 
         frameSequence = null;
