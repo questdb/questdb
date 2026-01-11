@@ -148,7 +148,6 @@ public class SqlParser {
     private final ObjectPool<WindowColumn> windowColumnPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private int digit;
-    private boolean overClauseMode = false;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
 
@@ -869,7 +868,7 @@ public class SqlParser {
 
     private CharSequence optTok(GenericLexer lexer) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode && !pivotMode)) {
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !pivotMode)) {
             return null;
         }
         return tok;
@@ -3607,7 +3606,7 @@ public class SqlParser {
     private void parseSelectClause(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         int pos = lexer.getPosition();
         CharSequence tok = SqlUtil.fetchNext(lexer, true);
-        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')'))) {
             throw SqlException.position(pos).put("[distinct] column expected");
         }
 
@@ -3665,305 +3664,15 @@ public class SqlParser {
                 // expression parsing. When windowContext is set, the OVER clause has already been
                 // consumed from the lexer and we can use the parsed WindowColumn directly.
                 if (expr.windowContext != null) {
+                    // ExpressionParser already parsed the window function with its OVER clause
                     col = expr.windowContext;
                 } else {
-                    // windowIgnoreNulls is 0 --> non-window context or default
-                    // windowIgnoreNulls is 1 --> ignore nulls
-                    // windowIgnoreNulls is 2 --> respect nulls
-                    byte windowNullsDesc = 0;
-                    if (tok != null) {
-                        if (isIgnoreWord(tok)) {
-                            windowNullsDesc = 1;
-                        } else if (isRespectWord(tok)) {
-                            windowNullsDesc = 2;
-                        }
+                    // Regular expression (non-window function)
+                    if (expr.type == ExpressionNode.QUERY) {
+                        throw SqlException.$(expr.position, "query is not expected, did you mean column?");
                     }
-
-                    if (tok != null && windowNullsDesc > 0) {
-                        CharSequence next = optTok(lexer);
-                        if (next != null && isNullsWord(next)) {
-                            expectTok(lexer, "over");
-                        } else {
-                            windowNullsDesc = 0;
-                            lexer.backTo(colPosition, tok);
-                        }
-                    }
-
-                    if ((tok != null && isOverKeyword(tok)) || windowNullsDesc > 0) {
-                        // Fallback window parsing path - should rarely be reached since ExpressionParser
-                        // now handles window functions. This path remains for backwards compatibility and
-                        // edge cases where the expression parser doesn't consume the OVER clause.
-                        // If you see issues with window parsing, check ExpressionParser.parseWindowClause().
-                        expectTok(lexer, '(');
-                        overClauseMode = true;//prevent lexer returning ')' ending over clause as null in a sub-query
-                        try {
-                            WindowColumn winCol = windowColumnPool.next().of(null, expr);
-                            col = winCol;
-
-                            tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
-                            winCol.setIgnoreNulls(windowNullsDesc == 1);
-                            winCol.setNullsDescPos(windowNullsDesc > 0 ? colPosition : 0);
-
-                            if (isPartitionKeyword(tok)) {
-                                expectTok(lexer, "by");
-
-                                ObjList<ExpressionNode> partitionBy = winCol.getPartitionBy();
-
-                                do {
-                                    // allow dangling comma by previewing the token
-                                    tok = tok(lexer, "column name, 'order' or ')'");
-                                    if (isOrderKeyword(tok)) {
-                                        if (partitionBy.size() == 0) {
-                                            throw SqlException.$(lexer.lastTokenPosition(), "at least one column is expected in `partition by` clause");
-                                        }
-                                        break;
-                                    }
-                                    lexer.unparseLast();
-                                    partitionBy.add(expectExpr(lexer, sqlParserCallback, model.getDecls()));
-                                    tok = tok(lexer, "'order' or ')'");
-                                } while (Chars.equals(tok, ','));
-                            }
-
-                            if (isOrderKeyword(tok)) {
-                                expectTok(lexer, "by");
-
-                                do {
-                                    final ExpressionNode orderByExpr = expectExpr(lexer, sqlParserCallback, model.getDecls());
-
-                                    tok = tokIncludingLocalBrace(lexer, "'asc' or 'desc'");
-
-                                    if (isDescKeyword(tok)) {
-                                        winCol.addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_DESCENDING);
-                                        tok = tokIncludingLocalBrace(lexer, "',' or ')'");
-                                    } else {
-                                        winCol.addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_ASCENDING);
-                                        if (isAscKeyword(tok)) {
-                                            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
-                                        }
-                                    }
-                                } while (Chars.equals(tok, ','));
-                            }
-                            int framingMode = -1;
-                            if (isRowsKeyword(tok)) {
-                                framingMode = WindowColumn.FRAMING_ROWS;
-                            } else if (isRangeKeyword(tok)) {
-                                framingMode = WindowColumn.FRAMING_RANGE;
-                            } else if (isGroupsKeyword(tok)) {
-                                framingMode = WindowColumn.FRAMING_GROUPS;
-                            } else if (!Chars.equals(tok, ')')) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "'rows', 'groups', 'range' or ')' expected");
-                            }
-
-                        /* PG documentation:
-                           The default framing option is RANGE UNBOUNDED PRECEDING, which is the same as RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
-                           With ORDER BY, this sets the frame to be all rows from the partition start up through the current row's last ORDER BY peer.
-                           Without ORDER BY, this means all rows of the partition are included in the window frame, since all rows become peers of the current row.
-                         */
-
-                            if (framingMode != -1) {
-                                winCol.setFramingMode(framingMode);
-
-                                if (framingMode == WindowColumn.FRAMING_GROUPS && winCol.getOrderBy().size() == 0) {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "GROUPS mode requires an ORDER BY clause");
-                                }
-
-                                // These keywords define for each row a window (a physical or logical
-                                // set of rows) used for calculating the function result. The function is
-                                // then applied to all the rows in the window. The window moves through the
-                                // query result set or partition from top to bottom.
-
-                        /*
-                        { ROWS | GROUPS | RANGE }
-                        { BETWEEN
-                            { UNBOUNDED PRECEDING
-                            | CURRENT ROW
-                            | value_expr { PRECEDING | FOLLOWING }
-                            }
-                            AND
-                            { UNBOUNDED FOLLOWING
-                            | CURRENT ROW
-                            | value_expr { PRECEDING | FOLLOWING }
-                            }
-                        | { UNBOUNDED PRECEDING
-                          | CURRENT ROW
-                          | value_expr PRECEDING
-                          }
-                        }
-                        */
-                                tok = tok(lexer, "'between', 'unbounded', 'current' or expression");
-                                if (isBetweenKeyword(tok)) {
-                                    // Use the BETWEEN ... AND clause to specify a start point and end point for the window.
-                                    // The first expression (before AND) defines the start point and the second
-                                    // expression (after AND) defines the end point.
-
-                                    // If you omit BETWEEN and specify only one end point, then Oracle considers it the start
-                                    // point, and the end point defaults to the current row.
-
-                                    tok = tok(lexer, "'unbounded', 'current' or expression");
-                                    // lo
-                                    if (isUnboundedPreceding(lexer, tok)) {
-                                        // Specify UNBOUNDED PRECEDING to indicate that the window starts at the first
-                                        // row of the partition. This is the start point specification and cannot be
-                                        // used as an end point specification.
-                                        winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
-                                    } else if (isCurrentRow(lexer, tok)) {
-                                        // As a start point, CURRENT ROW specifies that the window begins at the current row.
-                                        // In this case the end point cannot be value_expr PRECEDING.
-                                        winCol.setRowsLoKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
-                                    } else if (isPrecedingKeyword(tok)) {
-                                        throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
-                                    } else {
-                                        pos = lexer.lastTokenPosition();
-                                        lexer.unparseLast();
-                                        winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
-                                        if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                            char timeUnit = parseTimeUnit(lexer);
-                                            if (timeUnit != 0) {
-                                                winCol.setRowsLoExprTimeUnit(timeUnit);
-                                            }
-                                        }
-
-                                        tok = tok(lexer, "'preceding' or 'following'");
-                                        if (isPrecedingKeyword(tok)) {
-                                            winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
-                                        } else if (isFollowingKeyword(tok)) {
-                                            winCol.setRowsLoKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
-                                        } else {
-                                            throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
-                                        }
-                                    }
-
-                                    if (winCol.getOrderBy().size() != 1 && winCol.requiresOrderBy()) {//groups mode is validated earlier
-                                        throw SqlException.$(lexer.lastTokenPosition(), "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
-                                    }
-
-                                    tok = tok(lexer, "'and'");
-
-                                    if (isAndKeyword(tok)) {
-                                        tok = tok(lexer, "'unbounded', 'current' or expression");
-                                        // hi
-                                        if (isUnboundedKeyword(tok)) {
-                                            tok = tok(lexer, "'following'");
-                                            if (isFollowingKeyword(tok)) {
-                                                // Specify UNBOUNDED FOLLOWING to indicate that the window ends at the
-                                                // last row of the partition. This is the end point specification and
-                                                // cannot be used as a start point specification.
-                                                winCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
-                                            } else {
-                                                throw SqlException.$(lexer.lastTokenPosition(), "'following' expected");
-                                            }
-                                        } else if (isCurrentRow(lexer, tok)) {
-                                            winCol.setRowsHiKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
-                                        } else if (isPrecedingKeyword(tok) || isFollowingKeyword(tok)) {
-                                            throw SqlException.$(lexer.lastTokenPosition(), "integer expression expected");
-                                        } else {
-                                            pos = lexer.lastTokenPosition();
-                                            lexer.unparseLast();
-                                            winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
-                                            if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                                char timeUnit = parseTimeUnit(lexer);
-                                                if (timeUnit != 0) {
-                                                    winCol.setRowsHiExprTimeUnit(timeUnit);
-                                                }
-                                            }
-
-                                            tok = tok(lexer, "'preceding'  'following'");
-                                            if (isPrecedingKeyword(tok)) {
-                                                if (winCol.getRowsLoKind() == WindowColumn.CURRENT) {
-                                                    // As a start point, CURRENT ROW specifies that the window begins at the current row.
-                                                    // In this case the end point cannot be value_expr PRECEDING.
-                                                    throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row must not be PRECEDING");
-                                                }
-                                                if (winCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
-                                                    throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row must not be PRECEDING");
-                                                }
-                                                winCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
-                                            } else if (isFollowingKeyword(tok)) {
-                                                winCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
-                                            } else {
-                                                throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
-                                            }
-                                        }
-                                    } else {
-                                        throw SqlException.$(lexer.lastTokenPosition(), "'and' expected");
-                                    }
-                                } else {
-                                    // If you omit BETWEEN and specify only one end point, then QuestDB considers it the
-                                    // start point, and the end point defaults to the current row.
-                                    pos = lexer.lastTokenPosition();
-                                    if (isUnboundedPreceding(lexer, tok)) {
-                                        winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
-                                    } else if (isCurrentRow(lexer, tok)) {
-                                        winCol.setRowsLoKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
-                                    } else if (isPrecedingKeyword(tok) || isFollowingKeyword(tok)) {
-                                        throw SqlException.$(pos, "integer expression expected");
-                                    } else {
-                                        lexer.unparseLast();
-                                        winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
-                                        if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                            char timeUnit = parseTimeUnit(lexer);
-                                            if (timeUnit != 0) {
-                                                winCol.setRowsLoExprTimeUnit(timeUnit);
-                                            }
-                                        }
-                                        tok = tok(lexer, "'preceding'");
-                                        if (isPrecedingKeyword(tok)) {
-                                            winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
-                                        } else {
-                                            throw SqlException.$(lexer.lastTokenPosition(), "'preceding' expected");
-                                        }
-                                    }
-
-                                    winCol.setRowsHiKind(WindowColumn.CURRENT, pos);
-                                }
-
-                                if (winCol.getOrderBy().size() != 1 && winCol.requiresOrderBy()) {//groups mode is validated earlier
-                                    throw SqlException.$(lexer.lastTokenPosition(), "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
-                                }
-
-                                tok = tok(lexer, "'exclude' or ')' expected");
-
-                                if (isExcludeKeyword(tok)) {
-                                    tok = tok(lexer, "'current', 'group', 'ties' or 'no other' expected");
-                                    int excludePos = lexer.lastTokenPosition();
-                                    if (isCurrentKeyword(tok)) {
-                                        tok = tok(lexer, "'row' expected");
-                                        if (isRowKeyword(tok)) {
-                                            winCol.setExclusionKind(WindowColumn.EXCLUDE_CURRENT_ROW, excludePos);
-                                        } else {
-                                            throw SqlException.$(lexer.lastTokenPosition(), "'row' expected");
-                                        }
-                                    } else if (isGroupKeyword(tok)) {
-                                        winCol.setExclusionKind(WindowColumn.EXCLUDE_GROUP, excludePos);
-                                    } else if (isTiesKeyword(tok)) {
-                                        winCol.setExclusionKind(WindowColumn.EXCLUDE_TIES, excludePos);
-                                    } else if (isNoKeyword(tok)) {
-                                        tok = tok(lexer, "'others' expected");
-                                        if (isOthersKeyword(tok)) {
-                                            winCol.setExclusionKind(WindowColumn.EXCLUDE_NO_OTHERS, excludePos);
-                                        } else {
-                                            throw SqlException.$(lexer.lastTokenPosition(), "'others' expected");
-                                        }
-                                    } else {
-                                        throw SqlException.$(lexer.lastTokenPosition(), "'current', 'group', 'ties' or 'no other' expected");
-                                    }
-
-                                    tok = tok(lexer, "')' expected");
-                                }
-                            }
-                            expectTok(tok, lexer.lastTokenPosition(), ')');
-                        } finally {
-                            overClauseMode = false;
-                        }
-                        tok = optTok(lexer);
-
-                    } else {
-                        if (expr.type == ExpressionNode.QUERY) {
-                            throw SqlException.$(expr.position, "query is not expected, did you mean column?");
-                        }
-                        col = queryColumnPool.next().of(null, expr);
-                    }
-                } // end of else block for expr.windowContext == null
+                    col = queryColumnPool.next().of(null, expr);
+                }
 
                 final CharSequence alias;
                 final int aliasPosition;

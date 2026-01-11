@@ -95,51 +95,33 @@ public class RpnBuilder implements ExpressionParserListener {
             if (timeUnit != 0) {
                 sink.put(' ');
                 switch (timeUnit) {
-                    case WindowColumn.TIME_UNIT_HOUR:
-                        sink.put("hour");
-                        break;
-                    case WindowColumn.TIME_UNIT_MINUTE:
-                        sink.put("minute");
-                        break;
-                    case WindowColumn.TIME_UNIT_SECOND:
-                        sink.put("second");
-                        break;
-                    case WindowColumn.TIME_UNIT_MILLISECOND:
-                        sink.put("millisecond");
-                        break;
-                    case WindowColumn.TIME_UNIT_MICROSECOND:
-                        sink.put("microsecond");
-                        break;
-                    case WindowColumn.TIME_UNIT_NANOSECOND:
-                        sink.put("nanosecond");
-                        break;
-                    case WindowColumn.TIME_UNIT_DAY:
-                        sink.put("day");
-                        break;
-                    default:
-                        sink.put(timeUnit);
-                        break;
+                    case WindowColumn.TIME_UNIT_HOUR -> sink.put("hour");
+                    case WindowColumn.TIME_UNIT_MINUTE -> sink.put("minute");
+                    case WindowColumn.TIME_UNIT_SECOND -> sink.put("second");
+                    case WindowColumn.TIME_UNIT_MILLISECOND -> sink.put("millisecond");
+                    case WindowColumn.TIME_UNIT_MICROSECOND -> sink.put("microsecond");
+                    case WindowColumn.TIME_UNIT_NANOSECOND -> sink.put("nanosecond");
+                    case WindowColumn.TIME_UNIT_DAY -> sink.put("day");
+                    default -> sink.put(timeUnit);
                 }
             }
             sink.put(' ');
         }
 
         switch (kind) {
-            case WindowColumn.PRECEDING:
+            case WindowColumn.PRECEDING -> {
                 if (expr == null && isLower) {
                     sink.put("unbounded ");
                 }
                 sink.put("preceding");
-                break;
-            case WindowColumn.FOLLOWING:
+            }
+            case WindowColumn.FOLLOWING -> {
                 if (expr == null && !isLower) {
                     sink.put("unbounded ");
                 }
                 sink.put("following");
-                break;
-            case WindowColumn.CURRENT:
-                sink.put("current row");
-                break;
+            }
+            case WindowColumn.CURRENT -> sink.put("current row");
         }
     }
 
