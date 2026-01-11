@@ -57,8 +57,6 @@ import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.cutlass.line.tcp.v4.IlpV4ColumnDef;
-import io.questdb.cutlass.line.tcp.v4.IlpV4TableStructureAdapter;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
@@ -91,7 +89,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final long spinLockTimeoutMs;
     private final StringSink[] tableNameSinks;
     private final TableStructureAdapter tableStructureAdapter;
-    private final IlpV4TableStructureAdapter v4TableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
@@ -177,11 +174,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
             this.tableStructureAdapter = new TableStructureAdapter(
                     cairoConfiguration,
                     defaultColumnTypes,
-                    configuration.getDefaultPartitionBy(),
-                    cairoConfiguration.getWalEnabledDefault()
-            );
-            this.v4TableStructureAdapter = new IlpV4TableStructureAdapter(
-                    cairoConfiguration,
                     configuration.getDefaultPartitionBy(),
                     cairoConfiguration.getWalEnabledDefault()
             );
@@ -603,107 +595,4 @@ public class LineTcpMeasurementScheduler implements Closeable {
         return seq;
     }
 
-    /**
-     * Returns the Cairo engine.
-     *
-     * @return Cairo engine
-     */
-    public CairoEngine getCairoEngine() {
-        return engine;
-    }
-
-    /**
-     * Gets or creates TableUpdateDetails for the given table name.
-     * This method is used by ILP v4 protocol handler.
-     *
-     * @param securityContext security context
-     * @param netIoJob        network I/O job
-     * @param ctx             connection context
-     * @param tableNameUtf16  table name (UTF-16)
-     * @param columns         column definitions for table creation (can be null if table exists)
-     * @return table update details
-     */
-    public TableUpdateDetails getTableUpdateDetailsForV4(
-            SecurityContext securityContext,
-            NetworkIOJob netIoJob,
-            LineTcpConnectionContext ctx,
-            CharSequence tableNameUtf16,
-            IlpV4ColumnDef[] columns
-    ) {
-        tableUpdateDetailsLock.writeLock().lock();
-        try {
-            final long deadline = clock.getTicks() + spinLockTimeoutMs;
-            Utf8String tableNameUtf8 = new Utf8String(tableNameUtf16);
-
-            while (true) {
-                TableUpdateDetails tud;
-
-                // Check if the global cache has the table
-                final int tudKeyIndex = tableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
-                if (tudKeyIndex < 0) {
-                    tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
-                } else {
-                    final int status = engine.getTableStatus(path, tableNameUtf16);
-                    if (status != TableUtils.TABLE_EXISTS) {
-                        if (columns == null) {
-                            // Table doesn't exist and no schema provided - return null
-                            // Caller should call again with schema from decoded message
-                            return null;
-                        }
-                        if (!autoCreateNewTables) {
-                            throw CairoException.nonCritical()
-                                    .put("table does not exist, creating new tables is disabled [table=").put(tableNameUtf16)
-                                    .put(']');
-                        }
-                        if (!autoCreateNewColumns) {
-                            throw CairoException.nonCritical()
-                                    .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(tableNameUtf16)
-                                    .put(']');
-                        }
-
-                        // Create the table
-                        IlpV4TableStructureAdapter tsa = v4TableStructureAdapter.of(tableNameUtf16, columns);
-                        securityContext.authorizeTableCreate();
-                        engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
-                    }
-
-                    // Check if table is WAL - handle separately
-                    TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
-                    if (tableToken != null && engine.isWalTable(tableToken)) {
-                        // Create WAL-oriented TUD (don't add to global cache, similar to text protocol)
-                        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
-                        tud = new WalTableUpdateDetails(
-                                engine,
-                                securityContext,
-                                engine.getWalWriter(tableToken),
-                                defaultColumnTypes,
-                                tableNameUtf8,
-                                netIoJob.getSymbolCachePool(),
-                                configuration.getCommitInterval(),
-                                true,
-                                engine.getConfiguration().getMaxUncommittedRows()
-                        );
-                        ctx.addTableUpdateDetails(tableNameUtf8, tud);
-                        return tud;
-                    }
-
-                    tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, tableNameUtf8);
-                    if (tud == null) {
-                        // retry assignment
-                        if (clock.getTicks() >= deadline) {
-                            throw CairoException.nonCritical().put("table is locked: ").put(tableNameUtf16);
-                        }
-                        Os.sleep(1);
-                        continue;
-                    }
-                }
-
-                // For non-WAL tables from the global cache, just add to context and return
-                ctx.addTableUpdateDetails(tableNameUtf8, tud);
-                return tud;
-            }
-        } finally {
-            tableUpdateDetailsLock.writeLock().unlock();
-        }
-    }
 }

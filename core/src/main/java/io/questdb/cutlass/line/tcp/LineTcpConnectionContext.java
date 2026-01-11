@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
@@ -35,7 +34,6 @@ import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
-import io.questdb.cutlass.line.tcp.v4.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -46,7 +44,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -57,11 +54,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private static final DummyPrincipalContext DUMMY_CONTEXT = new DummyPrincipalContext();
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
-
-    // Protocol detection states
-    private static final byte PROTOCOL_UNKNOWN = 0;
-    private static final byte PROTOCOL_TEXT = 1;
-    private static final byte PROTOCOL_V4 = 2;
 
     protected final NetworkFacade nf;
     private final SocketAuthenticator authenticator;
@@ -84,8 +76,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long lastQueueFullLogMillis = 0;
     private long nextCheckIdleTime;
     private long nextCommitTime;
-    private byte protocolType = PROTOCOL_UNKNOWN;
-    private IlpV4ProtocolHandler v4Handler;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         super(
@@ -137,10 +127,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         Misc.free(recvBuffer);
         peerDisconnected = false;
         goodMeasurement = true;
-        protocolType = PROTOCOL_UNKNOWN;
-        if (v4Handler != null) {
-            v4Handler.reset();
-        }
         ObjList<Utf8String> keys = tableUpdateDetailsUtf8.keys();
         for (int n = keys.size() - 1; n >= 0; --n) {
             final Utf8String tableNameUtf8 = keys.get(n);
@@ -155,8 +141,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         clear();
         Misc.free(authenticator);
         Misc.free(parser);
-        Misc.free(v4Handler);
-        v4Handler = null;
     }
 
     public long commitWalTables(long wallClockMillis) {
@@ -212,19 +196,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (authenticator.isAuthenticated()) {
             read();
             try {
-                // Protocol detection on first data after authentication
-                if (protocolType == PROTOCOL_UNKNOWN) {
-                    IOContextResult detectResult = detectProtocol();
-                    if (detectResult != null) {
-                        return detectResult;
-                    }
-                }
-
-                if (protocolType == PROTOCOL_V4) {
-                    return handleV4Protocol(netIoJob);
-                }
-
-                // Text protocol - continue with normal parsing
+                // Text protocol parsing
                 IOContextResult parseResult = parseMeasurements(netIoJob);
                 doMaintenance(milliClock.getTicks());
                 return parseResult;
@@ -234,201 +206,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         } else {
             // uncommon branch in a separate method to avoid polluting common path
             return handleAuthentication(netIoJob);
-        }
-    }
-
-    /**
-     * Handles ILP v4 protocol processing.
-     */
-    private IOContextResult handleV4Protocol(NetworkIOJob netIoJob) {
-        // Initialize handler on first v4 call
-        if (v4Handler == null) {
-            v4Handler = new IlpV4ProtocolHandler(configuration, (int) getFd(), milliClock);
-            v4Handler.setRecvBuffer(recvBuffer.getBufStart());
-        } else if (v4Handler.getState() == IlpV4ProtocolHandler.STATE_HANDSHAKE_WAIT_REQUEST
-                && v4Handler.getRecvBufProcessed() == 0) {
-            // Handler was reset (e.g., by clear() during connection reuse) - update buffer
-            v4Handler.setRecvBuffer(recvBuffer.getBufStart());
-        }
-
-        // Process based on handler state
-        int result = v4Handler.process(recvBuffer.getBufPos());
-
-        switch (result) {
-            case IlpV4ProtocolHandler.RESULT_NEEDS_READ:
-                if (peerDisconnected) {
-                    return IOContextResult.NEEDS_DISCONNECT;
-                }
-                // Check if buffer is full and needs to grow
-                if (recvBuffer.getBufPos() == recvBuffer.getBufEnd()) {
-                    // First compact V4 buffer to move processed data out
-                    compactV4RecvBuffer();
-                    // Then try to grow if still needed
-                    if (recvBuffer.getBufPos() == recvBuffer.getBufEnd()) {
-                        if (!recvBuffer.tryCompactOrGrowBuffer()) {
-                            LOG.error().$('[').$(getFd()).$("] v4 message too large for buffer").$();
-                            return IOContextResult.NEEDS_DISCONNECT;
-                        }
-                        // Update handler's buffer pointer after growth
-                        v4Handler.setRecvBuffer(recvBuffer.getBufStart());
-                    }
-                }
-                return IOContextResult.NEEDS_READ;
-
-            case IlpV4ProtocolHandler.RESULT_NEEDS_WRITE:
-                int sendResult = v4Handler.send(socket);
-                if (sendResult == IlpV4ProtocolHandler.RESULT_DISCONNECT) {
-                    return IOContextResult.NEEDS_DISCONNECT;
-                }
-                if (sendResult == IlpV4ProtocolHandler.RESULT_NEEDS_WRITE) {
-                    return IOContextResult.NEEDS_WRITE;
-                }
-                // After send, continue processing
-                return handleV4Protocol(netIoJob);
-
-            case IlpV4ProtocolHandler.RESULT_CONTINUE:
-                if (v4Handler.getState() == IlpV4ProtocolHandler.STATE_PROCESSING) {
-                    // Process the message
-                    int processResult = v4Handler.processMessage(
-                            securityContext,
-                            scheduler.getCairoEngine(),
-                            createTableUpdateDetailsProvider(netIoJob),
-                            recvBuffer.getBufPos()
-                    );
-
-                    // Compact the recv buffer after processing
-                    compactV4RecvBuffer();
-
-                    if (processResult == IlpV4ProtocolHandler.RESULT_NEEDS_WRITE) {
-                        int sendResult2 = v4Handler.send(socket);
-                        if (sendResult2 == IlpV4ProtocolHandler.RESULT_DISCONNECT) {
-                            return IOContextResult.NEEDS_DISCONNECT;
-                        }
-                        if (sendResult2 == IlpV4ProtocolHandler.RESULT_NEEDS_WRITE) {
-                            return IOContextResult.NEEDS_WRITE;
-                        }
-                    } else if (processResult == IlpV4ProtocolHandler.RESULT_DISCONNECT) {
-                        return IOContextResult.NEEDS_DISCONNECT;
-                    }
-
-                    // Continue to check if more messages are pending
-                    return handleV4Protocol(netIoJob);
-                }
-                // State changed, continue
-                return handleV4Protocol(netIoJob);
-
-            case IlpV4ProtocolHandler.RESULT_DISCONNECT:
-            default:
-                return IOContextResult.NEEDS_DISCONNECT;
-        }
-    }
-
-    /**
-     * Compacts the recv buffer by removing processed data.
-     */
-    private void compactV4RecvBuffer() {
-        long processed = v4Handler.getRecvBufProcessed();
-        long bufStart = recvBuffer.getBufStart();
-
-        if (processed > bufStart) {
-            long remaining = recvBuffer.getBufPos() - processed;
-            if (remaining > 0) {
-                // Move unprocessed data to start of buffer
-                Unsafe.getUnsafe().copyMemory(processed, bufStart, remaining);
-                recvBuffer.setBufPos(bufStart + remaining);
-            } else {
-                recvBuffer.setBufPos(bufStart);
-            }
-            // Reset handler's processed pointer
-            v4Handler.setRecvBuffer(bufStart);
-        }
-    }
-
-    /**
-     * Creates a TableUpdateDetailsProvider for v4 processing.
-     */
-    private IlpV4ProtocolHandler.TableUpdateDetailsProvider createTableUpdateDetailsProvider(NetworkIOJob netIoJob) {
-        return new IlpV4ProtocolHandler.TableUpdateDetailsProvider() {
-            @Override
-            public TableUpdateDetails getTableUpdateDetails(String tableName) {
-                // Look up in our cache
-                for (int i = 0, n = tableUpdateDetailsUtf8.size(); i < n; i++) {
-                    Utf8String key = tableUpdateDetailsUtf8.keys().get(i);
-                    if (key.toString().equals(tableName)) {
-                        return tableUpdateDetailsUtf8.get(key);
-                    }
-                }
-
-                // Try to get from scheduler (without columns - table must exist)
-                return scheduler.getTableUpdateDetailsForV4(
-                        securityContext,
-                        netIoJob,
-                        LineTcpConnectionContext.this,
-                        tableName,
-                        null
-                );
-            }
-
-            @Override
-            public TableUpdateDetails createTableUpdateDetails(
-                    String tableName,
-                    IlpV4TableBlockCursor tableBlock,
-                    CairoEngine engine,
-                    SecurityContext securityContext
-            ) {
-                // Extract column definitions from the cursor (this creates a small temp array)
-                int columnCount = tableBlock.getColumnCount();
-                IlpV4ColumnDef[] schema = new IlpV4ColumnDef[columnCount];
-                for (int i = 0; i < columnCount; i++) {
-                    schema[i] = tableBlock.getColumnDef(i);
-                }
-                // Create table with column definitions from the cursor
-                return scheduler.getTableUpdateDetailsForV4(
-                        securityContext,
-                        netIoJob,
-                        LineTcpConnectionContext.this,
-                        tableName,
-                        schema
-                );
-            }
-        };
-    }
-
-    /**
-     * Detects the protocol based on the first bytes received.
-     *
-     * @return IOContextResult if more data is needed or disconnect required, null if detection complete
-     */
-    private IOContextResult detectProtocol() {
-        long bufStart = recvBuffer.getBufStart();
-        long bufPos = recvBuffer.getBufPos();
-        int available = (int) (bufPos - bufStart);
-
-        if (available == 0) {
-            return IOContextResult.NEEDS_READ;
-        }
-
-        IlpV4ProtocolDetector.DetectionResult result = IlpV4ProtocolDetector.detect(bufStart, available);
-
-        switch (result) {
-            case V4_HANDSHAKE:
-            case V4_DIRECT:
-                protocolType = PROTOCOL_V4;
-                LOG.info().$('[').$(getFd()).$("] detected ILP v4 protocol").$();
-                return null;
-
-            case TEXT_PROTOCOL:
-                protocolType = PROTOCOL_TEXT;
-                LOG.debug().$('[').$(getFd()).$("] detected text protocol").$();
-                return null;
-
-            case NEED_MORE_DATA:
-                return IOContextResult.NEEDS_READ;
-
-            case UNKNOWN:
-            default:
-                LOG.error().$('[').$(getFd()).$("] unknown protocol detected").$();
-                return IOContextResult.NEEDS_DISCONNECT;
         }
     }
 
