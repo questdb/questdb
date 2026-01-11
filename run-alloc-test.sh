@@ -19,8 +19,6 @@
 #   --batch=N             Batch/flush size
 #   --warmup=N            Warmup rows
 #   --report=N            Report interval
-#   --max-flight=N        Max in-flight requests for ilpv4-http (0=sync, default: 0)
-#   --no-gorilla          Disable Gorilla timestamp compression (ilpv4-http only)
 #   --no-warmup           Skip warmup
 #
 
@@ -175,8 +173,6 @@ case "$1" in
         echo "  --batch=N             Batch/flush size (default: 10000)"
         echo "  --warmup=N            Warmup rows (default: 100000)"
         echo "  --report=N            Report progress every N rows (default: 1000000)"
-        echo "  --max-flight=N        Max in-flight requests for ilpv4-http (0=sync, default: 0)"
-        echo "  --no-gorilla          Disable Gorilla timestamp compression (ilpv4-http only)"
         echo "  --no-warmup           Skip warmup phase"
         echo ""
         echo "Examples:"

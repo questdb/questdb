@@ -52,16 +52,11 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
 
@@ -89,18 +84,11 @@ public class IlpV4HttpSender implements Sender {
     private static final String WRITE_PATH = "/write/v4";
     private static final String CONTENT_TYPE = "application/x-ilp-v4";
     private static final int DEFAULT_TIMEOUT_MS = 30000;
-    private static final int CLOSE_TIMEOUT_SECONDS = 30;
 
     // Retry constants
     private static final int RETRY_BACKOFF_MULTIPLIER = 2;
     private static final int RETRY_INITIAL_BACKOFF_MS = 10;
     private static final int RETRY_MAX_JITTER_MS = 10;
-
-    // Async flush: shared executor
-    private static final Object EXECUTOR_LOCK = new Object();
-    private static volatile ExecutorService sharedExecutor;
-    private static final int DEFAULT_EXECUTOR_POOL_SIZE = Math.max(2, Runtime.getRuntime().availableProcessors());
-    private static volatile int executorPoolSize = Integer.getInteger("questdb.ilp.async.poolSize", DEFAULT_EXECUTOR_POOL_SIZE);
 
     // Multi-host support
     private final ObjList<String> hosts;
@@ -108,9 +96,8 @@ public class IlpV4HttpSender implements Sender {
     private int currentAddressIndex;
 
     private final IlpV4MessageEncoder encoder;
-    // Non-final to allow buffer swapping in async mode
-    private Map<String, IlpV4TableBuffer> tableBuffers;
-    private ObjList<String> tableOrder;
+    private final Map<String, IlpV4TableBuffer> tableBuffers;
+    private final ObjList<String> tableOrder;
     private final HttpClient client;
     private final StringSink errorSink;
 
@@ -138,32 +125,10 @@ public class IlpV4HttpSender implements Sender {
     // Name validation
     private int maxNameLength;
 
-    // Async flush state
-    // Configuration
-    private int maxInFlightRequests = 0;  // 0 = sync mode (default)
-    private HttpClientConfiguration clientConfiguration;
-    private ClientTlsConfiguration tlsConfig;
-
-    // Synchronization
-    private final ReentrantLock stateLock = new ReentrantLock();
-    private final Condition slotAvailable = stateLock.newCondition();
-    private final AtomicInteger inFlightCount = new AtomicInteger(0);
-
-    // Error state
-    private volatile boolean inErrorState = false;
-    private volatile LineSenderException pendingError = null;
-
-    // Resource pools (initialized when async mode is enabled)
-    private HttpClientPool clientPool;
-    private BufferSetPool bufferSetPool;
-
     private IlpV4HttpSender(ObjList<String> hosts, IntList ports, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig) {
         this.hosts = hosts;
         this.ports = ports;
         this.currentAddressIndex = 0;
-        // Save configuration for creating client pool later if async mode is enabled
-        this.clientConfiguration = clientConfiguration;
-        this.tlsConfig = tlsConfig;
         // Create encoder without its own buffer - we'll set the sink before each flush
         this.encoder = new IlpV4MessageEncoder(null);
         this.tableBuffers = new HashMap<>();
@@ -175,7 +140,7 @@ public class IlpV4HttpSender implements Sender {
         this.pendingRows = 0;
         this.timeoutMs = DEFAULT_TIMEOUT_MS;
         this.flushIntervalNanos = Long.MAX_VALUE; // Disable time-based auto-flush by default
-        // Create TLS or plain text HTTP client based on configuration (for sync mode)
+        // Create TLS or plain text HTTP client based on configuration
         this.client = tlsConfig != null
                 ? HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig)
                 : HttpClientFactory.newPlainTextInstance(clientConfiguration);
@@ -301,467 +266,6 @@ public class IlpV4HttpSender implements Sender {
     public IlpV4HttpSender setTimeout(int timeoutMs) {
         this.timeoutMs = timeoutMs;
         return this;
-    }
-
-    /**
-     * Sets the maximum number of in-flight (concurrent) flush requests.
-     * <p>
-     * When set to 0 (default), all flush operations are synchronous.
-     * When set to N > 0, auto-flush operations are submitted to a background
-     * thread pool, allowing up to N concurrent requests. This can significantly
-     * improve throughput over high-latency networks.
-     * <p>
-     * Back-pressure: If N requests are already in-flight when a new auto-flush
-     * triggers, the at()/atNow() call will block until a slot becomes available.
-     * <p>
-     * Error handling: If any in-flight request fails after retries, the sender
-     * enters an error state. Subsequent at()/atNow() calls will throw until
-     * reset() is called.
-     * <p>
-     * Must be called before the first flush (cannot change mode after first flush).
-     *
-     * @param max maximum concurrent flush requests (0 = sync, default)
-     * @return this sender for method chaining
-     * @throws IllegalArgumentException if max < 0
-     * @throws IllegalStateException    if called after first flush
-     */
-    public IlpV4HttpSender maxInFlightRequests(int max) {
-        if (max < 0) {
-            throw new IllegalArgumentException("maxInFlightRequests must be >= 0, got: " + max);
-        }
-        if (clientPool != null || bufferSetPool != null) {
-            throw new IllegalStateException("cannot change maxInFlightRequests after async mode initialized");
-        }
-        this.maxInFlightRequests = max;
-        if (max > 0) {
-            initAsyncResources();
-        }
-        return this;
-    }
-
-    /**
-     * Returns true if async flush mode is enabled.
-     */
-    public boolean isAsyncMode() {
-        return maxInFlightRequests > 0;
-    }
-
-    /**
-     * Returns the maximum number of in-flight requests configured.
-     */
-    public int getMaxInFlightRequests() {
-        return maxInFlightRequests;
-    }
-
-    /**
-     * Returns the current number of in-flight flush requests.
-     */
-    public int getInFlightCount() {
-        return inFlightCount.get();
-    }
-
-    /**
-     * Returns true if the sender is in an error state.
-     * In error state, at()/atNow() calls will throw until reset() is called.
-     */
-    public boolean isInErrorState() {
-        return inErrorState;
-    }
-
-    /**
-     * Returns the pending error if in error state, null otherwise.
-     */
-    public LineSenderException getPendingError() {
-        return pendingError;
-    }
-
-    /**
-     * Initializes resources for async mode.
-     */
-    private void initAsyncResources() {
-        if (maxInFlightRequests > 0) {
-            this.clientPool = new HttpClientPool(clientConfiguration, tlsConfig, maxInFlightRequests);
-            this.bufferSetPool = new BufferSetPool(maxInFlightRequests * 2);  // Keep some extra for buffering
-        }
-    }
-
-    /**
-     * Gets or creates the shared executor service.
-     */
-    private static ExecutorService getOrCreateExecutor() {
-        if (sharedExecutor == null) {
-            synchronized (EXECUTOR_LOCK) {
-                if (sharedExecutor == null) {
-                    sharedExecutor = Executors.newFixedThreadPool(executorPoolSize, r -> {
-                        Thread t = new Thread(r, "ilp-http-flush");
-                        t.setDaemon(true);
-                        return t;
-                    });
-                }
-            }
-        }
-        return sharedExecutor;
-    }
-
-    /**
-     * Checks if the sender is in error state and throws if so.
-     */
-    private void checkErrorState() {
-        if (inErrorState) {
-            LineSenderException error = pendingError;
-            String errorMsg = error != null ? ": " + error.getMessage() : "";
-            throw new LineSenderException("sender in error state, call reset() to recover" + errorMsg);
-        }
-    }
-
-    // ==================== Async Flush Implementation ====================
-
-    /**
-     * Submits an async flush operation.
-     * This swaps the current buffers and submits them for background processing.
-     * Blocks if max in-flight requests are already pending (back-pressure).
-     */
-    private void submitAsyncFlush() {
-        stateLock.lock();
-        try {
-            // Wait until a slot is available (back-pressure)
-            while (inFlightCount.get() >= maxInFlightRequests && !inErrorState) {
-                try {
-                    slotAvailable.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new LineSenderException("interrupted while waiting for flush slot");
-                }
-            }
-
-            // Check error state after waiting
-            checkErrorState();
-
-            // Swap buffers - create PendingFlush from current state
-            PendingFlush pending = swapBuffers();
-            if (!pending.hasData()) {
-                // Nothing to flush
-                return;
-            }
-
-            // Increment in-flight count and submit
-            inFlightCount.incrementAndGet();
-            getOrCreateExecutor().submit(() -> executeFlush(pending));
-        } finally {
-            stateLock.unlock();
-        }
-    }
-
-    /**
-     * Swaps the current buffers with fresh ones and returns the old buffers
-     * wrapped in a PendingFlush.
-     * <p>
-     * Must be called while holding stateLock.
-     */
-    private PendingFlush swapBuffers() {
-        // Capture current state for thread-safe async flush
-        int addressIndex = currentAddressIndex;
-        boolean gorilla = gorillaEnabled;
-        boolean schemaRef = useSchemaRef;
-
-        // Create PendingFlush with current state (transfer ownership)
-        PendingFlush pending = new PendingFlush(tableBuffers, tableOrder, pendingRows, addressIndex, gorilla, schemaRef);
-
-        // Get fresh buffers from pool or create new ones
-        BufferSetPool.BufferSet freshSet = bufferSetPool.acquire();
-
-        // Swap to fresh empty buffers
-        this.tableBuffers = freshSet.getTableBuffers();
-        this.tableOrder = freshSet.getTableOrder();
-        this.pendingRows = 0;
-        this.currentTable = null;
-
-        // Reset time-based flush timer
-        if (flushIntervalNanos != Long.MAX_VALUE) {
-            flushAfterNanos = System.nanoTime() + flushIntervalNanos;
-        }
-
-        return pending;
-    }
-
-    /**
-     * Executes a flush operation in a background thread.
-     * This method acquires an HttpClient from the pool and sends the request.
-     */
-    private void executeFlush(PendingFlush pending) {
-        HttpClient pooledClient = null;
-        try {
-            pooledClient = clientPool.acquire();
-            doFlushAttemptWithClient(pooledClient, pending);
-            // Success - return buffers to pool
-            bufferSetPool.releaseFromPendingFlush(pending);
-        } catch (LineSenderException e) {
-            handleFlushError(e, pending);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            handleFlushError(new LineSenderException("flush interrupted"), pending);
-        } catch (Exception e) {
-            handleFlushError(new LineSenderException("flush failed: " + e.getMessage()), pending);
-        } finally {
-            if (pooledClient != null) {
-                clientPool.release(pooledClient);
-            }
-            // Decrement in-flight count and signal waiting threads
-            stateLock.lock();
-            try {
-                inFlightCount.decrementAndGet();
-                slotAvailable.signalAll();
-            } finally {
-                stateLock.unlock();
-            }
-        }
-    }
-
-    /**
-     * Performs a single flush attempt using the specified client.
-     * This is similar to doFlushAttempt() but takes a client parameter.
-     * Uses thread-local state for address rotation and RNG to be thread-safe.
-     */
-    private void doFlushAttemptWithClient(HttpClient httpClient, PendingFlush pending) {
-        Map<String, IlpV4TableBuffer> buffers = pending.getTableBuffers();
-        ObjList<String> order = pending.getTableOrder();
-
-        // Create a thread-local encoder for this async flush (encoder is not thread-safe)
-        IlpV4MessageEncoder localEncoder = new IlpV4MessageEncoder(null);
-
-        // Thread-local state captured from PendingFlush (avoids reading shared instance fields)
-        int localAddressIndex = pending.getInitialAddressIndex();
-        boolean localGorillaEnabled = pending.isGorillaEnabled();
-        boolean localUseSchemaRef = pending.isUseSchemaRef();
-
-        // Thread-local RNG for backoff jitter (Rnd is not thread-safe)
-        Rnd localRnd = new Rnd(System.nanoTime(), Thread.currentThread().getId());
-
-        // Retry loop
-        long retryingDeadlineNanos = Long.MIN_VALUE;
-        int retryBackoff = Math.min(maxBackoffMillis, RETRY_INITIAL_BACKOFF_MS);
-        LineSenderException lastException = null;
-
-        try {
-            while (true) {
-                try {
-                    String host = hosts.get(localAddressIndex);
-                    int port = ports.get(localAddressIndex);
-                    doFlushAttemptOnce(httpClient, buffers, order, localEncoder, host, port, localGorillaEnabled, localUseSchemaRef);
-                    return; // Success
-                } catch (LineSenderException e) {
-                    if (!e.isRetryable()) {
-                        throw e;
-                    }
-                    lastException = e;
-                } catch (HttpClientException e) {
-                    lastException = new LineSenderException("Failed to flush: " + e.getMessage(), true);
-                }
-
-                // Check retry deadline
-                long nowNanos = Os.currentTimeNanos();
-                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE)
-                        ? nowNanos + maxRetriesNanos
-                        : retryingDeadlineNanos;
-                if (nowNanos >= retryingDeadlineNanos) {
-                    throw lastException;
-                }
-
-                // Rotate address for multi-host support (thread-local)
-                if (hosts.size() > 1) {
-                    localAddressIndex = (localAddressIndex + 1) % hosts.size();
-                }
-
-                // Sleep with backoff using thread-local RNG
-                Os.sleep(retryBackoff);
-                int jitter = localRnd.nextInt(RETRY_MAX_JITTER_MS);
-                retryBackoff = Math.min(maxBackoffMillis, (retryBackoff + jitter) * RETRY_BACKOFF_MULTIPLIER);
-            }
-        } finally {
-            localEncoder.close();
-        }
-    }
-
-    /**
-     * Performs a single HTTP request for flush (sync mode).
-     */
-    private void doFlushAttemptOnce(HttpClient httpClient, Map<String, IlpV4TableBuffer> buffers, ObjList<String> order) {
-        doFlushAttemptOnce(httpClient, buffers, order, this.encoder, currentHost(), currentPort(), gorillaEnabled, useSchemaRef);
-    }
-
-    /**
-     * Performs a single HTTP request for flush with a specific encoder and host/port.
-     * This overload allows async mode to use thread-local encoder, address, and encoding settings.
-     */
-    private void doFlushAttemptOnce(HttpClient httpClient, Map<String, IlpV4TableBuffer> buffers, ObjList<String> order,
-                                     IlpV4MessageEncoder messageEncoder, String host, int port,
-                                     boolean gorilla, boolean schemaRef) {
-        // Create HTTP request and prepare for content
-        HttpClient.Request request = httpClient.newRequest(host, port)
-                .POST()
-                .url(WRITE_PATH)
-                .header("Content-Type", CONTENT_TYPE);
-
-        // Add authentication headers if configured
-        if (username != null) {
-            request.authBasic(username, password);
-        } else if (authToken != null) {
-            request.authToken(null, authToken);
-        }
-
-        request.withContent();
-
-        // Create sink that writes directly to the HTTP request buffer
-        IlpV4HttpRequestSink sink = new IlpV4HttpRequestSink(request);
-        messageEncoder.setSink(sink);
-        messageEncoder.setGorillaEnabled(gorilla);
-
-        // Record start position for validation
-        int startContentLength = request.getContentLength();
-
-        // Verify buffer is fresh (should be 0 after newRequest() + withContent())
-        if (startContentLength != 0) {
-            throw new LineSenderException(
-                "HTTP request buffer not empty at start: contentLength=" + startContentLength +
-                ". This indicates stale data in the buffer from a previous request."
-            );
-        }
-
-        // Write placeholder header (will be patched later)
-        for (int i = 0; i < HEADER_SIZE; i++) {
-            sink.putByte((byte) 0);
-        }
-
-        // Encode each table directly to the HTTP request buffer
-        int tableCount = 0;
-        for (int i = 0, n = order.size(); i < n; i++) {
-            String tableName = order.get(i);
-            IlpV4TableBuffer buffer = buffers.get(tableName);
-            if (buffer.getRowCount() > 0) {
-                int beforeEncode = request.getContentLength();
-                buffer.encode(messageEncoder, schemaRef, gorilla);
-                int afterEncode = request.getContentLength();
-                int tableBytes = afterEncode - beforeEncode;
-                // Sanity check: each table should encode to a reasonable size
-                if (tableBytes > 100_000_000 || tableBytes < 0) {
-                    throw new LineSenderException(
-                        "Invalid table encoding size: " + tableBytes + " bytes for table " + tableName +
-                        " with " + buffer.getRowCount() + " rows, " + buffer.getColumnCount() + " columns" +
-                        " (before=" + beforeEncode + ", after=" + afterEncode + ")"
-                    );
-                }
-                tableCount++;
-            }
-        }
-
-        // Calculate payload length
-        int payloadLength = request.getContentLength() - HEADER_SIZE;
-
-        // Get header address AFTER all encoding (in case buffer relocated)
-        long headerAddress = request.getContentStart();
-
-        // Patch header directly in the buffer
-        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress, (byte) 'I');
-        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 1, (byte) 'L');
-        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 2, (byte) 'P');
-        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 3, (byte) '4');
-        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 4, VERSION_1);
-        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 5, gorilla ? FLAG_GORILLA : 0);
-        io.questdb.std.Unsafe.getUnsafe().putShort(headerAddress + 6, (short) tableCount);
-        io.questdb.std.Unsafe.getUnsafe().putInt(headerAddress + 8, payloadLength);
-
-        // Send the request
-        HttpClient.ResponseHeaders response = request.send(timeoutMs);
-        response.await(timeoutMs);
-
-        DirectUtf8Sequence statusCode = response.getStatusCode();
-        if (statusCode == null || !Utf8s.equalsNcAscii("200", statusCode) && !Utf8s.equalsNcAscii("204", statusCode)) {
-            boolean retryable = isRetryableHttpStatus(statusCode);
-            StringSink errSink = new StringSink();
-            errSink.put("HTTP error: ");
-            if (statusCode != null) {
-                errSink.put(statusCode);
-            } else {
-                errSink.put("no status");
-            }
-
-            Response resp = response.getResponse();
-            if (resp != null) {
-                Fragment fragment = resp.recv();
-                if (fragment != null && fragment.lo() < fragment.hi()) {
-                    errSink.put(" - ");
-                    for (long ptr = fragment.lo(); ptr < fragment.hi() && ptr < fragment.lo() + 200; ptr++) {
-                        errSink.put((char) io.questdb.std.Unsafe.getUnsafe().getByte(ptr));
-                    }
-                }
-            }
-            throw new LineSenderException(errSink.toString(), retryable);
-        }
-    }
-
-    /**
-     * Handles a flush error by setting the error state.
-     */
-    private void handleFlushError(LineSenderException error, PendingFlush pending) {
-        stateLock.lock();
-        try {
-            if (!inErrorState) {
-                inErrorState = true;
-                pendingError = error;
-            }
-            // Signal waiting threads to wake up and see the error
-            slotAvailable.signalAll();
-        } finally {
-            stateLock.unlock();
-        }
-        // Note: we don't return pending buffers to pool on error
-        // They will be GC'd
-    }
-
-    /**
-     * Waits for all in-flight flush operations to complete.
-     * Used by flush() and close() to ensure all data is sent.
-     */
-    private void waitForInFlight() {
-        stateLock.lock();
-        try {
-            while (inFlightCount.get() > 0) {
-                try {
-                    slotAvailable.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new LineSenderException("interrupted while waiting for in-flight flushes");
-                }
-            }
-        } finally {
-            stateLock.unlock();
-        }
-    }
-
-    /**
-     * Waits for all in-flight flush operations to complete with a timeout.
-     * Returns true if all completed, false if timeout elapsed.
-     */
-    private boolean waitForInFlightWithTimeout(long timeoutNanos) {
-        long deadline = System.nanoTime() + timeoutNanos;
-        stateLock.lock();
-        try {
-            while (inFlightCount.get() > 0) {
-                long remaining = deadline - System.nanoTime();
-                if (remaining <= 0) {
-                    return false;
-                }
-                try {
-                    slotAvailable.await(remaining, TimeUnit.NANOSECONDS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
-            }
-            return true;
-        } finally {
-            stateLock.unlock();
-        }
     }
 
     // ==================== Sender interface implementation ====================
@@ -978,23 +482,12 @@ public class IlpV4HttpSender implements Sender {
     }
 
     private void finishRow() {
-        // Check error state first - async flush may have failed
-        if (isAsyncMode()) {
-            checkErrorState();
-        }
-
         checkCurrentTable();
         currentTable.nextRow();
         pendingRows++;
 
         if (shouldAutoFlush()) {
-            if (isAsyncMode()) {
-                // Async mode: submit to background thread (may block if max in-flight reached)
-                submitAsyncFlush();
-            } else {
-                // Sync mode: flush directly
-                flush();
-            }
+            flush();
         }
     }
 
@@ -1019,37 +512,6 @@ public class IlpV4HttpSender implements Sender {
 
     @Override
     public void flush() {
-        if (isAsyncMode()) {
-            flushAsync();
-        } else {
-            flushSync();
-        }
-    }
-
-    /**
-     * Async flush implementation.
-     * Submits current buffers as async flush and waits for all in-flight to complete.
-     */
-    private void flushAsync() {
-        // Check error state first
-        checkErrorState();
-
-        // Submit current buffers if there's data
-        if (tableOrder.size() > 0) {
-            submitAsyncFlush();
-        }
-
-        // Wait for all in-flight requests to complete
-        waitForInFlight();
-
-        // Check for errors that occurred during async processing
-        checkErrorState();
-    }
-
-    /**
-     * Synchronous flush implementation (original behavior).
-     */
-    private void flushSync() {
         if (tableOrder.size() == 0) {
             return;
         }
@@ -1252,11 +714,6 @@ public class IlpV4HttpSender implements Sender {
 
     @Override
     public void reset() {
-        // Clear error state (allows recovery from async errors)
-        inErrorState = false;
-        pendingError = null;
-
-        // Reset all table buffers
         for (int i = 0, n = tableOrder.size(); i < n; i++) {
             tableBuffers.get(tableOrder.get(i)).reset();
         }
@@ -1465,21 +922,6 @@ public class IlpV4HttpSender implements Sender {
 
     @Override
     public void close() {
-        // Wait for in-flight operations if in async mode
-        if (isAsyncMode()) {
-            // Wait with timeout (don't block forever if something goes wrong)
-            long timeoutNanos = TimeUnit.SECONDS.toNanos(CLOSE_TIMEOUT_SECONDS);
-            waitForInFlightWithTimeout(timeoutNanos);
-            // Note: we don't throw on timeout during close - just proceed with cleanup
-        }
-
-        // Close async resources if initialized
-        if (clientPool != null) {
-            clientPool.close();
-        }
-        if (bufferSetPool != null) {
-            bufferSetPool.close();
-        }
         encoder.close();
         Misc.free(client);
     }
