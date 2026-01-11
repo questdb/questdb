@@ -61,6 +61,20 @@ public class IlpV4TableBlockCursor implements Mutable {
     // Cached null flags per column for current row (avoids megamorphic isNull() calls)
     private boolean[] columnNullFlags = new boolean[16];
 
+    // Type-bucketed column indices for monomorphic advanceRow() calls
+    private int[] booleanColumnIndices = new int[16];
+    private int[] fixedWidthColumnIndices = new int[16];
+    private int[] timestampColumnIndices = new int[16];
+    private int[] stringColumnIndices = new int[16];
+    private int[] symbolColumnIndices = new int[16];
+    private int[] geoHashColumnIndices = new int[16];
+    private int booleanColumnCount;
+    private int fixedWidthColumnCount;
+    private int timestampColumnCount;
+    private int stringColumnCount;
+    private int symbolColumnCount;
+    private int geoHashColumnCount;
+
     // Schema cache reference
     private IlpV4SchemaCache schemaCache;
 
@@ -131,8 +145,14 @@ public class IlpV4TableBlockCursor implements Mutable {
 
         this.columnDefs = schema.getColumns();
 
-        // Initialize column cursors
+        // Initialize column cursors and type buckets
         ensureColumnCursorCapacity(columnCount);
+        booleanColumnCount = 0;
+        fixedWidthColumnCount = 0;
+        timestampColumnCount = 0;
+        stringColumnCount = 0;
+        symbolColumnCount = 0;
+        geoHashColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
             IlpV4ColumnDef colDef = columnDefs[i];
             byte typeCode = colDef.getTypeCode();
@@ -158,6 +178,12 @@ public class IlpV4TableBlockCursor implements Mutable {
         }
         if (columnNullFlags.length < capacity) {
             columnNullFlags = new boolean[capacity];
+            booleanColumnIndices = new int[capacity];
+            fixedWidthColumnIndices = new int[capacity];
+            timestampColumnIndices = new int[capacity];
+            stringColumnIndices = new int[capacity];
+            symbolColumnIndices = new int[capacity];
+            geoHashColumnIndices = new int[capacity];
         }
     }
 
@@ -177,6 +203,7 @@ public class IlpV4TableBlockCursor implements Mutable {
                     boolCursor = new IlpV4BooleanColumnCursor();
                     columnCursors.setQuick(colIndex, boolCursor);
                 }
+                booleanColumnIndices[booleanColumnCount++] = colIndex;
                 return boolCursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength);
 
             case TYPE_BYTE:
@@ -195,6 +222,7 @@ public class IlpV4TableBlockCursor implements Mutable {
                     fixedCursor = new IlpV4FixedWidthColumnCursor();
                     columnCursors.setQuick(colIndex, fixedCursor);
                 }
+                fixedWidthColumnIndices[fixedWidthColumnCount++] = colIndex;
                 return fixedCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength);
 
             case TYPE_TIMESTAMP:
@@ -206,6 +234,7 @@ public class IlpV4TableBlockCursor implements Mutable {
                     tsCursor = new IlpV4TimestampColumnCursor();
                     columnCursors.setQuick(colIndex, tsCursor);
                 }
+                timestampColumnIndices[timestampColumnCount++] = colIndex;
                 return tsCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength, gorillaEnabled);
 
             case TYPE_STRING:
@@ -217,6 +246,7 @@ public class IlpV4TableBlockCursor implements Mutable {
                     strCursor = new IlpV4StringColumnCursor();
                     columnCursors.setQuick(colIndex, strCursor);
                 }
+                stringColumnIndices[stringColumnCount++] = colIndex;
                 return strCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength);
 
             case TYPE_SYMBOL:
@@ -227,6 +257,7 @@ public class IlpV4TableBlockCursor implements Mutable {
                     symCursor = new IlpV4SymbolColumnCursor();
                     columnCursors.setQuick(colIndex, symCursor);
                 }
+                symbolColumnIndices[symbolColumnCount++] = colIndex;
                 return symCursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength);
 
             case TYPE_GEOHASH:
@@ -237,6 +268,7 @@ public class IlpV4TableBlockCursor implements Mutable {
                     geoCursor = new IlpV4GeoHashColumnCursor();
                     columnCursors.setQuick(colIndex, geoCursor);
                 }
+                geoHashColumnIndices[geoHashColumnCount++] = colIndex;
                 return geoCursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength);
 
             default:
@@ -313,8 +345,30 @@ public class IlpV4TableBlockCursor implements Mutable {
      */
     public void nextRow() throws IlpV4ParseException {
         currentRow++;
-        for (int i = 0; i < columnCount; i++) {
-            columnNullFlags[i] = columnCursors.getQuick(i).advanceRow();
+        // Type-bucketed iteration for monomorphic advanceRow() calls
+        for (int i = 0; i < booleanColumnCount; i++) {
+            int col = booleanColumnIndices[i];
+            columnNullFlags[col] = getBooleanColumn(col).advanceRow();
+        }
+        for (int i = 0; i < fixedWidthColumnCount; i++) {
+            int col = fixedWidthColumnIndices[i];
+            columnNullFlags[col] = getFixedWidthColumn(col).advanceRow();
+        }
+        for (int i = 0; i < timestampColumnCount; i++) {
+            int col = timestampColumnIndices[i];
+            columnNullFlags[col] = getTimestampColumn(col).advanceRow();
+        }
+        for (int i = 0; i < stringColumnCount; i++) {
+            int col = stringColumnIndices[i];
+            columnNullFlags[col] = getStringColumn(col).advanceRow();
+        }
+        for (int i = 0; i < symbolColumnCount; i++) {
+            int col = symbolColumnIndices[i];
+            columnNullFlags[col] = getSymbolColumn(col).advanceRow();
+        }
+        for (int i = 0; i < geoHashColumnCount; i++) {
+            int col = geoHashColumnIndices[i];
+            columnNullFlags[col] = getGeoHashColumn(col).advanceRow();
         }
     }
 
@@ -417,6 +471,14 @@ public class IlpV4TableBlockCursor implements Mutable {
         columnDefs = null;
         bytesConsumed = 0;
         schemaCache = null;
+
+        // Reset type bucket counts
+        booleanColumnCount = 0;
+        fixedWidthColumnCount = 0;
+        timestampColumnCount = 0;
+        stringColumnCount = 0;
+        symbolColumnCount = 0;
+        geoHashColumnCount = 0;
 
         // Clear all column cursors
         for (int i = 0; i < columnCursors.size(); i++) {
