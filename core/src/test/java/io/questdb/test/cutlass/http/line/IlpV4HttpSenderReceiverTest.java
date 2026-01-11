@@ -6281,4 +6281,55 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
+
+    // ==================== Regression tests ====================
+
+    /**
+     * Regression test for flushIntervalNanos not being initialized.
+     *
+     * When flushIntervalNanos was not initialized (defaulting to 0), time-based
+     * auto-flush would trigger on almost every row, causing severe performance
+     * degradation. This test verifies that rows are properly batched when
+     * auto-flush is disabled (the default).
+     */
+    @Test
+    public void testBuilderRowsBatchedByDefault() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Use IlpV4HttpSender directly to access pendingRows
+                try (IlpV4HttpSender sender = (IlpV4HttpSender) Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+
+                    // Send 100 rows without explicit flush
+                    // If the bug exists, each row would trigger auto-flush
+                    // and pendingRows would never accumulate
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("test_batching")
+                                .symbol("tag", "value")
+                                .longColumn("counter", i)
+                                .at(1000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+
+                    // Verify rows are pending (not auto-flushed)
+                    Assert.assertEquals("Rows should be batched, not auto-flushed individually",
+                            100, sender.getPendingRows());
+
+                    // Now flush all at once
+                    sender.flush();
+
+                    // Verify all rows were sent
+                    Assert.assertEquals("All rows should be flushed", 0, sender.getPendingRows());
+                }
+
+                serverMain.awaitTable("test_batching");
+                serverMain.assertSql("select count() from test_batching", "count\n100\n");
+            }
+        });
+    }
 }

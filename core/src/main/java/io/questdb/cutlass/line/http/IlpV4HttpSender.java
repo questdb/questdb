@@ -139,6 +139,7 @@ public class IlpV4HttpSender implements Sender {
         this.autoFlushRows = 0;
         this.pendingRows = 0;
         this.timeoutMs = DEFAULT_TIMEOUT_MS;
+        this.flushIntervalNanos = Long.MAX_VALUE; // Disable time-based auto-flush by default
         // Create TLS or plain text HTTP client based on configuration
         this.client = tlsConfig != null
                 ? HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig)
