@@ -7176,9 +7176,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             avg
                             500.5
                             """,
-                    "union",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "union"
             );
 
             assertWithReorder(
@@ -7187,9 +7185,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             500.5
                             500.5
                             """,
-                    "union all",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "union all"
             );
 
             assertWithReorder(
@@ -7197,16 +7193,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             avg
                             500.5
                             """,
-                    "intersect",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "intersect"
             );
 
             assertWithReorder(
                     "avg\n",
-                    "except",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "except"
             );
         });
     }
@@ -7549,9 +7541,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         );
     }
 
-    private void assertWithReorder(String expected, String setOperation, String... subqueries) throws Exception {
-        assertSql(expected, subqueries[0] + " " + setOperation + " " + subqueries[1]);
-        assertSql(expected, subqueries[1] + " " + setOperation + " " + subqueries[0]);
+    private void assertWithReorder(String expected, String setOperation) throws Exception {
+        assertSql(expected, "select avg(event) from ict " + " " + setOperation + " " + "select distinct avg(event) from ict");
+        assertSql(expected, "select distinct avg(event) from ict" + " " + setOperation + " " + "select avg(event) from ict ");
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {
