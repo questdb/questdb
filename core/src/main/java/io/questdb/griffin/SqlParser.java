@@ -147,12 +147,13 @@ public class SqlParser {
     private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<WindowColumn> windowColumnPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
+    private boolean copyMode = false;
+    private boolean createTableMode = false;
+    private boolean createViewMode = false;
     private int digit;
     private boolean overClauseMode = false;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
-    private boolean createTableMode = false;
-    private boolean copyMode = false;
 
     SqlParser(
             CairoEngine cairoEngine,
@@ -848,8 +849,7 @@ public class SqlParser {
 
     private CharSequence optTok(GenericLexer lexer) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || (subQueryMode && Chars.equals(tok, ')')
-                && !overClauseMode && !pivotMode)) {
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode && !pivotMode)) {
             return null;
         }
         return tok;
@@ -2006,7 +2006,13 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        final QueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        final QueryModel queryModel;
+        try {
+            createViewMode = true;
+            queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        } finally {
+            createViewMode = false;
+        }
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
@@ -3997,7 +4003,7 @@ public class SqlParser {
                 }
 
                 if (Chars.equals(tok, ')')) {
-                    if (subQueryMode || overClauseMode || createTableMode || copyMode) {
+                    if (subQueryMode || overClauseMode || createTableMode || copyMode || createViewMode) {
                         // it's a balanced: ')'
                         lexer.unparseLast();
                         break;
@@ -4896,6 +4902,7 @@ public class SqlParser {
         subQueryMode = false;
         createTableMode = false;
         copyMode = false;
+        createViewMode = false;
         characterStore.clear();
         insertModelPool.clear();
         pivotQueryColumnPool.clear();
