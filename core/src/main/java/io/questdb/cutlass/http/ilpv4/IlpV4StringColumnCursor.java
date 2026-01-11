@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.ilpv4;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.TYPE_STRING;
 
@@ -80,7 +81,7 @@ public final class IlpV4StringColumnCursor implements IlpV4ColumnCursor {
         this.typeCode = typeCode;
         this.nullable = nullable;
         this.rowCount = rowCount;
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength);
+        this.nameUtf8.of(nameAddress, nameAddress + nameLength, Utf8s.isAscii(nameAddress, nameLength));
 
         int offset = 0;
         int nullCount = 0;
@@ -148,7 +149,10 @@ public final class IlpV4StringColumnCursor implements IlpV4ColumnCursor {
         int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
 
         // Update flyweight to point to this string's bytes - NO ALLOCATION!
-        valueUtf8.of(stringDataAddress + startOffset, stringDataAddress + endOffset);
+        int stringLen = endOffset - startOffset;
+        long stringAddr = stringDataAddress + startOffset;
+        boolean ascii = Utf8s.isAscii(stringAddr, stringLen);
+        valueUtf8.of(stringAddr, stringDataAddress + endOffset, ascii);
         currentValueIndex++;
         return false;
     }
