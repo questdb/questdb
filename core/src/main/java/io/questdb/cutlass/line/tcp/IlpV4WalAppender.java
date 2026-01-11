@@ -330,42 +330,24 @@ public class IlpV4WalAppender {
      * @return QuestDB column type
      */
     public static int mapIlpV4TypeToQuestDB(int ilpType) {
-        switch (ilpType) {
-            case TYPE_BOOLEAN:
-                return ColumnType.BOOLEAN;
-            case TYPE_BYTE:
-                return ColumnType.BYTE;
-            case TYPE_SHORT:
-                return ColumnType.SHORT;
-            case TYPE_INT:
-                return ColumnType.INT;
-            case TYPE_LONG:
-                return ColumnType.LONG;
-            case TYPE_FLOAT:
-                return ColumnType.FLOAT;
-            case TYPE_DOUBLE:
-                return ColumnType.DOUBLE;
-            case TYPE_STRING:
-                return ColumnType.STRING;
-            case TYPE_VARCHAR:
-                return ColumnType.VARCHAR;
-            case TYPE_SYMBOL:
-                return ColumnType.SYMBOL;
-            case TYPE_TIMESTAMP:
-                return ColumnType.TIMESTAMP;
-            case TYPE_TIMESTAMP_NANOS:
-                return ColumnType.TIMESTAMP_NANO;
-            case TYPE_DATE:
-                return ColumnType.DATE;
-            case TYPE_UUID:
-                return ColumnType.UUID;
-            case TYPE_LONG256:
-                return ColumnType.LONG256;
-            case TYPE_GEOHASH:
-                return ColumnType.GEOLONG; // Default to GEOLONG, precision handled separately
-            default:
-                throw new IllegalArgumentException("Unknown ILP v4 type: " + ilpType);
-        }
+        return switch (ilpType) {
+            case TYPE_BOOLEAN -> ColumnType.BOOLEAN;
+            case TYPE_BYTE -> ColumnType.BYTE;
+            case TYPE_SHORT -> ColumnType.SHORT;
+            case TYPE_INT -> ColumnType.INT;
+            case TYPE_LONG -> ColumnType.LONG;
+            case TYPE_FLOAT -> ColumnType.FLOAT;
+            case TYPE_DOUBLE -> ColumnType.DOUBLE;
+            case TYPE_STRING, TYPE_VARCHAR -> ColumnType.VARCHAR;
+            case TYPE_SYMBOL -> ColumnType.SYMBOL;
+            case TYPE_TIMESTAMP -> ColumnType.TIMESTAMP;
+            case TYPE_TIMESTAMP_NANOS -> ColumnType.TIMESTAMP_NANO;
+            case TYPE_DATE -> ColumnType.DATE;
+            case TYPE_UUID -> ColumnType.UUID;
+            case TYPE_LONG256 -> ColumnType.LONG256;
+            case TYPE_GEOHASH -> ColumnType.GEOLONG; // Default to GEOLONG, precision handled separately
+            default -> throw new IllegalArgumentException("Unknown ILP v4 type: " + ilpType);
+        };
     }
 
     /**

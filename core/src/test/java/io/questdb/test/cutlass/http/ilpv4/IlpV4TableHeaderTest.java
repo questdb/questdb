@@ -44,12 +44,17 @@ public class IlpV4TableHeaderTest {
         String tableName = "weather";
         byte[] buf = encodeTableHeader(tableName, 100, 5);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(tableName, header.getTableName());
-        Assert.assertEquals(100, header.getRowCount());
-        Assert.assertEquals(5, header.getColumnCount());
+            Assert.assertEquals(tableName, header.getTableName());
+            Assert.assertEquals(100, header.getRowCount());
+            Assert.assertEquals(5, header.getColumnCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -61,12 +66,15 @@ public class IlpV4TableHeaderTest {
         offset = IlpV4Varint.encode(buf, offset, 100);
         offset = IlpV4Varint.encode(buf, offset, 5);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
+        long address = copyToDirectMemory(buf, offset);
         try {
-            header.parse(buf, 0, offset);
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, offset);
             Assert.fail("Expected exception for empty table name");
         } catch (IlpV4ParseException e) {
             Assert.assertTrue(e.getMessage().contains("empty table name"));
+        } finally {
+            Unsafe.free(address, offset, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -80,10 +88,15 @@ public class IlpV4TableHeaderTest {
         String tableName = sb.toString();
         byte[] buf = encodeTableHeader(tableName, 1, 1);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(tableName, header.getTableName());
+            Assert.assertEquals(tableName, header.getTableName());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -96,12 +109,15 @@ public class IlpV4TableHeaderTest {
         String tableName = sb.toString();
         byte[] buf = encodeTableHeader(tableName, 1, 1);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
+        long address = copyToDirectMemory(buf);
         try {
-            header.parse(buf, 0, buf.length);
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
             Assert.fail("Expected exception for table name too long");
         } catch (IlpV4ParseException e) {
             Assert.assertTrue(e.getMessage().contains("table name too long"));
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -111,10 +127,15 @@ public class IlpV4TableHeaderTest {
         String tableName = "données_météo";
         byte[] buf = encodeTableHeader(tableName, 50, 3);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(tableName, header.getTableName());
+            Assert.assertEquals(tableName, header.getTableName());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -123,10 +144,15 @@ public class IlpV4TableHeaderTest {
         String tableName = "测量数据";
         byte[] buf = encodeTableHeader(tableName, 10, 2);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(tableName, header.getTableName());
+            Assert.assertEquals(tableName, header.getTableName());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     // ==================== Row Count Tests ====================
@@ -135,10 +161,15 @@ public class IlpV4TableHeaderTest {
     public void testRowCountZero() throws IlpV4ParseException {
         byte[] buf = encodeTableHeader("test", 0, 5);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(0, header.getRowCount());
+            Assert.assertEquals(0, header.getRowCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -147,10 +178,15 @@ public class IlpV4TableHeaderTest {
         long rowCount = 1_000_000;
         byte[] buf = encodeTableHeader("test", rowCount, 5);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(rowCount, header.getRowCount());
+            Assert.assertEquals(rowCount, header.getRowCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -159,10 +195,15 @@ public class IlpV4TableHeaderTest {
         long rowCount = IlpV4Constants.DEFAULT_MAX_ROWS_PER_TABLE;
         byte[] buf = encodeTableHeader("test", rowCount, 5);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(rowCount, header.getRowCount());
+            Assert.assertEquals(rowCount, header.getRowCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -171,10 +212,15 @@ public class IlpV4TableHeaderTest {
         long rowCount = Long.MAX_VALUE >> 1; // Very large but valid
         byte[] buf = encodeTableHeader("test", rowCount, 5);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(rowCount, header.getRowCount());
+            Assert.assertEquals(rowCount, header.getRowCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     // ==================== Column Count Tests ====================
@@ -184,10 +230,15 @@ public class IlpV4TableHeaderTest {
         // Zero columns might be valid for empty table blocks
         byte[] buf = encodeTableHeader("test", 10, 0);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(0, header.getColumnCount());
+            Assert.assertEquals(0, header.getColumnCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -196,10 +247,15 @@ public class IlpV4TableHeaderTest {
         int columnCount = 500;
         byte[] buf = encodeTableHeader("test", 100, columnCount);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(columnCount, header.getColumnCount());
+            Assert.assertEquals(columnCount, header.getColumnCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -208,10 +264,15 @@ public class IlpV4TableHeaderTest {
         int columnCount = IlpV4Constants.MAX_COLUMNS_PER_TABLE;
         byte[] buf = encodeTableHeader("test", 100, columnCount);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals(columnCount, header.getColumnCount());
+            Assert.assertEquals(columnCount, header.getColumnCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -220,12 +281,15 @@ public class IlpV4TableHeaderTest {
         int columnCount = IlpV4Constants.MAX_COLUMNS_PER_TABLE + 1;
         byte[] buf = encodeTableHeader("test", 100, columnCount);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
+        long address = copyToDirectMemory(buf);
         try {
-            header.parse(buf, 0, buf.length);
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
             Assert.fail("Expected exception for column count exceeding max");
         } catch (IlpV4ParseException e) {
             Assert.assertTrue(e.getMessage().contains("column count exceeds maximum"));
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -241,44 +305,26 @@ public class IlpV4TableHeaderTest {
         System.arraycopy(header1, 0, combined, 0, header1.length);
         System.arraycopy(header2, 0, combined, header1.length, header2.length);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-
-        // Parse first header
-        header.parse(combined, 0, combined.length);
-        Assert.assertEquals("table1", header.getTableName());
-        Assert.assertEquals(100, header.getRowCount());
-        Assert.assertEquals(5, header.getColumnCount());
-        int consumed1 = header.getBytesConsumed();
-        Assert.assertEquals(header1.length, consumed1);
-
-        // Parse second header
-        header.reset();
-        header.parse(combined, consumed1, combined.length - consumed1);
-        Assert.assertEquals("table2", header.getTableName());
-        Assert.assertEquals(200, header.getRowCount());
-        Assert.assertEquals(10, header.getColumnCount());
-    }
-
-    // ==================== Direct Memory Tests ====================
-
-    @Test
-    public void testParseDirectMemory() throws IlpV4ParseException {
-        byte[] buf = encodeTableHeader("weather", 100, 5);
-
-        long address = Unsafe.malloc(buf.length, MemoryTag.NATIVE_DEFAULT);
+        long address = copyToDirectMemory(combined);
         try {
-            for (int i = 0; i < buf.length; i++) {
-                Unsafe.getUnsafe().putByte(address + i, buf[i]);
-            }
-
             IlpV4TableHeader header = new IlpV4TableHeader();
-            header.parse(address, buf.length);
 
-            Assert.assertEquals("weather", header.getTableName());
+            // Parse first header
+            header.parse(address, combined.length);
+            Assert.assertEquals("table1", header.getTableName());
             Assert.assertEquals(100, header.getRowCount());
             Assert.assertEquals(5, header.getColumnCount());
+            int consumed1 = header.getBytesConsumed();
+            Assert.assertEquals(header1.length, consumed1);
+
+            // Parse second header
+            header.reset();
+            header.parse(address + consumed1, combined.length - consumed1);
+            Assert.assertEquals("table2", header.getTableName());
+            Assert.assertEquals(200, header.getRowCount());
+            Assert.assertEquals(10, header.getColumnCount());
         } finally {
-            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, combined.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -295,12 +341,17 @@ public class IlpV4TableHeaderTest {
         int written = original.encode(buf, 0);
         Assert.assertEquals(buf.length, written);
 
-        IlpV4TableHeader parsed = new IlpV4TableHeader();
-        parsed.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader parsed = new IlpV4TableHeader();
+            parsed.parse(address, buf.length);
 
-        Assert.assertEquals(original.getTableName(), parsed.getTableName());
-        Assert.assertEquals(original.getRowCount(), parsed.getRowCount());
-        Assert.assertEquals(original.getColumnCount(), parsed.getColumnCount());
+            Assert.assertEquals(original.getTableName(), parsed.getTableName());
+            Assert.assertEquals(original.getRowCount(), parsed.getRowCount());
+            Assert.assertEquals(original.getColumnCount(), parsed.getColumnCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -336,12 +387,15 @@ public class IlpV4TableHeaderTest {
         byte[] truncated = new byte[buf.length / 2];
         System.arraycopy(buf, 0, truncated, 0, truncated.length);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
+        long address = copyToDirectMemory(truncated);
         try {
-            header.parse(truncated, 0, truncated.length);
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, truncated.length);
             Assert.fail("Expected exception for truncated buffer");
         } catch (IlpV4ParseException e) {
             // Expected
+        } finally {
+            Unsafe.free(address, truncated.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -349,20 +403,37 @@ public class IlpV4TableHeaderTest {
     public void testReset() throws IlpV4ParseException {
         byte[] buf = encodeTableHeader("test", 100, 5);
 
-        IlpV4TableHeader header = new IlpV4TableHeader();
-        header.parse(buf, 0, buf.length);
+        long address = copyToDirectMemory(buf);
+        try {
+            IlpV4TableHeader header = new IlpV4TableHeader();
+            header.parse(address, buf.length);
 
-        Assert.assertEquals("test", header.getTableName());
+            Assert.assertEquals("test", header.getTableName());
 
-        header.reset();
+            header.reset();
 
-        Assert.assertNull(header.getTableName());
-        Assert.assertEquals(0, header.getRowCount());
-        Assert.assertEquals(0, header.getColumnCount());
-        Assert.assertEquals(0, header.getBytesConsumed());
+            Assert.assertNull(header.getTableName());
+            Assert.assertEquals(0, header.getRowCount());
+            Assert.assertEquals(0, header.getColumnCount());
+            Assert.assertEquals(0, header.getBytesConsumed());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     // ==================== Helper Methods ====================
+
+    private static long copyToDirectMemory(byte[] buf) {
+        return copyToDirectMemory(buf, buf.length);
+    }
+
+    private static long copyToDirectMemory(byte[] buf, int length) {
+        long address = Unsafe.malloc(length, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < length; i++) {
+            Unsafe.getUnsafe().putByte(address + i, buf[i]);
+        }
+        return address;
+    }
 
     private byte[] encodeTableHeader(String tableName, long rowCount, int columnCount) {
         byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);

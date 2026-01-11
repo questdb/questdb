@@ -25,6 +25,9 @@
 package io.questdb.cutlass.http.ilpv4;
 
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8s;
 
 import java.nio.charset.StandardCharsets;
 
@@ -44,11 +47,15 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
  * </pre>
  * <p>
  * This class is mutable and reusable. Call {@link #reset()} before parsing a new header.
+ * <p>
+ * For zero-allocation parsing from direct memory, use {@link #getTableNameUtf8()}.
+ * The {@link #getTableName()} method allocates a String on-demand when needed.
  */
 public class IlpV4TableHeader {
 
     private final IlpV4Varint.DecodeResult decodeResult = new IlpV4Varint.DecodeResult();
-    private String tableName;
+    private final DirectUtf8String tableNameUtf8 = new DirectUtf8String();
+    private String tableNameStr;  // Lazily allocated when getTableName() is called
     private long rowCount;
     private int columnCount;
     private int bytesConsumed;
@@ -85,12 +92,9 @@ public class IlpV4TableHeader {
             throw IlpV4ParseException.headerTooShort();
         }
 
-        // Read table name bytes
-        byte[] nameBytes = new byte[nameLenInt];
-        for (int i = 0; i < nameLenInt; i++) {
-            nameBytes[i] = Unsafe.getUnsafe().getByte(address + offset + i);
-        }
-        this.tableName = new String(nameBytes, StandardCharsets.UTF_8);
+        // Set up flyweight pointing to table name bytes in wire memory (zero allocation)
+        this.tableNameUtf8.of(address + offset, address + offset + nameLenInt);
+        this.tableNameStr = null;  // Clear cached String, will be lazily allocated if needed
         offset += nameLenInt;
 
         // Parse row count
@@ -106,69 +110,6 @@ public class IlpV4TableHeader {
             throw IlpV4ParseException.headerTooShort();
         }
         IlpV4Varint.decode(address + offset, limit, decodeResult);
-        long colCount = decodeResult.value;
-        if (colCount > MAX_COLUMNS_PER_TABLE) {
-            throw IlpV4ParseException.create(
-                    IlpV4ParseException.ErrorCode.COLUMN_COUNT_EXCEEDED,
-                    "column count exceeds maximum: " + colCount + " (max " + MAX_COLUMNS_PER_TABLE + ")"
-            );
-        }
-        this.columnCount = (int) colCount;
-        offset += decodeResult.bytesRead;
-
-        this.bytesConsumed = offset;
-    }
-
-    /**
-     * Parses a table header from a byte array.
-     *
-     * @param buf       buffer
-     * @param bufOffset starting offset
-     * @param length    available bytes
-     * @throws IlpV4ParseException if parsing fails
-     */
-    public void parse(byte[] buf, int bufOffset, int length) throws IlpV4ParseException {
-        int offset = 0;
-        int limit = bufOffset + length; // Absolute position of end of data
-
-        // Parse table name length
-        IlpV4Varint.decode(buf, bufOffset + offset, limit, decodeResult);
-        offset += decodeResult.bytesRead;
-
-        int nameLenInt = (int) decodeResult.value;
-        if (nameLenInt <= 0) {
-            throw IlpV4ParseException.create(
-                    IlpV4ParseException.ErrorCode.INVALID_TABLE_NAME,
-                    "empty table name"
-            );
-        }
-        if (nameLenInt > MAX_TABLE_NAME_LENGTH) {
-            throw IlpV4ParseException.create(
-                    IlpV4ParseException.ErrorCode.INVALID_TABLE_NAME,
-                    "table name too long: " + nameLenInt + " bytes (max " + MAX_TABLE_NAME_LENGTH + ")"
-            );
-        }
-        if (offset + nameLenInt > length) {
-            throw IlpV4ParseException.headerTooShort();
-        }
-
-        // Read table name
-        this.tableName = new String(buf, bufOffset + offset, nameLenInt, StandardCharsets.UTF_8);
-        offset += nameLenInt;
-
-        // Parse row count
-        if (offset >= length) {
-            throw IlpV4ParseException.headerTooShort();
-        }
-        IlpV4Varint.decode(buf, bufOffset + offset, limit, decodeResult);
-        this.rowCount = decodeResult.value;
-        offset += decodeResult.bytesRead;
-
-        // Parse column count
-        if (offset >= length) {
-            throw IlpV4ParseException.headerTooShort();
-        }
-        IlpV4Varint.decode(buf, bufOffset + offset, limit, decodeResult);
         long colCount = decodeResult.value;
         if (colCount > MAX_COLUMNS_PER_TABLE) {
             throw IlpV4ParseException.create(
@@ -189,11 +130,19 @@ public class IlpV4TableHeader {
      * @return address after encoded header
      */
     public long encode(long address) {
-        byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
-
-        long pos = IlpV4Varint.encode(address, nameBytes.length);
-        for (byte b : nameBytes) {
-            Unsafe.getUnsafe().putByte(pos++, b);
+        long pos;
+        if (tableNameUtf8.size() > 0) {
+            // Copy directly from flyweight (avoids String allocation)
+            int nameLen = tableNameUtf8.size();
+            pos = IlpV4Varint.encode(address, nameLen);
+            Unsafe.getUnsafe().copyMemory(tableNameUtf8.ptr(), pos, nameLen);
+            pos += nameLen;
+        } else {
+            byte[] nameBytes = getTableName().getBytes(StandardCharsets.UTF_8);
+            pos = IlpV4Varint.encode(address, nameBytes.length);
+            for (byte b : nameBytes) {
+                Unsafe.getUnsafe().putByte(pos++, b);
+            }
         }
 
         pos = IlpV4Varint.encode(pos, rowCount);
@@ -210,11 +159,20 @@ public class IlpV4TableHeader {
      * @return offset after encoded header
      */
     public int encode(byte[] buf, int offset) {
-        byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
-
-        offset = IlpV4Varint.encode(buf, offset, nameBytes.length);
-        System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
-        offset += nameBytes.length;
+        if (tableNameUtf8.size() > 0) {
+            // Copy directly from flyweight
+            int nameLen = tableNameUtf8.size();
+            offset = IlpV4Varint.encode(buf, offset, nameLen);
+            for (int i = 0; i < nameLen; i++) {
+                buf[offset + i] = Unsafe.getUnsafe().getByte(tableNameUtf8.ptr() + i);
+            }
+            offset += nameLen;
+        } else {
+            byte[] nameBytes = getTableName().getBytes(StandardCharsets.UTF_8);
+            offset = IlpV4Varint.encode(buf, offset, nameBytes.length);
+            System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
+            offset += nameBytes.length;
+        }
 
         offset = IlpV4Varint.encode(buf, offset, rowCount);
         offset = IlpV4Varint.encode(buf, offset, columnCount);
@@ -228,9 +186,14 @@ public class IlpV4TableHeader {
      * @return encoded size
      */
     public int encodedSize() {
-        byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
-        return IlpV4Varint.encodedLength(nameBytes.length) +
-                nameBytes.length +
+        int nameLen;
+        if (tableNameUtf8.size() > 0) {
+            nameLen = tableNameUtf8.size();
+        } else {
+            nameLen = getTableName().getBytes(StandardCharsets.UTF_8).length;
+        }
+        return IlpV4Varint.encodedLength(nameLen) +
+                nameLen +
                 IlpV4Varint.encodedLength(rowCount) +
                 IlpV4Varint.encodedLength(columnCount);
     }
@@ -239,7 +202,8 @@ public class IlpV4TableHeader {
      * Resets this header for reuse.
      */
     public void reset() {
-        tableName = null;
+        tableNameUtf8.clear();
+        tableNameStr = null;
         rowCount = 0;
         columnCount = 0;
         bytesConsumed = 0;
@@ -247,12 +211,32 @@ public class IlpV4TableHeader {
 
     // ==================== Getters and Setters ====================
 
+    /**
+     * Returns the table name as a UTF-8 sequence (zero allocation).
+     * <p>
+     * The returned sequence points directly to the wire memory and is valid
+     * until the next call to {@link #parse} or {@link #reset}.
+     */
+    public DirectUtf8Sequence getTableNameUtf8() {
+        return tableNameUtf8;
+    }
+
+    /**
+     * Returns the table name as a String.
+     * <p>
+     * This method allocates on first call after parsing from direct memory.
+     * For zero-allocation access, use {@link #getTableNameUtf8()}.
+     */
     public String getTableName() {
-        return tableName;
+        if (tableNameStr == null && tableNameUtf8.size() > 0) {
+            tableNameStr = Utf8s.stringFromUtf8Bytes(tableNameUtf8.ptr(), tableNameUtf8.ptr() + tableNameUtf8.size());
+        }
+        return tableNameStr;
     }
 
     public void setTableName(String tableName) {
-        this.tableName = tableName;
+        this.tableNameStr = tableName;
+        this.tableNameUtf8.clear();  // Not valid when set from String
     }
 
     public long getRowCount() {
@@ -281,7 +265,7 @@ public class IlpV4TableHeader {
     @Override
     public String toString() {
         return "IlpV4TableHeader{" +
-                "tableName='" + tableName + '\'' +
+                "tableName='" + getTableName() + '\'' +
                 ", rowCount=" + rowCount +
                 ", columnCount=" + columnCount +
                 '}';

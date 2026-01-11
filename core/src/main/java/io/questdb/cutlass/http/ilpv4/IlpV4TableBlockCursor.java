@@ -27,7 +27,6 @@ package io.questdb.cutlass.http.ilpv4;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8String;
 
 import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
 
@@ -52,7 +51,6 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
  */
 public class IlpV4TableBlockCursor implements Mutable {
 
-    private final DirectUtf8String tableNameUtf8 = new DirectUtf8String();
     private final IlpV4TableHeader tableHeader = new IlpV4TableHeader();
     private final IlpV4Varint.DecodeResult decodeResult = new IlpV4Varint.DecodeResult();
 
@@ -63,7 +61,6 @@ public class IlpV4TableBlockCursor implements Mutable {
     private IlpV4SchemaCache schemaCache;
 
     // Table state
-    private String tableName;  // Cached for table lookup (one allocation per table block)
     private int rowCount;
     private int columnCount;
     private int currentRow;
@@ -97,15 +94,8 @@ public class IlpV4TableBlockCursor implements Mutable {
         tableHeader.parse(dataAddress, dataLength);
         offset = tableHeader.getBytesConsumed();
 
-        this.tableName = tableHeader.getTableName();
         this.rowCount = (int) tableHeader.getRowCount();
         this.columnCount = tableHeader.getColumnCount();
-
-        // Set up table name flyweight (points to wire memory)
-        // Note: We need to find the table name start address from the header parsing
-        // The table header format is: [name_len varint][name bytes][row_count varint][col_count varint]
-        // For now, we use the String from the header (one allocation per table)
-        // TODO: Parse table name address directly for full zero-alloc
 
         // Parse schema section
         IlpV4Schema.ParseResult schemaResult = IlpV4Schema.parse(dataAddress + offset, dataLength - offset, columnCount);
@@ -116,7 +106,7 @@ public class IlpV4TableBlockCursor implements Mutable {
             schema = schemaResult.schema;
             // Cache the schema if caching is enabled
             if (schemaCache != null) {
-                schemaCache.put(tableName, schema);
+                schemaCache.put(tableHeader.getTableName(), schema);
             }
         } else {
             // Schema reference mode - look up in cache
@@ -126,11 +116,11 @@ public class IlpV4TableBlockCursor implements Mutable {
                         "schema reference mode requires schema cache"
                 );
             }
-            schema = schemaCache.get(tableName, schemaResult.schemaHash);
+            schema = schemaCache.get(tableHeader.getTableName(), schemaResult.schemaHash);
             if (schema == null) {
                 throw IlpV4ParseException.create(
                         IlpV4ParseException.ErrorCode.SCHEMA_NOT_FOUND,
-                        "schema not found in cache for table: " + tableName
+                        "schema not found in cache for table: " + tableHeader.getTableName()
                 );
             }
         }
@@ -259,12 +249,23 @@ public class IlpV4TableBlockCursor implements Mutable {
     }
 
     /**
-     * Returns the table name.
+     * Returns the table name as a UTF-8 sequence (zero allocation).
      * <p>
-     * Note: This allocates on first call per table block for cache lookup.
+     * The returned sequence points directly to wire memory and is valid
+     * until the cursor is reused for another table block.
+     */
+    public DirectUtf8Sequence getTableNameUtf8() {
+        return tableHeader.getTableNameUtf8();
+    }
+
+    /**
+     * Returns the table name as a String.
+     * <p>
+     * This allocates on first call per table block. Prefer {@link #getTableNameUtf8()}
+     * for zero-allocation access on hot paths.
      */
     public String getTableName() {
-        return tableName;
+        return tableHeader.getTableName();
     }
 
     /**
@@ -392,9 +393,7 @@ public class IlpV4TableBlockCursor implements Mutable {
 
     @Override
     public void clear() {
-        tableNameUtf8.clear();
         tableHeader.reset();
-        tableName = null;
         rowCount = 0;
         columnCount = 0;
         currentRow = -1;

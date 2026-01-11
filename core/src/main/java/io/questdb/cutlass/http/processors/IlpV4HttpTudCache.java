@@ -41,6 +41,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 
 /**
@@ -141,17 +142,16 @@ public class IlpV4HttpTudCache implements QuietCloseable {
 
     public WalTableUpdateDetails getTableUpdateDetails(
             SecurityContext securityContext,
-            String tableName,
+            Utf8Sequence tableNameUtf8,
             IlpV4ColumnDef[] schema
     ) {
-        Utf8String tableNameUtf8 = new Utf8String(tableName);
         int key = tableUpdateDetails.keyIndex(tableNameUtf8);
         if (key < 0) {
             return tableUpdateDetails.valueAt(key);
         }
 
         tableNameUtf16.clear();
-        tableNameUtf16.put(tableName);
+        Utf8s.utf8ToUtf16(tableNameUtf8, tableNameUtf16);
         TableToken tableToken = getOrCreateTable(securityContext, tableNameUtf16, schema);
         if (tableToken == null) {
             return null;
@@ -165,19 +165,22 @@ public class IlpV4HttpTudCache implements QuietCloseable {
         TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
         path.of(engine.getConfiguration().getDbRoot());
 
+        // Copy table name to heap - needed for WalTableUpdateDetails and cache key
+        Utf8String tableNameCopy = Utf8String.newInstance(tableNameUtf8);
+
         WalTableUpdateDetails tud = new WalTableUpdateDetails(
                 engine,
                 securityContext,
                 engine.getWalWriter(tableToken),
                 defaultColumnTypes,
-                tableNameUtf8,
+                tableNameCopy,
                 symbolCachePool,
                 -1,
                 false,
                 Long.MAX_VALUE
         );
 
-        tableUpdateDetails.putAt(key, tableNameUtf8, tud);
+        tableUpdateDetails.putAt(key, tableNameCopy, tud);
         return tud;
     }
 

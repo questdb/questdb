@@ -143,11 +143,10 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
             // Process each table block using streaming cursors
             while (messageCursor.hasNextTable()) {
                 IlpV4TableBlockCursor tableBlock = messageCursor.nextTable();
-                String tableName = tableBlock.getTableName();
 
-                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(securityContext, tableName, tableBlock.getSchema());
+                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(securityContext, tableBlock.getTableNameUtf8(), tableBlock.getSchema());
                 if (tud == null) {
-                    reject(Status.INTERNAL_ERROR, "failed to create table update details for: " + tableName, fd);
+                    reject(Status.INTERNAL_ERROR, "failed to create table update details for: " + tableBlock.getTableName(), fd);
                     return;
                 }
 
