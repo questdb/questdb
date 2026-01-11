@@ -47,11 +47,12 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
     private static final String ERROR_ID = generateErrorId();
     private static final Log LOG = LogFactory.getLog(IlpV4HttpProcessorState.class);
 
-    private final IlpV4MessageDecoder messageDecoder;
+    private final IlpV4StreamingDecoder streamingDecoder;
     private final IlpV4WalAppender walAppender;
     private final StringSink error = new StringSink();
     private final IlpV4HttpTudCache tudCache;
     private final int maxResponseErrorMessageLength;
+    private final IlpV4SchemaCache schemaCache;
 
     // Buffer to accumulate incoming data
     private long bufferAddress;
@@ -72,7 +73,8 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
     ) {
         assert initBufferSize > 0;
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
-        this.messageDecoder = new IlpV4MessageDecoder();
+        this.schemaCache = new IlpV4SchemaCache();
+        this.streamingDecoder = new IlpV4StreamingDecoder(schemaCache);
         this.walAppender = new IlpV4WalAppender(
                 configuration.autoCreateNewColumns(),
                 engine.getConfiguration().getMaxFileNameLength()
@@ -98,11 +100,13 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
         currentStatus = Status.OK;
         bufferPosition = 0;
         sendStatus = SendStatus.NONE;
+        streamingDecoder.reset();
     }
 
     @Override
     public void close() {
         Misc.free(tudCache);
+        Misc.free(streamingDecoder);
         if (bufferAddress != 0) {
             Unsafe.free(bufferAddress, bufferSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferAddress = 0;
@@ -133,12 +137,12 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
         }
 
         try {
-            // Decode the message
-            IlpV4DecodedMessage message = messageDecoder.decode(bufferAddress, bufferPosition);
+            // Decode using streaming decoder (zero-allocation after warmup)
+            IlpV4MessageCursor messageCursor = streamingDecoder.decode(bufferAddress, bufferPosition);
 
-            // Process each table block
-            for (int i = 0; i < message.getTableCount(); i++) {
-                IlpV4DecodedTableBlock tableBlock = message.getTableBlock(i);
+            // Process each table block using streaming cursors
+            while (messageCursor.hasNextTable()) {
+                IlpV4TableBlockCursor tableBlock = messageCursor.nextTable();
                 String tableName = tableBlock.getTableName();
 
                 WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(securityContext, tableName, tableBlock.getSchema());
@@ -147,7 +151,7 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
                     return;
                 }
 
-                walAppender.appendToWal(securityContext, tableBlock, tud);
+                walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
             }
 
         } catch (IlpV4ParseException e) {

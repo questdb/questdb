@@ -289,6 +289,14 @@ public class IlpV4TableBlockCursor implements Mutable {
     }
 
     /**
+     * Returns the column definitions array for schema access.
+     * Note: Returns internal array directly (no copy) for zero-allocation.
+     */
+    public IlpV4ColumnDef[] getSchema() {
+        return columnDefs;
+    }
+
+    /**
      * Returns whether there are more rows to iterate.
      */
     public boolean hasNextRow() {
