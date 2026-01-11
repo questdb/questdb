@@ -1677,23 +1677,25 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFrameExcludeGroupNotSupported() {
-        // EXCLUDE GROUP is not supported - error points to 'GROUP'
+    public void testWindowFrameCurrentRowWithPrecedingEnd() {
+        // Frame starting from CURRENT ROW cannot have PRECEDING end
         assertFail(
-                "avg(c) over (partition by b order by ts rows UNBOUNDED PRECEDING EXCLUDE GROUP)",
-                73,
-                "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported"
+                "f(c) over (partition by b order by ts rows between current row and 2 preceding)",
+                69,
+                "frame starting from CURRENT ROW must end with CURRENT ROW or FOLLOWING"
         );
     }
 
     @Test
-    public void testWindowFrameExcludeTiesNotSupported() {
-        // EXCLUDE TIES is not supported - error points to 'TIES'
-        assertFail(
-                "avg(c) over (partition by b order by ts rows UNBOUNDED PRECEDING EXCLUDE TIES)",
-                73,
-                "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported"
-        );
+    public void testWindowFrameExcludeGroup() throws SqlException {
+        x("c avg over (partition by b order by ts rows between unbounded preceding and current row exclude group)",
+                "avg(c) over (partition by b order by ts rows between UNBOUNDED PRECEDING and current row EXCLUDE GROUP)");
+    }
+
+    @Test
+    public void testWindowFrameExcludeTies() throws SqlException {
+        x("c avg over (partition by b order by ts rows between unbounded preceding and current row exclude ties)",
+                "avg(c) over (partition by b order by ts rows between UNBOUNDED PRECEDING and current row EXCLUDE TIES)");
     }
 
     @Test
@@ -1713,6 +1715,119 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "avg(a) over(partition by b order by ts rows between 10 preceding and preceding)",
                 69,
                 "frame bound value expected before 'preceding'"
+        );
+    }
+
+    @Test
+    public void testWindowFrameExpressionWithExcludeTies() throws SqlException {
+        // Expression in frame bound with EXCLUDE TIES
+        x("c f over (partition by b order by ts rows between 1 1 / preceding and unbounded following exclude ties)",
+                "f(c) over (partition by b order by ts rows between 1/1 preceding and unbounded following exclude ties)");
+    }
+
+    @Test
+    public void testWindowFrameFollowingWithPrecedingEnd() {
+        // Frame starting from FOLLOWING cannot have PRECEDING end
+        assertFail(
+                "f(c) over (partition by b order by ts rows between 1 following and 2 preceding)",
+                69,
+                "frame starting from FOLLOWING must end with FOLLOWING"
+        );
+    }
+
+    @Test
+    public void testWindowFrameSingleBoundFollowing() {
+        // Single-bound mode only allows PRECEDING, not FOLLOWING
+        assertFail(
+                "f(c) over (partition by b order by ts rows 12 following)",
+                46,
+                "single-bound frame specification requires PRECEDING, use BETWEEN for FOLLOWING"
+        );
+    }
+
+    @Test
+    public void testWindowFrameTimeUnitWithGroups() {
+        // Time units are only valid with RANGE, not GROUPS
+        assertFail(
+                "f(c) over (partition by b order by a groups 10 day preceding)",
+                47,
+                "time units are only valid with RANGE frames, not ROWS or GROUPS"
+        );
+    }
+
+    @Test
+    public void testWindowFrameTimeUnitWithRows() {
+        // Time units are only valid with RANGE, not ROWS
+        assertFail(
+                "f(c) over (partition by b order by a rows 10 day preceding)",
+                45,
+                "time units are only valid with RANGE frames, not ROWS or GROUPS"
+        );
+    }
+
+    @Test
+    public void testWindowFrameUnboundedFollowingAsStart() {
+        // UNBOUNDED FOLLOWING cannot be frame start
+        assertFail(
+                "avg(a) over(partition by b order by ts rows between unbounded following and current row)",
+                62,
+                "frame start cannot be UNBOUNDED FOLLOWING, use UNBOUNDED PRECEDING"
+        );
+    }
+
+    @Test
+    public void testWindowFrameUnboundedPrecedingAsEnd() {
+        // UNBOUNDED PRECEDING cannot be frame end
+        assertFail(
+                "avg(a) over(partition by b order by ts rows between current row and unbounded preceding)",
+                78,
+                "frame end cannot be UNBOUNDED PRECEDING, use UNBOUNDED FOLLOWING"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionIgnoreNullTypo() {
+        // Common typo: "null" instead of "nulls"
+        assertFail(
+                "lag(d, 1) ignore null over () from tab",
+                17,
+                "'nulls' expected, not 'null'"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionIgnoreNullsWithoutOver() {
+        // IGNORE NULLS requires OVER clause
+        assertFail(
+                "lag(1.0) ignore nulls from trades",
+                22,
+                "'over' expected after 'nulls'"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionIgnoreWithoutNulls() {
+        // IGNORE must be followed by NULLS
+        assertFail(
+                "lag(d, 1) ignore over () from tab",
+                17,
+                "'nulls' expected after 'ignore'"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInsideCase() throws SqlException {
+        // Note: leading space is due to how CASE expressions are serialized in RPN
+        x(" x 0 > 1 row_number over (partition by x) case", "case when x > 0 then 1 else row_number() over (partition by x) end");
+    }
+
+    @Test
+    public void testWindowFunctionRespectWithoutNulls() {
+        // RESPECT must be followed by NULLS
+        assertFail(
+                "lag(d, 1) respect over () from tab",
+                18,
+                "'nulls' expected after 'respect'"
         );
     }
 }

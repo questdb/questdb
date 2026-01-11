@@ -844,8 +844,11 @@ public class ExpressionParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        // Save opStack state - we're in the middle of parsing the outer expression
-        int opStackSize = opStack.size();
+        // Save opStack bottom - we need to isolate the inner parseExpr from the outer context
+        // This prevents the inner parseExpr from seeing/popping items from the outer expression
+        // (e.g., a CASE node that belongs to the outer expression)
+        int savedOpStackBottom = opStack.getBottom();
+        opStack.setBottom(opStack.sizeRaw());
 
         try {
             // Use a separate tree builder to avoid state conflicts
@@ -853,10 +856,8 @@ public class ExpressionParser {
             parseExpr(lexer, treeBuilder, sqlParserCallback, decls);
             return treeBuilder.getResult();
         } finally {
-            // Restore opStack state
-            while (opStack.size() > opStackSize) {
-                opStack.pop();
-            }
+            // Restore opStack bottom
+            opStack.setBottom(savedOpStackBottom);
         }
     }
 
@@ -888,13 +889,13 @@ public class ExpressionParser {
                 if (isLowerBound) {
                     windowCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "UNBOUNDED PRECEDING not valid for upper bound");
+                    throw SqlException.$(lexer.lastTokenPosition(), "frame end cannot be UNBOUNDED PRECEDING, use UNBOUNDED FOLLOWING");
                 }
             } else if (tok != null && SqlKeywords.isFollowingKeyword(tok)) {
                 if (!isLowerBound) {
                     windowCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "UNBOUNDED FOLLOWING not valid for lower bound");
+                    throw SqlException.$(lexer.lastTokenPosition(), "frame start cannot be UNBOUNDED FOLLOWING, use UNBOUNDED PRECEDING");
                 }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected after 'unbounded'");
@@ -914,10 +915,13 @@ public class ExpressionParser {
             lexer.unparseLast();
             ExpressionNode boundExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
 
-            // Check for optional time unit (HOUR, MINUTE, SECOND, etc.)
+            // Check for optional time unit (HOUR, MINUTE, SECOND, etc.) - only valid for RANGE mode
             tok = SqlUtil.fetchNext(lexer);
             char timeUnit = parseTimeUnit(tok);
             if (timeUnit != 0) {
+                if (windowCol.getFramingMode() != WindowColumn.FRAMING_RANGE) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "time units are only valid with RANGE frames, not ROWS or GROUPS");
+                }
                 if (isLowerBound) {
                     windowCol.setRowsLoExprTimeUnit(timeUnit);
                 } else {
@@ -975,9 +979,28 @@ public class ExpressionParser {
             tok = SqlUtil.fetchNext(lexer);
             parseWindowFrameBound(lexer, windowCol, tok, false, sqlParserCallback, decls);
 
+            // Validate frame bounds order
+            int loKind = windowCol.getRowsLoKind();
+            int hiKind = windowCol.getRowsHiKind();
+            if (hiKind == WindowColumn.PRECEDING) {
+                if (loKind == WindowColumn.CURRENT) {
+                    throw SqlException.$(windowCol.getRowsHiKindPos(), "frame starting from CURRENT ROW must end with CURRENT ROW or FOLLOWING");
+                }
+                if (loKind == WindowColumn.FOLLOWING) {
+                    throw SqlException.$(windowCol.getRowsHiKindPos(), "frame starting from FOLLOWING must end with FOLLOWING");
+                }
+            }
+
         } else {
             // Single bound - defaults to CURRENT ROW for upper bound
             parseWindowFrameBound(lexer, windowCol, tok, true, sqlParserCallback, decls);
+
+            // In single-bound mode, only PRECEDING is allowed (not FOLLOWING)
+            if (windowCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
+                throw SqlException.$(windowCol.getRowsLoKindPos(), "single-bound frame specification requires PRECEDING, use BETWEEN for FOLLOWING");
+            }
+
+            windowCol.setRowsHiKind(WindowColumn.CURRENT, windowCol.getRowsLoKindPos());
         }
 
         // Check for EXCLUDE clause
@@ -986,7 +1009,7 @@ public class ExpressionParser {
             int excludePos = lexer.lastTokenPosition();
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'current row' or 'no others' expected after 'exclude'");
+                throw SqlException.$(lexer.lastTokenPosition(), "'current', 'group', 'ties' or 'no others' expected after 'exclude'");
             }
 
             if (SqlKeywords.isCurrentKeyword(tok)) {
@@ -996,9 +1019,12 @@ public class ExpressionParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "'row' expected after 'current'");
                 }
                 windowCol.setExclusionKind(WindowColumn.EXCLUDE_CURRENT_ROW, excludePos);
-            } else if (SqlKeywords.isGroupKeyword(tok) || SqlKeywords.isTiesKeyword(tok)) {
-                // EXCLUDE GROUP and EXCLUDE TIES are not supported
-                throw SqlException.$(lexer.lastTokenPosition(), "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
+            } else if (SqlKeywords.isGroupKeyword(tok)) {
+                // EXCLUDE GROUP
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_GROUP, excludePos);
+            } else if (SqlKeywords.isTiesKeyword(tok)) {
+                // EXCLUDE TIES
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_TIES, excludePos);
             } else if (SqlKeywords.isNoKeyword(tok)) {
                 // EXCLUDE NO OTHERS
                 tok = SqlUtil.fetchNext(lexer);
@@ -1007,7 +1033,7 @@ public class ExpressionParser {
                 }
                 windowCol.setExclusionKind(WindowColumn.EXCLUDE_NO_OTHERS, excludePos);
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'current row' or 'no others' expected after 'exclude'");
+                throw SqlException.$(lexer.lastTokenPosition(), "'current', 'group', 'ties' or 'no others' expected after 'exclude'");
             }
             tok = SqlUtil.fetchNext(lexer);
         }
@@ -1348,11 +1374,19 @@ public class ExpressionParser {
                                     boolean ignoreNulls = false;
                                     int nullsDescPos = 0;
                                     if (nextTok != null && (SqlKeywords.isIgnoreWord(nextTok) || SqlKeywords.isRespectWord(nextTok))) {
-                                        ignoreNulls = SqlKeywords.isIgnoreWord(nextTok);
+                                        boolean isIgnore = SqlKeywords.isIgnoreWord(nextTok);
                                         nullsDescPos = lexer.lastTokenPosition();
                                         CharSequence nullsWord = SqlUtil.fetchNext(lexer);
                                         if (nullsWord != null && SqlKeywords.isNullsWord(nullsWord)) {
+                                            ignoreNulls = isIgnore;
                                             nextTok = SqlUtil.fetchNext(lexer);
+                                        } else if (nullsWord != null && SqlKeywords.isOverKeyword(nullsWord)) {
+                                            // User wrote "IGNORE OVER" or "RESPECT OVER" - missing NULLS
+                                            throw SqlException.$(lexer.lastTokenPosition(), "'nulls' expected after '")
+                                                    .put(isIgnore ? "ignore" : "respect").put('\'');
+                                        } else if (nullsWord != null && SqlKeywords.isNullKeyword(nullsWord)) {
+                                            // User wrote "IGNORE NULL" instead of "IGNORE NULLS" - common typo
+                                            throw SqlException.$(lexer.lastTokenPosition(), "'nulls' expected, not 'null'");
                                         } else {
                                             // Not IGNORE/RESPECT NULLS pattern, restore tokens
                                             if (nullsWord != null) {
@@ -1360,7 +1394,6 @@ public class ExpressionParser {
                                             }
                                             lexer.unparseLast();
                                             nextTok = SqlUtil.fetchNext(lexer);
-                                            ignoreNulls = false;
                                             nullsDescPos = 0;
                                         }
                                     }
@@ -1376,6 +1409,9 @@ public class ExpressionParser {
                                         parseWindowClause(lexer, node, sqlParserCallback, decls, ignoreNulls, nullsDescPos);
                                         argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         break;
+                                    } else if (nullsDescPos != 0) {
+                                        // We parsed IGNORE/RESPECT NULLS but no OVER follows
+                                        throw SqlException.$(lexer.lastTokenPosition(), "'over' expected after 'nulls'");
                                     } else if (nextTok != null) {
                                         lexer.unparseLast();
                                     }

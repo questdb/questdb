@@ -80,7 +80,7 @@ public class RpnBuilder implements ExpressionParserListener {
 
     private void serializeFrameBound(ExpressionNode expr, int kind, char timeUnit, boolean isLower) {
         if (expr != null) {
-            sink.put(expr.token);
+            serializeExpressionToRpn(expr);
             if (timeUnit != 0) {
                 sink.put(' ');
                 switch (timeUnit) {
