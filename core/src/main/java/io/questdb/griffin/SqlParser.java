@@ -356,6 +356,27 @@ public class SqlParser {
                 break;
         }
 
+        // Traverse window context expressions (partition by, order by, frame bounds)
+        if (node.windowContext != null) {
+            WindowColumn wc = node.windowContext;
+            ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                partitionBy.set(i, recursiveReplace(partitionBy.get(i), visitor));
+            }
+            ObjList<ExpressionNode> orderBy = wc.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                orderBy.set(i, recursiveReplace(orderBy.get(i), visitor));
+            }
+            ExpressionNode loExpr = wc.getRowsLoExpr();
+            if (loExpr != null) {
+                wc.setRowsLoExpr(recursiveReplace(loExpr, visitor), wc.getRowsLoExprPos());
+            }
+            ExpressionNode hiExpr = wc.getRowsHiExpr();
+            if (hiExpr != null) {
+                wc.setRowsHiExpr(recursiveReplace(hiExpr, visitor), wc.getRowsHiExprPos());
+            }
+        }
+
         return visitor.visit(node);
     }
 
