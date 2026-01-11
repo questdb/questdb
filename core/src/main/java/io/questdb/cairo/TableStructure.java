@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.view.ViewDefinition;
 
 public interface TableStructure {
 
@@ -64,6 +65,10 @@ public interface TableStructure {
         return 0; // TTL disabled by default
     }
 
+    default ViewDefinition getViewDefinition() {
+        return null;
+    }
+
     default void init(TableToken tableToken) {
     }
 
@@ -72,6 +77,10 @@ public interface TableStructure {
     boolean isIndexed(int columnIndex);
 
     default boolean isMatView() {
+        return false;
+    }
+
+    default boolean isView() {
         return false;
     }
 

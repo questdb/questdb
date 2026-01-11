@@ -257,6 +257,17 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 's';
     }
 
+    public static boolean isCompileKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'p'
+                && (tok.charAt(4) | 32) == 'i'
+                && (tok.charAt(5) | 32) == 'l'
+                && (tok.charAt(6) | 32) == 'e';
+    }
+
     public static boolean isComma(CharSequence tok) {
         return tok.length() == 1 && tok.charAt(0) == ',';
     }
@@ -1534,6 +1545,21 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'r';
     }
 
+    public static boolean isOverridableKeyword(CharSequence tok) {
+        return tok.length() == 11
+                && (tok.charAt(0) | 32) == 'o'
+                && (tok.charAt(1) | 32) == 'v'
+                && (tok.charAt(2) | 32) == 'e'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'i'
+                && (tok.charAt(6) | 32) == 'd'
+                && (tok.charAt(7) | 32) == 'a'
+                && (tok.charAt(8) | 32) == 'b'
+                && (tok.charAt(9) | 32) == 'l'
+                && (tok.charAt(10) | 32) == 'e';
+    }
+
     public static boolean isParamKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'p'
@@ -1570,6 +1596,17 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'u'
                 && (tok.charAt(5) | 32) == 'e'
                 && (tok.charAt(6) | 32) == 't';
+    }
+
+    public static boolean isReplaceKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'r'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'c'
+                && (tok.charAt(6) | 32) == 'e';
     }
 
     public static boolean isPartitionKeyword(CharSequence tok) {

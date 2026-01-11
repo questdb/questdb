@@ -192,7 +192,7 @@ public class WorkerPool implements Closeable {
                 worker.start();
             }
             if (log != null) {
-                log.info().$("worker pool started [pool=").$(poolName).I$();
+                log.debug().$("worker pool started [pool=").$(poolName).I$();
             }
             started.countDown();
         }

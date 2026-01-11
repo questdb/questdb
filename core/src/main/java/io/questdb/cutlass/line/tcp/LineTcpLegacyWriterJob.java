@@ -72,7 +72,7 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
 
     @Override
     public void close() {
-        LOG.info().$("line protocol writer closing [workerId=").$(workerId).I$();
+        LOG.debug().$("line protocol writer closing [workerId=").$(workerId).I$();
         // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
             if (!run(workerId, Job.TERMINATING_STATUS)) {
