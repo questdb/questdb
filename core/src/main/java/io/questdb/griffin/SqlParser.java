@@ -3462,7 +3462,7 @@ public class SqlParser {
                     tok = tok(lexer, "constant list");
                 } while (isComma(tok));
 
-                if (isNotRightParen(tok)) {
+                if (!iRightParen(tok)) {
                     throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
                 }
             }
@@ -3502,14 +3502,14 @@ public class SqlParser {
 
                 model.addGroupBy(groupByExpr);
                 tok = optTok(lexer);
-            } while (tok != null && isNotRightParen(tok) && isComma(tok));
+            } while (tok != null && !iRightParen(tok) && isComma(tok));
         }
 
         if (tok == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
         }
 
-        if (isNotRightParen(tok)) {
+        if (!iRightParen(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
         }
         tok = setModelAliasAndGetOptTok(lexer, model);

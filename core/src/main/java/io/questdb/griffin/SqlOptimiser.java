@@ -5765,7 +5765,7 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode sampleBy = nested.getSampleBy();
             final ExpressionNode sampleByOffset = nested.getSampleByOffset();
             final ObjList<ExpressionNode> sampleByFill = nested.getSampleByFill();
-            final ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName() != null && isNotUTC(nested.getSampleByTimezoneName().token)
+            final ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName() != null && !isUTC(nested.getSampleByTimezoneName().token)
                     ? nested.getSampleByTimezoneName()
                     : null;
             final ExpressionNode sampleByUnit = nested.getSampleByUnit();
@@ -5830,7 +5830,7 @@ public class SqlOptimiser implements Mutable {
 
                 int wrapAction = SAMPLE_BY_REWRITE_NO_WRAP;
 
-                if (sampleByTimezoneName != null && isNotUTC(sampleByTimezoneName.token)) {
+                if (sampleByTimezoneName != null && !isUTC(sampleByTimezoneName.token)) {
                     wrapAction |= SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE;
                 }
 
