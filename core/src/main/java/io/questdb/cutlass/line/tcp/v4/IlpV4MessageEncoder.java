@@ -560,6 +560,185 @@ public class IlpV4MessageEncoder implements Closeable {
     }
 
     /**
+     * Writes a double array column.
+     * Each row has: [nDims (1B)] [dim1..dimN (4B each)] [flattened values (8B each, LE)]
+     *
+     * @param dims        nDims per row
+     * @param shapes      flattened shape data (all dimensions concatenated)
+     * @param data        flattened double values
+     * @param valueCount  number of non-null values
+     * @param shapeOffset number of shape ints used
+     * @param dataOffset  number of data elements used
+     */
+    public void writeDoubleArrayColumn(byte[] dims, int[] shapes, double[] data,
+                                       int valueCount, int shapeOffset, int dataOffset) {
+        // Calculate total size needed
+        int shapeIdx = 0;
+        int dataIdx = 0;
+        int totalSize = 0;
+        for (int row = 0; row < valueCount; row++) {
+            int nDims = dims[row];
+            // 1 byte for nDims + 4 bytes per dimension + 8 bytes per element
+            int elemCount = 1;
+            for (int d = 0; d < nDims; d++) {
+                elemCount *= shapes[shapeIdx + d];
+            }
+            totalSize += 1 + (nDims * 4) + (elemCount * 8);
+            shapeIdx += nDims;
+        }
+
+        sink.ensureCapacity(totalSize);
+
+        // Write each row's array
+        shapeIdx = 0;
+        dataIdx = 0;
+        for (int row = 0; row < valueCount; row++) {
+            int nDims = dims[row];
+            sink.putByte((byte) nDims);
+
+            int elemCount = 1;
+            for (int d = 0; d < nDims; d++) {
+                int dimLen = shapes[shapeIdx++];
+                sink.putInt(dimLen);
+                elemCount *= dimLen;
+            }
+
+            for (int e = 0; e < elemCount; e++) {
+                sink.putDouble(data[dataIdx++]);
+            }
+        }
+    }
+
+    /**
+     * Writes a long array column.
+     * Each row has: [nDims (1B)] [dim1..dimN (4B each)] [flattened values (8B each, LE)]
+     *
+     * @param dims        nDims per row
+     * @param shapes      flattened shape data (all dimensions concatenated)
+     * @param data        flattened long values
+     * @param valueCount  number of non-null values
+     * @param shapeOffset number of shape ints used
+     * @param dataOffset  number of data elements used
+     */
+    public void writeLongArrayColumn(byte[] dims, int[] shapes, long[] data,
+                                     int valueCount, int shapeOffset, int dataOffset) {
+        // Calculate total size needed
+        int shapeIdx = 0;
+        int dataIdx = 0;
+        int totalSize = 0;
+        for (int row = 0; row < valueCount; row++) {
+            int nDims = dims[row];
+            // 1 byte for nDims + 4 bytes per dimension + 8 bytes per element
+            int elemCount = 1;
+            for (int d = 0; d < nDims; d++) {
+                elemCount *= shapes[shapeIdx + d];
+            }
+            totalSize += 1 + (nDims * 4) + (elemCount * 8);
+            shapeIdx += nDims;
+        }
+
+        sink.ensureCapacity(totalSize);
+
+        // Write each row's array
+        shapeIdx = 0;
+        dataIdx = 0;
+        for (int row = 0; row < valueCount; row++) {
+            int nDims = dims[row];
+            sink.putByte((byte) nDims);
+
+            int elemCount = 1;
+            for (int d = 0; d < nDims; d++) {
+                int dimLen = shapes[shapeIdx++];
+                sink.putInt(dimLen);
+                elemCount *= dimLen;
+            }
+
+            for (int e = 0; e < elemCount; e++) {
+                sink.putLong(data[dataIdx++]);
+            }
+        }
+    }
+
+    // ==================== Decimal column encoding ====================
+
+    /**
+     * Writes a Decimal64 column.
+     * <p>
+     * Wire format: [scale (1B)] + [values (8B each, big-endian)]
+     *
+     * @param scale the decimal scale (shared by all values)
+     * @param values the unscaled 64-bit values
+     * @param valueCount number of values to write
+     */
+    public void writeDecimal64Column(byte scale, long[] values, int valueCount) {
+        // 1 byte for scale + 8 bytes per value
+        int totalSize = 1 + (valueCount * 8);
+        sink.ensureCapacity(totalSize);
+
+        // Write scale (shared for entire column)
+        sink.putByte(scale);
+
+        // Write values (big-endian for decimal compatibility)
+        for (int i = 0; i < valueCount; i++) {
+            sink.putLongBE(values[i]);
+        }
+    }
+
+    /**
+     * Writes a Decimal128 column.
+     * <p>
+     * Wire format: [scale (1B)] + [values (16B each: high then low, big-endian)]
+     *
+     * @param scale the decimal scale (shared by all values)
+     * @param high the high 64 bits of each value
+     * @param low the low 64 bits of each value
+     * @param valueCount number of values to write
+     */
+    public void writeDecimal128Column(byte scale, long[] high, long[] low, int valueCount) {
+        // 1 byte for scale + 16 bytes per value
+        int totalSize = 1 + (valueCount * 16);
+        sink.ensureCapacity(totalSize);
+
+        // Write scale (shared for entire column)
+        sink.putByte(scale);
+
+        // Write values (big-endian: high then low)
+        for (int i = 0; i < valueCount; i++) {
+            sink.putLongBE(high[i]);
+            sink.putLongBE(low[i]);
+        }
+    }
+
+    /**
+     * Writes a Decimal256 column.
+     * <p>
+     * Wire format: [scale (1B)] + [values (32B each: hh, hl, lh, ll, big-endian)]
+     *
+     * @param scale the decimal scale (shared by all values)
+     * @param hh bits 255-192 of each value
+     * @param hl bits 191-128 of each value
+     * @param lh bits 127-64 of each value
+     * @param ll bits 63-0 of each value
+     * @param valueCount number of values to write
+     */
+    public void writeDecimal256Column(byte scale, long[] hh, long[] hl, long[] lh, long[] ll, int valueCount) {
+        // 1 byte for scale + 32 bytes per value
+        int totalSize = 1 + (valueCount * 32);
+        sink.ensureCapacity(totalSize);
+
+        // Write scale (shared for entire column)
+        sink.putByte(scale);
+
+        // Write values (big-endian: hh, hl, lh, ll)
+        for (int i = 0; i < valueCount; i++) {
+            sink.putLongBE(hh[i]);
+            sink.putLongBE(hl[i]);
+            sink.putLongBE(lh[i]);
+            sink.putLongBE(ll[i]);
+        }
+    }
+
+    /**
      * Writes a single byte.
      */
     public void writeByte(byte value) {

@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.http.IlpV4HttpSender;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -5701,6 +5702,582 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("test_atnow_multi");
                 serverMain.assertSql("select count() from test_atnow_multi", "count\n10\n");
+            }
+        });
+    }
+
+    // ==================== Array Tests ====================
+    // NOTE: These tests require server-side ILP v4 parser updates to handle array types (0x11, 0x12).
+    // The client-side implementation is complete, but server-side support is not yet available.
+    // The tests are disabled until server-side support is added.
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilder1DDoubleArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_1d_double_array")
+                            .doubleArray("values", new double[]{1.1, 2.2, 3.3, 4.4, 5.5})
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_1d_double_array");
+                serverMain.assertSql("select count() from test_1d_double_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilder1DLongArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_1d_long_array")
+                            .longArray("values", new long[]{100, 200, 300, 400, 500})
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_1d_long_array");
+                serverMain.assertSql("select count() from test_1d_long_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilder2DDoubleArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    double[][] matrix = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+                    sender.table("test_2d_double_array")
+                            .doubleArray("matrix", matrix)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_2d_double_array");
+                serverMain.assertSql("select count() from test_2d_double_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilder2DLongArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    long[][] matrix = {{1, 2, 3}, {4, 5, 6}};
+                    sender.table("test_2d_long_array")
+                            .longArray("matrix", matrix)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_2d_long_array");
+                serverMain.assertSql("select count() from test_2d_long_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilder3DDoubleArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    double[][][] cube = {{{1.0, 2.0}, {3.0, 4.0}}, {{5.0, 6.0}, {7.0, 8.0}}};
+                    sender.table("test_3d_double_array")
+                            .doubleArray("cube", cube)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_3d_double_array");
+                serverMain.assertSql("select count() from test_3d_double_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilder3DLongArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    long[][][] cube = {{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}};
+                    sender.table("test_3d_long_array")
+                            .longArray("cube", cube)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_3d_long_array");
+                serverMain.assertSql("select count() from test_3d_long_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilderArrayWithScalarColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_mixed_array")
+                            .symbol("location", "NYC")
+                            .doubleArray("readings", new double[]{1.1, 2.2, 3.3})
+                            .longColumn("count", 42)
+                            .stringColumn("status", "OK")
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_mixed_array");
+                serverMain.assertSql("select count() from test_mixed_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilderMultipleArrayRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("test_multi_array")
+                                .doubleArray("values", new double[]{i * 1.0, i * 2.0, i * 3.0})
+                                .at(1000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_multi_array");
+                serverMain.assertSql("select count() from test_multi_array", "count\n100\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilderEmptyArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_empty_array")
+                            .doubleArray("values", new double[]{})
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_empty_array");
+                serverMain.assertSql("select count() from test_empty_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilderNullArraySkipped() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_null_array")
+                            .doubleArray("values", (double[]) null)
+                            .longColumn("marker", 1)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_null_array");
+                serverMain.assertSql("select count() from test_null_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support array types yet")
+    public void testBuilderLargeArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    double[] largeArray = new double[1000];
+                    for (int i = 0; i < largeArray.length; i++) {
+                        largeArray[i] = i * 0.1;
+                    }
+                    sender.table("test_large_array")
+                            .doubleArray("values", largeArray)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_large_array");
+                serverMain.assertSql("select count() from test_large_array", "count\n1\n");
+            }
+        });
+    }
+
+    // ==================== Decimal column tests ====================
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support decimal types yet")
+    public void testBuilderDecimal64() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    io.questdb.std.Decimal64 value = new io.questdb.std.Decimal64(12345, 2); // 123.45
+                    sender.table("test_decimal64")
+                            .decimalColumn("price", value)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_decimal64");
+                serverMain.assertSql("select count() from test_decimal64", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support decimal types yet")
+    public void testBuilderDecimal128() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    io.questdb.std.Decimal128 value = new io.questdb.std.Decimal128(0, 12345678901234L, 2); // 123456789012.34
+                    sender.table("test_decimal128")
+                            .decimalColumn("amount", value)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_decimal128");
+                serverMain.assertSql("select count() from test_decimal128", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support decimal types yet")
+    public void testBuilderDecimal256() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    io.questdb.std.Decimal256 value = io.questdb.std.Decimal256.fromLong(123456789L, 4);
+                    sender.table("test_decimal256")
+                            .decimalColumn("big_value", value)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_decimal256");
+                serverMain.assertSql("select count() from test_decimal256", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support decimal types yet")
+    public void testBuilderDecimalFromString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_decimal_string")
+                            .decimalColumn("price", "123.456789")
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_decimal_string");
+                serverMain.assertSql("select count() from test_decimal_string", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support decimal types yet")
+    public void testBuilderDecimalMultipleRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    // Same scale for all values in the column
+                    io.questdb.std.Decimal64 v1 = new io.questdb.std.Decimal64(100, 2); // 1.00
+                    io.questdb.std.Decimal64 v2 = new io.questdb.std.Decimal64(200, 2); // 2.00
+                    io.questdb.std.Decimal64 v3 = new io.questdb.std.Decimal64(300, 2); // 3.00
+
+                    sender.table("test_decimal_multi")
+                            .decimalColumn("price", v1)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.table("test_decimal_multi")
+                            .decimalColumn("price", v2)
+                            .at(2000000000L, ChronoUnit.MICROS);
+                    sender.table("test_decimal_multi")
+                            .decimalColumn("price", v3)
+                            .at(3000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_decimal_multi");
+                serverMain.assertSql("select count() from test_decimal_multi", "count\n3\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support decimal types yet")
+    public void testBuilderDecimalWithScalarColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    io.questdb.std.Decimal64 price = new io.questdb.std.Decimal64(9999, 2); // 99.99
+                    sender.table("test_decimal_mixed")
+                            .symbol("product", "Widget")
+                            .longColumn("quantity", 10)
+                            .decimalColumn("price", price)
+                            .doubleColumn("discount", 0.1)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_decimal_mixed");
+                serverMain.assertSql("select count() from test_decimal_mixed", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support decimal types yet")
+    public void testBuilderDecimalNullSkipped() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    // Null decimals should be skipped without error
+                    sender.table("test_decimal_null")
+                            .symbol("name", "test")
+                            .decimalColumn("value", (io.questdb.std.Decimal64) null)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_decimal_null");
+                serverMain.assertSql("select count() from test_decimal_null", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support decimal types yet")
+    public void testBuilderDecimalZeroValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    io.questdb.std.Decimal64 zero = new io.questdb.std.Decimal64(0, 2); // 0.00
+                    sender.table("test_decimal_zero")
+                            .decimalColumn("balance", zero)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_decimal_zero");
+                serverMain.assertSql("select count() from test_decimal_zero", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    @org.junit.Ignore("Server-side ILP v4 parser doesn't support decimal types yet")
+    public void testBuilderDecimalNegativeValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    io.questdb.std.Decimal64 negative = new io.questdb.std.Decimal64(-5000, 2); // -50.00
+                    sender.table("test_decimal_negative")
+                            .decimalColumn("loss", negative)
+                            .at(1000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_decimal_negative");
+                serverMain.assertSql("select count() from test_decimal_negative", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDecimalScaleMismatchThrows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    // First value with scale 2
+                    io.questdb.std.Decimal64 v1 = new io.questdb.std.Decimal64(100, 2);
+                    sender.table("test_decimal_scale_mismatch")
+                            .decimalColumn("price", v1)
+                            .at(1000000000L, ChronoUnit.MICROS);
+
+                    // Second value with scale 4 - should throw
+                    io.questdb.std.Decimal64 v2 = new io.questdb.std.Decimal64(10000, 4);
+                    try {
+                        sender.table("test_decimal_scale_mismatch")
+                                .decimalColumn("price", v2)
+                                .at(2000000000L, ChronoUnit.MICROS);
+                        Assert.fail("Expected LineSenderException for scale mismatch");
+                    } catch (LineSenderException e) {
+                        Assert.assertTrue(e.getMessage().contains("scale mismatch"));
+                    }
+                }
             }
         });
     }

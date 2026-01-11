@@ -197,6 +197,36 @@ public final class IlpV4Constants {
     public static final byte TYPE_VARCHAR = 0x0F;
 
     /**
+     * Column type: DOUBLE_ARRAY (N-dimensional array of IEEE 754 float64).
+     * Wire format: [nDims (1B)] [dim1_len (4B)]...[dimN_len (4B)] [flattened values (LE)]
+     */
+    public static final byte TYPE_DOUBLE_ARRAY = 0x11;
+
+    /**
+     * Column type: LONG_ARRAY (N-dimensional array of int64).
+     * Wire format: [nDims (1B)] [dim1_len (4B)]...[dimN_len (4B)] [flattened values (LE)]
+     */
+    public static final byte TYPE_LONG_ARRAY = 0x12;
+
+    /**
+     * Column type: DECIMAL64 (8 bytes, 18 digits precision).
+     * Wire format: [scale (1B in schema)] + [big-endian unscaled value (8B)]
+     */
+    public static final byte TYPE_DECIMAL64 = 0x13;
+
+    /**
+     * Column type: DECIMAL128 (16 bytes, 38 digits precision).
+     * Wire format: [scale (1B in schema)] + [big-endian unscaled value (16B)]
+     */
+    public static final byte TYPE_DECIMAL128 = 0x14;
+
+    /**
+     * Column type: DECIMAL256 (32 bytes, 77 digits precision).
+     * Wire format: [scale (1B in schema)] + [big-endian unscaled value (32B)]
+     */
+    public static final byte TYPE_DECIMAL256 = 0x15;
+
+    /**
      * High bit indicating nullable column.
      */
     public static final byte TYPE_NULLABLE_FLAG = (byte) 0x80;
@@ -436,6 +466,21 @@ public final class IlpV4Constants {
                 break;
             case TYPE_VARCHAR:
                 name = "VARCHAR";
+                break;
+            case TYPE_DOUBLE_ARRAY:
+                name = "DOUBLE_ARRAY";
+                break;
+            case TYPE_LONG_ARRAY:
+                name = "LONG_ARRAY";
+                break;
+            case TYPE_DECIMAL64:
+                name = "DECIMAL64";
+                break;
+            case TYPE_DECIMAL128:
+                name = "DECIMAL128";
+                break;
+            case TYPE_DECIMAL256:
+                name = "DECIMAL256";
                 break;
             default:
                 name = "UNKNOWN(" + code + ")";

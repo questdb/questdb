@@ -38,6 +38,9 @@ import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.v4.*;
 import io.questdb.cairo.TableUtils;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -717,46 +720,159 @@ public class IlpV4HttpSender implements Sender {
         currentTable = null;
     }
 
-    // ==================== Array methods (not supported in ILPv4) ====================
+    // ==================== Array methods ====================
 
     @Override
     public Sender doubleArray(@NotNull CharSequence name, double[] values) {
-        throw new LineSenderException("Array columns are not supported in ILPv4");
+        if (values == null) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_DOUBLE_ARRAY, true);
+        col.addDoubleArray(values);
+        return this;
     }
 
     @Override
     public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
-        throw new LineSenderException("Array columns are not supported in ILPv4");
+        if (values == null) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_DOUBLE_ARRAY, true);
+        col.addDoubleArray(values);
+        return this;
     }
 
     @Override
     public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
-        throw new LineSenderException("Array columns are not supported in ILPv4");
+        if (values == null) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_DOUBLE_ARRAY, true);
+        col.addDoubleArray(values);
+        return this;
     }
 
     @Override
     public Sender doubleArray(CharSequence name, DoubleArray array) {
-        throw new LineSenderException("Array columns are not supported in ILPv4");
+        if (array == null) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_DOUBLE_ARRAY, true);
+        col.addDoubleArray(array);
+        return this;
     }
 
     @Override
     public Sender longArray(@NotNull CharSequence name, long[] values) {
-        throw new LineSenderException("Array columns are not supported in ILPv4");
+        if (values == null) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_LONG_ARRAY, true);
+        col.addLongArray(values);
+        return this;
     }
 
     @Override
     public Sender longArray(@NotNull CharSequence name, long[][] values) {
-        throw new LineSenderException("Array columns are not supported in ILPv4");
+        if (values == null) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_LONG_ARRAY, true);
+        col.addLongArray(values);
+        return this;
     }
 
     @Override
     public Sender longArray(@NotNull CharSequence name, long[][][] values) {
-        throw new LineSenderException("Array columns are not supported in ILPv4");
+        if (values == null) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_LONG_ARRAY, true);
+        col.addLongArray(values);
+        return this;
     }
 
     @Override
     public Sender longArray(CharSequence name, LongArray array) {
-        throw new LineSenderException("Array columns are not supported in ILPv4");
+        if (array == null) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_LONG_ARRAY, true);
+        col.addLongArray(array);
+        return this;
+    }
+
+    // ==================== Decimal methods ====================
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal64 value) {
+        if (value == null || value.isNull()) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_DECIMAL64, true);
+        col.addDecimal64(value);
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal128 value) {
+        if (value == null || value.isNull()) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_DECIMAL128, true);
+        col.addDecimal128(value);
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        if (value == null || value.isNull()) {
+            return this;
+        }
+        checkCurrentTable();
+        validateColumnName(name);
+        IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_DECIMAL256, true);
+        col.addDecimal256(value);
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, CharSequence value) {
+        if (value == null || value.length() == 0) {
+            return this;
+        }
+        // Parse as Decimal256 (highest precision to preserve all digits)
+        checkCurrentTable();
+        validateColumnName(name);
+        try {
+            java.math.BigDecimal bd = new java.math.BigDecimal(value.toString());
+            Decimal256 decimal = Decimal256.fromBigDecimal(bd);
+            IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(name.toString(), TYPE_DECIMAL256, true);
+            col.addDecimal256(decimal);
+        } catch (Exception e) {
+            throw new LineSenderException("Failed to parse decimal value: " + value, e);
+        }
+        return this;
     }
 
     // ==================== Helper methods ====================

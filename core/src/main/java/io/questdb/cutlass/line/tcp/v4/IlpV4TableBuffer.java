@@ -24,8 +24,17 @@
 
 package io.questdb.cutlass.line.tcp.v4;
 
+import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.cutlass.line.array.ArrayBufferAppender;
+import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
+import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
 
@@ -275,6 +284,51 @@ public class IlpV4TableBuffer {
                     // Long256 is 4 longs (32 bytes)
                     encodeLong256Column(encoder, col, valueCount);
                     break;
+                case TYPE_DOUBLE_ARRAY:
+                    encoder.writeDoubleArrayColumn(
+                            col.getArrayDims(),
+                            col.getArrayShapes(),
+                            col.getDoubleArrayData(),
+                            valueCount,
+                            col.getArrayShapeOffset(),
+                            col.getArrayDataOffset()
+                    );
+                    break;
+                case TYPE_LONG_ARRAY:
+                    encoder.writeLongArrayColumn(
+                            col.getArrayDims(),
+                            col.getArrayShapes(),
+                            col.getLongArrayData(),
+                            valueCount,
+                            col.getArrayShapeOffset(),
+                            col.getArrayDataOffset()
+                    );
+                    break;
+                case TYPE_DECIMAL64:
+                    encoder.writeDecimal64Column(
+                            col.getDecimalScale(),
+                            col.getDecimal64Values(),
+                            valueCount
+                    );
+                    break;
+                case TYPE_DECIMAL128:
+                    encoder.writeDecimal128Column(
+                            col.getDecimalScale(),
+                            col.getDecimal128High(),
+                            col.getDecimal128Low(),
+                            valueCount
+                    );
+                    break;
+                case TYPE_DECIMAL256:
+                    encoder.writeDecimal256Column(
+                            col.getDecimalScale(),
+                            col.getDecimal256Hh(),
+                            col.getDecimal256Hl(),
+                            col.getDecimal256Lh(),
+                            col.getDecimal256Ll(),
+                            valueCount
+                    );
+                    break;
                 default:
                     throw new IllegalStateException("Unknown column type: " + col.type);
             }
@@ -315,6 +369,17 @@ public class IlpV4TableBuffer {
         // Long256 stored as flat array: 4 longs per value (avoids inner array allocation)
         private long[] long256Values;
 
+        // Array storage (double/long arrays - variable length per row)
+        // Each row stores: [nDims (1B)][dim1..dimN (4B each)][flattened data]
+        // We track per-row metadata separately from the actual data
+        private byte[] arrayDims;           // nDims per row
+        private int[] arrayShapes;          // Flattened shape data (all dimensions concatenated)
+        private int arrayShapeOffset;       // Current write offset in arrayShapes
+        private double[] doubleArrayData;   // Flattened double values
+        private long[] longArrayData;       // Flattened long values
+        private int arrayDataOffset;        // Current write offset in data arrays
+        private int arrayRowCapacity;       // Capacity for array row count
+
         // Null tracking - bit-packed for memory efficiency (1 bit per row vs 8 bits with boolean[])
         private long[] nullBitmapPacked;
         private boolean hasNulls;
@@ -323,6 +388,20 @@ public class IlpV4TableBuffer {
         private CharSequenceIntHashMap symbolDict;
         private ObjList<String> symbolList;
         private int[] symbolIndices;
+
+        // Decimal storage
+        // All values in a decimal column must share the same scale
+        // For Decimal64: single long per value (64-bit unscaled)
+        // For Decimal128: two longs per value (128-bit unscaled: high, low)
+        // For Decimal256: four longs per value (256-bit unscaled: hh, hl, lh, ll)
+        private byte decimalScale = -1;   // Shared scale for column (-1 = not set)
+        private long[] decimal64Values;   // Decimal64: one long per value
+        private long[] decimal128High;    // Decimal128: high 64 bits
+        private long[] decimal128Low;     // Decimal128: low 64 bits
+        private long[] decimal256Hh;      // Decimal256: bits 255-192
+        private long[] decimal256Hl;      // Decimal256: bits 191-128
+        private long[] decimal256Lh;      // Decimal256: bits 127-64
+        private long[] decimal256Ll;      // Decimal256: bits 63-0
 
         public ColumnBuffer(String name, byte type, boolean nullable) {
             this.name = name;
@@ -455,6 +534,107 @@ public class IlpV4TableBuffer {
             return long256Values[index * 4 + component];
         }
 
+        // ==================== Decimal getters ====================
+
+        /**
+         * Returns the shared scale for this decimal column.
+         * Returns -1 if no values have been added yet.
+         */
+        public byte getDecimalScale() {
+            return decimalScale;
+        }
+
+        /**
+         * Returns the Decimal64 values (one long per value).
+         */
+        public long[] getDecimal64Values() {
+            return decimal64Values;
+        }
+
+        /**
+         * Returns the high 64 bits of Decimal128 values.
+         */
+        public long[] getDecimal128High() {
+            return decimal128High;
+        }
+
+        /**
+         * Returns the low 64 bits of Decimal128 values.
+         */
+        public long[] getDecimal128Low() {
+            return decimal128Low;
+        }
+
+        /**
+         * Returns bits 255-192 of Decimal256 values.
+         */
+        public long[] getDecimal256Hh() {
+            return decimal256Hh;
+        }
+
+        /**
+         * Returns bits 191-128 of Decimal256 values.
+         */
+        public long[] getDecimal256Hl() {
+            return decimal256Hl;
+        }
+
+        /**
+         * Returns bits 127-64 of Decimal256 values.
+         */
+        public long[] getDecimal256Lh() {
+            return decimal256Lh;
+        }
+
+        /**
+         * Returns bits 63-0 of Decimal256 values.
+         */
+        public long[] getDecimal256Ll() {
+            return decimal256Ll;
+        }
+
+        /**
+         * Returns the array dimensions per row (nDims for each row).
+         */
+        public byte[] getArrayDims() {
+            return arrayDims;
+        }
+
+        /**
+         * Returns the flattened array shapes (all dimension lengths concatenated).
+         */
+        public int[] getArrayShapes() {
+            return arrayShapes;
+        }
+
+        /**
+         * Returns the current write offset in arrayShapes.
+         */
+        public int getArrayShapeOffset() {
+            return arrayShapeOffset;
+        }
+
+        /**
+         * Returns the flattened double array data.
+         */
+        public double[] getDoubleArrayData() {
+            return doubleArrayData;
+        }
+
+        /**
+         * Returns the flattened long array data.
+         */
+        public long[] getLongArrayData() {
+            return longArrayData;
+        }
+
+        /**
+         * Returns the current write offset in the data arrays.
+         */
+        public int getArrayDataOffset() {
+            return arrayDataOffset;
+        }
+
         public void addBoolean(boolean value) {
             ensureCapacity();
             booleanValues[valueCount++] = value;
@@ -548,6 +728,346 @@ public class IlpV4TableBuffer {
             size++;
         }
 
+        // ==================== Decimal methods ====================
+
+        /**
+         * Adds a Decimal64 value.
+         * All values in a decimal column must share the same scale.
+         *
+         * @param value the Decimal64 value to add
+         * @throws LineSenderException if the scale doesn't match previous values
+         */
+        public void addDecimal64(Decimal64 value) {
+            if (value == null || value.isNull()) {
+                addNull();
+                return;
+            }
+            ensureCapacity();
+            validateAndSetScale((byte) value.getScale());
+            decimal64Values[valueCount++] = value.getValue();
+            size++;
+        }
+
+        /**
+         * Adds a Decimal128 value.
+         * All values in a decimal column must share the same scale.
+         *
+         * @param value the Decimal128 value to add
+         * @throws LineSenderException if the scale doesn't match previous values
+         */
+        public void addDecimal128(Decimal128 value) {
+            if (value == null || value.isNull()) {
+                addNull();
+                return;
+            }
+            ensureCapacity();
+            validateAndSetScale((byte) value.getScale());
+            decimal128High[valueCount] = value.getHigh();
+            decimal128Low[valueCount] = value.getLow();
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Adds a Decimal256 value.
+         * All values in a decimal column must share the same scale.
+         *
+         * @param value the Decimal256 value to add
+         * @throws LineSenderException if the scale doesn't match previous values
+         */
+        public void addDecimal256(Decimal256 value) {
+            if (value == null || value.isNull()) {
+                addNull();
+                return;
+            }
+            ensureCapacity();
+            validateAndSetScale((byte) value.getScale());
+            decimal256Hh[valueCount] = value.getHh();
+            decimal256Hl[valueCount] = value.getHl();
+            decimal256Lh[valueCount] = value.getLh();
+            decimal256Ll[valueCount] = value.getLl();
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Validates that the given scale matches the column's scale.
+         * If this is the first value, sets the column scale.
+         *
+         * @param scale the scale of the value being added
+         * @throws LineSenderException if the scale doesn't match
+         */
+        private void validateAndSetScale(byte scale) {
+            if (decimalScale == -1) {
+                decimalScale = scale;
+            } else if (decimalScale != scale) {
+                throw new LineSenderException(
+                        "decimal scale mismatch in column '" + name + "': expected " +
+                                decimalScale + " but got " + scale +
+                                ". All values in a decimal column must have the same scale."
+                );
+            }
+        }
+
+        // ==================== Array methods ====================
+
+        /**
+         * Adds a 1D double array.
+         */
+        public void addDoubleArray(double[] values) {
+            if (values == null) {
+                addNull();
+                return;
+            }
+            ensureArrayCapacity(1, values.length);
+            arrayDims[valueCount] = 1;
+            arrayShapes[arrayShapeOffset++] = values.length;
+            for (double v : values) {
+                doubleArrayData[arrayDataOffset++] = v;
+            }
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Adds a 2D double array.
+         * @throws LineSenderException if the array is jagged (irregular shape)
+         */
+        public void addDoubleArray(double[][] values) {
+            if (values == null) {
+                addNull();
+                return;
+            }
+            int dim0 = values.length;
+            int dim1 = dim0 > 0 ? values[0].length : 0;
+            // Validate rectangular shape
+            for (int i = 1; i < dim0; i++) {
+                if (values[i].length != dim1) {
+                    throw new LineSenderException("irregular array shape");
+                }
+            }
+            ensureArrayCapacity(2, dim0 * dim1);
+            arrayDims[valueCount] = 2;
+            arrayShapes[arrayShapeOffset++] = dim0;
+            arrayShapes[arrayShapeOffset++] = dim1;
+            for (double[] row : values) {
+                for (double v : row) {
+                    doubleArrayData[arrayDataOffset++] = v;
+                }
+            }
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Adds a 3D double array.
+         * @throws LineSenderException if the array is jagged (irregular shape)
+         */
+        public void addDoubleArray(double[][][] values) {
+            if (values == null) {
+                addNull();
+                return;
+            }
+            int dim0 = values.length;
+            int dim1 = dim0 > 0 ? values[0].length : 0;
+            int dim2 = dim0 > 0 && dim1 > 0 ? values[0][0].length : 0;
+            // Validate rectangular shape
+            for (int i = 0; i < dim0; i++) {
+                if (values[i].length != dim1) {
+                    throw new LineSenderException("irregular array shape");
+                }
+                for (int j = 0; j < dim1; j++) {
+                    if (values[i][j].length != dim2) {
+                        throw new LineSenderException("irregular array shape");
+                    }
+                }
+            }
+            ensureArrayCapacity(3, dim0 * dim1 * dim2);
+            arrayDims[valueCount] = 3;
+            arrayShapes[arrayShapeOffset++] = dim0;
+            arrayShapes[arrayShapeOffset++] = dim1;
+            arrayShapes[arrayShapeOffset++] = dim2;
+            for (double[][] plane : values) {
+                for (double[] row : plane) {
+                    for (double v : row) {
+                        doubleArrayData[arrayDataOffset++] = v;
+                    }
+                }
+            }
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Adds a DoubleArray (N-dimensional wrapper).
+         * Uses a capturing approach to extract shape and data.
+         */
+        public void addDoubleArray(DoubleArray array) {
+            if (array == null) {
+                addNull();
+                return;
+            }
+            // Use a capturing ArrayBufferAppender to extract the data
+            ArrayCapture capture = new ArrayCapture();
+            array.appendToBufPtr(capture);
+
+            ensureArrayCapacity(capture.nDims, capture.doubleDataOffset);
+            arrayDims[valueCount] = capture.nDims;
+            for (int i = 0; i < capture.nDims; i++) {
+                arrayShapes[arrayShapeOffset++] = capture.shape[i];
+            }
+            for (int i = 0; i < capture.doubleDataOffset; i++) {
+                doubleArrayData[arrayDataOffset++] = capture.doubleData[i];
+            }
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Adds a 1D long array.
+         */
+        public void addLongArray(long[] values) {
+            if (values == null) {
+                addNull();
+                return;
+            }
+            ensureArrayCapacity(1, values.length);
+            arrayDims[valueCount] = 1;
+            arrayShapes[arrayShapeOffset++] = values.length;
+            for (long v : values) {
+                longArrayData[arrayDataOffset++] = v;
+            }
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Adds a 2D long array.
+         * @throws LineSenderException if the array is jagged (irregular shape)
+         */
+        public void addLongArray(long[][] values) {
+            if (values == null) {
+                addNull();
+                return;
+            }
+            int dim0 = values.length;
+            int dim1 = dim0 > 0 ? values[0].length : 0;
+            // Validate rectangular shape
+            for (int i = 1; i < dim0; i++) {
+                if (values[i].length != dim1) {
+                    throw new LineSenderException("irregular array shape");
+                }
+            }
+            ensureArrayCapacity(2, dim0 * dim1);
+            arrayDims[valueCount] = 2;
+            arrayShapes[arrayShapeOffset++] = dim0;
+            arrayShapes[arrayShapeOffset++] = dim1;
+            for (long[] row : values) {
+                for (long v : row) {
+                    longArrayData[arrayDataOffset++] = v;
+                }
+            }
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Adds a 3D long array.
+         * @throws LineSenderException if the array is jagged (irregular shape)
+         */
+        public void addLongArray(long[][][] values) {
+            if (values == null) {
+                addNull();
+                return;
+            }
+            int dim0 = values.length;
+            int dim1 = dim0 > 0 ? values[0].length : 0;
+            int dim2 = dim0 > 0 && dim1 > 0 ? values[0][0].length : 0;
+            // Validate rectangular shape
+            for (int i = 0; i < dim0; i++) {
+                if (values[i].length != dim1) {
+                    throw new LineSenderException("irregular array shape");
+                }
+                for (int j = 0; j < dim1; j++) {
+                    if (values[i][j].length != dim2) {
+                        throw new LineSenderException("irregular array shape");
+                    }
+                }
+            }
+            ensureArrayCapacity(3, dim0 * dim1 * dim2);
+            arrayDims[valueCount] = 3;
+            arrayShapes[arrayShapeOffset++] = dim0;
+            arrayShapes[arrayShapeOffset++] = dim1;
+            arrayShapes[arrayShapeOffset++] = dim2;
+            for (long[][] plane : values) {
+                for (long[] row : plane) {
+                    for (long v : row) {
+                        longArrayData[arrayDataOffset++] = v;
+                    }
+                }
+            }
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Adds a LongArray (N-dimensional wrapper).
+         * Uses a capturing approach to extract shape and data.
+         */
+        public void addLongArray(LongArray array) {
+            if (array == null) {
+                addNull();
+                return;
+            }
+            // Use a capturing ArrayBufferAppender to extract the data
+            ArrayCapture capture = new ArrayCapture();
+            array.appendToBufPtr(capture);
+
+            ensureArrayCapacity(capture.nDims, capture.longDataOffset);
+            arrayDims[valueCount] = capture.nDims;
+            for (int i = 0; i < capture.nDims; i++) {
+                arrayShapes[arrayShapeOffset++] = capture.shape[i];
+            }
+            for (int i = 0; i < capture.longDataOffset; i++) {
+                longArrayData[arrayDataOffset++] = capture.longData[i];
+            }
+            valueCount++;
+            size++;
+        }
+
+        /**
+         * Ensures capacity for array storage.
+         * @param nDims number of dimensions for this array
+         * @param dataElements number of data elements
+         */
+        private void ensureArrayCapacity(int nDims, int dataElements) {
+            ensureCapacity(); // For row-level capacity (arrayDims uses valueCount)
+
+            // Ensure shape array capacity
+            int requiredShapeCapacity = arrayShapeOffset + nDims;
+            if (arrayShapes == null) {
+                arrayShapes = new int[Math.max(64, requiredShapeCapacity)];
+            } else if (requiredShapeCapacity > arrayShapes.length) {
+                arrayShapes = Arrays.copyOf(arrayShapes, Math.max(arrayShapes.length * 2, requiredShapeCapacity));
+            }
+
+            // Ensure data array capacity
+            int requiredDataCapacity = arrayDataOffset + dataElements;
+            if (type == TYPE_DOUBLE_ARRAY) {
+                if (doubleArrayData == null) {
+                    doubleArrayData = new double[Math.max(256, requiredDataCapacity)];
+                } else if (requiredDataCapacity > doubleArrayData.length) {
+                    doubleArrayData = Arrays.copyOf(doubleArrayData, Math.max(doubleArrayData.length * 2, requiredDataCapacity));
+                }
+            } else if (type == TYPE_LONG_ARRAY) {
+                if (longArrayData == null) {
+                    longArrayData = new long[Math.max(256, requiredDataCapacity)];
+                } else if (requiredDataCapacity > longArrayData.length) {
+                    longArrayData = Arrays.copyOf(longArrayData, Math.max(longArrayData.length * 2, requiredDataCapacity));
+                }
+            }
+        }
+
         public void addNull() {
             ensureCapacity();
             if (nullable) {
@@ -602,6 +1122,21 @@ public class IlpV4TableBuffer {
                         long256Values[offset + 3] = Long.MIN_VALUE;
                         valueCount++;
                         break;
+                    case TYPE_DECIMAL64:
+                        decimal64Values[valueCount++] = Decimals.DECIMAL64_NULL;
+                        break;
+                    case TYPE_DECIMAL128:
+                        decimal128High[valueCount] = Decimals.DECIMAL128_HI_NULL;
+                        decimal128Low[valueCount] = Decimals.DECIMAL128_LO_NULL;
+                        valueCount++;
+                        break;
+                    case TYPE_DECIMAL256:
+                        decimal256Hh[valueCount] = Decimals.DECIMAL256_HH_NULL;
+                        decimal256Hl[valueCount] = Decimals.DECIMAL256_HL_NULL;
+                        decimal256Lh[valueCount] = Decimals.DECIMAL256_LH_NULL;
+                        decimal256Ll[valueCount] = Decimals.DECIMAL256_LL_NULL;
+                        valueCount++;
+                        break;
                 }
                 size++;
             }
@@ -625,6 +1160,11 @@ public class IlpV4TableBuffer {
                 symbolDict.clear();
                 symbolList.clear();
             }
+            // Reset array tracking
+            arrayShapeOffset = 0;
+            arrayDataOffset = 0;
+            // Reset decimal scale (will be set by first non-null value)
+            decimalScale = -1;
         }
 
         /**
@@ -735,6 +1275,26 @@ public class IlpV4TableBuffer {
                     // Flat array: 4 longs per value
                     long256Values = new long[cap * 4];
                     break;
+                case TYPE_DOUBLE_ARRAY:
+                case TYPE_LONG_ARRAY:
+                    // Array types: allocate per-row tracking
+                    // Shape and data arrays are grown dynamically in ensureArrayCapacity()
+                    arrayDims = new byte[cap];
+                    arrayRowCapacity = cap;
+                    break;
+                case TYPE_DECIMAL64:
+                    decimal64Values = new long[cap];
+                    break;
+                case TYPE_DECIMAL128:
+                    decimal128High = new long[cap];
+                    decimal128Low = new long[cap];
+                    break;
+                case TYPE_DECIMAL256:
+                    decimal256Hh = new long[cap];
+                    decimal256Hl = new long[cap];
+                    decimal256Lh = new long[cap];
+                    decimal256Ll = new long[cap];
+                    break;
             }
         }
 
@@ -779,6 +1339,96 @@ public class IlpV4TableBuffer {
                     // Flat array: 4 longs per value
                     long256Values = Arrays.copyOf(long256Values, newCap * 4);
                     break;
+                case TYPE_DOUBLE_ARRAY:
+                case TYPE_LONG_ARRAY:
+                    // Array types: grow per-row tracking
+                    arrayDims = Arrays.copyOf(arrayDims, newCap);
+                    arrayRowCapacity = newCap;
+                    // Note: shapes and data arrays are grown in ensureArrayCapacity()
+                    break;
+                case TYPE_DECIMAL64:
+                    decimal64Values = Arrays.copyOf(decimal64Values, newCap);
+                    break;
+                case TYPE_DECIMAL128:
+                    decimal128High = Arrays.copyOf(decimal128High, newCap);
+                    decimal128Low = Arrays.copyOf(decimal128Low, newCap);
+                    break;
+                case TYPE_DECIMAL256:
+                    decimal256Hh = Arrays.copyOf(decimal256Hh, newCap);
+                    decimal256Hl = Arrays.copyOf(decimal256Hl, newCap);
+                    decimal256Lh = Arrays.copyOf(decimal256Lh, newCap);
+                    decimal256Ll = Arrays.copyOf(decimal256Ll, newCap);
+                    break;
+            }
+        }
+    }
+
+    /**
+     * Helper class to capture array data from DoubleArray/LongArray.appendToBufPtr().
+     * This implements ArrayBufferAppender to intercept the serialization and extract
+     * shape and data into Java arrays for storage in ColumnBuffer.
+     */
+    private static class ArrayCapture implements ArrayBufferAppender {
+        byte nDims;
+        int[] shape = new int[32]; // Max 32 dimensions
+        int shapeIndex;
+        double[] doubleData;
+        int doubleDataOffset;
+        long[] longData;
+        int longDataOffset;
+
+        @Override
+        public void putByte(byte b) {
+            if (shapeIndex == 0) {
+                // First byte is nDims
+                nDims = b;
+            }
+        }
+
+        @Override
+        public void putInt(int value) {
+            // Shape dimensions
+            if (shapeIndex < nDims) {
+                shape[shapeIndex++] = value;
+                // Once we have all dimensions, compute total elements and allocate data array
+                if (shapeIndex == nDims) {
+                    int totalElements = 1;
+                    for (int i = 0; i < nDims; i++) {
+                        totalElements *= shape[i];
+                    }
+                    // Allocate both - only one will be used
+                    doubleData = new double[totalElements];
+                    longData = new long[totalElements];
+                }
+            }
+        }
+
+        @Override
+        public void putDouble(double value) {
+            if (doubleData != null && doubleDataOffset < doubleData.length) {
+                doubleData[doubleDataOffset++] = value;
+            }
+        }
+
+        @Override
+        public void putLong(long value) {
+            if (longData != null && longDataOffset < longData.length) {
+                longData[longDataOffset++] = value;
+            }
+        }
+
+        @Override
+        public void putBlockOfBytes(long from, long len) {
+            // This is the bulk data from the array
+            // The AbstractArray uses this to copy raw bytes
+            // We need to figure out if it's doubles or longs based on context
+            // For now, assume doubles (8 bytes each) since DoubleArray uses this
+            int count = (int) (len / 8);
+            if (doubleData == null) {
+                doubleData = new double[count];
+            }
+            for (int i = 0; i < count; i++) {
+                doubleData[doubleDataOffset++] = Unsafe.getUnsafe().getDouble(from + i * 8L);
             }
         }
     }
