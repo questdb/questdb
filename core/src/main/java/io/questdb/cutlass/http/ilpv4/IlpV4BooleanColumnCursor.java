@@ -118,13 +118,13 @@ public final class IlpV4BooleanColumnCursor implements IlpV4ColumnCursor {
     }
 
     @Override
-    public void advanceRow() throws IlpV4ParseException {
+    public boolean advanceRow() throws IlpV4ParseException {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
             currentIsNull = IlpV4NullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
-                return;
+                return true;
             }
         } else {
             currentIsNull = false;
@@ -136,6 +136,7 @@ public final class IlpV4BooleanColumnCursor implements IlpV4ColumnCursor {
         byte b = Unsafe.getUnsafe().getByte(valueBitmapAddress + byteIndex);
         currentValue = (b & (1 << bitIndex)) != 0;
         currentValueIndex++;
+        return false;
     }
 
     @Override

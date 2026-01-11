@@ -131,13 +131,13 @@ public final class IlpV4FixedWidthColumnCursor implements IlpV4ColumnCursor {
     }
 
     @Override
-    public void advanceRow() throws IlpV4ParseException {
+    public boolean advanceRow() throws IlpV4ParseException {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
             currentIsNull = IlpV4NullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
-                return;
+                return true;
             }
         } else {
             currentIsNull = false;
@@ -147,6 +147,7 @@ public final class IlpV4FixedWidthColumnCursor implements IlpV4ColumnCursor {
         long valueAddress = valuesAddress + (long) currentValueIndex * valueSize;
         readCurrentValue(valueAddress);
         currentValueIndex++;
+        return false;
     }
 
     private void readCurrentValue(long address) {

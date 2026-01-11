@@ -131,14 +131,14 @@ public final class IlpV4GeoHashColumnCursor implements IlpV4ColumnCursor {
     }
 
     @Override
-    public void advanceRow() throws IlpV4ParseException {
+    public boolean advanceRow() throws IlpV4ParseException {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
             currentIsNull = IlpV4NullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 currentGeoHash = 0;
-                return;
+                return true;
             }
         } else {
             currentIsNull = false;
@@ -147,6 +147,7 @@ public final class IlpV4GeoHashColumnCursor implements IlpV4ColumnCursor {
         // Read geohash value
         long valueAddress = valuesAddress + (long) currentRow * valueSize;
         currentGeoHash = readValue(valueAddress, valueSize);
+        return false;
     }
 
     private static long readValue(long address, int valueSize) {

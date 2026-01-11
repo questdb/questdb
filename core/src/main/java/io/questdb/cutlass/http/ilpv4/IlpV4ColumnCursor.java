@@ -87,9 +87,10 @@ public interface IlpV4ColumnCursor extends Mutable {
      * Must be called before reading each row's value. The first call
      * advances to row 0.
      *
+     * @return true if the current row's value is NULL
      * @throws IlpV4ParseException if parsing fails during row advance
      */
-    void advanceRow() throws IlpV4ParseException;
+    boolean advanceRow() throws IlpV4ParseException;
 
     /**
      * Returns the current row index (0-based).

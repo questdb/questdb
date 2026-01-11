@@ -51,10 +51,11 @@ import io.questdb.std.QuietCloseable;
  *         while (table.hasNextRow()) {
  *             table.nextRow();
  *             for (int col = 0; col < table.getColumnCount(); col++) {
- *                 IlpV4ColumnCursor column = table.getColumn(col);
- *                 if (!column.isNull()) {
- *                     // Read value based on column type
+ *                 if (table.isColumnNull(col)) {
+ *                     continue;  // use isColumnNull() to avoid megamorphic calls
  *                 }
+ *                 IlpV4ColumnCursor column = table.getColumn(col);
+ *                 // Read value based on column type
  *             }
  *         }
  *     }

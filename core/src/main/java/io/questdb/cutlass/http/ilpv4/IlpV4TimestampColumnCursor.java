@@ -198,13 +198,13 @@ public final class IlpV4TimestampColumnCursor implements IlpV4ColumnCursor {
     }
 
     @Override
-    public void advanceRow() throws IlpV4ParseException {
+    public boolean advanceRow() throws IlpV4ParseException {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
             currentIsNull = IlpV4NullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
-                return;
+                return true;
             }
         } else {
             currentIsNull = false;
@@ -223,6 +223,7 @@ public final class IlpV4TimestampColumnCursor implements IlpV4ColumnCursor {
             currentTimestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) currentValueIndex * 8);
         }
         currentValueIndex++;
+        return false;
     }
 
     @Override

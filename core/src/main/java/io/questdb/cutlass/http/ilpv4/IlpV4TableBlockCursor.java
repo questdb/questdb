@@ -41,10 +41,11 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
  * while (cursor.hasNextRow()) {
  *     cursor.nextRow();
  *     for (int col = 0; col < cursor.getColumnCount(); col++) {
- *         IlpV4ColumnCursor colCursor = cursor.getColumn(col);
- *         if (!colCursor.isNull()) {
- *             // read value based on type
+ *         if (cursor.isColumnNull(col)) {
+ *             continue;  // use isColumnNull() to avoid megamorphic calls
  *         }
+ *         IlpV4ColumnCursor colCursor = cursor.getColumn(col);
+ *         // read value based on type
  *     }
  * }
  * </pre>
@@ -56,6 +57,9 @@ public class IlpV4TableBlockCursor implements Mutable {
 
     // Column cursors (reused across table blocks)
     private final ObjList<IlpV4ColumnCursor> columnCursors = new ObjList<>();
+
+    // Cached null flags per column for current row (avoids megamorphic isNull() calls)
+    private boolean[] columnNullFlags = new boolean[16];
 
     // Schema cache reference
     private IlpV4SchemaCache schemaCache;
@@ -151,6 +155,9 @@ public class IlpV4TableBlockCursor implements Mutable {
         while (columnCursors.size() < capacity) {
             // Pre-allocate with null, will be replaced with correct type
             columnCursors.add(null);
+        }
+        if (columnNullFlags.length < capacity) {
+            columnNullFlags = new boolean[capacity];
         }
     }
 
@@ -298,14 +305,30 @@ public class IlpV4TableBlockCursor implements Mutable {
 
     /**
      * Advances all column cursors to the next row.
+     * <p>
+     * Caches null flags for each column to avoid megamorphic {@code isNull()} calls
+     * in consumer loops. Use {@link #isColumnNull(int)} to check null status.
      *
      * @throws IlpV4ParseException if parsing fails during row advance
      */
     public void nextRow() throws IlpV4ParseException {
         currentRow++;
         for (int i = 0; i < columnCount; i++) {
-            columnCursors.getQuick(i).advanceRow();
+            columnNullFlags[i] = columnCursors.getQuick(i).advanceRow();
         }
+    }
+
+    /**
+     * Returns whether the column at the specified index is null for the current row.
+     * <p>
+     * This method provides monomorphic access to null status, avoiding the megamorphic
+     * virtual call overhead of {@code getColumn(i).isNull()}.
+     *
+     * @param index column index
+     * @return true if the column value is null for the current row
+     */
+    public boolean isColumnNull(int index) {
+        return columnNullFlags[index];
     }
 
     /**

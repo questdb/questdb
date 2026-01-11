@@ -130,14 +130,14 @@ public final class IlpV4StringColumnCursor implements IlpV4ColumnCursor {
     }
 
     @Override
-    public void advanceRow() throws IlpV4ParseException {
+    public boolean advanceRow() throws IlpV4ParseException {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
             currentIsNull = IlpV4NullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 valueUtf8.clear();
-                return;
+                return true;
             }
         } else {
             currentIsNull = false;
@@ -150,6 +150,7 @@ public final class IlpV4StringColumnCursor implements IlpV4ColumnCursor {
         // Update flyweight to point to this string's bytes - NO ALLOCATION!
         valueUtf8.of(stringDataAddress + startOffset, stringDataAddress + endOffset);
         currentValueIndex++;
+        return false;
     }
 
     @Override

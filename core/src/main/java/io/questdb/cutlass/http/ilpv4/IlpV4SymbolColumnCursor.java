@@ -171,14 +171,14 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
     }
 
     @Override
-    public void advanceRow() throws IlpV4ParseException {
+    public boolean advanceRow() throws IlpV4ParseException {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
             currentIsNull = IlpV4NullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 currentSymbolIndex = -1;
-                return;
+                return true;
             }
         } else {
             currentIsNull = false;
@@ -188,6 +188,7 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
         IlpV4Varint.decode(currentIndexAddress, indicesEnd, decodeResult);
         currentSymbolIndex = (int) decodeResult.value;
         currentIndexAddress += decodeResult.bytesRead;
+        return false;
     }
 
     @Override

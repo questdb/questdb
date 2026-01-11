@@ -190,9 +190,9 @@ public class IlpV4WalAppender {
 
             // Get timestamp for this row
             long timestamp;
-            if (timestampCursor != null && !timestampCursor.isNull()) {
+            if (timestampCursor != null && !tableBlock.isColumnNull(timestampColumnInBlock)) {
                 timestamp = ((IlpV4TimestampColumnCursor) timestampCursor).getTimestamp();
-            } else if (timestampCursor != null && timestampCursor instanceof IlpV4FixedWidthColumnCursor && !timestampCursor.isNull()) {
+            } else if (timestampCursor != null && timestampCursor instanceof IlpV4FixedWidthColumnCursor && !tableBlock.isColumnNull(timestampColumnInBlock)) {
                 timestamp = ((IlpV4FixedWidthColumnCursor) timestampCursor).getTimestamp();
             } else {
                 timestamp = tud.getTimestampDriver().getTicks();
@@ -205,8 +205,7 @@ public class IlpV4WalAppender {
                         continue;
                     }
 
-                    IlpV4ColumnCursor cursor = tableBlock.getColumn(col);
-                    if (cursor.isNull()) {
+                    if (tableBlock.isColumnNull(col)) {
                         continue;
                     }
 
@@ -214,7 +213,7 @@ public class IlpV4WalAppender {
                     int columnType = columnTypeMap[col];
                     byte ilpType = ilpTypes[col];
 
-                    writeValueFromCursor(r, columnIndex, columnType, ilpType, cursor);
+                    writeValueFromCursor(r, columnIndex, columnType, ilpType, tableBlock.getColumn(col));
                 }
                 r.append();
                 tud.commitIfMaxUncommittedRowsCountReached();
