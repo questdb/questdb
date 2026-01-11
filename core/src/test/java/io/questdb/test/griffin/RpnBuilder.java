@@ -48,6 +48,17 @@ public class RpnBuilder implements ExpressionParserListener {
         }
     }
 
+    public void reset() {
+        sink.clear();
+    }
+
+    public final CharSequence rpn() {
+        if (sink.charAt(sink.length() - 1) == ' ') {
+            sink.clear(sink.length() - 1);
+        }
+        return sink;
+    }
+
     private void serializeExpressionToRpn(ExpressionNode node) {
         if (node == null) {
             return;
@@ -207,16 +218,5 @@ public class RpnBuilder implements ExpressionParserListener {
         }
 
         sink.put(')');
-    }
-
-    public void reset() {
-        sink.clear();
-    }
-
-    public final CharSequence rpn() {
-        if (sink.charAt(sink.length() - 1) == ' ') {
-            sink.clear(sink.length() - 1);
-        }
-        return sink;
     }
 }

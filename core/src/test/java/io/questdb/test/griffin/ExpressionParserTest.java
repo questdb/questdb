@@ -1584,98 +1584,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail("a-^b", 1, "too few arguments for '-' [found=1,expected=2]");
     }
 
-    private void assertFail(String content, int pos, String contains) {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.testParseExpression(content, rpnBuilder);
-            Assert.fail("expected exception");
-        } catch (SqlException e) {
-            assertEquals(pos, e.getPosition());
-            if (!Chars.contains(e.getFlyweightMessage(), contains)) {
-                Assert.fail(e.getMessage() + " does not contain '" + contains + '\'');
-            }
-        }
-    }
-
-    private void x(CharSequence expectedRpn, String content) throws SqlException {
-        rpnBuilder.reset();
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.testParseExpression(content, rpnBuilder);
-        }
-        TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
-    }
-
-    @Test
-    public void testWindowFunctionArithmetic() throws SqlException {
-        // RPN: left operand, right operand, operator
-        x("row_number over () 1 +", "row_number() over () + 1");
-    }
-
-    @Test
-    public void testWindowFunctionIgnoreNulls() throws SqlException {
-        x("i first_value ignore nulls over (order by ts)", "first_value(i) ignore nulls over (order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionIgnoreNullsWithExclude() throws SqlException {
-        x("j first_value ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)",
-                "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)");
-    }
-
-    @Test
-    public void testWindowFunctionPartitionByExpression() throws SqlException {
-        x("i avg over (partition by sym '%aaa%' like order by ts)", "avg(i) over (partition by sym like '%aaa%' order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionRangeFrameWithTimeUnit() throws SqlException {
-        x("ts max over (order by ts range between '12' hour preceding and current row)",
-                "max(ts) over (order by ts range between '12' hour preceding and current row)");
-    }
-
-    @Test
-    public void testWindowFunctionRowsFrame() throws SqlException {
-        x("ts max over (order by ts rows between unbounded preceding and current row)",
-                "max(ts) over (order by ts rows between unbounded preceding and current row)");
-    }
-
-    @Test
-    public void testWindowFunctionRowsFrameExcludeCurrentRow() throws SqlException {
-        x("j avg over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)",
-                "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)");
-    }
-
-    @Test
-    public void testWindowFunctionPartitionByFunctionCall() throws SqlException {
-        x("row_number over (partition by 'y' ts timestamp_floor order by temp desc)",
-                "row_number() over (partition by timestamp_floor('y', ts) order by temp desc)");
-    }
-
-    // Window function tests
-    @Test
-    public void testWindowFunctionSimple() throws SqlException {
-        x("row_number over ()", "row_number() over ()");
-    }
-
-    @Test
-    public void testWindowFunctionWithOrderBy() throws SqlException {
-        x("ts max over (order by ts)", "max(ts) over (order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionWithOrderByDesc() throws SqlException {
-        x("ts max over (order by ts desc)", "max(ts) over (order by ts desc)");
-    }
-
-    @Test
-    public void testWindowFunctionWithPartitionAndOrder() throws SqlException {
-        x("x row_number over (partition by sym order by ts)", "row_number(x) over (partition by sym order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionWithPartitionBy() throws SqlException {
-        x("x row_number over (partition by x)", "row_number(x) over (partition by x)");
-    }
-
     @Test
     public void testWindowFrameCurrentRowWithPrecedingEnd() {
         // Frame starting from CURRENT ROW cannot have PRECEDING end
@@ -1699,6 +1607,23 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFrameExpressionWithExcludeTies() throws SqlException {
+        // Expression in frame bound with EXCLUDE TIES
+        x("c f over (partition by b order by ts rows between 1 1 / preceding and unbounded following exclude ties)",
+                "f(c) over (partition by b order by ts rows between 1/1 preceding and unbounded following exclude ties)");
+    }
+
+    @Test
+    public void testWindowFrameFollowingWithPrecedingEnd() {
+        // Frame starting from FOLLOWING cannot have PRECEDING end
+        assertFail(
+                "f(c) over (partition by b order by ts rows between 1 following and 2 preceding)",
+                69,
+                "frame starting from FOLLOWING must end with FOLLOWING"
+        );
+    }
+
+    @Test
     public void testWindowFrameMissingLowerBoundValue() {
         // Missing value before PRECEDING in lower bound
         assertFail(
@@ -1715,23 +1640,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "avg(a) over(partition by b order by ts rows between 10 preceding and preceding)",
                 69,
                 "frame bound value expected before 'preceding'"
-        );
-    }
-
-    @Test
-    public void testWindowFrameExpressionWithExcludeTies() throws SqlException {
-        // Expression in frame bound with EXCLUDE TIES
-        x("c f over (partition by b order by ts rows between 1 1 / preceding and unbounded following exclude ties)",
-                "f(c) over (partition by b order by ts rows between 1/1 preceding and unbounded following exclude ties)");
-    }
-
-    @Test
-    public void testWindowFrameFollowingWithPrecedingEnd() {
-        // Frame starting from FOLLOWING cannot have PRECEDING end
-        assertFail(
-                "f(c) over (partition by b order by ts rows between 1 following and 2 preceding)",
-                69,
-                "frame starting from FOLLOWING must end with FOLLOWING"
         );
     }
 
@@ -1786,6 +1694,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionArithmetic() throws SqlException {
+        // RPN: left operand, right operand, operator
+        x("row_number over () 1 +", "row_number() over () + 1");
+    }
+
+    @Test
     public void testWindowFunctionIgnoreNullTypo() {
         // Common typo: "null" instead of "nulls"
         assertFail(
@@ -1793,6 +1707,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 17,
                 "'nulls' expected, not 'null'"
         );
+    }
+
+    @Test
+    public void testWindowFunctionIgnoreNulls() throws SqlException {
+        x("i first_value ignore nulls over (order by ts)", "first_value(i) ignore nulls over (order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionIgnoreNullsWithExclude() throws SqlException {
+        x("j first_value ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)",
+                "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)");
     }
 
     @Test
@@ -1816,9 +1741,59 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionInBothThenAndElse() throws SqlException {
+        // Window function in both THEN and ELSE (arguments appear before function names in RPN)
+        x(" x 0 > x sum over (partition by a) x avg over (order by ts) case",
+                "case when x > 0 then sum(x) over (partition by a) else avg(x) over (order by ts) end");
+    }
+
+    @Test
+    public void testWindowFunctionInCaseThenClause() throws SqlException {
+        // Window function in THEN clause (x argument appears before sum in RPN)
+        x(" x 0 > x sum over (partition by y) 0 case", "case when x > 0 then sum(x) over (partition by y) else 0 end");
+    }
+
+    @Test
+    public void testWindowFunctionInCaseWhenCondition() throws SqlException {
+        // Window function in WHEN condition (comparing with a value)
+        x(" row_number over (partition by x) 5 > 1 0 case", "case when row_number() over (partition by x) > 5 then 1 else 0 end");
+    }
+
+    @Test
+    public void testWindowFunctionInMultipleCaseBranches() throws SqlException {
+        // Window functions in multiple CASE branches (arguments appear before function names in RPN)
+        x(" a 1 = x sum over (order by ts) a 2 = x avg over (partition by b) 0 case",
+                "case when a = 1 then sum(x) over (order by ts) when a = 2 then avg(x) over (partition by b) else 0 end");
+    }
+
+    @Test
+    public void testWindowFunctionInSimpleCase() throws SqlException {
+        // Simple CASE expression with window function
+        x("x 1 row_number over (partition by y) 0 case",
+                "case x when 1 then row_number() over (partition by y) else 0 end");
+    }
+
+    @Test
     public void testWindowFunctionInsideCase() throws SqlException {
         // Note: leading space is due to how CASE expressions are serialized in RPN
         x(" x 0 > 1 row_number over (partition by x) case", "case when x > 0 then 1 else row_number() over (partition by x) end");
+    }
+
+    @Test
+    public void testWindowFunctionPartitionByExpression() throws SqlException {
+        x("i avg over (partition by sym '%aaa%' like order by ts)", "avg(i) over (partition by sym like '%aaa%' order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionPartitionByFunctionCall() throws SqlException {
+        x("row_number over (partition by 'y' ts timestamp_floor order by temp desc)",
+                "row_number() over (partition by timestamp_floor('y', ts) order by temp desc)");
+    }
+
+    @Test
+    public void testWindowFunctionRangeFrameWithTimeUnit() throws SqlException {
+        x("ts max over (order by ts range between '12' hour preceding and current row)",
+                "max(ts) over (order by ts range between '12' hour preceding and current row)");
     }
 
     @Test
@@ -1832,6 +1807,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionRowsFrame() throws SqlException {
+        x("ts max over (order by ts rows between unbounded preceding and current row)",
+                "max(ts) over (order by ts rows between unbounded preceding and current row)");
+    }
+
+    @Test
+    public void testWindowFunctionRowsFrameExcludeCurrentRow() throws SqlException {
+        x("j avg over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)",
+                "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)");
+    }
+
+    // Window function tests
+    @Test
+    public void testWindowFunctionSimple() throws SqlException {
+        x("row_number over ()", "row_number() over ()");
+    }
+
+    @Test
     public void testWindowFunctionUnterminatedOverClause() {
         // Missing closing parenthesis for OVER clause
         assertFail(
@@ -1839,5 +1832,45 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 35,
                 "')' expected to close OVER clause"
         );
+    }
+
+    @Test
+    public void testWindowFunctionWithOrderBy() throws SqlException {
+        x("ts max over (order by ts)", "max(ts) over (order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionWithOrderByDesc() throws SqlException {
+        x("ts max over (order by ts desc)", "max(ts) over (order by ts desc)");
+    }
+
+    @Test
+    public void testWindowFunctionWithPartitionAndOrder() throws SqlException {
+        x("x row_number over (partition by sym order by ts)", "row_number(x) over (partition by sym order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionWithPartitionBy() throws SqlException {
+        x("x row_number over (partition by x)", "row_number(x) over (partition by x)");
+    }
+
+    private void assertFail(String content, int pos, String contains) {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.testParseExpression(content, rpnBuilder);
+            Assert.fail("expected exception");
+        } catch (SqlException e) {
+            assertEquals(pos, e.getPosition());
+            if (!Chars.contains(e.getFlyweightMessage(), contains)) {
+                Assert.fail(e.getMessage() + " does not contain '" + contains + '\'');
+            }
+        }
+    }
+
+    private void x(CharSequence expectedRpn, String content) throws SqlException {
+        rpnBuilder.reset();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.testParseExpression(content, rpnBuilder);
+        }
+        TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
 }

@@ -88,6 +88,7 @@ public class ExpressionParser {
     private final OperatorRegistry shadowRegistry;
     private final SqlParser sqlParser;
     private final ObjectPool<WindowColumn> windowColumnPool;
+    private final WindowExprTreeBuilder windowExprTreeBuilder = new WindowExprTreeBuilder();
     private boolean stopOnTopINOperator = false;
 
     ExpressionParser(
@@ -393,6 +394,376 @@ public class ExpressionParser {
         return processDefaultBranch;
     }
 
+    /**
+     * Parses a time unit keyword (HOUR, MINUTE, SECOND, etc.) and returns the corresponding constant.
+     * Returns 0 if the token is not a time unit.
+     */
+    private char parseTimeUnit(CharSequence tok) {
+        if (tok == null) {
+            return 0;
+        }
+        if (SqlKeywords.isHourKeyword(tok) || SqlKeywords.isHoursKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_HOUR;
+        }
+        if (SqlKeywords.isMinuteKeyword(tok) || SqlKeywords.isMinutesKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_MINUTE;
+        }
+        if (SqlKeywords.isSecondKeyword(tok) || SqlKeywords.isSecondsKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_SECOND;
+        }
+        if (SqlKeywords.isMillisecondKeyword(tok) || SqlKeywords.isMillisecondsKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_MILLISECOND;
+        }
+        if (SqlKeywords.isMicrosecondKeyword(tok) || SqlKeywords.isMicrosecondsKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_MICROSECOND;
+        }
+        if (SqlKeywords.isNanosecondKeyword(tok) || SqlKeywords.isNanosecondsKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_NANOSECOND;
+        }
+        if (SqlKeywords.isDayKeyword(tok) || SqlKeywords.isDaysKeyword(tok)) {
+            return WindowColumn.TIME_UNIT_DAY;
+        }
+        return 0;
+    }
+
+    /**
+     * Parses window function OVER clause and attaches the WindowColumn to the function node.
+     * Expected to be called when we've just finished parsing a function call and peeked OVER keyword.
+     *
+     * @param lexer             the lexer positioned after OVER keyword
+     * @param functionNode      the function node to attach window context to
+     * @param sqlParserCallback callback for nested expression parsing
+     * @param decls             declarations for expression parsing
+     * @param ignoreNulls       true if IGNORE NULLS was specified before OVER
+     * @param nullsDescPos      position of IGNORE/RESPECT keyword (0 if not specified)
+     */
+    private void parseWindowClause(
+            GenericLexer lexer,
+            ExpressionNode functionNode,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean ignoreNulls,
+            int nullsDescPos
+    ) throws SqlException {
+        // OVER keyword already consumed, expect '('
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) != '(') {
+            throw SqlException.$(lexer.lastTokenPosition(), "'(' expected after OVER");
+        }
+
+        WindowColumn windowCol = windowColumnPool.next().of(null, functionNode);
+        windowCol.setIgnoreNulls(ignoreNulls);
+        windowCol.setNullsDescPos(nullsDescPos);
+        functionNode.windowContext = windowCol;
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "')' or window specification expected");
+        }
+
+        // Handle PARTITION BY
+        if (SqlKeywords.isPartitionKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !SqlKeywords.isByKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'by' expected after 'partition'");
+            }
+
+            do {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "column name expected");
+                }
+                if (SqlKeywords.isOrderKeyword(tok) || tok.charAt(0) == ')') {
+                    break;
+                }
+                lexer.unparseLast();
+                ExpressionNode partitionExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                windowCol.getPartitionBy().add(partitionExpr);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'order', ',' or ')' expected");
+                }
+            } while (tok.charAt(0) == ',');
+        }
+
+        // Handle ORDER BY
+        if (SqlKeywords.isOrderKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !SqlKeywords.isByKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'by' expected after 'order'");
+            }
+
+            do {
+                ExpressionNode orderExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                if (orderExpr == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+
+                int direction = QueryModel.ORDER_DIRECTION_ASCENDING;
+                if (tok != null && SqlKeywords.isDescKeyword(tok)) {
+                    direction = QueryModel.ORDER_DIRECTION_DESCENDING;
+                    tok = SqlUtil.fetchNext(lexer);
+                } else if (tok != null && SqlKeywords.isAscKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+                windowCol.addOrderBy(orderExpr, direction);
+
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close OVER clause");
+                }
+            } while (tok.charAt(0) == ',');
+        }
+
+        // Handle ROWS/RANGE/GROUPS frame specification
+        if (!Chars.equals(tok, ')')) {
+            int framingMode = -1;
+            if (SqlKeywords.isRowsKeyword(tok)) {
+                framingMode = WindowColumn.FRAMING_ROWS;
+            } else if (SqlKeywords.isRangeKeyword(tok)) {
+                framingMode = WindowColumn.FRAMING_RANGE;
+            } else if (SqlKeywords.isGroupsKeyword(tok)) {
+                framingMode = WindowColumn.FRAMING_GROUPS;
+            }
+
+            if (framingMode != -1) {
+                int frameModePos = lexer.lastTokenPosition();
+                // GROUPS mode requires ORDER BY
+                if (framingMode == WindowColumn.FRAMING_GROUPS && windowCol.getOrderBy().size() == 0) {
+                    throw SqlException.$(frameModePos, "GROUPS mode requires an ORDER BY clause");
+                }
+                windowCol.setFramingMode(framingMode);
+                tok = parseWindowFrameClause(lexer, windowCol, sqlParserCallback, decls);
+
+                // RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column
+                if (framingMode == WindowColumn.FRAMING_RANGE && windowCol.getOrderBy().size() != 1) {
+                    int loKind = windowCol.getRowsLoKind();
+                    int hiKind = windowCol.getRowsHiKind();
+                    boolean hasOffset = (loKind == WindowColumn.PRECEDING || loKind == WindowColumn.FOLLOWING)
+                            && windowCol.getRowsLoExpr() != null;
+                    if (!hasOffset) {
+                        hasOffset = (hiKind == WindowColumn.PRECEDING || hiKind == WindowColumn.FOLLOWING)
+                                && windowCol.getRowsHiExpr() != null;
+                    }
+                    if (hasOffset) {
+                        throw SqlException.$(frameModePos, "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
+                    }
+                }
+            }
+        }
+
+        if (tok == null || tok.charAt(0) != ')') {
+            throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close OVER clause");
+        }
+    }
+
+    /**
+     * Parses an expression within a window clause context.
+     * Uses a separate tree builder to avoid state conflicts with the outer expression parsing.
+     * Saves and restores parser state since we're calling parseExpr recursively.
+     */
+    private ExpressionNode parseWindowExpr(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        // Save opStack bottom - we need to isolate the inner parseExpr from the outer context
+        // This prevents the inner parseExpr from seeing/popping items from the outer expression
+        // (e.g., a CASE node that belongs to the outer expression)
+        int savedOpStackBottom = opStack.getBottom();
+        opStack.setBottom(opStack.sizeRaw());
+
+        try {
+            // Reuse the tree builder to avoid allocations
+            windowExprTreeBuilder.reset();
+            parseExpr(lexer, windowExprTreeBuilder, sqlParserCallback, decls);
+            return windowExprTreeBuilder.getResult();
+        } finally {
+            // Restore opStack bottom
+            opStack.setBottom(savedOpStackBottom);
+        }
+    }
+
+    /**
+     * Parses a single frame bound (UNBOUNDED PRECEDING, CURRENT ROW, or expr PRECEDING/FOLLOWING)
+     */
+    private void parseWindowFrameBound(
+            GenericLexer lexer,
+            WindowColumn windowCol,
+            CharSequence tok,
+            boolean isLowerBound,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'unbounded', 'current' or expression expected");
+        }
+
+        int pos = lexer.lastTokenPosition();
+
+        // Check for common error: PRECEDING/FOLLOWING without a value
+        if (SqlKeywords.isPrecedingKeyword(tok) || SqlKeywords.isFollowingKeyword(tok)) {
+            throw SqlException.$(pos, "frame bound value expected before '").put(tok).put('\'');
+        }
+
+        if (SqlKeywords.isUnboundedKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && SqlKeywords.isPrecedingKeyword(tok)) {
+                if (isLowerBound) {
+                    windowCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "frame end cannot be UNBOUNDED PRECEDING, use UNBOUNDED FOLLOWING");
+                }
+            } else if (tok != null && SqlKeywords.isFollowingKeyword(tok)) {
+                if (!isLowerBound) {
+                    windowCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "frame start cannot be UNBOUNDED FOLLOWING, use UNBOUNDED PRECEDING");
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected after 'unbounded'");
+            }
+        } else if (SqlKeywords.isCurrentKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !SqlKeywords.isRowKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'row' expected after 'current'");
+            }
+            if (isLowerBound) {
+                windowCol.setRowsLoKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+            } else {
+                windowCol.setRowsHiKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+            }
+        } else {
+            // Expression followed by optional time unit and PRECEDING or FOLLOWING
+            lexer.unparseLast();
+            ExpressionNode boundExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+
+            // Check for optional time unit (HOUR, MINUTE, SECOND, etc.) - only valid for RANGE mode
+            tok = SqlUtil.fetchNext(lexer);
+            char timeUnit = parseTimeUnit(tok);
+            if (timeUnit != 0) {
+                if (windowCol.getFramingMode() != WindowColumn.FRAMING_RANGE) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "time units are only valid with RANGE frames, not ROWS or GROUPS");
+                }
+                if (isLowerBound) {
+                    windowCol.setRowsLoExprTimeUnit(timeUnit);
+                } else {
+                    windowCol.setRowsHiExprTimeUnit(timeUnit);
+                }
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            if (tok != null && SqlKeywords.isPrecedingKeyword(tok)) {
+                if (isLowerBound) {
+                    windowCol.setRowsLoExpr(boundExpr, pos);
+                    windowCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                } else {
+                    windowCol.setRowsHiExpr(boundExpr, pos);
+                    windowCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                }
+            } else if (tok != null && SqlKeywords.isFollowingKeyword(tok)) {
+                if (isLowerBound) {
+                    windowCol.setRowsLoExpr(boundExpr, pos);
+                    windowCol.setRowsLoKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
+                } else {
+                    windowCol.setRowsHiExpr(boundExpr, pos);
+                    windowCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
+            }
+        }
+    }
+
+    /**
+     * Parses frame clause (BETWEEN ... AND ... or single bound specification)
+     */
+    private CharSequence parseWindowFrameClause(
+            GenericLexer lexer,
+            WindowColumn windowCol,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'between', 'unbounded', 'current' or expression expected");
+        }
+
+        if (SqlKeywords.isBetweenKeyword(tok)) {
+            // BETWEEN low AND high
+            tok = SqlUtil.fetchNext(lexer);
+            parseWindowFrameBound(lexer, windowCol, tok, true, sqlParserCallback, decls);
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !SqlKeywords.isAndKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'and' expected");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+            parseWindowFrameBound(lexer, windowCol, tok, false, sqlParserCallback, decls);
+
+            // Validate frame bounds order
+            int loKind = windowCol.getRowsLoKind();
+            int hiKind = windowCol.getRowsHiKind();
+            if (hiKind == WindowColumn.PRECEDING) {
+                if (loKind == WindowColumn.CURRENT) {
+                    throw SqlException.$(windowCol.getRowsHiKindPos(), "frame starting from CURRENT ROW must end with CURRENT ROW or FOLLOWING");
+                }
+                if (loKind == WindowColumn.FOLLOWING) {
+                    throw SqlException.$(windowCol.getRowsHiKindPos(), "frame starting from FOLLOWING must end with FOLLOWING");
+                }
+            }
+
+        } else {
+            // Single bound - defaults to CURRENT ROW for upper bound
+            parseWindowFrameBound(lexer, windowCol, tok, true, sqlParserCallback, decls);
+
+            // In single-bound mode, only PRECEDING is allowed (not FOLLOWING)
+            if (windowCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
+                throw SqlException.$(windowCol.getRowsLoKindPos(), "single-bound frame specification requires PRECEDING, use BETWEEN for FOLLOWING");
+            }
+
+            windowCol.setRowsHiKind(WindowColumn.CURRENT, windowCol.getRowsLoKindPos());
+        }
+
+        // Check for EXCLUDE clause
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && SqlKeywords.isExcludeKeyword(tok)) {
+            int excludePos = lexer.lastTokenPosition();
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
+            }
+
+            if (SqlKeywords.isCurrentKeyword(tok)) {
+                // EXCLUDE CURRENT ROW
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !SqlKeywords.isRowKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'row' expected after 'current'");
+                }
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_CURRENT_ROW, excludePos);
+            } else if (SqlKeywords.isGroupKeyword(tok)) {
+                // EXCLUDE GROUP
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_GROUP, excludePos);
+            } else if (SqlKeywords.isTiesKeyword(tok)) {
+                // EXCLUDE TIES
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_TIES, excludePos);
+            } else if (SqlKeywords.isNoKeyword(tok)) {
+                // EXCLUDE NO OTHERS
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !SqlKeywords.isOthersKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'others' expected after 'no'");
+                }
+                windowCol.setExclusionKind(WindowColumn.EXCLUDE_NO_OTHERS, excludePos);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
+            }
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        return tok;
+    }
+
     private int popAndOpStack(ExpressionParserListener listener, int argStackDepth, int prevBranch) throws SqlException {
         ExpressionNode node;
         while ((node = opStack.pop()) != null && !SqlKeywords.isBetweenKeyword(node.token)) {
@@ -692,376 +1063,6 @@ public class ExpressionParser {
             }
         }
         return false;
-    }
-
-    /**
-     * Parses a time unit keyword (HOUR, MINUTE, SECOND, etc.) and returns the corresponding constant.
-     * Returns 0 if the token is not a time unit.
-     */
-    private char parseTimeUnit(CharSequence tok) {
-        if (tok == null) {
-            return 0;
-        }
-        if (SqlKeywords.isHourKeyword(tok) || SqlKeywords.isHoursKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_HOUR;
-        }
-        if (SqlKeywords.isMinuteKeyword(tok) || SqlKeywords.isMinutesKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_MINUTE;
-        }
-        if (SqlKeywords.isSecondKeyword(tok) || SqlKeywords.isSecondsKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_SECOND;
-        }
-        if (SqlKeywords.isMillisecondKeyword(tok) || SqlKeywords.isMillisecondsKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_MILLISECOND;
-        }
-        if (SqlKeywords.isMicrosecondKeyword(tok) || SqlKeywords.isMicrosecondsKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_MICROSECOND;
-        }
-        if (SqlKeywords.isNanosecondKeyword(tok) || SqlKeywords.isNanosecondsKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_NANOSECOND;
-        }
-        if (SqlKeywords.isDayKeyword(tok) || SqlKeywords.isDaysKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_DAY;
-        }
-        return 0;
-    }
-
-    /**
-     * Parses window function OVER clause and attaches the WindowColumn to the function node.
-     * Expected to be called when we've just finished parsing a function call and peeked OVER keyword.
-     *
-     * @param lexer             the lexer positioned after OVER keyword
-     * @param functionNode      the function node to attach window context to
-     * @param sqlParserCallback callback for nested expression parsing
-     * @param decls             declarations for expression parsing
-     * @param ignoreNulls       true if IGNORE NULLS was specified before OVER
-     * @param nullsDescPos      position of IGNORE/RESPECT keyword (0 if not specified)
-     */
-    private void parseWindowClause(
-            GenericLexer lexer,
-            ExpressionNode functionNode,
-            SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-            boolean ignoreNulls,
-            int nullsDescPos
-    ) throws SqlException {
-        // OVER keyword already consumed, expect '('
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || tok.charAt(0) != '(') {
-            throw SqlException.$(lexer.lastTokenPosition(), "'(' expected after OVER");
-        }
-
-        WindowColumn windowCol = windowColumnPool.next().of(null, functionNode);
-        windowCol.setIgnoreNulls(ignoreNulls);
-        windowCol.setNullsDescPos(nullsDescPos);
-        functionNode.windowContext = windowCol;
-
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "')' or window specification expected");
-        }
-
-        // Handle PARTITION BY
-        if (SqlKeywords.isPartitionKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || !SqlKeywords.isByKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'by' expected after 'partition'");
-            }
-
-            do {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "column name expected");
-                }
-                if (SqlKeywords.isOrderKeyword(tok) || tok.charAt(0) == ')') {
-                    break;
-                }
-                lexer.unparseLast();
-                ExpressionNode partitionExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
-                windowCol.getPartitionBy().add(partitionExpr);
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'order', ',' or ')' expected");
-                }
-            } while (tok.charAt(0) == ',');
-        }
-
-        // Handle ORDER BY
-        if (SqlKeywords.isOrderKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || !SqlKeywords.isByKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'by' expected after 'order'");
-            }
-
-            do {
-                ExpressionNode orderExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
-                if (orderExpr == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
-                }
-                tok = SqlUtil.fetchNext(lexer);
-
-                int direction = QueryModel.ORDER_DIRECTION_ASCENDING;
-                if (tok != null && SqlKeywords.isDescKeyword(tok)) {
-                    direction = QueryModel.ORDER_DIRECTION_DESCENDING;
-                    tok = SqlUtil.fetchNext(lexer);
-                } else if (tok != null && SqlKeywords.isAscKeyword(tok)) {
-                    tok = SqlUtil.fetchNext(lexer);
-                }
-                windowCol.addOrderBy(orderExpr, direction);
-
-                if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close OVER clause");
-                }
-            } while (tok.charAt(0) == ',');
-        }
-
-        // Handle ROWS/RANGE/GROUPS frame specification
-        if (!Chars.equals(tok, ')')) {
-            int framingMode = -1;
-            if (SqlKeywords.isRowsKeyword(tok)) {
-                framingMode = WindowColumn.FRAMING_ROWS;
-            } else if (SqlKeywords.isRangeKeyword(tok)) {
-                framingMode = WindowColumn.FRAMING_RANGE;
-            } else if (SqlKeywords.isGroupsKeyword(tok)) {
-                framingMode = WindowColumn.FRAMING_GROUPS;
-            }
-
-            if (framingMode != -1) {
-                int frameModePos = lexer.lastTokenPosition();
-                // GROUPS mode requires ORDER BY
-                if (framingMode == WindowColumn.FRAMING_GROUPS && windowCol.getOrderBy().size() == 0) {
-                    throw SqlException.$(frameModePos, "GROUPS mode requires an ORDER BY clause");
-                }
-                windowCol.setFramingMode(framingMode);
-                tok = parseWindowFrameClause(lexer, windowCol, sqlParserCallback, decls);
-
-                // RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column
-                if (framingMode == WindowColumn.FRAMING_RANGE && windowCol.getOrderBy().size() != 1) {
-                    int loKind = windowCol.getRowsLoKind();
-                    int hiKind = windowCol.getRowsHiKind();
-                    boolean hasOffset = (loKind == WindowColumn.PRECEDING || loKind == WindowColumn.FOLLOWING)
-                            && windowCol.getRowsLoExpr() != null;
-                    if (!hasOffset) {
-                        hasOffset = (hiKind == WindowColumn.PRECEDING || hiKind == WindowColumn.FOLLOWING)
-                                && windowCol.getRowsHiExpr() != null;
-                    }
-                    if (hasOffset) {
-                        throw SqlException.$(frameModePos, "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
-                    }
-                }
-            }
-        }
-
-        if (tok == null || tok.charAt(0) != ')') {
-            throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close OVER clause");
-        }
-    }
-
-    /**
-     * Parses an expression within a window clause context.
-     * Uses a separate tree builder to avoid state conflicts with the outer expression parsing.
-     * Saves and restores parser state since we're calling parseExpr recursively.
-     */
-    private ExpressionNode parseWindowExpr(
-            GenericLexer lexer,
-            SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
-    ) throws SqlException {
-        // Save opStack bottom - we need to isolate the inner parseExpr from the outer context
-        // This prevents the inner parseExpr from seeing/popping items from the outer expression
-        // (e.g., a CASE node that belongs to the outer expression)
-        int savedOpStackBottom = opStack.getBottom();
-        opStack.setBottom(opStack.sizeRaw());
-
-        try {
-            // Use a separate tree builder to avoid state conflicts
-            WindowExprTreeBuilder treeBuilder = new WindowExprTreeBuilder();
-            parseExpr(lexer, treeBuilder, sqlParserCallback, decls);
-            return treeBuilder.getResult();
-        } finally {
-            // Restore opStack bottom
-            opStack.setBottom(savedOpStackBottom);
-        }
-    }
-
-    /**
-     * Parses a single frame bound (UNBOUNDED PRECEDING, CURRENT ROW, or expr PRECEDING/FOLLOWING)
-     */
-    private void parseWindowFrameBound(
-            GenericLexer lexer,
-            WindowColumn windowCol,
-            CharSequence tok,
-            boolean isLowerBound,
-            SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
-    ) throws SqlException {
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'unbounded', 'current' or expression expected");
-        }
-
-        int pos = lexer.lastTokenPosition();
-
-        // Check for common error: PRECEDING/FOLLOWING without a value
-        if (SqlKeywords.isPrecedingKeyword(tok) || SqlKeywords.isFollowingKeyword(tok)) {
-            throw SqlException.$(pos, "frame bound value expected before '").put(tok).put('\'');
-        }
-
-        if (SqlKeywords.isUnboundedKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && SqlKeywords.isPrecedingKeyword(tok)) {
-                if (isLowerBound) {
-                    windowCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "frame end cannot be UNBOUNDED PRECEDING, use UNBOUNDED FOLLOWING");
-                }
-            } else if (tok != null && SqlKeywords.isFollowingKeyword(tok)) {
-                if (!isLowerBound) {
-                    windowCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "frame start cannot be UNBOUNDED FOLLOWING, use UNBOUNDED PRECEDING");
-                }
-            } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected after 'unbounded'");
-            }
-        } else if (SqlKeywords.isCurrentKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || !SqlKeywords.isRowKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'row' expected after 'current'");
-            }
-            if (isLowerBound) {
-                windowCol.setRowsLoKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
-            } else {
-                windowCol.setRowsHiKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
-            }
-        } else {
-            // Expression followed by optional time unit and PRECEDING or FOLLOWING
-            lexer.unparseLast();
-            ExpressionNode boundExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
-
-            // Check for optional time unit (HOUR, MINUTE, SECOND, etc.) - only valid for RANGE mode
-            tok = SqlUtil.fetchNext(lexer);
-            char timeUnit = parseTimeUnit(tok);
-            if (timeUnit != 0) {
-                if (windowCol.getFramingMode() != WindowColumn.FRAMING_RANGE) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "time units are only valid with RANGE frames, not ROWS or GROUPS");
-                }
-                if (isLowerBound) {
-                    windowCol.setRowsLoExprTimeUnit(timeUnit);
-                } else {
-                    windowCol.setRowsHiExprTimeUnit(timeUnit);
-                }
-                tok = SqlUtil.fetchNext(lexer);
-            }
-
-            if (tok != null && SqlKeywords.isPrecedingKeyword(tok)) {
-                if (isLowerBound) {
-                    windowCol.setRowsLoExpr(boundExpr, pos);
-                    windowCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
-                } else {
-                    windowCol.setRowsHiExpr(boundExpr, pos);
-                    windowCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
-                }
-            } else if (tok != null && SqlKeywords.isFollowingKeyword(tok)) {
-                if (isLowerBound) {
-                    windowCol.setRowsLoExpr(boundExpr, pos);
-                    windowCol.setRowsLoKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
-                } else {
-                    windowCol.setRowsHiExpr(boundExpr, pos);
-                    windowCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
-                }
-            } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
-            }
-        }
-    }
-
-    /**
-     * Parses frame clause (BETWEEN ... AND ... or single bound specification)
-     */
-    private CharSequence parseWindowFrameClause(
-            GenericLexer lexer,
-            WindowColumn windowCol,
-            SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
-    ) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'between', 'unbounded', 'current' or expression expected");
-        }
-
-        if (SqlKeywords.isBetweenKeyword(tok)) {
-            // BETWEEN low AND high
-            tok = SqlUtil.fetchNext(lexer);
-            parseWindowFrameBound(lexer, windowCol, tok, true, sqlParserCallback, decls);
-
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || !SqlKeywords.isAndKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'and' expected");
-            }
-
-            tok = SqlUtil.fetchNext(lexer);
-            parseWindowFrameBound(lexer, windowCol, tok, false, sqlParserCallback, decls);
-
-            // Validate frame bounds order
-            int loKind = windowCol.getRowsLoKind();
-            int hiKind = windowCol.getRowsHiKind();
-            if (hiKind == WindowColumn.PRECEDING) {
-                if (loKind == WindowColumn.CURRENT) {
-                    throw SqlException.$(windowCol.getRowsHiKindPos(), "frame starting from CURRENT ROW must end with CURRENT ROW or FOLLOWING");
-                }
-                if (loKind == WindowColumn.FOLLOWING) {
-                    throw SqlException.$(windowCol.getRowsHiKindPos(), "frame starting from FOLLOWING must end with FOLLOWING");
-                }
-            }
-
-        } else {
-            // Single bound - defaults to CURRENT ROW for upper bound
-            parseWindowFrameBound(lexer, windowCol, tok, true, sqlParserCallback, decls);
-
-            // In single-bound mode, only PRECEDING is allowed (not FOLLOWING)
-            if (windowCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
-                throw SqlException.$(windowCol.getRowsLoKindPos(), "single-bound frame specification requires PRECEDING, use BETWEEN for FOLLOWING");
-            }
-
-            windowCol.setRowsHiKind(WindowColumn.CURRENT, windowCol.getRowsLoKindPos());
-        }
-
-        // Check for EXCLUDE clause
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && SqlKeywords.isExcludeKeyword(tok)) {
-            int excludePos = lexer.lastTokenPosition();
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
-            }
-
-            if (SqlKeywords.isCurrentKeyword(tok)) {
-                // EXCLUDE CURRENT ROW
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || !SqlKeywords.isRowKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'row' expected after 'current'");
-                }
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_CURRENT_ROW, excludePos);
-            } else if (SqlKeywords.isGroupKeyword(tok)) {
-                // EXCLUDE GROUP
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_GROUP, excludePos);
-            } else if (SqlKeywords.isTiesKeyword(tok)) {
-                // EXCLUDE TIES
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_TIES, excludePos);
-            } else if (SqlKeywords.isNoKeyword(tok)) {
-                // EXCLUDE NO OTHERS
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || !SqlKeywords.isOthersKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'others' expected after 'no'");
-                }
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_NO_OTHERS, excludePos);
-            } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
-            }
-            tok = SqlUtil.fetchNext(lexer);
-        }
-
-        return tok;
     }
 
     void parseExpr(
@@ -2280,13 +2281,17 @@ public class ExpressionParser {
         }
     }
 
+    private enum Scope {
+        CASE, CAST, CAST_AS, PAREN, BRACKET, ARRAY
+    }
+
     /**
      * Tree builder for window clause expressions.
      * Builds expression trees matching ExpressionTreeBuilder's behavior.
      * Uses lhs/rhs for paramCount < 3, args for paramCount >= 3.
      */
     private static class WindowExprTreeBuilder implements ExpressionParserListener {
-        private final java.util.ArrayDeque<ExpressionNode> stack = new java.util.ArrayDeque<>();
+        private final ObjStack<ExpressionNode> stack = new ObjStack<>();
 
         public ExpressionNode getResult() {
             return stack.peek();
@@ -2299,15 +2304,15 @@ public class ExpressionParser {
                 case 0:
                     break;
                 case 1:
-                    node.rhs = stack.poll();
+                    node.rhs = stack.pop();
                     break;
                 case 2:
-                    node.rhs = stack.poll();
-                    node.lhs = stack.poll();
+                    node.rhs = stack.pop();
+                    node.lhs = stack.pop();
                     break;
                 default:
                     for (int i = 0; i < node.paramCount; i++) {
-                        node.args.add(stack.poll());
+                        node.args.add(stack.pop());
                     }
                     break;
             }
@@ -2317,10 +2322,6 @@ public class ExpressionParser {
         public void reset() {
             stack.clear();
         }
-    }
-
-    private enum Scope {
-        CASE, CAST, CAST_AS, PAREN, BRACKET, ARRAY
     }
 
     static {
