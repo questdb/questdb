@@ -47,19 +47,22 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Usage:
  * <pre>
- * # Start QuestDB server first, then:
- * java -cp core/target/questdb-*.jar io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient &lt;protocol&gt; [host] [port] [rows]
+ * java -cp ... IlpV4AllocationTestClient [options]
  *
- * # Examples:
- * java -cp ... IlpV4AllocationTestClient ilp-tcp localhost 9009 1000000
- * java -cp ... IlpV4AllocationTestClient ilp-http localhost 9000 1000000
- * java -cp ... IlpV4AllocationTestClient ilpv4-tcp localhost 9009 1000000
- * java -cp ... IlpV4AllocationTestClient ilpv4-http localhost 9000 1000000
+ * Options:
+ *   --protocol=PROTOCOL   Protocol: ilp-tcp, ilp-http, ilpv4-tcp, ilpv4-http (default: ilpv4-tcp)
+ *   --host=HOST           Server host (default: localhost)
+ *   --port=PORT           Server port (default: 9009 for TCP, 9000 for HTTP)
+ *   --rows=N              Total rows to send (default: 10000000)
+ *   --batch=N             Batch/flush size (default: 10000)
+ *   --warmup=N            Warmup rows (default: 100000)
+ *   --report=N            Report progress every N rows (default: 1000000)
+ *   --no-warmup           Skip warmup phase
+ *   --help                Show this help
  *
- * # With async-profiler:
- * java -agentpath:/path/to/async-profiler/lib/libasyncProfiler.so=start,event=alloc,file=alloc.jfr \
- *      -cp core/target/questdb-*.jar \
- *      io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient ilpv4-tcp
+ * Examples:
+ *   IlpV4AllocationTestClient --protocol=ilpv4-http --rows=1000000 --batch=5000
+ *   IlpV4AllocationTestClient --protocol=ilp-tcp --host=remote-server --port=9009
  * </pre>
  */
 public class IlpV4AllocationTestClient {
@@ -73,8 +76,9 @@ public class IlpV4AllocationTestClient {
     // Default configuration
     private static final String DEFAULT_HOST = "localhost";
     private static final int DEFAULT_ROWS = 10_000_000;
-    private static final int BATCH_SIZE = 10_000;
-    private static final int REPORT_INTERVAL = 1_000_000;
+    private static final int DEFAULT_BATCH_SIZE = 10_000;
+    private static final int DEFAULT_WARMUP_ROWS = 100_000;
+    private static final int DEFAULT_REPORT_INTERVAL = 1_000_000;
 
     // Pre-computed test data to avoid allocation during the test
     private static final String[] SYMBOLS = {
@@ -89,15 +93,49 @@ public class IlpV4AllocationTestClient {
     };
 
     public static void main(String[] args) {
-        if (args.length < 1) {
-            printUsage();
-            System.exit(1);
+        // Parse command-line options
+        String protocol = PROTOCOL_ILPV4_TCP;
+        String host = DEFAULT_HOST;
+        int port = -1; // -1 means use default for protocol
+        int totalRows = DEFAULT_ROWS;
+        int batchSize = DEFAULT_BATCH_SIZE;
+        int warmupRows = DEFAULT_WARMUP_ROWS;
+        int reportInterval = DEFAULT_REPORT_INTERVAL;
+
+        for (String arg : args) {
+            if (arg.equals("--help") || arg.equals("-h")) {
+                printUsage();
+                System.exit(0);
+            } else if (arg.startsWith("--protocol=")) {
+                protocol = arg.substring("--protocol=".length()).toLowerCase();
+            } else if (arg.startsWith("--host=")) {
+                host = arg.substring("--host=".length());
+            } else if (arg.startsWith("--port=")) {
+                port = Integer.parseInt(arg.substring("--port=".length()));
+            } else if (arg.startsWith("--rows=")) {
+                totalRows = Integer.parseInt(arg.substring("--rows=".length()));
+            } else if (arg.startsWith("--batch=")) {
+                batchSize = Integer.parseInt(arg.substring("--batch=".length()));
+            } else if (arg.startsWith("--warmup=")) {
+                warmupRows = Integer.parseInt(arg.substring("--warmup=".length()));
+            } else if (arg.startsWith("--report=")) {
+                reportInterval = Integer.parseInt(arg.substring("--report=".length()));
+            } else if (arg.equals("--no-warmup")) {
+                warmupRows = 0;
+            } else if (!arg.startsWith("--")) {
+                // Legacy positional args: protocol [host] [port] [rows]
+                protocol = arg.toLowerCase();
+            } else {
+                System.err.println("Unknown option: " + arg);
+                printUsage();
+                System.exit(1);
+            }
         }
 
-        String protocol = args[0].toLowerCase();
-        String host = args.length > 1 ? args[1] : DEFAULT_HOST;
-        int port = args.length > 2 ? Integer.parseInt(args[2]) : getDefaultPort(protocol);
-        int totalRows = args.length > 3 ? Integer.parseInt(args[3]) : DEFAULT_ROWS;
+        // Use default port if not specified
+        if (port == -1) {
+            port = getDefaultPort(protocol);
+        }
 
         System.out.println("ILP Allocation Test Client");
         System.out.println("==========================");
@@ -105,11 +143,13 @@ public class IlpV4AllocationTestClient {
         System.out.println("Host: " + host);
         System.out.println("Port: " + port);
         System.out.println("Total rows: " + String.format("%,d", totalRows));
-        System.out.println("Batch size: " + String.format("%,d", BATCH_SIZE));
+        System.out.println("Batch size: " + String.format("%,d", batchSize));
+        System.out.println("Warmup rows: " + String.format("%,d", warmupRows));
+        System.out.println("Report interval: " + String.format("%,d", reportInterval));
         System.out.println();
 
         try {
-            runTest(protocol, host, port, totalRows);
+            runTest(protocol, host, port, totalRows, batchSize, warmupRows, reportInterval);
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
             e.printStackTrace();
@@ -120,7 +160,18 @@ public class IlpV4AllocationTestClient {
     private static void printUsage() {
         System.out.println("ILP Allocation Test Client");
         System.out.println();
-        System.out.println("Usage: IlpV4AllocationTestClient <protocol> [host] [port] [rows]");
+        System.out.println("Usage: IlpV4AllocationTestClient [options]");
+        System.out.println();
+        System.out.println("Options:");
+        System.out.println("  --protocol=PROTOCOL   Protocol to use (default: ilpv4-tcp)");
+        System.out.println("  --host=HOST           Server host (default: localhost)");
+        System.out.println("  --port=PORT           Server port (default: 9009 for TCP, 9000 for HTTP)");
+        System.out.println("  --rows=N              Total rows to send (default: 10000000)");
+        System.out.println("  --batch=N             Batch/flush size (default: 10000)");
+        System.out.println("  --warmup=N            Warmup rows (default: 100000)");
+        System.out.println("  --report=N            Report progress every N rows (default: 1000000)");
+        System.out.println("  --no-warmup           Skip warmup phase");
+        System.out.println("  --help                Show this help");
         System.out.println();
         System.out.println("Protocols:");
         System.out.println("  ilp-tcp     Old ILP text protocol over TCP (default port: 9009)");
@@ -129,8 +180,9 @@ public class IlpV4AllocationTestClient {
         System.out.println("  ilpv4-http  New ILPv4 binary protocol over HTTP (default port: 9000)");
         System.out.println();
         System.out.println("Examples:");
-        System.out.println("  IlpV4AllocationTestClient ilp-tcp localhost 9009 1000000");
-        System.out.println("  IlpV4AllocationTestClient ilpv4-http localhost 9000 10000000");
+        System.out.println("  IlpV4AllocationTestClient --protocol=ilpv4-http --rows=1000000 --batch=5000");
+        System.out.println("  IlpV4AllocationTestClient --protocol=ilp-tcp --host=remote-server");
+        System.out.println("  IlpV4AllocationTestClient --protocol=ilpv4-tcp --rows=100000 --no-warmup");
     }
 
     private static int getDefaultPort(String protocol) {
@@ -145,31 +197,36 @@ public class IlpV4AllocationTestClient {
         }
     }
 
-    private static void runTest(String protocol, String host, int port, int totalRows) throws IOException {
+    private static void runTest(String protocol, String host, int port, int totalRows,
+                                  int batchSize, int warmupRows, int reportInterval) throws IOException {
         System.out.println("Connecting to " + host + ":" + port + "...");
 
-        try (Sender sender = createSender(protocol, host, port)) {
+        try (Sender sender = createSender(protocol, host, port, batchSize)) {
             System.out.println("Connected! Protocol: " + protocol);
             System.out.println();
 
             // Warm-up phase
-            System.out.println("Warming up (100,000 rows)...");
-            long warmupStart = System.nanoTime();
-            for (int i = 0; i < 100_000; i++) {
-                sendRow(sender, i);
-            }
-            sender.flush();
-            long warmupTime = System.nanoTime() - warmupStart;
-            System.out.println("Warmup complete in " + TimeUnit.NANOSECONDS.toMillis(warmupTime) + " ms");
-            System.out.println();
+            if (warmupRows > 0) {
+                System.out.println("Warming up (" + String.format("%,d", warmupRows) + " rows)...");
+                long warmupStart = System.nanoTime();
+                for (int i = 0; i < warmupRows; i++) {
+                    sendRow(sender, i);
+                }
+                sender.flush();
+                long warmupTime = System.nanoTime() - warmupStart;
+                System.out.println("Warmup complete in " + TimeUnit.NANOSECONDS.toMillis(warmupTime) + " ms");
+                System.out.println();
 
-            // Give GC a chance to clean up warmup allocations
-            System.gc();
-            Thread.sleep(100);
+                // Give GC a chance to clean up warmup allocations
+                System.gc();
+                Thread.sleep(100);
+            }
 
             // Main test phase
             System.out.println("Starting main test (" + String.format("%,d", totalRows) + " rows)...");
-            System.out.println("Progress will be reported every " + String.format("%,d", REPORT_INTERVAL) + " rows");
+            if (reportInterval > 0 && reportInterval <= totalRows) {
+                System.out.println("Progress will be reported every " + String.format("%,d", reportInterval) + " rows");
+            }
             System.out.println();
 
             long startTime = System.nanoTime();
@@ -180,7 +237,7 @@ public class IlpV4AllocationTestClient {
                 sendRow(sender, i);
 
                 // Report progress
-                if ((i + 1) % REPORT_INTERVAL == 0) {
+                if (reportInterval > 0 && (i + 1) % reportInterval == 0) {
                     long now = System.nanoTime();
                     long elapsedSinceReport = now - lastReportTime;
                     int rowsSinceReport = (i + 1) - lastReportRows;
@@ -209,6 +266,7 @@ public class IlpV4AllocationTestClient {
             System.out.println("==============");
             System.out.println("Protocol: " + protocol);
             System.out.println("Total rows: " + String.format("%,d", totalRows));
+            System.out.println("Batch size: " + String.format("%,d", batchSize));
             System.out.println("Total time: " + String.format("%.2f", totalSeconds) + " seconds");
             System.out.println("Throughput: " + String.format("%,.0f", rowsPerSecond) + " rows/second");
             System.out.println("Data rate: " + String.format("%.2f", (totalRows * estimatedRowSize()) / (1024.0 * 1024.0 * totalSeconds)) + " MB/s (estimated)");
@@ -219,7 +277,7 @@ public class IlpV4AllocationTestClient {
         }
     }
 
-    private static Sender createSender(String protocol, String host, int port) throws IOException {
+    private static Sender createSender(String protocol, String host, int port, int batchSize) throws IOException {
         switch (protocol) {
             case PROTOCOL_ILP_TCP:
                 return Sender.builder(Sender.Transport.TCP)
@@ -231,19 +289,21 @@ public class IlpV4AllocationTestClient {
                 return Sender.builder(Sender.Transport.HTTP)
                         .address(host)
                         .port(port)
-                        .autoFlushRows(BATCH_SIZE)
+                        .autoFlushRows(batchSize)
                         .build();
 
             case PROTOCOL_ILPV4_TCP:
                 // ILPv4 over TCP requires direct instantiation (builder only supports HTTP for binary)
-                return IlpV4Sender.connect(host, port);
+                IlpV4Sender tcpSender = IlpV4Sender.connect(host, port);
+                tcpSender.autoFlushRows(batchSize);
+                return tcpSender;
 
             case PROTOCOL_ILPV4_HTTP:
                 return Sender.builder(Sender.Transport.HTTP)
                         .address(host)
                         .port(port)
                         .binaryTransfer()
-                        .autoFlushRows(BATCH_SIZE)
+                        .autoFlushRows(batchSize)
                         .build();
 
             default:

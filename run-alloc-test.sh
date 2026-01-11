@@ -6,15 +6,20 @@
 #
 # Usage:
 #   ./run-alloc-test.sh server              - Start QuestDB server
-#   ./run-alloc-test.sh client <protocol>   - Run test client
-#   ./run-alloc-test.sh profile <protocol>  - Run with async-profiler
-#   ./run-alloc-test.sh jfr <protocol>      - Run with Java Flight Recorder
+#   ./run-alloc-test.sh client [options]    - Run test client
+#   ./run-alloc-test.sh profile [options]   - Run with async-profiler
+#   ./run-alloc-test.sh jfr [options]       - Run with Java Flight Recorder
+#   ./run-alloc-test.sh compare [options]   - Compare all protocols
 #
-# Protocols:
-#   ilp-tcp     - Old ILP text protocol over TCP (port 9009)
-#   ilp-http    - Old ILP text protocol over HTTP (port 9000)
-#   ilpv4-tcp   - New ILPv4 binary protocol over TCP (port 9009)
-#   ilpv4-http  - New ILPv4 binary protocol over HTTP (port 9000)
+# Options (passed to client):
+#   --protocol=PROTOCOL   Protocol: ilp-tcp, ilp-http, ilpv4-tcp, ilpv4-http
+#   --host=HOST           Server host (default: localhost)
+#   --port=PORT           Server port
+#   --rows=N              Total rows to send
+#   --batch=N             Batch/flush size
+#   --warmup=N            Warmup rows
+#   --report=N            Report interval
+#   --no-warmup           Skip warmup
 #
 
 set -e
@@ -40,17 +45,15 @@ check_jars() {
     fi
 }
 
-# Get default port for protocol
-get_default_port() {
-    local protocol=$1
-    case "$protocol" in
-        ilp-http|ilpv4-http)
-            echo "9000"
-            ;;
-        *)
-            echo "9009"
-            ;;
-    esac
+# Extract protocol from args for port defaulting
+get_protocol_from_args() {
+    for arg in "$@"; do
+        if [[ "$arg" == --protocol=* ]]; then
+            echo "${arg#--protocol=}"
+            return
+        fi
+    done
+    echo "ilpv4-tcp"  # default
 }
 
 case "$1" in
@@ -67,23 +70,17 @@ case "$1" in
 
     client)
         check_jars
-        PROTOCOL=${2:-ilpv4-tcp}
-        HOST=${3:-localhost}
-        PORT=${4:-$(get_default_port "$PROTOCOL")}
-        ROWS=${5:-10000000}
+        shift  # remove 'client' from args
         echo "Running ILP test client..."
-        echo "Protocol: $PROTOCOL"
-        echo "Host: $HOST"
-        echo "Port: $PORT"
-        echo "Rows: $ROWS"
-        echo ""
         java -cp "$MAIN_JAR:$TEST_JAR" \
              io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
-             "$PROTOCOL" "$HOST" "$PORT" "$ROWS"
+             "$@"
         ;;
 
     profile)
         check_jars
+        shift  # remove 'profile' from args
+
         # Check for async-profiler
         if [ -z "$ASYNC_PROFILER_HOME" ]; then
             # Try common locations
@@ -100,26 +97,19 @@ case "$1" in
             echo "Set ASYNC_PROFILER_HOME or install from: https://github.com/jvm-profiling-tools/async-profiler"
             echo ""
             echo "Alternative: Use JFR (Java Flight Recorder):"
-            echo "  $0 jfr <protocol> [rows]"
+            echo "  $0 jfr [options]"
             exit 1
         fi
 
-        PROTOCOL=${2:-ilpv4-tcp}
-        HOST=${3:-localhost}
-        PORT=${4:-$(get_default_port "$PROTOCOL")}
-        ROWS=${5:-10000000}
+        PROTOCOL=$(get_protocol_from_args "$@")
         PROFILE_OUTPUT="$SCRIPT_DIR/ilp-alloc-profile-${PROTOCOL}.jfr"
         echo "Running ILP test client with allocation profiling..."
-        echo "Protocol: $PROTOCOL"
-        echo "Host: $HOST"
-        echo "Port: $PORT"
-        echo "Rows: $ROWS"
         echo "Output: $PROFILE_OUTPUT"
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=alloc,file=$PROFILE_OUTPUT" \
              -cp "$MAIN_JAR:$TEST_JAR" \
              io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
-             "$PROTOCOL" "$HOST" "$PORT" "$ROWS"
+             "$@"
         echo ""
         echo "Profile saved to: $PROFILE_OUTPUT"
         echo "View with: $ASYNC_PROFILER_HOME/bin/jfr2flame $PROFILE_OUTPUT alloc-flame-${PROTOCOL}.html"
@@ -127,23 +117,17 @@ case "$1" in
 
     jfr)
         check_jars
-        # Use Java Flight Recorder (built into JDK)
-        PROTOCOL=${2:-ilpv4-tcp}
-        HOST=${3:-localhost}
-        PORT=${4:-$(get_default_port "$PROTOCOL")}
-        ROWS=${5:-10000000}
+        shift  # remove 'jfr' from args
+
+        PROTOCOL=$(get_protocol_from_args "$@")
         JFR_OUTPUT="$SCRIPT_DIR/ilp-alloc-${PROTOCOL}.jfr"
         echo "Running ILP test client with JFR allocation profiling..."
-        echo "Protocol: $PROTOCOL"
-        echo "Host: $HOST"
-        echo "Port: $PORT"
-        echo "Rows: $ROWS"
         echo "Output: $JFR_OUTPUT"
         echo ""
         java -XX:StartFlightRecording=filename="$JFR_OUTPUT",settings=profile \
              -cp "$MAIN_JAR:$TEST_JAR" \
              io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
-             "$PROTOCOL" "$HOST" "$PORT" "$ROWS"
+             "$@"
         echo ""
         echo "JFR recording saved to: $JFR_OUTPUT"
         echo "View with: jfr print --events jdk.ObjectAllocationInNewTLAB,jdk.ObjectAllocationOutsideTLAB $JFR_OUTPUT"
@@ -152,11 +136,9 @@ case "$1" in
 
     compare)
         check_jars
-        # Run all 4 protocols and compare throughput
-        ROWS=${2:-1000000}
+        shift  # remove 'compare' from args
+
         echo "Running comparison test across all protocols..."
-        echo "Rows per protocol: $ROWS"
-        echo ""
         echo "Make sure QuestDB server is running!"
         echo ""
 
@@ -164,10 +146,9 @@ case "$1" in
             echo "=========================================="
             echo "Testing: $protocol"
             echo "=========================================="
-            PORT=$(get_default_port "$protocol")
             java -cp "$MAIN_JAR:$TEST_JAR" \
                  io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
-                 "$protocol" localhost "$PORT" "$ROWS"
+                 --protocol="$protocol" "$@"
             echo ""
         done
         ;;
@@ -178,25 +159,27 @@ case "$1" in
         echo "Usage: $0 <command> [options]"
         echo ""
         echo "Commands:"
-        echo "  server                              Start QuestDB server"
-        echo "  client <protocol> [host] [port] [rows]"
-        echo "                                      Run test client"
-        echo "  profile <protocol> [host] [port] [rows]"
-        echo "                                      Run with async-profiler allocation tracking"
-        echo "  jfr <protocol> [host] [port] [rows]"
-        echo "                                      Run with Java Flight Recorder"
-        echo "  compare [rows]                      Run all 4 protocols and compare"
+        echo "  server              Start QuestDB server"
+        echo "  client [options]    Run test client"
+        echo "  profile [options]   Run with async-profiler allocation tracking"
+        echo "  jfr [options]       Run with Java Flight Recorder"
+        echo "  compare [options]   Run all 4 protocols and compare"
         echo ""
-        echo "Protocols:"
-        echo "  ilp-tcp      Old ILP text protocol over TCP (default port: 9009)"
-        echo "  ilp-http     Old ILP text protocol over HTTP (default port: 9000)"
-        echo "  ilpv4-tcp    New ILPv4 binary protocol over TCP (default port: 9009)"
-        echo "  ilpv4-http   New ILPv4 binary protocol over HTTP (default port: 9000)"
+        echo "Options:"
+        echo "  --protocol=PROTOCOL   Protocol: ilp-tcp, ilp-http, ilpv4-tcp, ilpv4-http (default: ilpv4-tcp)"
+        echo "  --host=HOST           Server host (default: localhost)"
+        echo "  --port=PORT           Server port (default: 9009 for TCP, 9000 for HTTP)"
+        echo "  --rows=N              Total rows to send (default: 10000000)"
+        echo "  --batch=N             Batch/flush size (default: 10000)"
+        echo "  --warmup=N            Warmup rows (default: 100000)"
+        echo "  --report=N            Report progress every N rows (default: 1000000)"
+        echo "  --no-warmup           Skip warmup phase"
         echo ""
         echo "Examples:"
         echo "  Terminal 1: $0 server"
-        echo "  Terminal 2: $0 client ilpv4-tcp localhost 9009 1000000"
-        echo "  Terminal 2: $0 jfr ilpv4-http localhost 9000 10000000"
-        echo "  Terminal 2: $0 compare 1000000"
+        echo "  Terminal 2: $0 client --protocol=ilpv4-tcp --rows=1000000 --batch=5000"
+        echo "  Terminal 2: $0 client --protocol=ilp-http --rows=100000 --no-warmup"
+        echo "  Terminal 2: $0 jfr --protocol=ilpv4-http --rows=10000000"
+        echo "  Terminal 2: $0 compare --rows=1000000 --batch=10000"
         ;;
 esac
