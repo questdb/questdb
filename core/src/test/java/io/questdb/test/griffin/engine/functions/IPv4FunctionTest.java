@@ -132,11 +132,6 @@ public class IPv4FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetInt() {
-        function.getInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetLong128Hi() {
         function.getLong128Hi(null);
     }

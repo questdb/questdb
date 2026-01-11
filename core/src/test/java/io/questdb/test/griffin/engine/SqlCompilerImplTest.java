@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -3854,13 +3855,31 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDependencyColumnsWithSameAliasError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            create table tab (
+                              x1 int,
+                              ts TIMESTAMP
+                            ) timestamp(ts);
+                            """
+            );
+
+            assertExceptionNoLeakCheck("select x1 as a, a as a from t", 18, "Duplicate column [name=a]");
+        });
+    }
+
+    @Test
     public void testDistinctDependencyColumnsThrowError() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table tab (" +
-                            "  x1 int," +
-                            "  ts TIMESTAMP" +
-                            ") timestamp(ts);"
+                    """
+                            create table tab (
+                              x1 int,
+                              ts TIMESTAMP
+                            ) timestamp(ts);
+                            """
             );
 
             assertExceptionNoLeakCheck("select distinct x1 as a, a from tab", 25, "Invalid column: a");
@@ -6099,7 +6118,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.dropTableOrMatView(path, tt);
+                engine.dropTableOrViewOrMatView(path, tt);
             }
         });
     }
@@ -7273,6 +7292,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createMatViewSuffixCalled);
                 }
+
+                try {
+                    execute(compiler, "create table price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create view price_view as (select sym, last(price) as price, ts from price sample by 1h) foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.createViewSuffixCalled);
+                }
             }
         });
     }
@@ -7612,6 +7639,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean compileDropTableExtCalled;
         boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
+        boolean createViewSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
@@ -7641,6 +7669,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         ) throws SqlException {
             createTableSuffixCalled = true;
             return super.parseCreateTableExt(lexer, securityContext, builder, tok);
+        }
+
+        @Override
+        public CreateViewOperationBuilder parseCreateViewExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateViewOperationBuilder builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            createViewSuffixCalled = true;
+            return super.parseCreateViewExt(lexer, securityContext, builder, tok);
         }
 
         @Override

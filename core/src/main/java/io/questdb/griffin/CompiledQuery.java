@@ -70,7 +70,10 @@ public interface CompiledQuery {
     short TABLE_SUSPEND = CANCEL_QUERY + 1; // 31
     short CREATE_MAT_VIEW = TABLE_SUSPEND + 1; // 32
     short REFRESH_MAT_VIEW = CREATE_MAT_VIEW + 1; // 33
-    short PLUGIN_OPERATION = REFRESH_MAT_VIEW + 1; // 34
+    short CREATE_VIEW = REFRESH_MAT_VIEW + 1; // 34
+    short COMPILE_VIEW = CREATE_VIEW + 1; // 35
+    short ALTER_VIEW = COMPILE_VIEW + 1; // 36
+    short PLUGIN_OPERATION = ALTER_VIEW + 1; // 37
     short EMPTY = PLUGIN_OPERATION + 1;
     short TYPES_COUNT = EMPTY;
 
@@ -120,6 +123,8 @@ public interface CompiledQuery {
     short getType();
 
     UpdateOperation getUpdateOperation();
+
+    boolean isCacheable();
 
     @Transient
     PluginOperation getPluginOperation();

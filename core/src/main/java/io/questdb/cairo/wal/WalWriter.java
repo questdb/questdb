@@ -104,33 +104,26 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
-public class WalWriter implements TableWriterAPI {
+public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private static final Runnable NOOP = () -> {
     };
+
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
-    private final CairoConfiguration configuration;
     private final DdlListener ddlListener;
-    private final WalEventWriter events;
-    private final FilesFacade ff;
     private final AtomicIntList initialSymbolCounts;
     private final IntList localSymbolIds;
     private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
     private final Metrics metrics;
-    private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
-    private final Path path;
-    private final int pathRootSize;
-    private final int pathSize;
     private final RecentWriteTracker recentWriteTracker;
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
-    private final TableSequencerAPI sequencer;
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<DirectCharSequenceIntHashMap> symbolMaps = new ObjList<>();
@@ -138,9 +131,6 @@ public class WalWriter implements TableWriterAPI {
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
-    private final WalDirectoryPolicy walDirectoryPolicy;
-    private final int walId;
-    private final String walName;
     private long avgRecordSize;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
@@ -148,7 +138,6 @@ public class WalWriter implements TableWriterAPI {
     private ConversionSymbolMapWriter conversionSymbolMap;
     private ConversionSymbolTable conversionSymbolTable;
     private long currentTxnStartRowNum = -1;
-    private boolean distressed;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
     private long lastMatViewPeriodHi = WAL_DEFAULT_LAST_PERIOD_HI;
@@ -156,23 +145,15 @@ public class WalWriter implements TableWriterAPI {
     private long lastMatViewRefreshTimestamp = WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
     private long lastReplaceRangeHiTs = 0;
     private long lastReplaceRangeLowTs = 0;
-    private int lastSegmentTxn = -1;
-    private long lastSeqTxn = NO_TXN;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
-    private boolean open;
-    private boolean rollSegmentOnNextRow = false;
-    private int segmentId = -1;
-    private long segmentLockFd = -1;
     private long segmentRowCount = -1;
-    private TableToken tableToken;
     private long totalSegmentsRowCount;
     private long totalSegmentsSize;
     private TxReader txReader;
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
-    private long walLockFd = -1;
 
     public WalWriter(
             CairoConfiguration configuration,
@@ -182,33 +163,20 @@ public class WalWriter implements TableWriterAPI {
             WalDirectoryPolicy walDirectoryPolicy,
             RecentWriteTracker recentWriteTracker
     ) {
+        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy);
+
         LOG.info().$("open [table=").$(tableToken).I$();
-        this.sequencer = tableSequencerAPI;
-        this.recentWriteTracker = recentWriteTracker;
-        this.configuration = configuration;
         this.ddlListener = ddlListener;
-        this.mkDirMode = configuration.getMkDirMode();
-        this.ff = configuration.getFilesFacade();
-        this.walDirectoryPolicy = walDirectoryPolicy;
-        this.tableToken = tableToken;
-        final int walId = tableSequencerAPI.getNextWalId(tableToken);
-        this.walName = WAL_NAME_BASE + walId;
-        this.walId = walId;
-        this.path = new Path();
-        path.of(configuration.getDbRoot());
-        this.pathRootSize = configuration.getDbLogName() == null ? path.size() : 0;
-        this.path.concat(tableToken).concat(walName);
-        this.pathSize = path.size();
+        this.recentWriteTracker = recentWriteTracker;
         this.metrics = configuration.getMetrics();
-        this.open = true;
 
         try {
             lockWal();
             mkWalDir();
 
             metadata = new WalWriterMetadata(ff);
-            tableSequencerAPI.getTableMetadata(tableToken, metadata);
-            this.timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
+            sequencer.getTableMetadata(tableToken, metadata);
+            timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
             this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();
@@ -218,7 +186,6 @@ public class WalWriter implements TableWriterAPI {
             initialSymbolCounts = new AtomicIntList(columnCount);
             localSymbolIds = new IntList(columnCount);
 
-            events = new WalEventWriter(configuration);
             events.of(symbolMaps, initialSymbolCounts, symbolMapNullFlags);
 
             configureColumns();
@@ -371,30 +338,6 @@ public class WalWriter implements TableWriterAPI {
         );
     }
 
-    public void doClose(boolean truncate) {
-        if (open) {
-            open = false;
-            if (metadata != null) {
-                metadata.close(truncate, Vm.TRUNCATE_TO_POINTER);
-            }
-            if (events != null) {
-                events.close(truncate, Vm.TRUNCATE_TO_POINTER);
-            }
-            freeSymbolMapReaders();
-            freeColumns(truncate);
-
-            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
-
-            try {
-                releaseWalLock();
-            } finally {
-                Misc.free(path);
-                LOG.info().$("closed [table=").$(tableToken).I$();
-            }
-            columnVersionReader = Misc.free(columnVersionReader);
-        }
-    }
-
     @Override
     public TableRecordMetadata getMetadata() {
         return metadata;
@@ -405,6 +348,7 @@ public class WalWriter implements TableWriterAPI {
         return metadata.getMetadataVersion();
     }
 
+    @TestOnly
     public long getSegmentRowCount() {
         return segmentRowCount;
     }
@@ -423,39 +367,30 @@ public class WalWriter implements TableWriterAPI {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
-    public @NotNull TableToken getTableToken() {
-        return tableToken;
-    }
-
     @Override
     public long getUncommittedRowCount() {
         return segmentRowCount - currentTxnStartRowNum;
-    }
-
-    public int getWalId() {
-        return walId;
-    }
-
-    public String getWalName() {
-        return walName;
     }
 
     public void goActive() {
         goActive(Long.MAX_VALUE);
     }
 
-    public boolean goActive(long maxStructureVersion) {
+    public void goActive(long maxStructureVersion) {
         try {
             applyMetadataChangeLog(maxStructureVersion);
-            return true;
         } catch (CairoException e) {
+            distressed = true;
+            if (e.isTableDropped()) {
+                // Throw table dropped exception as is
+                throw e;
+            }
             LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .$(", ex=").$((Throwable) e)
                     .$(", errno=").$(e.getErrno())
                     .I$();
-            distressed = true;
-            return false;
+            throw e;
         }
     }
 
@@ -467,18 +402,6 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public void ic(long o3MaxLag) {
         commit();
-    }
-
-    public boolean inTransaction() {
-        return segmentRowCount > currentTxnStartRowNum;
-    }
-
-    public boolean isDistressed() {
-        return distressed;
-    }
-
-    public boolean isOpen() {
-        return this.open;
     }
 
     @Override
@@ -568,118 +491,6 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    public void rollUncommittedToNewSegment(int convertColumnIndex, int convertToColumnType) {
-        final long uncommittedRows = getUncommittedRowCount();
-        final long oldLastSegmentTxn = lastSegmentTxn;
-        long rowsRemainInCurrentSegment = currentTxnStartRowNum;
-
-        if (uncommittedRows > 0) {
-            final int oldSegmentId = segmentId;
-            final int newSegmentId = segmentId + 1;
-            if (newSegmentId > WalUtils.SEG_MAX_ID) {
-                throw CairoException.critical(0)
-                        .put("cannot roll over to new segment due to SEG_MAX_ID overflow [table=").put(tableToken)
-                        .put(", walId=").put(walId)
-                        .put(", segmentId=").put(newSegmentId).put(']');
-            }
-            final long oldSegmentLockFd = segmentLockFd;
-            segmentLockFd = -1;
-            try {
-                createSegmentDir(newSegmentId);
-                path.trimTo(pathSize);
-                SegmentColumnRollSink columnRollSink = createSegmentColumnRollSink();
-                rowValueIsNotNull.fill(0, columnCount, -1);
-
-                int columnsToRoll = convertColumnIndex == -1 ? columnCount : columnCount - 1;
-                try {
-                    final int timestampIndex = metadata.getTimestampIndex();
-
-                    if (convertColumnIndex < 0) {
-                        LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                                .$(path).$(Files.SEPARATOR).$(oldSegmentId)
-                                .$(", lastSegmentTxn=").$(lastSegmentTxn)
-                                .$(", newSegmentId=").$(newSegmentId)
-                                .$(", skipRows=").$(rowsRemainInCurrentSegment)
-                                .$(", rowCount=").$(uncommittedRows)
-                                .I$();
-                    } else {
-                        int existingType = metadata.getColumnType(convertColumnIndex);
-                        LOG.info().$("rolling uncommitted rows to new segment with type conversion [wal=")
-                                .$(path).$(Files.SEPARATOR).$(oldSegmentId)
-                                .$(", lastSegmentTxn=").$(lastSegmentTxn)
-                                .$(", newSegmentId=").$(newSegmentId)
-                                .$(", skipRows=").$(rowsRemainInCurrentSegment)
-                                .$(", rowCount=").$(uncommittedRows)
-                                .$(", existingType=").$(ColumnType.nameOf(existingType))
-                                .$(", newType=").$(ColumnType.nameOf(convertToColumnType))
-                                .I$();
-                    }
-
-                    final int commitMode = configuration.getCommitMode();
-                    for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
-                        // Allocate space for new column in columnRollSink and move to next record
-                        // Do it for deleted columns too, it will be skipped in exactly same way in switchColumnsToNewSegment
-                        columnRollSink.nextColumn();
-                        final int columnType = metadata.getColumnType(columnIndex);
-                        if (columnType > 0) {
-                            final MemoryMA primaryColumn = getDataColumn(columnIndex);
-                            final MemoryMA secondaryColumn = getAuxColumn(columnIndex);
-                            final String columnName = metadata.getColumnName(columnIndex);
-
-                            SymbolMapWriterLite symbolMapWriter = null;
-                            SymbolTable symbolTable = null;
-                            if (columnIndex == convertColumnIndex) {
-                                if (ColumnType.isSymbol(convertToColumnType)) {
-                                    // New column destination is the column with last index
-                                    symbolMapWriter = getConversionSymbolMapWriter(columnCount - 1);
-                                }
-                                if (ColumnType.isSymbol(columnType)) {
-                                    symbolTable = getConversionSymbolMapReader(columnIndex);
-                                }
-                            }
-
-                            int colType = columnIndex == timestampIndex ? -columnType : columnType;
-                            int newColumnType = columnIndex == convertColumnIndex ? convertToColumnType : colType;
-                            // Saves existing segment file offsets and new file sizes in columnRollSink.
-                            CopyWalSegmentUtils.rollColumnToSegment(
-                                    ff,
-                                    configuration.getWriterFileOpenOpts(),
-                                    primaryColumn,
-                                    secondaryColumn,
-                                    path,
-                                    newSegmentId,
-                                    columnName,
-                                    colType,
-                                    currentTxnStartRowNum,
-                                    uncommittedRows,
-                                    columnRollSink,
-                                    commitMode,
-                                    newColumnType,
-                                    symbolTable,
-                                    symbolMapWriter
-                            );
-                        } else {
-                            // Deleted column
-                            rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
-                        }
-                    }
-                } catch (Throwable e) {
-                    closeSegmentSwitchFiles(columnRollSink);
-                    throw e;
-                }
-                switchColumnsToNewSegment(columnRollSink, columnsToRoll, convertColumnIndex);
-                rollLastWalEventRecord(newSegmentId, uncommittedRows);
-                segmentId = newSegmentId;
-                segmentRowCount = uncommittedRows;
-                currentTxnStartRowNum = 0;
-            } finally {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
-            }
-        } else if (segmentRowCount > 0 && uncommittedRows == 0) {
-            rollSegmentOnNextRow = true;
-        }
-    }
-
     @Override
     public void rollback() {
         try {
@@ -729,10 +540,6 @@ public class WalWriter implements TableWriterAPI {
             rollback();
             throw th;
         }
-    }
-
-    public void updateTableToken(TableToken ignoredTableToken) {
-        // goActive will update table token
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA dataMem, MemoryMA auxMem) {
@@ -826,21 +633,6 @@ public class WalWriter implements TableWriterAPI {
 
     private static int getDataColumnOffset(int columnIndex) {
         return columnIndex * 2;
-    }
-
-    private long acquireSegmentLock() {
-        final int segmentPathLen = path.size();
-        try {
-            lockName(path);
-            final long segmentLockFd = TableUtils.lock(ff, path.$());
-            if (segmentLockFd == -1) {
-                path.trimTo(segmentPathLen);
-                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path);
-            }
-            return segmentLockFd;
-        } finally {
-            path.trimTo(segmentPathLen);
-        }
     }
 
     private void addColumn(
@@ -1319,17 +1111,28 @@ public class WalWriter implements TableWriterAPI {
         return columnConversionSink;
     }
 
-    private int createSegmentDir(int segmentId) {
-        path.trimTo(pathSize);
-        path.slash().put(segmentId);
-        final int segmentPathLen = path.size();
-        segmentLockFd = acquireSegmentLock();
-        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
+    private void doClose(boolean truncate) {
+        if (open) {
+            open = false;
+            if (metadata != null) {
+                metadata.close(truncate, Vm.TRUNCATE_TO_POINTER);
+            }
+            if (events != null) {
+                events.close(truncate, Vm.TRUNCATE_TO_POINTER);
+            }
+            freeSymbolMapReaders();
+            freeColumns(truncate);
+
+            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
+
+            try {
+                releaseWalLock();
+            } finally {
+                Misc.free(path);
+                LOG.info().$("closed [table=").$(tableToken).I$();
+            }
+            columnVersionReader = Misc.free(columnVersionReader);
         }
-        walDirectoryPolicy.initDirectory(path);
-        path.trimTo(segmentPathLen);
-        return segmentPathLen;
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
@@ -1396,16 +1199,7 @@ public class WalWriter implements TableWriterAPI {
     private long getSequencerTxn() {
         long seqTxn;
         do {
-            seqTxn = sequencer.nextTxn(
-                    tableToken,
-                    walId,
-                    getColumnStructureVersion(),
-                    segmentId,
-                    lastSegmentTxn,
-                    txnMinTimestamp,
-                    txnMaxTimestamp,
-                    segmentRowCount - currentTxnStartRowNum
-            );
+            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
@@ -1423,21 +1217,12 @@ public class WalWriter implements TableWriterAPI {
         return false;
     }
 
-    private boolean isTruncateFilesOnClose() {
-        return this.walDirectoryPolicy.truncateFilesOnClose();
+    private boolean inTransaction() {
+        return segmentRowCount > currentTxnStartRowNum;
     }
 
-    private void lockWal() {
-        try {
-            lockName(path);
-            walLockFd = TableUtils.lock(ff, path.$());
-        } finally {
-            path.trimTo(pathSize);
-        }
-
-        if (walLockFd == -1) {
-            throw CairoException.critical(ff.errno()).put("cannot lock table: ").put(path.$());
-        }
+    private boolean isTruncateFilesOnClose() {
+        return walDirectoryPolicy.truncateFilesOnClose();
     }
 
     private void markColumnRemoved(int columnIndex, int columnType) {
@@ -1458,14 +1243,6 @@ public class WalWriter implements TableWriterAPI {
         rollSegmentOnNextRow = (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())
                 || breachedRolloverSizeThreshold()
                 || (lastSegmentTxn > Integer.MAX_VALUE - 2);
-    }
-
-    private void mkWalDir() {
-        final int walDirLength = path.size();
-        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("Cannot create WAL directory: ").put(path);
-        }
-        path.trimTo(walDirLength);
     }
 
     private void openColumnFiles(CharSequence columnName, int columnType, int columnIndex, int pathTrimToLen) {
@@ -1560,43 +1337,6 @@ public class WalWriter implements TableWriterAPI {
                 releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
             }
             path.trimTo(pathSize);
-        }
-    }
-
-    private void releaseSegmentLock(int segmentId, long segmentLockFd, long segmentTxn) {
-        if (ff.close(segmentLockFd)) {
-            // if events file has some transactions
-            if (segmentTxn >= 0) {
-                sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
-                LOG.debug().$("released segment lock [walId=").$(walId)
-                        .$(", segmentId=").$(segmentId)
-                        .$(", fd=").$(segmentLockFd)
-                        .$(']').$();
-            } else {
-                path.trimTo(pathSize).slash().put(segmentId);
-                walDirectoryPolicy.rollbackDirectory(path);
-                path.trimTo(pathSize);
-            }
-        } else {
-            LOG.error()
-                    .$("cannot close segment lock fd [walId=").$(walId)
-                    .$(", segmentId=").$(segmentId)
-                    .$(", fd=").$(segmentLockFd)
-                    .$(", errno=").$(ff.errno()).I$();
-        }
-    }
-
-    private void releaseWalLock() {
-        if (ff.close(walLockFd)) {
-            walLockFd = -1;
-            LOG.debug().$("released WAL lock [walId=").$(walId)
-                    .$(", fd=").$(walLockFd)
-                    .$(']').$();
-        } else {
-            LOG.error()
-                    .$("cannot close WAL lock fd [walId=").$(walId)
-                    .$(", fd=").$(walLockFd)
-                    .$(", errno=").$(ff.errno()).I$();
         }
     }
 
@@ -1721,6 +1461,118 @@ public class WalWriter implements TableWriterAPI {
             );
         }
         events.sync();
+    }
+
+    private void rollUncommittedToNewSegment(int convertColumnIndex, int convertToColumnType) {
+        final long uncommittedRows = getUncommittedRowCount();
+        final long oldLastSegmentTxn = lastSegmentTxn;
+        long rowsRemainInCurrentSegment = currentTxnStartRowNum;
+
+        if (uncommittedRows > 0) {
+            final int oldSegmentId = segmentId;
+            final int newSegmentId = segmentId + 1;
+            if (newSegmentId > WalUtils.SEG_MAX_ID) {
+                throw CairoException.critical(0)
+                        .put("cannot roll over to new segment due to SEG_MAX_ID overflow [table=").put(tableToken)
+                        .put(", walId=").put(walId)
+                        .put(", segmentId=").put(newSegmentId).put(']');
+            }
+            final long oldSegmentLockFd = segmentLockFd;
+            segmentLockFd = -1;
+            try {
+                createSegmentDir(newSegmentId);
+                path.trimTo(pathSize);
+                SegmentColumnRollSink columnRollSink = createSegmentColumnRollSink();
+                rowValueIsNotNull.fill(0, columnCount, -1);
+
+                int columnsToRoll = convertColumnIndex == -1 ? columnCount : columnCount - 1;
+                try {
+                    final int timestampIndex = metadata.getTimestampIndex();
+
+                    if (convertColumnIndex < 0) {
+                        LOG.info().$("rolling uncommitted rows to new segment [wal=")
+                                .$(path).$(Files.SEPARATOR).$(oldSegmentId)
+                                .$(", lastSegmentTxn=").$(lastSegmentTxn)
+                                .$(", newSegmentId=").$(newSegmentId)
+                                .$(", skipRows=").$(rowsRemainInCurrentSegment)
+                                .$(", rowCount=").$(uncommittedRows)
+                                .I$();
+                    } else {
+                        int existingType = metadata.getColumnType(convertColumnIndex);
+                        LOG.info().$("rolling uncommitted rows to new segment with type conversion [wal=")
+                                .$(path).$(Files.SEPARATOR).$(oldSegmentId)
+                                .$(", lastSegmentTxn=").$(lastSegmentTxn)
+                                .$(", newSegmentId=").$(newSegmentId)
+                                .$(", skipRows=").$(rowsRemainInCurrentSegment)
+                                .$(", rowCount=").$(uncommittedRows)
+                                .$(", existingType=").$(ColumnType.nameOf(existingType))
+                                .$(", newType=").$(ColumnType.nameOf(convertToColumnType))
+                                .I$();
+                    }
+
+                    final int commitMode = configuration.getCommitMode();
+                    for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
+                        // Allocate space for new column in columnRollSink and move to next record
+                        // Do it for deleted columns too, it will be skipped in exactly same way in switchColumnsToNewSegment
+                        columnRollSink.nextColumn();
+                        final int columnType = metadata.getColumnType(columnIndex);
+                        if (columnType > 0) {
+                            final MemoryMA primaryColumn = getDataColumn(columnIndex);
+                            final MemoryMA secondaryColumn = getAuxColumn(columnIndex);
+                            final String columnName = metadata.getColumnName(columnIndex);
+
+                            SymbolMapWriterLite symbolMapWriter = null;
+                            SymbolTable symbolTable = null;
+                            if (columnIndex == convertColumnIndex) {
+                                if (ColumnType.isSymbol(convertToColumnType)) {
+                                    // New column destination is the column with last index
+                                    symbolMapWriter = getConversionSymbolMapWriter(columnCount - 1);
+                                }
+                                if (ColumnType.isSymbol(columnType)) {
+                                    symbolTable = getConversionSymbolMapReader(columnIndex);
+                                }
+                            }
+
+                            int colType = columnIndex == timestampIndex ? -columnType : columnType;
+                            int newColumnType = columnIndex == convertColumnIndex ? convertToColumnType : colType;
+                            // Saves existing segment file offsets and new file sizes in columnRollSink.
+                            CopyWalSegmentUtils.rollColumnToSegment(
+                                    ff,
+                                    configuration.getWriterFileOpenOpts(),
+                                    primaryColumn,
+                                    secondaryColumn,
+                                    path,
+                                    newSegmentId,
+                                    columnName,
+                                    colType,
+                                    currentTxnStartRowNum,
+                                    uncommittedRows,
+                                    columnRollSink,
+                                    commitMode,
+                                    newColumnType,
+                                    symbolTable,
+                                    symbolMapWriter
+                            );
+                        } else {
+                            // Deleted column
+                            rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
+                        }
+                    }
+                } catch (Throwable e) {
+                    closeSegmentSwitchFiles(columnRollSink);
+                    throw e;
+                }
+                switchColumnsToNewSegment(columnRollSink, columnsToRoll, convertColumnIndex);
+                rollLastWalEventRecord(newSegmentId, uncommittedRows);
+                segmentId = newSegmentId;
+                segmentRowCount = uncommittedRows;
+                currentTxnStartRowNum = 0;
+            } finally {
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+            }
+        } else if (segmentRowCount > 0 && uncommittedRows == 0) {
+            rollSegmentOnNextRow = true;
+        }
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
