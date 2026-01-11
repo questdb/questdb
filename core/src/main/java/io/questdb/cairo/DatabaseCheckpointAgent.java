@@ -72,8 +72,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
-import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
@@ -294,7 +293,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         metadata.switchTo(path, path.size(), true);
                                         metadata.close(true, Vm.TRUNCATE_TO_POINTER);
 
-                                        mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                        mem.smallFile(ff, path.concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                                         mem.putLong(lastTxn);
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
 
@@ -334,7 +333,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     reader.getMetadata().dumpTo(mem);
                                     mem.close(false);
                                     // Copy _txn file.
-                                    path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
+                                    path.trimTo(rootLen).concat(TXN_FILE_NAME);
                                     mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                     reader.getTxFile().dumpTo(mem);
                                     mem.close(false);
@@ -368,7 +367,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         metadata.switchTo(path, path.size(), true); // dump sequencer metadata to checkpoint's  "db/tableName/txn_seq/_meta"
                                         metadata.close(true, Vm.TRUNCATE_TO_POINTER);
 
-                                        mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                        mem.smallFile(ff, path.concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                                         mem.putLong(lastTxn); // write lastTxn to checkpoint's "db/tableName/txn_seq/_txn"
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
                                     }
@@ -773,7 +772,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             } else {
                                 // Tables and materialized views have data files
                                 copyOrError(srcPath, dstPath, ff, recoveredMetaFiles, TableUtils.META_FILE_NAME);
-                                copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredTxnFiles, TableUtils.TXN_FILE_NAME);
+                                copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredTxnFiles, TXN_FILE_NAME);
                                 copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME);
                                 // Reset _todo_ file otherwise TableWriter will start restoring metadata on open.
                                 TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
@@ -795,7 +794,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
                                 } else {
                                     srcPath.trimTo(srcPathLen);
-                                    openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                                    openSmallFile(ff, srcPath, srcPathLen, memFile, TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
                                     long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
 
                                     memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
@@ -828,6 +827,42 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         }
                     }
             );
+
+            // Remove all the table directories that do not exist in the checkpoint.
+            // This will remove any tables that were created after the checkpoint was taken
+            dstPath.trimTo(rootLen).$();
+            ff.iterateDir(
+                    dstPath.$(), (pUtf8NameZ, type) -> {
+                        if (ff.isDirOrSoftLinkDirNoDots(dstPath, rootLen, pUtf8NameZ, type)) {
+                            srcPath.trimTo(snapshotDbLen);
+
+                            // Check if the checkpoint dir is configured to be inside the db dir,
+                            // so we do not delete checkpoint directory itself
+                            if (!Utf8s.startsWith(srcPath, dstPath)) {
+                                srcPath.concat(pUtf8NameZ);
+
+                                // Check that the table exists in the checkpoint
+                                // so that we do not restore tables that were created after the checkpoint was taken
+                                // that may be in an inconsistent state.
+                                if (!ff.exists(srcPath.$())) {
+                                    LOG.advisory().$("removing orphan table directory [dir=").$(dstPath).I$();
+
+                                    if (!ff.rmdir(dstPath)) {
+                                        LOG.critical().$("failed to remove orphan table directory [dir=").$(dstPath)
+                                                .$(", errno=").$(ff.errno()).I$();
+                                        throw CairoException.critical(ff.errno())
+                                                .put("Checkpoint recovery failed. Aborting QuestDB startup; " +
+                                                        "could not remove orphan table directory, " +
+                                                        "remove it manually to continue [dir=").put(dstPath).put(']');
+                                    }
+                                }
+                            }
+                        }
+                    }
+            );
+            dstPath.trimTo(rootLen);
+            srcPath.trimTo(snapshotDbLen);
+
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())
