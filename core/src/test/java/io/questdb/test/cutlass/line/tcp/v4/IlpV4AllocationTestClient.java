@@ -25,10 +25,8 @@
 package io.questdb.test.cutlass.line.tcp.v4;
 
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.http.IlpV4HttpSender;
 import io.questdb.cutlass.line.tcp.v4.IlpV4Sender;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
@@ -150,17 +148,15 @@ public class IlpV4AllocationTestClient {
     private static void runTest(String protocol, String host, int port, int totalRows) throws IOException {
         System.out.println("Connecting to " + host + ":" + port + "...");
 
-        try (SenderWrapper sender = createSender(protocol, host, port)) {
-            sender.printConnectionInfo();
-
-            // Configure auto-flush
-            sender.autoFlushRows(BATCH_SIZE);
+        try (Sender sender = createSender(protocol, host, port)) {
+            System.out.println("Connected! Protocol: " + protocol);
+            System.out.println();
 
             // Warm-up phase
             System.out.println("Warming up (100,000 rows)...");
             long warmupStart = System.nanoTime();
             for (int i = 0; i < 100_000; i++) {
-                sender.sendRow(i);
+                sendRow(sender, i);
             }
             sender.flush();
             long warmupTime = System.nanoTime() - warmupStart;
@@ -181,7 +177,7 @@ public class IlpV4AllocationTestClient {
             int lastReportRows = 0;
 
             for (int i = 0; i < totalRows; i++) {
-                sender.sendRow(i);
+                sendRow(sender, i);
 
                 // Report progress
                 if ((i + 1) % REPORT_INTERVAL == 0) {
@@ -223,36 +219,69 @@ public class IlpV4AllocationTestClient {
         }
     }
 
-    private static SenderWrapper createSender(String protocol, String host, int port) throws IOException {
+    private static Sender createSender(String protocol, String host, int port) throws IOException {
         switch (protocol) {
             case PROTOCOL_ILP_TCP:
-                return new OldIlpSenderWrapper(
-                        Sender.builder(Sender.Transport.TCP)
-                                .address(host)
-                                .port(port)
-                                .build(),
-                        "Old ILP (TCP)"
-                );
+                return Sender.builder(Sender.Transport.TCP)
+                        .address(host)
+                        .port(port)
+                        .build();
 
             case PROTOCOL_ILP_HTTP:
-                return new OldIlpSenderWrapper(
-                        Sender.builder(Sender.Transport.HTTP)
-                                .address(host)
-                                .port(port)
-                                .build(),
-                        "Old ILP (HTTP)"
-                );
+                return Sender.builder(Sender.Transport.HTTP)
+                        .address(host)
+                        .port(port)
+                        .autoFlushRows(BATCH_SIZE)
+                        .build();
 
             case PROTOCOL_ILPV4_TCP:
-                return new IlpV4TcpSenderWrapper(IlpV4Sender.connect(host, port));
+                // ILPv4 over TCP requires direct instantiation (builder only supports HTTP for binary)
+                return IlpV4Sender.connect(host, port);
 
             case PROTOCOL_ILPV4_HTTP:
-                return new IlpV4HttpSenderWrapper(IlpV4HttpSender.connect(host, port));
+                return Sender.builder(Sender.Transport.HTTP)
+                        .address(host)
+                        .port(port)
+                        .binaryTransfer()
+                        .autoFlushRows(BATCH_SIZE)
+                        .build();
 
             default:
                 throw new IllegalArgumentException("Unknown protocol: " + protocol +
                         ". Use one of: ilp-tcp, ilp-http, ilpv4-tcp, ilpv4-http");
         }
+    }
+
+    private static void sendRow(Sender sender, int rowIndex) {
+        // Base timestamp with small variations
+        long baseTimestamp = 1704067200000000L; // 2024-01-01 00:00:00 UTC in micros
+        long timestamp = baseTimestamp + (rowIndex * 1000L) + (rowIndex % 100);
+
+        sender.table("ilp_alloc_test")
+                // Symbol columns
+                .symbol("exchange", SYMBOLS[rowIndex % SYMBOLS.length])
+                .symbol("currency", rowIndex % 2 == 0 ? "USD" : "EUR")
+
+                // Numeric columns
+                .longColumn("trade_id", rowIndex)
+                .longColumn("volume", 100 + (rowIndex % 10000))
+                .doubleColumn("price", 100.0 + (rowIndex % 1000) * 0.01)
+                .doubleColumn("bid", 99.5 + (rowIndex % 1000) * 0.01)
+                .doubleColumn("ask", 100.5 + (rowIndex % 1000) * 0.01)
+                .longColumn("sequence", rowIndex % 1000000)
+                .doubleColumn("spread", 0.5 + (rowIndex % 100) * 0.01)
+
+                // String column
+                .stringColumn("venue", STRINGS[rowIndex % STRINGS.length])
+
+                // Boolean column
+                .boolColumn("is_buy", rowIndex % 2 == 0)
+
+                // Additional timestamp column
+                .timestampColumn("event_time", timestamp - 1000, ChronoUnit.MICROS)
+
+                // Designated timestamp
+                .at(timestamp, ChronoUnit.MICROS);
     }
 
     /**
@@ -268,212 +297,5 @@ public class IlpV4AllocationTestClient {
         // - 1 timestamp: 8 bytes
         // - Overhead: ~20 bytes
         return 120;
-    }
-
-    // ========== Sender Wrapper Interface ==========
-
-    private interface SenderWrapper extends Closeable {
-        void printConnectionInfo();
-        void autoFlushRows(int rows);
-        void sendRow(int rowIndex) throws IOException;
-        void flush() throws IOException;
-    }
-
-    // ========== Old ILP Sender Wrapper ==========
-
-    private static class OldIlpSenderWrapper implements SenderWrapper {
-        private final Sender sender;
-        private final String description;
-
-        OldIlpSenderWrapper(Sender sender, String description) {
-            this.sender = sender;
-            this.description = description;
-        }
-
-        @Override
-        public void printConnectionInfo() {
-            System.out.println("Connected! Protocol: " + description);
-            System.out.println();
-        }
-
-        @Override
-        public void autoFlushRows(int rows) {
-            // Old sender auto-flush is configured at build time, not runtime
-            // We'll manually flush periodically
-        }
-
-        @Override
-        public void sendRow(int rowIndex) {
-            // Base timestamp with small variations
-            long baseTimestamp = 1704067200000000L; // 2024-01-01 00:00:00 UTC in micros
-            long timestamp = baseTimestamp + (rowIndex * 1000L) + (rowIndex % 100);
-
-            sender.table("ilp_alloc_test")
-                    // Symbol columns
-                    .symbol("exchange", SYMBOLS[rowIndex % SYMBOLS.length])
-                    .symbol("currency", rowIndex % 2 == 0 ? "USD" : "EUR")
-
-                    // Numeric columns (old API only has long and double)
-                    .longColumn("trade_id", rowIndex)
-                    .longColumn("volume", 100 + (rowIndex % 10000))
-                    .doubleColumn("price", 100.0 + (rowIndex % 1000) * 0.01)
-                    .doubleColumn("bid", 99.5 + (rowIndex % 1000) * 0.01)
-                    .doubleColumn("ask", 100.5 + (rowIndex % 1000) * 0.01)
-                    .longColumn("sequence", rowIndex % 1000000) // int as long
-                    .doubleColumn("spread", 0.5 + (rowIndex % 100) * 0.01) // float as double
-
-                    // String column
-                    .stringColumn("venue", STRINGS[rowIndex % STRINGS.length])
-
-                    // Boolean column
-                    .boolColumn("is_buy", rowIndex % 2 == 0)
-
-                    // Additional timestamp column
-                    .timestampColumn("event_time", timestamp - 1000, ChronoUnit.MICROS)
-
-                    // Designated timestamp
-                    .at(timestamp, ChronoUnit.MICROS);
-        }
-
-        @Override
-        public void flush() {
-            sender.flush();
-        }
-
-        @Override
-        public void close() {
-            sender.close();
-        }
-    }
-
-    // ========== ILPv4 TCP Sender Wrapper ==========
-
-    private static class IlpV4TcpSenderWrapper implements SenderWrapper {
-        private final IlpV4Sender sender;
-
-        IlpV4TcpSenderWrapper(IlpV4Sender sender) {
-            this.sender = sender;
-        }
-
-        @Override
-        public void printConnectionInfo() {
-            System.out.println("Connected! Protocol: ILPv4 (TCP)");
-            System.out.println("Negotiated version: " + sender.getNegotiatedVersion());
-            System.out.println("Gorilla enabled: " + sender.isGorillaEnabled());
-            System.out.println();
-        }
-
-        @Override
-        public void autoFlushRows(int rows) {
-            sender.autoFlushRows(rows);
-        }
-
-        @Override
-        public void sendRow(int rowIndex) throws IOException {
-            // Base timestamp with small variations to test Gorilla compression
-            long baseTimestamp = 1704067200000000L; // 2024-01-01 00:00:00 UTC in micros
-            long timestamp = baseTimestamp + (rowIndex * 1000L) + (rowIndex % 100);
-
-            sender.table("ilpv4_alloc_test")
-                    // Symbol columns - test dictionary encoding
-                    .symbol("exchange", SYMBOLS[rowIndex % SYMBOLS.length])
-                    .symbol("currency", rowIndex % 2 == 0 ? "USD" : "EUR")
-
-                    // Numeric columns - all types supported
-                    .longColumn("trade_id", rowIndex)
-                    .longColumn("volume", 100 + (rowIndex % 10000))
-                    .doubleColumn("price", 100.0 + (rowIndex % 1000) * 0.01)
-                    .doubleColumn("bid", 99.5 + (rowIndex % 1000) * 0.01)
-                    .doubleColumn("ask", 100.5 + (rowIndex % 1000) * 0.01)
-                    .intColumn("sequence", rowIndex % 1000000)
-                    .floatColumn("spread", 0.5f + (rowIndex % 100) * 0.01f)
-
-                    // String column
-                    .stringColumn("venue", STRINGS[rowIndex % STRINGS.length])
-
-                    // Boolean column
-                    .boolColumn("is_buy", rowIndex % 2 == 0)
-
-                    // Additional timestamp column (tests Gorilla on non-designated timestamp)
-                    .timestampColumn("event_time", timestamp - 1000)
-
-                    // Designated timestamp
-                    .at(timestamp);
-        }
-
-        @Override
-        public void flush() throws IOException {
-            sender.flush();
-        }
-
-        @Override
-        public void close() throws IOException {
-            sender.close();
-        }
-    }
-
-    // ========== ILPv4 HTTP Sender Wrapper ==========
-
-    private static class IlpV4HttpSenderWrapper implements SenderWrapper {
-        private final IlpV4HttpSender sender;
-
-        IlpV4HttpSenderWrapper(IlpV4HttpSender sender) {
-            this.sender = sender;
-        }
-
-        @Override
-        public void printConnectionInfo() {
-            System.out.println("Connected! Protocol: ILPv4 (HTTP)");
-            System.out.println("Gorilla enabled: " + sender.isGorillaEnabled());
-            System.out.println();
-        }
-
-        @Override
-        public void autoFlushRows(int rows) {
-            sender.autoFlushRows(rows);
-        }
-
-        @Override
-        public void sendRow(int rowIndex) throws IOException {
-            // Base timestamp with small variations to test Gorilla compression
-            long baseTimestamp = 1704067200000000L; // 2024-01-01 00:00:00 UTC in micros
-            long timestamp = baseTimestamp + (rowIndex * 1000L) + (rowIndex % 100);
-
-            sender.table("ilpv4_http_alloc_test")
-                    // Symbol columns - test dictionary encoding
-                    .symbol("exchange", SYMBOLS[rowIndex % SYMBOLS.length])
-                    .symbol("currency", rowIndex % 2 == 0 ? "USD" : "EUR")
-
-                    // Numeric columns - all types supported
-                    .longColumn("trade_id", rowIndex)
-                    .longColumn("volume", 100 + (rowIndex % 10000))
-                    .doubleColumn("price", 100.0 + (rowIndex % 1000) * 0.01)
-                    .doubleColumn("bid", 99.5 + (rowIndex % 1000) * 0.01)
-                    .doubleColumn("ask", 100.5 + (rowIndex % 1000) * 0.01)
-                    .intColumn("sequence", rowIndex % 1000000)
-                    .floatColumn("spread", 0.5f + (rowIndex % 100) * 0.01f)
-
-                    // String column
-                    .stringColumn("venue", STRINGS[rowIndex % STRINGS.length])
-
-                    // Boolean column
-                    .boolColumn("is_buy", rowIndex % 2 == 0)
-
-                    // Additional timestamp column (tests Gorilla on non-designated timestamp)
-                    .timestampColumn("event_time", timestamp - 1000)
-
-                    // Designated timestamp
-                    .at(timestamp);
-        }
-
-        @Override
-        public void flush() throws IOException {
-            sender.flush();
-        }
-
-        @Override
-        public void close() throws IOException {
-            sender.close();
-        }
     }
 }
