@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.http;
 
+import io.questdb.ClientTlsConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.client.Sender;
@@ -36,8 +37,12 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.v4.*;
+import io.questdb.cairo.TableUtils;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
@@ -77,8 +82,16 @@ public class IlpV4HttpSender implements Sender {
     private static final String CONTENT_TYPE = "application/x-ilp-v4";
     private static final int DEFAULT_TIMEOUT_MS = 30000;
 
-    private final String host;
-    private final int port;
+    // Retry constants
+    private static final int RETRY_BACKOFF_MULTIPLIER = 2;
+    private static final int RETRY_INITIAL_BACKOFF_MS = 10;
+    private static final int RETRY_MAX_JITTER_MS = 10;
+
+    // Multi-host support
+    private final ObjList<String> hosts;
+    private final IntList ports;
+    private int currentAddressIndex;
+
     private final IlpV4MessageEncoder encoder;
     private final Map<String, IlpV4TableBuffer> tableBuffers;
     private final ObjList<String> tableOrder;
@@ -92,9 +105,27 @@ public class IlpV4HttpSender implements Sender {
     private int pendingRows;
     private int timeoutMs;
 
-    private IlpV4HttpSender(String host, int port, HttpClientConfiguration clientConfiguration) {
-        this.host = host;
-        this.port = port;
+    // Authentication fields
+    private String authToken;
+    private String username;
+    private String password;
+
+    // Retry fields
+    private long maxRetriesNanos;
+    private int maxBackoffMillis;
+    private final Rnd rnd;
+
+    // Time-based auto-flush fields
+    private long flushIntervalNanos;
+    private long flushAfterNanos = Long.MAX_VALUE;
+
+    // Name validation
+    private int maxNameLength;
+
+    private IlpV4HttpSender(ObjList<String> hosts, IntList ports, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig) {
+        this.hosts = hosts;
+        this.ports = ports;
+        this.currentAddressIndex = 0;
         // Create encoder without its own buffer - we'll set the sink before each flush
         this.encoder = new IlpV4MessageEncoder(null);
         this.tableBuffers = new HashMap<>();
@@ -105,8 +136,12 @@ public class IlpV4HttpSender implements Sender {
         this.autoFlushRows = 0;
         this.pendingRows = 0;
         this.timeoutMs = DEFAULT_TIMEOUT_MS;
-        this.client = HttpClientFactory.newPlainTextInstance(clientConfiguration);
+        // Create TLS or plain text HTTP client based on configuration
+        this.client = tlsConfig != null
+                ? HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig)
+                : HttpClientFactory.newPlainTextInstance(clientConfiguration);
         this.errorSink = new StringSink();
+        this.rnd = new Rnd(System.nanoTime(), System.nanoTime());
     }
 
     /**
@@ -117,7 +152,77 @@ public class IlpV4HttpSender implements Sender {
      * @return connected sender
      */
     public static IlpV4HttpSender connect(String host, int port) {
-        return new IlpV4HttpSender(host, port, DefaultHttpClientConfiguration.INSTANCE);
+        ObjList<String> hosts = new ObjList<>();
+        hosts.add(host);
+        IntList ports = new IntList();
+        ports.add(port);
+        return new IlpV4HttpSender(hosts, ports, DefaultHttpClientConfiguration.INSTANCE, null);
+    }
+
+    /**
+     * Factory method for SenderBuilder integration.
+     * Creates an IlpV4HttpSender with configuration from the builder.
+     *
+     * @param hosts               list of server hosts
+     * @param ports               list of server ports
+     * @param clientConfiguration HTTP client configuration
+     * @param tlsConfig           TLS configuration (null for plain HTTP)
+     * @param autoFlushRows       auto-flush threshold (0 = disabled)
+     * @param authToken           Bearer token for authentication (null if not used)
+     * @param username            Username for basic auth (null if not used)
+     * @param password            Password for basic auth (null if not used)
+     * @param maxRetriesNanos     Maximum time to retry (in nanoseconds)
+     * @param maxBackoffMillis    Maximum backoff between retries (in milliseconds)
+     * @param flushIntervalNanos  Time-based auto-flush interval (in nanoseconds, Long.MAX_VALUE to disable)
+     * @param maxNameLength       Maximum length for table and column names
+     * @return configured sender
+     */
+    public static IlpV4HttpSender create(
+            ObjList<String> hosts,
+            IntList ports,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            long maxRetriesNanos,
+            int maxBackoffMillis,
+            long flushIntervalNanos,
+            int maxNameLength
+    ) {
+        assert authToken == null || (username == null && password == null);
+        IlpV4HttpSender sender = new IlpV4HttpSender(hosts, ports, clientConfiguration, tlsConfig);
+        sender.autoFlushRows = autoFlushRows;
+        sender.authToken = authToken;
+        sender.username = username;
+        sender.password = password;
+        sender.maxRetriesNanos = maxRetriesNanos;
+        sender.maxBackoffMillis = maxBackoffMillis;
+        sender.flushIntervalNanos = flushIntervalNanos;
+        sender.maxNameLength = maxNameLength;
+        return sender;
+    }
+
+    /**
+     * Returns the current host being used for connections.
+     */
+    private String currentHost() {
+        return hosts.get(currentAddressIndex);
+    }
+
+    /**
+     * Returns the current port being used for connections.
+     */
+    private int currentPort() {
+        return ports.get(currentAddressIndex);
+    }
+
+    /**
+     * Rotate to the next address in the list (for failover).
+     */
+    private void rotateAddress() {
+        currentAddressIndex = (currentAddressIndex + 1) % hosts.size();
     }
 
     /**
@@ -164,6 +269,7 @@ public class IlpV4HttpSender implements Sender {
 
     @Override
     public IlpV4HttpSender table(CharSequence tableName) {
+        validateTableName(tableName);
         String name = tableName.toString();
         currentTable = tableBuffers.get(name);
         if (currentTable == null) {
@@ -177,6 +283,7 @@ public class IlpV4HttpSender implements Sender {
     @Override
     public IlpV4HttpSender symbol(CharSequence columnName, CharSequence value) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_SYMBOL, true);
         col.addSymbol(value.toString());
         return this;
@@ -185,6 +292,7 @@ public class IlpV4HttpSender implements Sender {
     @Override
     public IlpV4HttpSender boolColumn(CharSequence columnName, boolean value) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_BOOLEAN, false);
         col.addBoolean(value);
         return this;
@@ -193,6 +301,7 @@ public class IlpV4HttpSender implements Sender {
     @Override
     public IlpV4HttpSender longColumn(CharSequence columnName, long value) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_LONG, false);
         col.addLong(value);
         return this;
@@ -203,6 +312,7 @@ public class IlpV4HttpSender implements Sender {
      */
     public IlpV4HttpSender byteColumn(CharSequence columnName, byte value) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_BYTE, false);
         col.addByte(value);
         return this;
@@ -213,6 +323,7 @@ public class IlpV4HttpSender implements Sender {
      */
     public IlpV4HttpSender shortColumn(CharSequence columnName, short value) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_SHORT, false);
         col.addShort(value);
         return this;
@@ -223,6 +334,7 @@ public class IlpV4HttpSender implements Sender {
      */
     public IlpV4HttpSender intColumn(CharSequence columnName, int value) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_INT, false);
         col.addInt(value);
         return this;
@@ -231,6 +343,7 @@ public class IlpV4HttpSender implements Sender {
     @Override
     public IlpV4HttpSender doubleColumn(CharSequence columnName, double value) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_DOUBLE, false);
         col.addDouble(value);
         return this;
@@ -241,6 +354,7 @@ public class IlpV4HttpSender implements Sender {
      */
     public IlpV4HttpSender floatColumn(CharSequence columnName, float value) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_FLOAT, false);
         col.addFloat(value);
         return this;
@@ -249,6 +363,7 @@ public class IlpV4HttpSender implements Sender {
     @Override
     public IlpV4HttpSender stringColumn(CharSequence columnName, CharSequence value) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_STRING, true);
         col.addString(value.toString());
         return this;
@@ -257,6 +372,7 @@ public class IlpV4HttpSender implements Sender {
     @Override
     public IlpV4HttpSender timestampColumn(CharSequence columnName, long value, ChronoUnit unit) {
         checkCurrentTable();
+        validateColumnName(columnName);
         if (unit == ChronoUnit.NANOS) {
             // Send nanoseconds with full precision using TYPE_TIMESTAMP_NANOS
             IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_TIMESTAMP_NANOS, true);
@@ -274,6 +390,7 @@ public class IlpV4HttpSender implements Sender {
     public IlpV4HttpSender timestampColumn(CharSequence columnName, Instant value) {
         long micros = value.getEpochSecond() * 1_000_000L + value.getNano() / 1000L;
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_TIMESTAMP, true);
         col.addLong(micros);
         return this;
@@ -284,6 +401,7 @@ public class IlpV4HttpSender implements Sender {
      */
     public IlpV4HttpSender timestampColumn(CharSequence columnName, long valueMicros) {
         checkCurrentTable();
+        validateColumnName(columnName);
         IlpV4TableBuffer.ColumnBuffer col = currentTable.getOrCreateColumn(columnName.toString(), TYPE_TIMESTAMP, true);
         col.addLong(valueMicros);
         return this;
@@ -364,9 +482,28 @@ public class IlpV4HttpSender implements Sender {
         currentTable.nextRow();
         pendingRows++;
 
-        if (autoFlushRows > 0 && pendingRows >= autoFlushRows) {
+        if (shouldAutoFlush()) {
             flush();
         }
+    }
+
+    private boolean shouldAutoFlush() {
+        // Check row-based auto-flush
+        if (autoFlushRows > 0 && pendingRows >= autoFlushRows) {
+            return true;
+        }
+
+        // Check time-based auto-flush
+        if (flushIntervalNanos != Long.MAX_VALUE) {
+            long nowNanos = System.nanoTime();
+            if (flushAfterNanos == Long.MAX_VALUE) {
+                flushAfterNanos = nowNanos + flushIntervalNanos;
+            } else if (flushAfterNanos - nowNanos < 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     @Override
@@ -375,91 +512,186 @@ public class IlpV4HttpSender implements Sender {
             return;
         }
 
-        try {
-            // Create HTTP request and prepare for content
-            HttpClient.Request request = client.newRequest(host, port)
-                    .POST()
-                    .url(WRITE_PATH)
-                    .header("Content-Type", CONTENT_TYPE);
-            request.withContent();
+        long retryingDeadlineNanos = Long.MIN_VALUE;
+        int retryBackoff = Math.min(maxBackoffMillis, RETRY_INITIAL_BACKOFF_MS);
+        LineSenderException lastException = null;
 
-            // Create sink that writes directly to the HTTP request buffer
-            IlpV4HttpRequestSink sink = new IlpV4HttpRequestSink(request);
-            encoder.setSink(sink);
-            encoder.setGorillaEnabled(gorillaEnabled);
-
-            // Write placeholder header (will be patched later)
-            for (int i = 0; i < HEADER_SIZE; i++) {
-                sink.putByte((byte) 0);
+        while (true) {
+            try {
+                doFlushAttempt();
+                return; // Success
+            } catch (LineSenderException e) {
+                // Non-retryable error
+                if (!e.isRetryable()) {
+                    throw e;
+                }
+                lastException = e;
+            } catch (HttpClientException e) {
+                // Network error, retryable
+                lastException = new LineSenderException("Failed to flush: " + e.getMessage(), true);
             }
 
-            // Encode each table directly to the HTTP request buffer
-            for (int i = 0, n = tableOrder.size(); i < n; i++) {
-                String tableName = tableOrder.get(i);
-                IlpV4TableBuffer buffer = tableBuffers.get(tableName);
-                if (buffer.getRowCount() > 0) {
-                    buffer.encode(encoder, useSchemaRef, gorillaEnabled);
-                }
+            // Check retry deadline
+            long nowNanos = Os.currentTimeNanos();
+            retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE)
+                    ? nowNanos + maxRetriesNanos
+                    : retryingDeadlineNanos;
+            if (nowNanos >= retryingDeadlineNanos) {
+                throw lastException;
             }
 
-            // Calculate payload length and table count
-            int payloadLength = request.getContentLength() - HEADER_SIZE;
-            int tableCount = 0;
-            for (int i = 0, n = tableOrder.size(); i < n; i++) {
-                String tableName = tableOrder.get(i);
-                IlpV4TableBuffer buffer = tableBuffers.get(tableName);
-                if (buffer.getRowCount() > 0) {
-                    tableCount++;
-                }
+            // Rotate address for multi-host support
+            if (hosts.size() > 1) {
+                rotateAddress();
             }
 
-            // Get header address AFTER all encoding (in case buffer relocated)
-            long headerAddress = request.getContentStart();
+            // Sleep with backoff
+            Os.sleep(retryBackoff);
+            retryBackoff = backoff(retryBackoff);
+        }
+    }
 
-            // Patch header directly in the buffer
-            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress, (byte) 'I');
-            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 1, (byte) 'L');
-            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 2, (byte) 'P');
-            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 3, (byte) '4');
-            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 4, VERSION_1);
-            io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 5, gorillaEnabled ? FLAG_GORILLA : 0);
-            io.questdb.std.Unsafe.getUnsafe().putShort(headerAddress + 6, (short) tableCount);
-            io.questdb.std.Unsafe.getUnsafe().putInt(headerAddress + 8, payloadLength);
+    private void doFlushAttempt() {
+        // Create HTTP request and prepare for content
+        HttpClient.Request request = client.newRequest(currentHost(), currentPort())
+                .POST()
+                .url(WRITE_PATH)
+                .header("Content-Type", CONTENT_TYPE);
 
-            // Send the request
-            HttpClient.ResponseHeaders response = request.send(timeoutMs);
-            response.await(timeoutMs);
+        // Add authentication headers if configured
+        if (username != null) {
+            request.authBasic(username, password);
+        } else if (authToken != null) {
+            request.authToken(null, authToken);
+        }
 
-            DirectUtf8Sequence statusCode = response.getStatusCode();
-            if (statusCode == null || !Utf8s.equalsNcAscii("200", statusCode) && !Utf8s.equalsNcAscii("204", statusCode)) {
-                errorSink.clear();
-                errorSink.put("HTTP error: ");
-                if (statusCode != null) {
-                    errorSink.put(statusCode);
-                } else {
-                    errorSink.put("no status");
-                }
+        request.withContent();
 
-                Response resp = response.getResponse();
-                if (resp != null) {
-                    Fragment fragment = resp.recv();
-                    if (fragment != null && fragment.lo() < fragment.hi()) {
-                        errorSink.put(" - ");
-                        for (long ptr = fragment.lo(); ptr < fragment.hi() && ptr < fragment.lo() + 200; ptr++) {
-                            errorSink.put((char) io.questdb.std.Unsafe.getUnsafe().getByte(ptr));
-                        }
+        // Create sink that writes directly to the HTTP request buffer
+        IlpV4HttpRequestSink sink = new IlpV4HttpRequestSink(request);
+        encoder.setSink(sink);
+        encoder.setGorillaEnabled(gorillaEnabled);
+
+        // Write placeholder header (will be patched later)
+        for (int i = 0; i < HEADER_SIZE; i++) {
+            sink.putByte((byte) 0);
+        }
+
+        // Encode each table directly to the HTTP request buffer
+        for (int i = 0, n = tableOrder.size(); i < n; i++) {
+            String tableName = tableOrder.get(i);
+            IlpV4TableBuffer buffer = tableBuffers.get(tableName);
+            if (buffer.getRowCount() > 0) {
+                buffer.encode(encoder, useSchemaRef, gorillaEnabled);
+            }
+        }
+
+        // Calculate payload length and table count
+        int payloadLength = request.getContentLength() - HEADER_SIZE;
+        int tableCount = 0;
+        for (int i = 0, n = tableOrder.size(); i < n; i++) {
+            String tableName = tableOrder.get(i);
+            IlpV4TableBuffer buffer = tableBuffers.get(tableName);
+            if (buffer.getRowCount() > 0) {
+                tableCount++;
+            }
+        }
+
+        // Get header address AFTER all encoding (in case buffer relocated)
+        long headerAddress = request.getContentStart();
+
+        // Patch header directly in the buffer
+        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress, (byte) 'I');
+        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 1, (byte) 'L');
+        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 2, (byte) 'P');
+        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 3, (byte) '4');
+        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 4, VERSION_1);
+        io.questdb.std.Unsafe.getUnsafe().putByte(headerAddress + 5, gorillaEnabled ? FLAG_GORILLA : 0);
+        io.questdb.std.Unsafe.getUnsafe().putShort(headerAddress + 6, (short) tableCount);
+        io.questdb.std.Unsafe.getUnsafe().putInt(headerAddress + 8, payloadLength);
+
+        // Send the request
+        HttpClient.ResponseHeaders response = request.send(timeoutMs);
+        response.await(timeoutMs);
+
+        DirectUtf8Sequence statusCode = response.getStatusCode();
+        if (statusCode == null || !Utf8s.equalsNcAscii("200", statusCode) && !Utf8s.equalsNcAscii("204", statusCode)) {
+            boolean retryable = isRetryableHttpStatus(statusCode);
+            errorSink.clear();
+            errorSink.put("HTTP error: ");
+            if (statusCode != null) {
+                errorSink.put(statusCode);
+            } else {
+                errorSink.put("no status");
+            }
+
+            Response resp = response.getResponse();
+            if (resp != null) {
+                Fragment fragment = resp.recv();
+                if (fragment != null && fragment.lo() < fragment.hi()) {
+                    errorSink.put(" - ");
+                    for (long ptr = fragment.lo(); ptr < fragment.hi() && ptr < fragment.lo() + 200; ptr++) {
+                        errorSink.put((char) io.questdb.std.Unsafe.getUnsafe().getByte(ptr));
                     }
                 }
-                throw new LineSenderException(errorSink.toString());
             }
+            throw new LineSenderException(errorSink.toString(), retryable);
+        }
 
-            // Clear buffers
-            for (int i = 0, n = tableOrder.size(); i < n; i++) {
-                tableBuffers.get(tableOrder.get(i)).reset();
+        // Clear buffers
+        for (int i = 0, n = tableOrder.size(); i < n; i++) {
+            tableBuffers.get(tableOrder.get(i)).reset();
+        }
+        pendingRows = 0;
+
+        // Reset time-based flush timer
+        if (flushIntervalNanos != Long.MAX_VALUE) {
+            flushAfterNanos = System.nanoTime() + flushIntervalNanos;
+        }
+    }
+
+    private int backoff(int currentBackoff) {
+        int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
+        int backoff = currentBackoff + jitter;
+        return Math.min(maxBackoffMillis, backoff * RETRY_BACKOFF_MULTIPLIER);
+    }
+
+    private static boolean isRetryableHttpStatus(DirectUtf8Sequence statusCode) {
+        if (statusCode == null) {
+            return true;
+        }
+        // 5xx status codes are retryable (server errors)
+        // 503 Service Unavailable, 500 Internal Server Error, etc.
+        return statusCode.size() >= 1 && statusCode.byteAt(0) == '5';
+    }
+
+    private void validateTableName(CharSequence name) {
+        if (maxNameLength > 0 && !TableUtils.isValidTableName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("table name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
             }
-            pendingRows = 0;
-        } catch (HttpClientException e) {
-            throw new LineSenderException("Failed to flush: " + e.getMessage(), e);
+            throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
+                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ")
+                    .putAsPrintable(name);
+        }
+    }
+
+    private void validateColumnName(CharSequence name) {
+        if (maxNameLength > 0 && !TableUtils.isValidColumnName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("column name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
+            }
+            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
+                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ")
+                    .putAsPrintable(name);
         }
     }
 

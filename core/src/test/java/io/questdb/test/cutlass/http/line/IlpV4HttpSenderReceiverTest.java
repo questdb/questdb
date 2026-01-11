@@ -28,12 +28,14 @@ import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.http.IlpV4HttpSender;
 import io.questdb.test.AbstractBootstrapTest;
-import java.time.temporal.ChronoUnit;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
+import io.questdb.test.tools.TlsProxyRule;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+
 import java.time.temporal.ChronoUnit;
 
 /**
@@ -43,6 +45,9 @@ import java.time.temporal.ChronoUnit;
  * written to QuestDB tables and can be queried.
  */
 public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
+
+    @Rule
+    public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", HTTP_PORT);
 
     @Override
     @Before
@@ -2141,6 +2146,3561 @@ public class IlpV4HttpSenderReceiverTest extends AbstractBootstrapTest {
                         "select event_time from test_ts_col_future",
                         "event_time\n3000-01-01T00:00:00.000000Z\n"
                 );
+            }
+        });
+    }
+
+    // Builder integration tests
+
+    @Test
+    public void testBuilderBinaryTransfer() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Use SenderBuilder with binaryTransfer()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_builder")
+                            .symbol("city", "Paris")
+                            .doubleColumn("temperature", 25.0)
+                            .longColumn("humidity", 70)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_builder");
+                serverMain.assertSql("select count() from test_builder", "count\n1\n");
+                serverMain.assertSql(
+                        "select city, temperature, humidity from test_builder",
+                        "city\ttemperature\thumidity\nParis\t25.0\t70\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderBinaryTransferWithAutoFlushRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Use SenderBuilder with binaryTransfer() and autoFlushRows
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .autoFlushRows(50)  // Auto-flush after 50 rows
+                        .build()) {
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("test_builder_autoflush")
+                                .symbol("id", "row" + i)
+                                .longColumn("value", i)
+                                .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
+                    }
+                    // Should have auto-flushed at row 50, flush remaining
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_builder_autoflush");
+                serverMain.assertSql("select count() from test_builder_autoflush", "count\n100\n");
+            }
+        });
+    }
+
+    // TLS tests
+
+    @Test
+    public void testBuilderBinaryTransferWithTls() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                int tlsPort = tlsProxy.getListeningPort();
+
+                // Use SenderBuilder with binaryTransfer() and TLS
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + tlsPort)
+                        .binaryTransfer()
+                        .enableTls()
+                        .advancedTls()
+                        .disableCertificateValidation()
+                        .build()) {
+                    sender.table("test_tls")
+                            .symbol("city", "Berlin")
+                            .doubleColumn("temperature", 20.0)
+                            .longColumn("humidity", 60)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_tls");
+                serverMain.assertSql("select count() from test_tls", "count\n1\n");
+                serverMain.assertSql(
+                        "select city, temperature, humidity from test_tls",
+                        "city\ttemperature\thumidity\nBerlin\t20.0\t60\n"
+                );
+            }
+        });
+    }
+
+    // Config string tests
+
+    @Test
+    public void testConfigStringBinaryTransfer() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Use fromConfig() with binary_transfer=on
+                try (Sender sender = Sender.fromConfig("http::addr=localhost:" + httpPort + ";binary_transfer=on;")) {
+                    sender.table("test_config")
+                            .symbol("city", "Tokyo")
+                            .doubleColumn("temperature", 30.0)
+                            .longColumn("humidity", 80)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_config");
+                serverMain.assertSql("select count() from test_config", "count\n1\n");
+                serverMain.assertSql(
+                        "select city, temperature, humidity from test_config",
+                        "city\ttemperature\thumidity\nTokyo\t30.0\t80\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testConfigStringBinaryTransferWithTls() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                int tlsPort = tlsProxy.getListeningPort();
+
+                // Use fromConfig() with binary_transfer=on and TLS
+                try (Sender sender = Sender.fromConfig(
+                        "https::addr=localhost:" + tlsPort + ";binary_transfer=on;tls_verify=unsafe_off;")) {
+                    sender.table("test_config_tls")
+                            .symbol("city", "Sydney")
+                            .doubleColumn("temperature", 28.0)
+                            .longColumn("humidity", 55)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_config_tls");
+                serverMain.assertSql("select count() from test_config_tls", "count\n1\n");
+            }
+        });
+    }
+
+    // ==================== Extensive Builder Integration Tests ====================
+
+    @Test
+    public void testBuilderAllDataTypes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_all_types")
+                            .symbol("sym", "test_symbol")
+                            .boolColumn("bool_col", true)
+                            .longColumn("long_col", 123456789L)
+                            .doubleColumn("double_col", 3.14159)
+                            .stringColumn("string_col", "hello world")
+                            .timestampColumn("ts_col", 1609459200000000L, ChronoUnit.MICROS)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_all_types");
+                serverMain.assertSql("select count() from test_all_types", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderMultipleTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    // Insert into first table
+                    sender.table("table_a")
+                            .symbol("name", "first")
+                            .longColumn("value", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+
+                    // Insert into second table
+                    sender.table("table_b")
+                            .symbol("name", "second")
+                            .longColumn("value", 2)
+                            .at(1000000000001L, ChronoUnit.MICROS);
+
+                    // Insert into third table
+                    sender.table("table_c")
+                            .symbol("name", "third")
+                            .longColumn("value", 3)
+                            .at(1000000000002L, ChronoUnit.MICROS);
+
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("table_a");
+                serverMain.awaitTable("table_b");
+                serverMain.awaitTable("table_c");
+                serverMain.assertSql("select count() from table_a", "count\n1\n");
+                serverMain.assertSql("select count() from table_b", "count\n1\n");
+                serverMain.assertSql("select count() from table_c", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderMultipleSymbols() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_multi_sym")
+                            .symbol("sym1", "value1")
+                            .symbol("sym2", "value2")
+                            .symbol("sym3", "value3")
+                            .longColumn("data", 100)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_multi_sym");
+                serverMain.assertSql(
+                        "select sym1, sym2, sym3, data from test_multi_sym",
+                        "sym1\tsym2\tsym3\tdata\nvalue1\tvalue2\tvalue3\t100\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderLargeStringColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                StringBuilder largeString = new StringBuilder();
+                for (int i = 0; i < 1000; i++) {
+                    largeString.append("x");
+                }
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_large_string")
+                            .symbol("id", "row1")
+                            .stringColumn("large_data", largeString.toString())
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_large_string");
+                serverMain.assertSql("select length(large_data) from test_large_string", "length\n1000\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderNegativeNumbers() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_negative")
+                            .symbol("id", "neg")
+                            .longColumn("neg_long", -123456789L)
+                            .doubleColumn("neg_double", -3.14159)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_negative");
+                serverMain.assertSql(
+                        "select neg_long, neg_double from test_negative",
+                        "neg_long\tneg_double\n-123456789\t-3.14159\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderZeroValues() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_zero")
+                            .symbol("id", "zero")
+                            .longColumn("zero_long", 0L)
+                            .doubleColumn("zero_double", 0.0)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_zero");
+                serverMain.assertSql(
+                        "select zero_long, zero_double from test_zero",
+                        "zero_long\tzero_double\n0\t0.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderMaxLongValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_max_long")
+                            .symbol("id", "max")
+                            .longColumn("max_val", Long.MAX_VALUE)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_max_long");
+                serverMain.assertSql(
+                        "select max_val from test_max_long",
+                        "max_val\n" + Long.MAX_VALUE + "\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderMinLongValue() throws Exception {
+        // Note: Long.MIN_VALUE is a null sentinel in QuestDB, so we use MIN_VALUE + 1
+        long minNonNull = Long.MIN_VALUE + 1;
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_min_long")
+                            .symbol("id", "min")
+                            .longColumn("min_val", minNonNull)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_min_long");
+                serverMain.assertSql(
+                        "select min_val from test_min_long",
+                        "min_val\n" + minNonNull + "\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderBooleanTrue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_bool_true")
+                            .symbol("id", "t")
+                            .boolColumn("flag", true)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_bool_true");
+                serverMain.assertSql("select flag from test_bool_true", "flag\ntrue\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderBooleanFalse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_bool_false")
+                            .symbol("id", "f")
+                            .boolColumn("flag", false)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_bool_false");
+                serverMain.assertSql("select flag from test_bool_false", "flag\nfalse\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderMultipleFlushes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    // First flush
+                    sender.table("test_multi_flush")
+                            .symbol("batch", "1")
+                            .longColumn("value", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Second flush
+                    sender.table("test_multi_flush")
+                            .symbol("batch", "2")
+                            .longColumn("value", 2)
+                            .at(1000000000001L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Third flush
+                    sender.table("test_multi_flush")
+                            .symbol("batch", "3")
+                            .longColumn("value", 3)
+                            .at(1000000000002L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_multi_flush");
+                serverMain.assertSql("select count() from test_multi_flush", "count\n3\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilder100Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("test_100_rows")
+                                .symbol("id", "row" + i)
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_100_rows");
+                serverMain.assertSql("select count() from test_100_rows", "count\n100\n");
+                serverMain.assertSql("select sum(value) from test_100_rows", "sum\n4950\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilder1000Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 1000; i++) {
+                        sender.table("test_1000_rows")
+                                .symbol("id", "row" + i)
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_1000_rows");
+                serverMain.assertSql("select count() from test_1000_rows", "count\n1000\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTimestampMicros() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ts_micros")
+                            .symbol("id", "micros")
+                            .longColumn("value", 1)
+                            .at(1609459200000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ts_micros");
+                serverMain.assertSql(
+                        "select timestamp from test_ts_micros",
+                        "timestamp\n2021-01-01T00:00:00.000000Z\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTimestampNanos() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ts_nanos")
+                            .symbol("id", "nanos")
+                            .longColumn("value", 1)
+                            .at(1609459200000000000L, ChronoUnit.NANOS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ts_nanos");
+                serverMain.assertSql(
+                        "select timestamp from test_ts_nanos",
+                        "timestamp\n2021-01-01T00:00:00.000000000Z\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderEmptySymbolValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_empty_sym")
+                            .symbol("empty", "")
+                            .longColumn("value", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_empty_sym");
+                serverMain.assertSql("select count() from test_empty_sym", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderEmptyStringValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_empty_str")
+                            .symbol("id", "row1")
+                            .stringColumn("empty_str", "")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_empty_str");
+                serverMain.assertSql("select count() from test_empty_str", "count\n1\n");
+                serverMain.assertSql("select length(empty_str) from test_empty_str", "length\n0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSpecialCharactersInSymbol() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_special_sym")
+                            .symbol("special", "hello-world_123")
+                            .longColumn("value", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_special_sym");
+                serverMain.assertSql(
+                        "select special from test_special_sym",
+                        "special\nhello-world_123\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSpecialCharactersInString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_special_str")
+                            .symbol("id", "row1")
+                            .stringColumn("special", "hello\tworld\nnewline")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_special_str");
+                serverMain.assertSql("select count() from test_special_str", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderUnicodeInString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_unicode")
+                            .symbol("id", "row1")
+                            .stringColumn("unicode_str", "こんにちは世界")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_unicode");
+                serverMain.assertSql("select count() from test_unicode", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleNaN() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_nan")
+                            .symbol("id", "nan")
+                            .doubleColumn("nan_val", Double.NaN)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_nan");
+                serverMain.assertSql("select count() from test_nan", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleInfinity() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_inf")
+                            .symbol("id", "pos_inf")
+                            .doubleColumn("inf_val", Double.POSITIVE_INFINITY)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.table("test_inf")
+                            .symbol("id", "neg_inf")
+                            .doubleColumn("inf_val", Double.NEGATIVE_INFINITY)
+                            .at(1000000000001L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_inf");
+                serverMain.assertSql("select count() from test_inf", "count\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderAutoFlushRows10() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .autoFlushRows(10)
+                        .build()) {
+                    // Insert 25 rows, should auto-flush at 10 and 20
+                    for (int i = 0; i < 25; i++) {
+                        sender.table("test_autoflush_10")
+                                .symbol("id", "row" + i)
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush(); // Flush remaining 5
+                }
+
+                serverMain.awaitTable("test_autoflush_10");
+                serverMain.assertSql("select count() from test_autoflush_10", "count\n25\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSameTableMultipleRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 50; i++) {
+                        sender.table("test_same_table")
+                                .symbol("type", i % 2 == 0 ? "even" : "odd")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_same_table");
+                serverMain.assertSql("select count() from test_same_table", "count\n50\n");
+                serverMain.assertSql("select count() from test_same_table where type = 'even'", "count\n25\n");
+                serverMain.assertSql("select count() from test_same_table where type = 'odd'", "count\n25\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderFlushEmpty() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    // Flush with no data should not throw
+                    sender.flush();
+                    sender.flush();
+                    sender.flush();
+                }
+                // If we get here without exception, test passes
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderInterleavedTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    // Interleave rows between tables
+                    for (int i = 0; i < 20; i++) {
+                        sender.table("interleave_a")
+                                .symbol("id", "a" + i)
+                                .longColumn("value", i)
+                                .at(1000000000000L + i * 2, ChronoUnit.MICROS);
+
+                        sender.table("interleave_b")
+                                .symbol("id", "b" + i)
+                                .longColumn("value", i * 10)
+                                .at(1000000000000L + i * 2 + 1, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("interleave_a");
+                serverMain.awaitTable("interleave_b");
+                serverMain.assertSql("select count() from interleave_a", "count\n20\n");
+                serverMain.assertSql("select count() from interleave_b", "count\n20\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSmallDoubleAsFloat() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_small_double")
+                            .symbol("id", "f1")
+                            .doubleColumn("float_val", 3.14)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_small_double");
+                serverMain.assertSql("select count() from test_small_double", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderByteRangeLong() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_byte_range")
+                            .symbol("id", "b1")
+                            .longColumn("byte_val", 127)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_byte_range");
+                serverMain.assertSql("select byte_val from test_byte_range", "byte_val\n127\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderShortRangeLong() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_short_range")
+                            .symbol("id", "s1")
+                            .longColumn("short_val", 32767)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_short_range");
+                serverMain.assertSql("select short_val from test_short_range", "short_val\n32767\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderIntRangeLong() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_int_range")
+                            .symbol("id", "i1")
+                            .longColumn("int_val", Integer.MAX_VALUE)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_int_range");
+                serverMain.assertSql("select int_val from test_int_range", "int_val\n" + Integer.MAX_VALUE + "\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Additional extensive tests - Multiple column combinations
+    // =====================================================================
+
+    @Test
+    public void testBuilderAllColumnTypesInOneRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_all_types")
+                            .symbol("sym", "s1")
+                            .stringColumn("str", "hello")
+                            .longColumn("lng", 123L)
+                            .doubleColumn("dbl", 3.14)
+                            .boolColumn("bool", true)
+                            .timestampColumn("ts", 1000000L, ChronoUnit.MICROS)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_all_types");
+                serverMain.assertSql("select count() from test_all_types", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTwoLongColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_two_longs")
+                            .longColumn("a", 100L)
+                            .longColumn("b", 200L)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_two_longs");
+                serverMain.assertSql("select a, b from test_two_longs", "a\tb\n100\t200\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderThreeDoubleColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_three_doubles")
+                            .doubleColumn("x", 1.1)
+                            .doubleColumn("y", 2.2)
+                            .doubleColumn("z", 3.3)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_three_doubles");
+                serverMain.assertSql("select count() from test_three_doubles", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTwoStringColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_two_strings")
+                            .stringColumn("first", "hello")
+                            .stringColumn("second", "world")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_two_strings");
+                serverMain.assertSql("select first, second from test_two_strings", "first\tsecond\nhello\tworld\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTwoBoolColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_two_bools")
+                            .boolColumn("enabled", true)
+                            .boolColumn("active", false)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_two_bools");
+                serverMain.assertSql("select enabled, active from test_two_bools", "enabled\tactive\ntrue\tfalse\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderFiveSymbols() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_five_syms")
+                            .symbol("a", "1")
+                            .symbol("b", "2")
+                            .symbol("c", "3")
+                            .symbol("d", "4")
+                            .symbol("e", "5")
+                            .longColumn("value", 42)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_five_syms");
+                serverMain.assertSql("select a,b,c,d,e from test_five_syms", "a\tb\tc\td\te\n1\t2\t3\t4\t5\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderMixedSymbolsAndLongs() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_mixed")
+                            .symbol("sym1", "a")
+                            .symbol("sym2", "b")
+                            .longColumn("val1", 10)
+                            .longColumn("val2", 20)
+                            .longColumn("val3", 30)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_mixed");
+                serverMain.assertSql("select val1+val2+val3 as total from test_mixed", "total\n60\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Row batch tests
+    // =====================================================================
+
+    @Test
+    public void testBuilder5Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 5; i++) {
+                        sender.table("test_5rows")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_5rows");
+                serverMain.assertSql("select count() from test_5rows", "count\n5\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilder10Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("test_10rows")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_10rows");
+                serverMain.assertSql("select count() from test_10rows", "count\n10\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilder50Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 50; i++) {
+                        sender.table("test_50rows")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_50rows");
+                serverMain.assertSql("select count() from test_50rows", "count\n50\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilder500Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 500; i++) {
+                        sender.table("test_500rows")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_500rows");
+                serverMain.assertSql("select count() from test_500rows", "count\n500\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilder5000Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 5000; i++) {
+                        sender.table("test_5000rows")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_5000rows");
+                serverMain.assertSql("select count() from test_5000rows", "count\n5000\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Flush behavior tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderFlushAfterEveryRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("test_flush_each")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                }
+
+                serverMain.awaitTable("test_flush_each");
+                serverMain.assertSql("select count() from test_flush_each", "count\n10\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderFlushEvery5Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 50; i++) {
+                        sender.table("test_flush_5")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                        if ((i + 1) % 5 == 0) {
+                            sender.flush();
+                        }
+                    }
+                    sender.flush(); // flush remaining
+                }
+
+                serverMain.awaitTable("test_flush_5");
+                serverMain.assertSql("select count() from test_flush_5", "count\n50\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderFlushEvery10Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("test_flush_10")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                        if ((i + 1) % 10 == 0) {
+                            sender.flush();
+                        }
+                    }
+                }
+
+                serverMain.awaitTable("test_flush_10");
+                serverMain.assertSql("select count() from test_flush_10", "count\n100\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Double value edge cases
+    // =====================================================================
+
+    @Test
+    public void testBuilderDoubleZero() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_dbl_zero")
+                            .doubleColumn("val", 0.0)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_dbl_zero");
+                serverMain.assertSql("select val from test_dbl_zero", "val\n0.0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleNegativeZero() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_dbl_neg_zero")
+                            .doubleColumn("val", -0.0)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_dbl_neg_zero");
+                // IEEE 754 -0.0 is preserved by QuestDB
+                serverMain.assertSql("select count() from test_dbl_neg_zero", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleSmallPositive() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_dbl_small")
+                            .doubleColumn("val", 0.000001)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_dbl_small");
+                serverMain.assertSql("select count() from test_dbl_small", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleSmallNegative() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_dbl_small_neg")
+                            .doubleColumn("val", -0.000001)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_dbl_small_neg");
+                serverMain.assertSql("select count() from test_dbl_small_neg", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleLargePositive() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_dbl_large")
+                            .doubleColumn("val", 1.0e100)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_dbl_large");
+                serverMain.assertSql("select count() from test_dbl_large", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleLargeNegative() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_dbl_large_neg")
+                            .doubleColumn("val", -1.0e100)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_dbl_large_neg");
+                serverMain.assertSql("select count() from test_dbl_large_neg", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleMinValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_dbl_min")
+                            .doubleColumn("val", Double.MIN_VALUE)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_dbl_min");
+                serverMain.assertSql("select count() from test_dbl_min", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleMaxValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_dbl_max")
+                            .doubleColumn("val", Double.MAX_VALUE)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_dbl_max");
+                serverMain.assertSql("select count() from test_dbl_max", "count\n1\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Long value edge cases
+    // =====================================================================
+
+    @Test
+    public void testBuilderLongZero() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_long_zero")
+                            .longColumn("val", 0L)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_long_zero");
+                serverMain.assertSql("select val from test_long_zero", "val\n0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderLongOne() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_long_one")
+                            .longColumn("val", 1L)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_long_one");
+                serverMain.assertSql("select val from test_long_one", "val\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderLongNegativeOne() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_long_neg1")
+                            .longColumn("val", -1L)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_long_neg1");
+                serverMain.assertSql("select val from test_long_neg1", "val\n-1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderLong1000() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_long_1000")
+                            .longColumn("val", 1000L)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_long_1000");
+                serverMain.assertSql("select val from test_long_1000", "val\n1000\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderLongNegative1000() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_long_neg1000")
+                            .longColumn("val", -1000L)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_long_neg1000");
+                serverMain.assertSql("select val from test_long_neg1000", "val\n-1000\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // String value edge cases
+    // =====================================================================
+
+    @Test
+    public void testBuilderStringSingleChar() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_single")
+                            .stringColumn("val", "a")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_single");
+                serverMain.assertSql("select val from test_str_single", "val\na\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringWithSpaces() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_spaces")
+                            .stringColumn("val", "hello world")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_spaces");
+                serverMain.assertSql("select val from test_str_spaces", "val\nhello world\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringWithTabs() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_tabs")
+                            .stringColumn("val", "a\tb\tc")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_tabs");
+                serverMain.assertSql("select count() from test_str_tabs", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringWithNewlines() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_newlines")
+                            .stringColumn("val", "line1\nline2")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_newlines");
+                serverMain.assertSql("select count() from test_str_newlines", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringWithQuotes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_quotes")
+                            .stringColumn("val", "say \"hello\"")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_quotes");
+                serverMain.assertSql("select count() from test_str_quotes", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringWithBackslash() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_backslash")
+                            .stringColumn("val", "path\\to\\file")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_backslash");
+                serverMain.assertSql("select count() from test_str_backslash", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringNumeric() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_numeric")
+                            .stringColumn("val", "12345")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_numeric");
+                serverMain.assertSql("select val from test_str_numeric", "val\n12345\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderString100Chars() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < 100; i++) {
+                    sb.append('x');
+                }
+                String longStr = sb.toString();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_100")
+                            .stringColumn("val", longStr)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_100");
+                serverMain.assertSql("select length(val) from test_str_100", "length\n100\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Symbol edge cases
+    // =====================================================================
+
+    @Test
+    public void testBuilderSymbolSingleChar() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_sym_single")
+                            .symbol("s", "x")
+                            .longColumn("v", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sym_single");
+                serverMain.assertSql("select s from test_sym_single", "s\nx\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSymbolNumeric() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_sym_num")
+                            .symbol("s", "123")
+                            .longColumn("v", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sym_num");
+                serverMain.assertSql("select s from test_sym_num", "s\n123\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSymbolMixedCase() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_sym_mixed")
+                            .symbol("s", "AbCdEf")
+                            .longColumn("v", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sym_mixed");
+                serverMain.assertSql("select s from test_sym_mixed", "s\nAbCdEf\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSymbolWithUnderscore() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_sym_underscore")
+                            .symbol("s", "hello_world")
+                            .longColumn("v", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sym_underscore");
+                serverMain.assertSql("select s from test_sym_underscore", "s\nhello_world\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSymbolWithDash() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_sym_dash")
+                            .symbol("s", "hello-world")
+                            .longColumn("v", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sym_dash");
+                serverMain.assertSql("select s from test_sym_dash", "s\nhello-world\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Timestamp edge cases
+    // =====================================================================
+
+    @Test
+    public void testBuilderTimestampZeroMicros() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ts_zero")
+                            .longColumn("val", 1)
+                            .at(0L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ts_zero");
+                serverMain.assertSql("select timestamp from test_ts_zero", "timestamp\n1970-01-01T00:00:00.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTimestampOneMicro() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ts_one")
+                            .longColumn("val", 1)
+                            .at(1L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ts_one");
+                serverMain.assertSql("select timestamp from test_ts_one", "timestamp\n1970-01-01T00:00:00.000001Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTimestampOneSecond() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ts_1sec")
+                            .longColumn("val", 1)
+                            .at(1000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ts_1sec");
+                serverMain.assertSql("select timestamp from test_ts_1sec", "timestamp\n1970-01-01T00:00:01.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTimestampOneMinute() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ts_1min")
+                            .longColumn("val", 1)
+                            .at(60000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ts_1min");
+                serverMain.assertSql("select timestamp from test_ts_1min", "timestamp\n1970-01-01T00:01:00.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTimestampYear2020() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // 2020-01-01 00:00:00 UTC in micros
+                long ts2020 = 1577836800000000L;
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ts_2020")
+                            .longColumn("val", 1)
+                            .at(ts2020, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ts_2020");
+                serverMain.assertSql("select timestamp from test_ts_2020", "timestamp\n2020-01-01T00:00:00.000000Z\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Multiple table interleaving tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderTwoTablesInterleaved() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("table_a")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                        sender.table("table_b")
+                                .longColumn("val", i * 2)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("table_a");
+                serverMain.awaitTable("table_b");
+                serverMain.assertSql("select count() from table_a", "count\n10\n");
+                serverMain.assertSql("select count() from table_b", "count\n10\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderThreeTablesInterleaved() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("tbl_x")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                        sender.table("tbl_y")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                        sender.table("tbl_z")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("tbl_x");
+                serverMain.awaitTable("tbl_y");
+                serverMain.awaitTable("tbl_z");
+                serverMain.assertSql("select count() from tbl_x", "count\n10\n");
+                serverMain.assertSql("select count() from tbl_y", "count\n10\n");
+                serverMain.assertSql("select count() from tbl_z", "count\n10\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Auto-flush configuration tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderAutoFlush1Row() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .autoFlushRows(1)
+                        .build()) {
+                    for (int i = 0; i < 5; i++) {
+                        sender.table("test_auto1")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                }
+
+                serverMain.awaitTable("test_auto1");
+                serverMain.assertSql("select count() from test_auto1", "count\n5\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderAutoFlush2Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .autoFlushRows(2)
+                        .build()) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("test_auto2")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                }
+
+                serverMain.awaitTable("test_auto2");
+                serverMain.assertSql("select count() from test_auto2", "count\n10\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderAutoFlush5Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .autoFlushRows(5)
+                        .build()) {
+                    for (int i = 0; i < 25; i++) {
+                        sender.table("test_auto5")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                }
+
+                serverMain.awaitTable("test_auto5");
+                serverMain.assertSql("select count() from test_auto5", "count\n25\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderAutoFlush50Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .autoFlushRows(50)
+                        .build()) {
+                    for (int i = 0; i < 200; i++) {
+                        sender.table("test_auto50")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                }
+
+                serverMain.awaitTable("test_auto50");
+                serverMain.assertSql("select count() from test_auto50", "count\n200\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderAutoFlush100Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .autoFlushRows(100)
+                        .build()) {
+                    for (int i = 0; i < 500; i++) {
+                        sender.table("test_auto100")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                }
+
+                serverMain.awaitTable("test_auto100");
+                serverMain.assertSql("select count() from test_auto100", "count\n500\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Config string tests for binary transfer
+    // =====================================================================
+
+    @Test
+    public void testBuilderConfigStringBinaryTransferOn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.fromConfig("http::addr=localhost:" + httpPort + ";binary_transfer=on;")) {
+                    sender.table("test_config_on")
+                            .longColumn("val", 42)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_config_on");
+                serverMain.assertSql("select val from test_config_on", "val\n42\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderConfigStringBinaryTransferOff() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.fromConfig("http::addr=localhost:" + httpPort + ";binary_transfer=off;")) {
+                    sender.table("test_config_off")
+                            .longColumn("val", 42)
+                            .atNow();
+                }
+
+                serverMain.awaitTable("test_config_off");
+                serverMain.assertSql("select val from test_config_off", "val\n42\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderConfigStringWithAutoFlush() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.fromConfig("http::addr=localhost:" + httpPort + ";binary_transfer=on;auto_flush_rows=5;")) {
+                    for (int i = 0; i < 20; i++) {
+                        sender.table("test_config_auto")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                }
+
+                serverMain.awaitTable("test_config_auto");
+                serverMain.assertSql("select count() from test_config_auto", "count\n20\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Unicode tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderStringUnicodeEmoji() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_emoji")
+                            .stringColumn("val", "\uD83D\uDE00\uD83D\uDE01\uD83D\uDE02")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_emoji");
+                serverMain.assertSql("select count() from test_emoji", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringUnicodeChinese() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_chinese")
+                            .stringColumn("val", "\u4e2d\u6587\u6d4b\u8bd5")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_chinese");
+                serverMain.assertSql("select count() from test_chinese", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringUnicodeJapanese() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_japanese")
+                            .stringColumn("val", "\u65e5\u672c\u8a9e")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_japanese");
+                serverMain.assertSql("select count() from test_japanese", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringUnicodeArabic() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_arabic")
+                            .stringColumn("val", "\u0627\u0644\u0639\u0631\u0628\u064a\u0629")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_arabic");
+                serverMain.assertSql("select count() from test_arabic", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderStringUnicodeRussian() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_russian")
+                            .stringColumn("val", "\u0420\u0443\u0441\u0441\u043a\u0438\u0439")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_russian");
+                serverMain.assertSql("select count() from test_russian", "count\n1\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Sum and aggregate verification tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderSumOf10Values() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 1; i <= 10; i++) {
+                        sender.table("test_sum10")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sum10");
+                serverMain.assertSql("select sum(val) from test_sum10", "sum\n55\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSumOf100Values() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 1; i <= 100; i++) {
+                        sender.table("test_sum100")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sum100");
+                serverMain.assertSql("select sum(val) from test_sum100", "sum\n5050\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderMinMax() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_minmax")
+                            .longColumn("val", 100)
+                            .at(1000000000001L, ChronoUnit.MICROS);
+                    sender.table("test_minmax")
+                            .longColumn("val", 50)
+                            .at(1000000000002L, ChronoUnit.MICROS);
+                    sender.table("test_minmax")
+                            .longColumn("val", 200)
+                            .at(1000000000003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_minmax");
+                serverMain.assertSql("select min(val), max(val) from test_minmax", "min\tmax\n50\t200\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderAverage() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_avg")
+                            .longColumn("val", 10)
+                            .at(1000000000001L, ChronoUnit.MICROS);
+                    sender.table("test_avg")
+                            .longColumn("val", 20)
+                            .at(1000000000002L, ChronoUnit.MICROS);
+                    sender.table("test_avg")
+                            .longColumn("val", 30)
+                            .at(1000000000003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_avg");
+                serverMain.assertSql("select avg(val) from test_avg", "avg\n20.0\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // More row count tests
+    // =====================================================================
+
+    @Test
+    public void testBuilder10000Rows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 10000; i++) {
+                        sender.table("test_10000rows")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_10000rows");
+                serverMain.assertSql("select count() from test_10000rows", "count\n10000\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderMultipleFlushes50Each() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int batch = 0; batch < 10; batch++) {
+                        for (int i = 0; i < 50; i++) {
+                            sender.table("test_multi_flush")
+                                    .longColumn("value", batch * 50 + i)
+                                    .at(1000000000000L + batch * 50 + i, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+                    }
+                }
+
+                serverMain.awaitTable("test_multi_flush");
+                serverMain.assertSql("select count() from test_multi_flush", "count\n500\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Multiple data columns tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderTenLongColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ten_longs")
+                            .longColumn("c1", 1)
+                            .longColumn("c2", 2)
+                            .longColumn("c3", 3)
+                            .longColumn("c4", 4)
+                            .longColumn("c5", 5)
+                            .longColumn("c6", 6)
+                            .longColumn("c7", 7)
+                            .longColumn("c8", 8)
+                            .longColumn("c9", 9)
+                            .longColumn("c10", 10)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ten_longs");
+                serverMain.assertSql("select c1+c2+c3+c4+c5+c6+c7+c8+c9+c10 as total from test_ten_longs", "total\n55\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTenStringColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ten_strings")
+                            .stringColumn("s1", "a")
+                            .stringColumn("s2", "b")
+                            .stringColumn("s3", "c")
+                            .stringColumn("s4", "d")
+                            .stringColumn("s5", "e")
+                            .stringColumn("s6", "f")
+                            .stringColumn("s7", "g")
+                            .stringColumn("s8", "h")
+                            .stringColumn("s9", "i")
+                            .stringColumn("s10", "j")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ten_strings");
+                serverMain.assertSql("select count() from test_ten_strings", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTenDoubleColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ten_doubles")
+                            .doubleColumn("d1", 1.1)
+                            .doubleColumn("d2", 2.2)
+                            .doubleColumn("d3", 3.3)
+                            .doubleColumn("d4", 4.4)
+                            .doubleColumn("d5", 5.5)
+                            .doubleColumn("d6", 6.6)
+                            .doubleColumn("d7", 7.7)
+                            .doubleColumn("d8", 8.8)
+                            .doubleColumn("d9", 9.9)
+                            .doubleColumn("d10", 10.0)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ten_doubles");
+                serverMain.assertSql("select count() from test_ten_doubles", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTenBoolColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ten_bools")
+                            .boolColumn("b1", true)
+                            .boolColumn("b2", false)
+                            .boolColumn("b3", true)
+                            .boolColumn("b4", false)
+                            .boolColumn("b5", true)
+                            .boolColumn("b6", false)
+                            .boolColumn("b7", true)
+                            .boolColumn("b8", false)
+                            .boolColumn("b9", true)
+                            .boolColumn("b10", false)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ten_bools");
+                serverMain.assertSql("select count() from test_ten_bools", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTenSymbols() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ten_syms")
+                            .symbol("s1", "v1")
+                            .symbol("s2", "v2")
+                            .symbol("s3", "v3")
+                            .symbol("s4", "v4")
+                            .symbol("s5", "v5")
+                            .symbol("s6", "v6")
+                            .symbol("s7", "v7")
+                            .symbol("s8", "v8")
+                            .symbol("s9", "v9")
+                            .symbol("s10", "v10")
+                            .longColumn("val", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ten_syms");
+                serverMain.assertSql("select count() from test_ten_syms", "count\n1\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // String length edge cases
+    // =====================================================================
+
+    @Test
+    public void testBuilderString500Chars() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < 500; i++) {
+                    sb.append('a');
+                }
+                String str = sb.toString();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_500")
+                            .stringColumn("val", str)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_500");
+                serverMain.assertSql("select length(val) from test_str_500", "length\n500\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderString1000Chars() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < 1000; i++) {
+                    sb.append('b');
+                }
+                String str = sb.toString();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_1000")
+                            .stringColumn("val", str)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_1000");
+                serverMain.assertSql("select length(val) from test_str_1000", "length\n1000\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderString5000Chars() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < 5000; i++) {
+                    sb.append('c');
+                }
+                String str = sb.toString();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_str_5000")
+                            .stringColumn("val", str)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_str_5000");
+                serverMain.assertSql("select length(val) from test_str_5000", "length\n5000\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Different symbol cardinality tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderSymbol100DistinctValues() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("test_sym_100")
+                                .symbol("sym", "value_" + i)
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sym_100");
+                serverMain.assertSql("select count_distinct(sym) from test_sym_100", "count_distinct\n100\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderSymbolSameValue100Times() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("test_sym_same")
+                                .symbol("sym", "constant")
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sym_same");
+                serverMain.assertSql("select count_distinct(sym) from test_sym_same", "count_distinct\n1\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Timestamp column tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderTwoTimestampColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_two_ts")
+                            .timestampColumn("ts1", 1000000L, ChronoUnit.MICROS)
+                            .timestampColumn("ts2", 2000000L, ChronoUnit.MICROS)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_two_ts");
+                serverMain.assertSql("select count() from test_two_ts", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTimestampWithInstant() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_ts_instant")
+                            .timestampColumn("ts", java.time.Instant.parse("2021-01-01T00:00:00Z"))
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_ts_instant");
+                serverMain.assertSql("select count() from test_ts_instant", "count\n1\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Table name edge cases
+    // =====================================================================
+
+    @Test
+    public void testBuilderTableNameShort() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("t")
+                            .longColumn("v", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("t");
+                serverMain.assertSql("select count() from t", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTableNameWithUnderscore() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("my_table_name")
+                            .longColumn("v", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("my_table_name");
+                serverMain.assertSql("select count() from my_table_name", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderTableNameWithNumbers() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("table123")
+                            .longColumn("v", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("table123");
+                serverMain.assertSql("select count() from table123", "count\n1\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Column name edge cases
+    // =====================================================================
+
+    @Test
+    public void testBuilderColumnNameShort() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_col_short")
+                            .longColumn("x", 42)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_col_short");
+                serverMain.assertSql("select x from test_col_short", "x\n42\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderColumnNameWithUnderscore() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_col_underscore")
+                            .longColumn("my_column", 42)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_col_underscore");
+                serverMain.assertSql("select my_column from test_col_underscore", "my_column\n42\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // More double precision tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderDoublePi() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_pi")
+                            .doubleColumn("val", Math.PI)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_pi");
+                serverMain.assertSql("select count() from test_pi", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleE() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_e")
+                            .doubleColumn("val", Math.E)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_e");
+                serverMain.assertSql("select count() from test_e", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderDoubleSqrt2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_sqrt2")
+                            .doubleColumn("val", Math.sqrt(2))
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_sqrt2");
+                serverMain.assertSql("select count() from test_sqrt2", "count\n1\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Boolean combinations
+    // =====================================================================
+
+    @Test
+    public void testBuilderFiveBoolsAllTrue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_bools_true")
+                            .boolColumn("a", true)
+                            .boolColumn("b", true)
+                            .boolColumn("c", true)
+                            .boolColumn("d", true)
+                            .boolColumn("e", true)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_bools_true");
+                serverMain.assertSql("select a,b,c,d,e from test_bools_true", "a\tb\tc\td\te\ntrue\ttrue\ttrue\ttrue\ttrue\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderFiveBoolsAllFalse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_bools_false")
+                            .boolColumn("a", false)
+                            .boolColumn("b", false)
+                            .boolColumn("c", false)
+                            .boolColumn("d", false)
+                            .boolColumn("e", false)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_bools_false");
+                serverMain.assertSql("select a,b,c,d,e from test_bools_false", "a\tb\tc\td\te\nfalse\tfalse\tfalse\tfalse\tfalse\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // Complex schema tests
+    // =====================================================================
+
+    @Test
+    public void testBuilderComplexSchema1() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("complex1")
+                            .symbol("region", "us-east")
+                            .symbol("host", "server-01")
+                            .symbol("dc", "dc1")
+                            .longColumn("cpu", 50)
+                            .longColumn("mem", 80)
+                            .doubleColumn("disk_usage", 0.45)
+                            .boolColumn("healthy", true)
+                            .stringColumn("status", "running")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("complex1");
+                serverMain.assertSql("select region,host,dc,cpu,mem from complex1",
+                        "region\thost\tdc\tcpu\tmem\nus-east\tserver-01\tdc1\t50\t80\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderComplexSchema2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("complex2")
+                            .symbol("type", "temperature")
+                            .symbol("unit", "celsius")
+                            .symbol("sensor_id", "t-001")
+                            .doubleColumn("value", 23.5)
+                            .doubleColumn("min", 20.0)
+                            .doubleColumn("max", 30.0)
+                            .longColumn("reading_count", 1000)
+                            .boolColumn("calibrated", true)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("complex2");
+                serverMain.assertSql("select type,unit,sensor_id from complex2",
+                        "type\tunit\tsensor_id\ntemperature\tcelsius\tt-001\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderComplexSchemaMultipleRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 50; i++) {
+                        sender.table("complex_multi")
+                                .symbol("region", i % 3 == 0 ? "us" : i % 3 == 1 ? "eu" : "asia")
+                                .symbol("host", "host-" + (i % 10))
+                                .longColumn("metric1", i * 10)
+                                .longColumn("metric2", i * 20)
+                                .doubleColumn("ratio", i / 100.0)
+                                .boolColumn("active", i % 2 == 0)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("complex_multi");
+                serverMain.assertSql("select count() from complex_multi", "count\n50\n");
+            }
+        });
+    }
+
+    // =====================================================================
+    // atNow tests with binary transfer
+    // =====================================================================
+
+    @Test
+    public void testBuilderAtNowSimple() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    sender.table("test_atnow")
+                            .longColumn("val", 42)
+                            .atNow();
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_atnow");
+                serverMain.assertSql("select count() from test_atnow", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBuilderAtNowMultiple() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + httpPort)
+                        .binaryTransfer()
+                        .build()) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("test_atnow_multi")
+                                .longColumn("val", i)
+                                .atNow();
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("test_atnow_multi");
+                serverMain.assertSql("select count() from test_atnow_multi", "count\n10\n");
             }
         });
     }
