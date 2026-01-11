@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.line.tcp.v4;
 
 import io.questdb.client.Sender;
+import io.questdb.cutlass.line.http.IlpV4HttpSender;
 import io.questdb.cutlass.line.tcp.v4.IlpV4Sender;
 
 import java.io.IOException;
@@ -57,6 +58,7 @@ import java.util.concurrent.TimeUnit;
  *   --batch=N             Batch/flush size (default: 10000)
  *   --warmup=N            Warmup rows (default: 100000)
  *   --report=N            Report progress every N rows (default: 1000000)
+ *   --max-flight=N        Max in-flight requests for ilpv4-http (0=sync, default: 0)
  *   --no-warmup           Skip warmup phase
  *   --help                Show this help
  *
@@ -101,6 +103,8 @@ public class IlpV4AllocationTestClient {
         int batchSize = DEFAULT_BATCH_SIZE;
         int warmupRows = DEFAULT_WARMUP_ROWS;
         int reportInterval = DEFAULT_REPORT_INTERVAL;
+        int maxFlightRequests = 0; // 0 = sync mode (default)
+        boolean gorillaEnabled = true;
 
         for (String arg : args) {
             if (arg.equals("--help") || arg.equals("-h")) {
@@ -120,6 +124,10 @@ public class IlpV4AllocationTestClient {
                 warmupRows = Integer.parseInt(arg.substring("--warmup=".length()));
             } else if (arg.startsWith("--report=")) {
                 reportInterval = Integer.parseInt(arg.substring("--report=".length()));
+            } else if (arg.startsWith("--max-flight=")) {
+                maxFlightRequests = Integer.parseInt(arg.substring("--max-flight=".length()));
+            } else if (arg.equals("--no-gorilla")) {
+                gorillaEnabled = false;
             } else if (arg.equals("--no-warmup")) {
                 warmupRows = 0;
             } else if (!arg.startsWith("--")) {
@@ -146,10 +154,14 @@ public class IlpV4AllocationTestClient {
         System.out.println("Batch size: " + String.format("%,d", batchSize));
         System.out.println("Warmup rows: " + String.format("%,d", warmupRows));
         System.out.println("Report interval: " + String.format("%,d", reportInterval));
+        if (protocol.equals(PROTOCOL_ILPV4_HTTP)) {
+            System.out.println("Max in-flight: " + maxFlightRequests + (maxFlightRequests == 0 ? " (sync)" : " (async)"));
+            System.out.println("Gorilla: " + (gorillaEnabled ? "enabled" : "disabled"));
+        }
         System.out.println();
 
         try {
-            runTest(protocol, host, port, totalRows, batchSize, warmupRows, reportInterval);
+            runTest(protocol, host, port, totalRows, batchSize, warmupRows, reportInterval, maxFlightRequests, gorillaEnabled);
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
             e.printStackTrace();
@@ -170,6 +182,8 @@ public class IlpV4AllocationTestClient {
         System.out.println("  --batch=N             Batch/flush size (default: 10000)");
         System.out.println("  --warmup=N            Warmup rows (default: 100000)");
         System.out.println("  --report=N            Report progress every N rows (default: 1000000)");
+        System.out.println("  --max-flight=N        Max in-flight requests for ilpv4-http (0=sync, default: 0)");
+        System.out.println("  --no-gorilla          Disable Gorilla timestamp compression (ilpv4-http only)");
         System.out.println("  --no-warmup           Skip warmup phase");
         System.out.println("  --help                Show this help");
         System.out.println();
@@ -198,10 +212,11 @@ public class IlpV4AllocationTestClient {
     }
 
     private static void runTest(String protocol, String host, int port, int totalRows,
-                                  int batchSize, int warmupRows, int reportInterval) throws IOException {
+                                  int batchSize, int warmupRows, int reportInterval,
+                                  int maxFlightRequests, boolean gorillaEnabled) throws IOException {
         System.out.println("Connecting to " + host + ":" + port + "...");
 
-        try (Sender sender = createSender(protocol, host, port, batchSize)) {
+        try (Sender sender = createSender(protocol, host, port, batchSize, maxFlightRequests, gorillaEnabled)) {
             System.out.println("Connected! Protocol: " + protocol);
             System.out.println();
 
@@ -277,7 +292,8 @@ public class IlpV4AllocationTestClient {
         }
     }
 
-    private static Sender createSender(String protocol, String host, int port, int batchSize) throws IOException {
+    private static Sender createSender(String protocol, String host, int port, int batchSize,
+                                         int maxFlightRequests, boolean gorillaEnabled) throws IOException {
         switch (protocol) {
             case PROTOCOL_ILP_TCP:
                 return Sender.builder(Sender.Transport.TCP)
@@ -299,12 +315,13 @@ public class IlpV4AllocationTestClient {
                 return tcpSender;
 
             case PROTOCOL_ILPV4_HTTP:
-                return Sender.builder(Sender.Transport.HTTP)
-                        .address(host)
-                        .port(port)
-                        .binaryTransfer()
-                        .autoFlushRows(batchSize)
-                        .build();
+                IlpV4HttpSender httpSender = IlpV4HttpSender.connect(host, port);
+                httpSender.autoFlushRows(batchSize);
+                httpSender.setGorillaEnabled(gorillaEnabled);
+                if (maxFlightRequests > 0) {
+                    httpSender.maxInFlightRequests(maxFlightRequests);
+                }
+                return httpSender;
 
             default:
                 throw new IllegalArgumentException("Unknown protocol: " + protocol +
