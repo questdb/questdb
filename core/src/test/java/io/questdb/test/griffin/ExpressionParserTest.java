@@ -1715,6 +1715,57 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionCumulative() throws SqlException {
+        // CUMULATIVE is shorthand for ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        x("x sum over (order by ts rows between unbounded preceding and current row)",
+                "sum(x) over (order by ts cumulative)");
+    }
+
+    @Test
+    public void testWindowFunctionCumulativeCaseInsensitive() throws SqlException {
+        // CUMULATIVE is case-insensitive
+        x("x sum over (order by ts rows between unbounded preceding and current row)",
+                "sum(x) over (order by ts CUMULATIVE)");
+    }
+
+    @Test
+    public void testWindowFunctionCumulativeVwap() throws SqlException {
+        // VWAP: cumulative sum of (price * volume) / cumulative sum of volume, partitioned by symbol
+        // ORDER BY timestamp is explicit but will be ignored by optimizer for time-series tables
+        x("price volume * sum over (partition by symbol order by timestamp rows between unbounded preceding and current row) " +
+                        "volume sum over (partition by symbol order by timestamp rows between unbounded preceding and current row) /",
+                "sum(price * volume) over (partition by symbol order by timestamp cumulative) / " +
+                        "sum(volume) over (partition by symbol order by timestamp cumulative)");
+    }
+
+    @Test
+    public void testWindowFunctionCumulativeWithPartitionBy() throws SqlException {
+        // CUMULATIVE with PARTITION BY
+        x("x sum over (partition by symbol order by ts rows between unbounded preceding and current row)",
+                "sum(x) over (partition by symbol order by ts cumulative)");
+    }
+
+    @Test
+    public void testWindowFunctionCumulativeWithoutOrderBy() {
+        // CUMULATIVE requires ORDER BY - error points to CUMULATIVE keyword
+        assertFail(
+                "sum(x) over (partition by y cumulative)",
+                28,
+                "CUMULATIVE requires an ORDER BY clause"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionCumulativeWithoutOrderByNoPartition() {
+        // CUMULATIVE requires ORDER BY even without PARTITION BY
+        assertFail(
+                "sum(x) over (cumulative)",
+                13,
+                "CUMULATIVE requires an ORDER BY clause"
+        );
+    }
+
+    @Test
     public void testWindowFunctionIgnoreNullTypo() {
         // Common typo: "null" instead of "nulls"
         assertFail(

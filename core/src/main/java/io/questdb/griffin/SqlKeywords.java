@@ -351,6 +351,20 @@ public class SqlKeywords {
                 ;
     }
 
+    public static boolean isCumulativeKeyword(CharSequence tok) {
+        return tok.length() == 10
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'u'
+                && (tok.charAt(4) | 32) == 'l'
+                && (tok.charAt(5) | 32) == 'a'
+                && (tok.charAt(6) | 32) == 't'
+                && (tok.charAt(7) | 32) == 'i'
+                && (tok.charAt(8) | 32) == 'v'
+                && (tok.charAt(9) | 32) == 'e';
+    }
+
     public static boolean isDatabaseKeyword(CharSequence tok) {
         return tok.length() == 8
                 && (tok.charAt(0) | 32) == 'd'
@@ -581,14 +595,6 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'p';
     }
 
-    public static boolean isElseKeyword(CharSequence tok) {
-        return tok.length() == 4
-                && (tok.charAt(0) | 32) == 'e'
-                && (tok.charAt(1) | 32) == 'l'
-                && (tok.charAt(2) | 32) == 's'
-                && (tok.charAt(3) | 32) == 'e';
-    }
-
     public static boolean isEmptyAlias(CharSequence tok) {
         return tok.length() == 2
                 && ((tok.charAt(0) == '\'' && tok.charAt(1) == '\'') || (tok.charAt(0) == '"' && tok.charAt(1) == '"'));
@@ -774,11 +780,11 @@ public class SqlKeywords {
                 && (tok.charAt(8) | 32) == 'g';
     }
 
-    public static boolean isForKeyword(CharSequence tok) {
-        return tok.length() == 3
-                && (tok.charAt(0) | 32) == 'f'
-                && (tok.charAt(1) | 32) == 'o'
-                && (tok.charAt(2) | 32) == 'r';
+    public static boolean isNotForKeyword(CharSequence tok) {
+        return tok.length() != 3
+                || (tok.charAt(0) | 32) != 'f'
+                || (tok.charAt(1) | 32) != 'o'
+                || (tok.charAt(2) | 32) != 'r';
     }
 
     public static boolean isForceKeyword(CharSequence tok) {
@@ -1808,8 +1814,8 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 't';
     }
 
-    public static boolean isRightParen(CharSequence tok) {
-        return tok.length() == 1 && tok.charAt(0) == ')';
+    public static boolean isNotRightParen(CharSequence tok) {
+        return tok.length() != 1 || tok.charAt(0) != ')';
     }
 
     public static boolean isRowKeyword(CharSequence tok) {
@@ -2194,13 +2200,13 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'e';
     }
 
-    public static boolean isUTC(CharSequence tok) {
-        return tok.length() == 5
-                && (tok.charAt(0)) == '\''
-                && (tok.charAt(1) | 32) == 'u'
-                && (tok.charAt(2) | 32) == 't'
-                && (tok.charAt(3) | 32) == 'c'
-                && (tok.charAt(4)) == '\'';
+    public static boolean isNotUTC(CharSequence tok) {
+        return tok.length() != 5
+                || (tok.charAt(0)) != '\''
+                || (tok.charAt(1) | 32) != 'u'
+                || (tok.charAt(2) | 32) != 't'
+                || (tok.charAt(3) | 32) != 'c'
+                || (tok.charAt(4)) != '\'';
     }
 
     public static boolean isUnboundedKeyword(CharSequence tok) {

@@ -3350,7 +3350,7 @@ public class SqlParser {
         do {
             model.addPivotGroupByColumn(parsePivotAggregateColumn(lexer, model, functionFactoryCache, sqlParserCallback));
             tok = optTok(lexer);
-        } while (tok != null && !isForKeyword(tok) && isComma(tok));
+        } while (tok != null && isNotForKeyword(tok) && isComma(tok));
 
         ObjList<QueryColumn> pivotGroupByCols = model.getPivotGroupByColumns();
         boolean hasNoAlias = false;
@@ -3373,7 +3373,7 @@ public class SqlParser {
         }
         model.setPivotGroupByColumnHasNoAlias(hasNoAlias && pivotGroupByCols.size() == 1);
 
-        if (tok == null || !isForKeyword(tok)) {
+        if (tok == null || isNotForKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "expected FOR");
         }
 
@@ -3430,7 +3430,7 @@ public class SqlParser {
 
                     CharSequence nextTok = tok(lexer, "',' or ')'");
                     CharSequence alias;
-                    if (!isForKeyword(nextTok) && columnAliasStop.excludes(nextTok)) {
+                    if (isNotForKeyword(nextTok) && columnAliasStop.excludes(nextTok)) {
                         assertNotDot(lexer, nextTok);
                         if (isAsKeyword(nextTok)) {
                             nextTok = tok(lexer, "alias");
@@ -3462,7 +3462,7 @@ public class SqlParser {
                     tok = tok(lexer, "constant list");
                 } while (isComma(tok));
 
-                if (!isRightParen(tok)) {
+                if (isNotRightParen(tok)) {
                     throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
                 }
             }
@@ -3502,14 +3502,14 @@ public class SqlParser {
 
                 model.addGroupBy(groupByExpr);
                 tok = optTok(lexer);
-            } while (tok != null && !isRightParen(tok) && isComma(tok));
+            } while (tok != null && isNotRightParen(tok) && isComma(tok));
         }
 
         if (tok == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
         }
 
-        if (!isRightParen(tok)) {
+        if (isNotRightParen(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
         }
         tok = setModelAliasAndGetOptTok(lexer, model);
@@ -3528,7 +3528,7 @@ public class SqlParser {
         CharSequence tok = tok(lexer, "'FOR' or ',' or ')'");
         QueryColumn col = queryColumnPool.next().of(null, expr);
 
-        if (!isForKeyword(tok) && columnAliasStop.excludes(tok)) {
+        if (isNotForKeyword(tok) && columnAliasStop.excludes(tok)) {
             CharSequence alias;
             assertNotDot(lexer, tok);
             if (isAsKeyword(tok)) {
