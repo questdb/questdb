@@ -1700,6 +1700,21 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionDivision() throws SqlException {
+        // Two window functions divided by each other
+        x("x sum over (partition by y) x count over (partition by y) /",
+                "sum(x) over (partition by y) / count(x) over (partition by y)");
+    }
+
+    @Test
+    public void testWindowFunctionDivisionWithCastInPartitionBy() throws SqlException {
+        // VWAP-style: two window functions with :: cast in partition by
+        // RPN for ts::date is "ts date ::" (operand, type, cast operator)
+        x("price volume * sum over (partition by symbol, ts date :: order by ts) volume sum over (partition by symbol, ts date :: order by ts) /",
+                "sum(price * volume) over (partition by symbol, ts::date order by ts) / sum(volume) over (partition by symbol, ts::date order by ts)");
+    }
+
+    @Test
     public void testWindowFunctionIgnoreNullTypo() {
         // Common typo: "null" instead of "nulls"
         assertFail(
@@ -1707,6 +1722,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 17,
                 "'nulls' expected, not 'null'"
         );
+    }
+
+    @Test
+    public void testWindowFunctionMultipleArithmetic() throws SqlException {
+        // Multiple window functions in arithmetic expression
+        x("x sum over (order by ts) x lag over (order by ts) - x avg over (order by ts) /",
+                "(sum(x) over (order by ts) - lag(x) over (order by ts)) / avg(x) over (order by ts)");
     }
 
     @Test

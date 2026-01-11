@@ -7938,23 +7938,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testNestedWindowFunctionNotSupported() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSyntaxError(
-                    "select a,b, 1 + f(c) over (partition by b order by a groups between unbounded preceding and 10 day following) from xyz",
-                    21,
-                    "Nested window functions' context are not currently supported."
-            );
-
-            assertSyntaxError(
-                    "select a,b,cast(f(c) over (order by a) as int) from xyz",
-                    21,
-                    "Nested window functions' context are not currently supported."
-            );
-        });
-    }
-
-    @Test
     public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
         assertQuery(
                 "select-virtual day(ts) day, isin, last from (select-group-by [ts, isin, last(start_price) last] ts, isin, last(start_price) last from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4') sample by 1d)",
@@ -12577,6 +12560,38 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testVWAP() throws SqlException {
+        assertQuery(
+                "select-virtual" +
+                        " timestamp," +
+                        " symbol," +
+                        " sum1 / sum vwap_daily" +
+                        " from (" +
+                        "select-group-by [timestamp, symbol, sum(volume) sum, sum(price * volume) sum1] timestamp, symbol, sum(volume) sum, sum(price * volume) sum1" +
+                        " from (select [timestamp, symbol, volume, price] from trades timestamp (timestamp) where timestamp > dateadd('d', -(1), now())))",
+                """
+                        SELECT
+                                timestamp,
+                                symbol,
+                                sum(price * volume) OVER (
+                                    PARTITION BY symbol, timestamp
+                                    ORDER BY timestamp
+                                ) / sum(volume) OVER (
+                                    PARTITION BY symbol, timestamp
+                                    ORDER BY timestamp
+                                ) AS vwap_daily
+                            FROM trades
+                            WHERE timestamp > dateadd('d', -1, now())
+                        """,
+                modelOf("trades")
+                        .col("price", ColumnType.DOUBLE)
+                        .col("volume", ColumnType.DOUBLE)
+                        .col("symbol", ColumnType.SYMBOL)
+                        .timestamp("timestamp")
+        );
+    }
+
+    @Test
     public void testWhereClause() throws Exception {
         assertQuery(
                 "select-virtual x, sum + 25 ohoh from (select-group-by [a + b * c x, sum(z) sum] a + b * c x, sum(z) sum from (select [a, c, b, z] from zyzy where a in (0, 10) and b = 10))",
@@ -12632,6 +12647,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("customerId", ColumnType.INT)
                         .col("x", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToFunctionNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            // Window function as argument to cast() - not allowed
+            assertSyntaxError(
+                    "select a,b,cast(f(c) over (order by a) as int) from xyz",
+                    21,
+                    "window function is not allowed as an argument to another function"
+            );
+
+            // Window function as argument to abs() - not allowed
+            assertSyntaxError(
+                    "select a,b, abs(f(c) over (order by a)) from xyz",
+                    21,
+                    "window function is not allowed as an argument to another function"
+            );
+        });
     }
 
     @Test
