@@ -181,6 +181,15 @@ public class IlpV4GorillaDecoder {
     }
 
     /**
+     * Returns the current bit position (bits read since reset).
+     *
+     * @return bits read
+     */
+    public long getBitPosition() {
+        return bitReader.getBitPosition();
+    }
+
+    /**
      * Gets the previous timestamp (for debugging/testing).
      *
      * @return the last decoded timestamp

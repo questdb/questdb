@@ -68,7 +68,8 @@ public class IlpV4ConnectionContext implements Closeable {
     public static final int STATE_CLOSED = 6;
 
     private final IlpV4ReceiverConfiguration config;
-    private final IlpV4MessageDecoder messageDecoder;
+    private final IlpV4StreamingDecoder streamingDecoder;
+    private final IlpV4MessageHeader messageHeader;  // Reused for header parsing
     private final IlpV4WalAppender walAppender;
     private final IlpV4CapabilityRequest capabilityRequest;
     private final IlpV4CapabilityResponse capabilityResponse;
@@ -107,7 +108,9 @@ public class IlpV4ConnectionContext implements Closeable {
         this.config = config;
         this.schemaCache = config.isSchemaCachingEnabled() ?
                 new IlpV4SchemaCache(config.getMaxCachedSchemas()) : null;
-        this.messageDecoder = new IlpV4MessageDecoder(schemaCache);
+        // Use streaming decoder (zero-allocation after warmup)
+        this.streamingDecoder = new IlpV4StreamingDecoder(schemaCache);
+        this.messageHeader = new IlpV4MessageHeader();
         this.walAppender = new IlpV4WalAppender(
                 config.isAutoCreateNewColumns(),
                 config.getMaxFileNameLength()
@@ -145,7 +148,8 @@ public class IlpV4ConnectionContext implements Closeable {
         messagesProcessed = 0;
         bytesReceived = 0;
         bytesSent = 0;
-        messageDecoder.reset();
+        streamingDecoder.reset();
+        messageHeader.reset();
     }
 
     /**
@@ -293,10 +297,10 @@ public class IlpV4ConnectionContext implements Closeable {
 
         // Check if we have a complete message
         try {
-            IlpV4MessageHeader header = messageDecoder.getMessageHeader();
-            header.parse(recvBufferAddress, recvBufferPos);
+            // Parse header directly (reusable, no allocation)
+            messageHeader.parse(recvBufferAddress, recvBufferPos);
 
-            long totalLength = header.getTotalLength();
+            long totalLength = messageHeader.getTotalLength();
             if (totalLength > config.getMaxMessageSize()) {
                 LOG.error().$("message too large [size=").$(totalLength)
                         .$(", max=").$(config.getMaxMessageSize()).$(']').$();
@@ -342,12 +346,12 @@ public class IlpV4ConnectionContext implements Closeable {
         }
 
         try {
-            // Decode message
-            IlpV4DecodedMessage message = messageDecoder.decode(recvBufferAddress, recvBufferPos);
+            // Decode message using streaming decoder (zero-allocation after warmup)
+            IlpV4MessageCursor messageCursor = streamingDecoder.decode(recvBufferAddress, recvBufferPos);
 
-            // Process each table block
-            for (int i = 0; i < message.getTableCount(); i++) {
-                IlpV4DecodedTableBlock tableBlock = message.getTableBlock(i);
+            // Process each table block using cursor iteration
+            while (messageCursor.hasNextTable()) {
+                IlpV4TableBlockCursor tableBlock = messageCursor.nextTable();
                 String tableName = tableBlock.getTableName();
 
                 TableUpdateDetails tud = tableUpdateDetailsProvider.getTableUpdateDetails(tableName);
@@ -359,7 +363,7 @@ public class IlpV4ConnectionContext implements Closeable {
                         return ProcessResult.NEEDS_WRITE;
                     }
                     // Table creation should be handled by tableUpdateDetailsProvider
-                    tud = tableUpdateDetailsProvider.createTableUpdateDetails(tableName, tableBlock.getSchema());
+                    tud = tableUpdateDetailsProvider.createTableUpdateDetails(tableName, tableBlock);
                     if (tud == null) {
                         pendingResponse = IlpV4Response.internalError("failed to create table: " + tableName);
                         prepareResponse();
@@ -367,14 +371,14 @@ public class IlpV4ConnectionContext implements Closeable {
                     }
                 }
 
-                // Append to WAL
-                walAppender.appendToWal(securityContext, tableBlock, tud);
+                // Append to WAL using streaming API (zero-allocation for most types)
+                walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
             }
 
             messagesProcessed++;
 
             // Consume the message from receive buffer
-            long totalLength = messageDecoder.getMessageHeader().getTotalLength();
+            long totalLength = messageHeader.getTotalLength();
             if (recvBufferPos > totalLength) {
                 Unsafe.getUnsafe().copyMemory(
                         recvBufferAddress + totalLength,
@@ -586,11 +590,13 @@ public class IlpV4ConnectionContext implements Closeable {
 
         /**
          * Creates table update details for a new table.
+         * <p>
+         * Uses the streaming cursor API for schema information (zero-allocation).
          *
-         * @param tableName table name
-         * @param schema    table schema
+         * @param tableName  table name
+         * @param tableBlock streaming table block cursor with schema info
          * @return table update details, or null on failure
          */
-        TableUpdateDetails createTableUpdateDetails(String tableName, IlpV4ColumnDef[] schema);
+        TableUpdateDetails createTableUpdateDetails(String tableName, IlpV4TableBlockCursor tableBlock);
     }
 }

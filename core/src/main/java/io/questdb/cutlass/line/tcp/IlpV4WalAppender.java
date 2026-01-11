@@ -26,11 +26,10 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cutlass.line.tcp.v4.IlpV4ColumnDef;
-import io.questdb.cutlass.line.tcp.v4.IlpV4DecodedColumn;
-import io.questdb.cutlass.line.tcp.v4.IlpV4DecodedTableBlock;
+import io.questdb.cutlass.line.tcp.v4.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
 
@@ -86,6 +85,261 @@ public class IlpV4WalAppender {
             } catch (MetadataChangedException e) {
                 // Retry - metadata changed during processing
             }
+        }
+    }
+
+    /**
+     * Appends a table block using the streaming cursor API (zero-allocation).
+     * <p>
+     * This method processes the table block row-by-row using flyweight cursors,
+     * avoiding intermediate object allocations on the hot path.
+     *
+     * @param securityContext security context for authorization
+     * @param tableBlock      streaming table block cursor
+     * @param tud             table update details
+     * @throws CommitFailedException if commit fails
+     * @throws IlpV4ParseException   if parsing fails during cursor iteration
+     */
+    public void appendToWalStreaming(SecurityContext securityContext, IlpV4TableBlockCursor tableBlock,
+                                     TableUpdateDetails tud) throws CommitFailedException, IlpV4ParseException {
+        while (!tud.isDropped()) {
+            try {
+                appendToWalStreaming0(securityContext, tableBlock, tud);
+                break;
+            } catch (MetadataChangedException e) {
+                // Retry - reset cursor and retry
+                tableBlock.resetRowIteration();
+            }
+        }
+    }
+
+    private void appendToWalStreaming0(SecurityContext securityContext, IlpV4TableBlockCursor tableBlock,
+                                       TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException, IlpV4ParseException {
+        int columnCount = tableBlock.getColumnCount();
+        int rowCount = tableBlock.getRowCount();
+
+        if (rowCount == 0) {
+            return;
+        }
+
+        // Ensure mapping arrays are large enough
+        if (columnIndexMap.length < columnCount) {
+            columnIndexMap = new int[columnCount];
+            columnTypeMap = new int[columnCount];
+        }
+
+        TableWriterAPI writer = tud.getWriter();
+        if (writer == null) {
+            throw CairoException.nonCritical()
+                    .put("writer is null for table [table=")
+                    .put(tud.getTableNameUtf16())
+                    .put(']');
+        }
+        TableRecordMetadata metadata = writer.getMetadata();
+        int timestampIndex = tud.getTimestampIndex();
+
+        // Phase 1: Resolve column indices and create missing columns
+        int timestampColumnInBlock = -1;
+        byte[] ilpTypes = new byte[columnCount];  // Track ILP types for conversion
+        for (int i = 0; i < columnCount; i++) {
+            IlpV4ColumnDef colDef = tableBlock.getColumnDef(i);
+            String columnName = colDef.getName();
+            byte colType = colDef.getTypeCode();
+            ilpTypes[i] = colType;
+
+            int columnWriterIndex;
+
+            if (columnName.isEmpty() && (colType == TYPE_TIMESTAMP || colType == TYPE_TIMESTAMP_NANOS)) {
+                if (timestampIndex < 0) {
+                    throw CairoException.nonCritical()
+                            .put("designated timestamp provided but table has no designated timestamp [table=")
+                            .put(tud.getTableNameUtf16())
+                            .put(']');
+                }
+                columnWriterIndex = timestampIndex;
+                timestampColumnInBlock = i;
+            } else {
+                columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+
+                if (columnWriterIndex < 0) {
+                    if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
+                        securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
+                        try {
+                            int newColumnType = mapIlpV4TypeToQuestDB(colDef.getTypeCode());
+                            writer.addColumn(columnName, newColumnType, securityContext);
+                            columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnName));
+                        } catch (CairoException e) {
+                            columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+                            if (columnWriterIndex < 0) {
+                                throw e;
+                            }
+                        }
+                    } else if (!autoCreateNewColumns) {
+                        throw CairoException.nonCritical()
+                                .put("new columns not allowed [table=")
+                                .put(tud.getTableNameUtf16())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    } else {
+                        throw CairoException.nonCritical()
+                                .put("invalid column name [table=")
+                                .put(tud.getTableNameUtf16())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
+                }
+
+                if (columnWriterIndex == timestampIndex) {
+                    timestampColumnInBlock = i;
+                }
+            }
+
+            int columnType = metadata.getColumnType(columnWriterIndex);
+            columnIndexMap[i] = metadata.getWriterIndex(columnWriterIndex);
+            columnTypeMap[i] = columnType;
+        }
+
+        // Phase 2: Stream rows using cursors
+        IlpV4ColumnCursor timestampCursor = timestampColumnInBlock >= 0 ?
+                tableBlock.getColumn(timestampColumnInBlock) : null;
+
+        while (tableBlock.hasNextRow()) {
+            tableBlock.nextRow();
+
+            // Get timestamp for this row
+            long timestamp;
+            if (timestampCursor != null && !timestampCursor.isNull()) {
+                timestamp = ((IlpV4TimestampColumnCursor) timestampCursor).getTimestamp();
+            } else if (timestampCursor != null && timestampCursor instanceof IlpV4FixedWidthColumnCursor && !timestampCursor.isNull()) {
+                timestamp = ((IlpV4FixedWidthColumnCursor) timestampCursor).getTimestamp();
+            } else {
+                timestamp = tud.getTimestampDriver().getTicks();
+            }
+
+            TableWriter.Row r = writer.newRow(timestamp);
+            try {
+                for (int col = 0; col < columnCount; col++) {
+                    if (col == timestampColumnInBlock) {
+                        continue;
+                    }
+
+                    IlpV4ColumnCursor cursor = tableBlock.getColumn(col);
+                    if (cursor.isNull()) {
+                        continue;
+                    }
+
+                    int columnIndex = columnIndexMap[col];
+                    int columnType = columnTypeMap[col];
+                    byte ilpType = ilpTypes[col];
+
+                    writeValueFromCursor(r, columnIndex, columnType, ilpType, cursor);
+                }
+                r.append();
+                tud.commitIfMaxUncommittedRowsCountReached();
+            } catch (CommitFailedException e) {
+                throw e;
+            } catch (CairoException e) {
+                r.cancel();
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Writes a value from a cursor to a row (zero-allocation for most types).
+     */
+    private void writeValueFromCursor(TableWriter.Row r, int columnIndex, int columnType,
+                                      byte ilpType, IlpV4ColumnCursor cursor) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN:
+                r.putBool(columnIndex, ((IlpV4BooleanColumnCursor) cursor).getValue());
+                break;
+
+            case ColumnType.BYTE:
+                r.putByte(columnIndex, ((IlpV4FixedWidthColumnCursor) cursor).getByte());
+                break;
+
+            case ColumnType.SHORT:
+                r.putShort(columnIndex, ((IlpV4FixedWidthColumnCursor) cursor).getShort());
+                break;
+
+            case ColumnType.INT:
+                r.putInt(columnIndex, ((IlpV4FixedWidthColumnCursor) cursor).getInt());
+                break;
+
+            case ColumnType.LONG:
+                r.putLong(columnIndex, ((IlpV4FixedWidthColumnCursor) cursor).getLong());
+                break;
+
+            case ColumnType.FLOAT:
+                r.putFloat(columnIndex, ((IlpV4FixedWidthColumnCursor) cursor).getFloat());
+                break;
+
+            case ColumnType.DOUBLE:
+                r.putDouble(columnIndex, ((IlpV4FixedWidthColumnCursor) cursor).getDouble());
+                break;
+
+            case ColumnType.DATE:
+                r.putDate(columnIndex, ((IlpV4FixedWidthColumnCursor) cursor).getDate());
+                break;
+
+            case ColumnType.TIMESTAMP:
+                long tsValue;
+                if (cursor instanceof IlpV4TimestampColumnCursor) {
+                    tsValue = ((IlpV4TimestampColumnCursor) cursor).getTimestamp();
+                } else {
+                    tsValue = ((IlpV4FixedWidthColumnCursor) cursor).getTimestamp();
+                }
+                if (ilpType == TYPE_TIMESTAMP_NANOS && columnType == ColumnType.TIMESTAMP) {
+                    tsValue = tsValue / 1000;
+                } else if (ilpType == TYPE_TIMESTAMP && columnType == ColumnType.TIMESTAMP_NANO) {
+                    tsValue = tsValue * 1000;
+                }
+                r.putTimestamp(columnIndex, tsValue);
+                break;
+
+            case ColumnType.STRING:
+                // Note: This allocates for STRING type - unavoidable with current API
+                r.putStr(columnIndex, ((IlpV4StringColumnCursor) cursor).getStringValue());
+                break;
+
+            case ColumnType.VARCHAR:
+                // Zero-allocation! Use DirectUtf8Sequence directly
+                DirectUtf8Sequence utf8Value = ((IlpV4StringColumnCursor) cursor).getUtf8Value();
+                r.putVarchar(columnIndex, utf8Value);
+                break;
+
+            case ColumnType.SYMBOL:
+                // May allocate on first access per dictionary entry, then cached
+                r.putSym(columnIndex, ((IlpV4SymbolColumnCursor) cursor).getSymbolString());
+                break;
+
+            case ColumnType.UUID:
+                IlpV4FixedWidthColumnCursor uuidCursor = (IlpV4FixedWidthColumnCursor) cursor;
+                r.putLong128(columnIndex, uuidCursor.getUuidLo(), uuidCursor.getUuidHi());
+                break;
+
+            case ColumnType.LONG256:
+                IlpV4FixedWidthColumnCursor l256Cursor = (IlpV4FixedWidthColumnCursor) cursor;
+                r.putLong256(columnIndex,
+                        l256Cursor.getLong256_0(),
+                        l256Cursor.getLong256_1(),
+                        l256Cursor.getLong256_2(),
+                        l256Cursor.getLong256_3());
+                break;
+
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                r.putGeoHash(columnIndex, ((IlpV4GeoHashColumnCursor) cursor).getGeoHash());
+                break;
+
+            default:
+                LOG.error().$("unsupported column type [type=").$(columnType).$(']').$();
+                break;
         }
     }
 

@@ -372,17 +372,23 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             @Override
             public TableUpdateDetails createTableUpdateDetails(
                     String tableName,
-                    IlpV4DecodedTableBlock tableBlock,
+                    IlpV4TableBlockCursor tableBlock,
                     CairoEngine engine,
                     SecurityContext securityContext
             ) {
-                // Create table with column definitions from the decoded block
+                // Extract column definitions from the cursor (this creates a small temp array)
+                int columnCount = tableBlock.getColumnCount();
+                IlpV4ColumnDef[] schema = new IlpV4ColumnDef[columnCount];
+                for (int i = 0; i < columnCount; i++) {
+                    schema[i] = tableBlock.getColumnDef(i);
+                }
+                // Create table with column definitions from the cursor
                 return scheduler.getTableUpdateDetailsForV4(
                         securityContext,
                         netIoJob,
                         LineTcpConnectionContext.this,
                         tableName,
-                        tableBlock.getSchema()
+                        schema
                 );
             }
         };

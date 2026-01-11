@@ -41,6 +41,11 @@ import java.io.Closeable;
 import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
 
 /**
+ * Note: This handler uses the zero-allocation streaming decoder API.
+ * See {@link IlpV4StreamingDecoder} for implementation details.
+ */
+
+/**
  * Handles ILP v4 protocol processing within a LineTcpConnectionContext.
  * <p>
  * This handler is created when v4 protocol is detected and manages:
@@ -74,7 +79,8 @@ public class IlpV4ProtocolHandler implements Closeable {
 
     private final LineTcpReceiverConfiguration configuration;
     private final IlpV4SchemaCache schemaCache;
-    private final IlpV4MessageDecoder messageDecoder;
+    private final IlpV4StreamingDecoder streamingDecoder;
+    private final IlpV4MessageHeader messageHeader;  // Reused for header parsing
     private final IlpV4WalAppender walAppender;
     private final IlpV4CapabilityRequest capabilityRequest;
     private final IlpV4Negotiator negotiator;
@@ -119,8 +125,9 @@ public class IlpV4ProtocolHandler implements Closeable {
         // Initialize schema cache
         this.schemaCache = new IlpV4SchemaCache(256);
 
-        // Initialize decoder and appender
-        this.messageDecoder = new IlpV4MessageDecoder(schemaCache);
+        // Initialize streaming decoder (zero-allocation) and header parser
+        this.streamingDecoder = new IlpV4StreamingDecoder(schemaCache);
+        this.messageHeader = new IlpV4MessageHeader();
         this.walAppender = new IlpV4WalAppender(
                 configuration.getAutoCreateNewColumns(),
                 configuration.getMaxFileNameLength()
@@ -151,7 +158,8 @@ public class IlpV4ProtocolHandler implements Closeable {
         gorillaEnabled = false;
         messagesReceived = 0;
         messagesProcessed = 0;
-        messageDecoder.reset();
+        streamingDecoder.reset();
+        messageHeader.reset();
     }
 
     /**
@@ -283,10 +291,10 @@ public class IlpV4ProtocolHandler implements Closeable {
         }
 
         try {
-            IlpV4MessageHeader header = messageDecoder.getMessageHeader();
-            header.parse(recvBufProcessed, available);
+            // Parse header directly (reusable, no allocation)
+            messageHeader.parse(recvBufProcessed, available);
 
-            long totalLength = header.getTotalLength();
+            long totalLength = messageHeader.getTotalLength();
 
             // Check message size limit
             int maxMessageSize = 16 * 1024 * 1024; // 16 MB
@@ -336,12 +344,12 @@ public class IlpV4ProtocolHandler implements Closeable {
         int available = (int) (recvBufPos - recvBufProcessed);
 
         try {
-            // Decode message
-            IlpV4DecodedMessage message = messageDecoder.decode(recvBufProcessed, available);
+            // Decode message using streaming decoder (zero-allocation after warmup)
+            IlpV4MessageCursor messageCursor = streamingDecoder.decode(recvBufProcessed, available);
 
-            // Process each table block
-            for (int i = 0; i < message.getTableCount(); i++) {
-                IlpV4DecodedTableBlock tableBlock = message.getTableBlock(i);
+            // Process each table block using cursor iteration
+            while (messageCursor.hasNextTable()) {
+                IlpV4TableBlockCursor tableBlock = messageCursor.nextTable();
                 String tableName = tableBlock.getTableName();
 
                 TableUpdateDetails tud = tudProvider.getTableUpdateDetails(tableName);
@@ -352,7 +360,7 @@ public class IlpV4ProtocolHandler implements Closeable {
                         return RESULT_NEEDS_WRITE;
                     }
 
-                    // Create table
+                    // Create table using cursor schema info
                     tud = tudProvider.createTableUpdateDetails(tableName, tableBlock, engine, securityContext);
                     if (tud == null) {
                         prepareErrorResponse("failed to create table: " + tableName);
@@ -360,14 +368,14 @@ public class IlpV4ProtocolHandler implements Closeable {
                     }
                 }
 
-                // Append to WAL
-                walAppender.appendToWal(securityContext, tableBlock, tud);
+                // Append to WAL using streaming API (zero-allocation for most types)
+                walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
             }
 
             messagesProcessed++;
 
             // Mark message as processed
-            long totalLength = messageDecoder.getMessageHeader().getTotalLength();
+            long totalLength = messageHeader.getTotalLength();
             recvBufProcessed += totalLength;
 
             // Prepare OK response
@@ -505,16 +513,18 @@ public class IlpV4ProtocolHandler implements Closeable {
 
         /**
          * Creates table update details for a new table.
+         * <p>
+         * Uses the streaming cursor API for schema information (zero-allocation).
          *
          * @param tableName       table name
-         * @param tableBlock      decoded table block with schema info
+         * @param tableBlock      streaming table block cursor with schema info
          * @param engine          Cairo engine
          * @param securityContext security context
          * @return table update details, or null on failure
          */
         TableUpdateDetails createTableUpdateDetails(
                 String tableName,
-                IlpV4DecodedTableBlock tableBlock,
+                IlpV4TableBlockCursor tableBlock,
                 CairoEngine engine,
                 SecurityContext securityContext
         );
