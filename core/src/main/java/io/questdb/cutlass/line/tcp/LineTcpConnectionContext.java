@@ -54,7 +54,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private static final DummyPrincipalContext DUMMY_CONTEXT = new DummyPrincipalContext();
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
-
     protected final NetworkFacade nf;
     private final SocketAuthenticator authenticator;
     private final DirectUtf8String byteCharSequence = new DirectUtf8String();
@@ -196,7 +195,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (authenticator.isAuthenticated()) {
             read();
             try {
-                // Text protocol parsing
                 IOContextResult parseResult = parseMeasurements(netIoJob);
                 doMaintenance(milliClock.getTicks());
                 return parseResult;

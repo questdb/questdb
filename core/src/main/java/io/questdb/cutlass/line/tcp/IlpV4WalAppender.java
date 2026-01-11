@@ -26,12 +26,12 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cutlass.line.tcp.v4.*;
+import io.questdb.cutlass.http.ilpv4.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.DirectUtf8Sequence;
 
-import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
+import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
 
 /**
  * Appends decoded ILP v4 table blocks to WAL.

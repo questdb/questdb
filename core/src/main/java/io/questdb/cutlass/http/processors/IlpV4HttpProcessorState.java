@@ -29,7 +29,7 @@ import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.IlpV4WalAppender;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
-import io.questdb.cutlass.line.tcp.v4.*;
+import io.questdb.cutlass.http.ilpv4.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;

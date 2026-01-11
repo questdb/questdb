@@ -594,5 +594,4 @@ public class LineTcpMeasurementScheduler implements Closeable {
         }
         return seq;
     }
-
 }

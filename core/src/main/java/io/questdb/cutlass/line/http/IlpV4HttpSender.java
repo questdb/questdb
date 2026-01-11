@@ -36,7 +36,7 @@ import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.cutlass.line.tcp.v4.*;
+import io.questdb.cutlass.http.ilpv4.*;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -58,7 +58,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
 
-import static io.questdb.cutlass.line.tcp.v4.IlpV4Constants.*;
+import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
 
 /**
  * ILP v4 HTTP client sender for sending binary data to QuestDB over HTTP.

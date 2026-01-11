@@ -25,7 +25,7 @@
 package io.questdb.cutlass.line.http;
 
 import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.cutlass.line.tcp.v4.IlpV4OutputSink;
+import io.questdb.cutlass.http.ilpv4.IlpV4OutputSink;
 import io.questdb.std.Unsafe;
 
 /**
