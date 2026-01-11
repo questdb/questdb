@@ -52,7 +52,7 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
 public class IlpV4TableBlockCursor implements Mutable {
 
     private final IlpV4TableHeader tableHeader = new IlpV4TableHeader();
-    private final IlpV4Varint.DecodeResult decodeResult = new IlpV4Varint.DecodeResult();
+    private final IlpV4Schema.ParseResult parseResult = new IlpV4Schema.ParseResult();
 
     // Column cursors (reused across table blocks)
     private final ObjList<IlpV4ColumnCursor> columnCursors = new ObjList<>();
@@ -97,13 +97,13 @@ public class IlpV4TableBlockCursor implements Mutable {
         this.rowCount = (int) tableHeader.getRowCount();
         this.columnCount = tableHeader.getColumnCount();
 
-        // Parse schema section
-        IlpV4Schema.ParseResult schemaResult = IlpV4Schema.parse(dataAddress + offset, dataLength - offset, columnCount);
-        offset += schemaResult.bytesConsumed;
+        // Parse schema section (zero-alloc: reuses parseResult)
+        IlpV4Schema.parse(dataAddress + offset, dataLength - offset, columnCount, parseResult);
+        offset += parseResult.bytesConsumed;
 
         IlpV4Schema schema;
-        if (!schemaResult.isReference) {
-            schema = schemaResult.schema;
+        if (!parseResult.isReference) {
+            schema = parseResult.schema;
             // Cache the schema if caching is enabled
             if (schemaCache != null) {
                 schemaCache.put(tableHeader.getTableName(), schema);
@@ -116,7 +116,7 @@ public class IlpV4TableBlockCursor implements Mutable {
                         "schema reference mode requires schema cache"
                 );
             }
-            schema = schemaCache.get(tableHeader.getTableName(), schemaResult.schemaHash);
+            schema = schemaCache.get(tableHeader.getTableName(), parseResult.schemaHash);
             if (schema == null) {
                 throw IlpV4ParseException.create(
                         IlpV4ParseException.ErrorCode.SCHEMA_NOT_FOUND,
@@ -133,18 +133,10 @@ public class IlpV4TableBlockCursor implements Mutable {
             IlpV4ColumnDef colDef = columnDefs[i];
             byte typeCode = colDef.getTypeCode();
             boolean nullable = colDef.isNullable();
-            String colName = colDef.getName();
-
-            // Get column name address (we need to find it in schema bytes)
-            // For simplicity, use name bytes from the ColumnDef
-            byte[] nameBytes = colName.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            // We can't easily get the wire address here, so we skip the name flyweight
-            // The column cursor will have an empty/null name reference
-            // This is acceptable since column mapping uses index-based lookup
 
             int consumed = initializeColumnCursor(
                     i, dataAddress + offset, dataLength - offset, rowCount,
-                    typeCode, nullable, 0, 0  // No name address/length for now
+                    typeCode, nullable, 0, 0  // Column mapping uses index-based lookup
             );
             offset += consumed;
         }
@@ -394,6 +386,7 @@ public class IlpV4TableBlockCursor implements Mutable {
     @Override
     public void clear() {
         tableHeader.reset();
+        parseResult.clear();
         rowCount = 0;
         columnCount = 0;
         currentRow = -1;

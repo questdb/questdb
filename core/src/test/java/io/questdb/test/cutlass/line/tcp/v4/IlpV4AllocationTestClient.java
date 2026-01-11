@@ -73,7 +73,7 @@ public class IlpV4AllocationTestClient {
 
     // Default configuration
     private static final String DEFAULT_HOST = "localhost";
-    private static final int DEFAULT_ROWS = 10_000_000;
+    private static final int DEFAULT_ROWS = 80_000_000;
     private static final int DEFAULT_BATCH_SIZE = 10_000;
     private static final int DEFAULT_WARMUP_ROWS = 100_000;
     private static final int DEFAULT_REPORT_INTERVAL = 1_000_000;
@@ -167,7 +167,7 @@ public class IlpV4AllocationTestClient {
         System.out.println("  --rows=N              Total rows to send (default: 10000000)");
         System.out.println("  --batch=N             Batch/flush size (default: 10000)");
         System.out.println("  --warmup=N            Warmup rows (default: 100000)");
-        System.out.println("  --report=N            Report progress every N rows (default: 1000000)");
+        System.out.println("  --report=N            Report progress every N rows (default: 8000000)");
         System.out.println("  --no-warmup           Skip warmup phase");
         System.out.println("  --help                Show this help");
         System.out.println();

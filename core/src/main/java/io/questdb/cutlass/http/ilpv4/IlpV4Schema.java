@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.ilpv4;
 
+import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
 import java.nio.charset.StandardCharsets;
@@ -87,39 +88,66 @@ public final class IlpV4Schema {
 
     /**
      * Result of parsing a schema section.
+     * <p>
+     * This class is mutable and reusable to avoid allocations on hot paths.
+     * Use {@link #setFullSchema} or {@link #setReference} to populate, and
+     * {@link #clear} to reset for reuse.
      */
-    public static final class ParseResult {
-        public final IlpV4Schema schema;
-        public final long schemaHash;
-        public final boolean isReference;
-        public final int bytesConsumed;
+    public static final class ParseResult implements Mutable {
+        public IlpV4Schema schema;
+        public long schemaHash;
+        public boolean isReference;
+        public int bytesConsumed;
 
-        private ParseResult(IlpV4Schema schema, long schemaHash, boolean isReference, int bytesConsumed) {
+        public void setFullSchema(IlpV4Schema schema, int bytesConsumed) {
             this.schema = schema;
-            this.schemaHash = schemaHash;
-            this.isReference = isReference;
+            this.schemaHash = schema.getSchemaHash();
+            this.isReference = false;
             this.bytesConsumed = bytesConsumed;
         }
 
+        public void setReference(long schemaHash, int bytesConsumed) {
+            this.schema = null;
+            this.schemaHash = schemaHash;
+            this.isReference = true;
+            this.bytesConsumed = bytesConsumed;
+        }
+
+        @Override
+        public void clear() {
+            this.schema = null;
+            this.schemaHash = 0;
+            this.isReference = false;
+            this.bytesConsumed = 0;
+        }
+
+        // Factory methods for convenience (allocate - use in tests)
         public static ParseResult fullSchema(IlpV4Schema schema, int bytesConsumed) {
-            return new ParseResult(schema, schema.getSchemaHash(), false, bytesConsumed);
+            ParseResult result = new ParseResult();
+            result.setFullSchema(schema, bytesConsumed);
+            return result;
         }
 
         public static ParseResult reference(long schemaHash, int bytesConsumed) {
-            return new ParseResult(null, schemaHash, true, bytesConsumed);
+            ParseResult result = new ParseResult();
+            result.setReference(schemaHash, bytesConsumed);
+            return result;
         }
     }
 
     /**
-     * Parses a schema section from direct memory.
+     * Parses a schema section from direct memory (zero-allocation version).
+     * <p>
+     * This method populates the provided {@link ParseResult} instead of allocating a new one.
+     * Use this on hot paths where allocation must be avoided.
      *
      * @param address     memory address
      * @param length      available bytes
      * @param columnCount expected number of columns (from table header)
-     * @return parse result
+     * @param result      reusable parse result to populate
      * @throws IlpV4ParseException if parsing fails
      */
-    public static ParseResult parse(long address, int length, int columnCount) throws IlpV4ParseException {
+    public static void parse(long address, int length, int columnCount, ParseResult result) throws IlpV4ParseException {
         if (length < 1) {
             throw IlpV4ParseException.headerTooShort();
         }
@@ -128,21 +156,39 @@ public final class IlpV4Schema {
         int offset = 1;
 
         if (schemaMode == SCHEMA_MODE_REFERENCE) {
-            // Schema reference mode - just a hash
+            // Schema reference mode - just a hash (zero-alloc path)
             if (length < 1 + 8) {
                 throw IlpV4ParseException.headerTooShort();
             }
             long schemaHash = Unsafe.getUnsafe().getLong(address + offset);
-            return ParseResult.reference(schemaHash, 1 + 8);
+            result.setReference(schemaHash, 1 + 8);
         } else if (schemaMode == SCHEMA_MODE_FULL) {
-            // Full schema mode - parse column definitions
-            return parseFullSchema(address, length, columnCount, offset);
+            // Full schema mode - parse column definitions (allocates for new schema)
+            parseFullSchema(address, length, columnCount, offset, result);
         } else {
             throw IlpV4ParseException.create(
                     IlpV4ParseException.ErrorCode.INVALID_SCHEMA_MODE,
                     "unknown schema mode: 0x" + Integer.toHexString(schemaMode & 0xFF)
             );
         }
+    }
+
+    /**
+     * Parses a schema section from direct memory.
+     * <p>
+     * Convenience method that allocates a new {@link ParseResult}. For zero-allocation
+     * parsing, use {@link #parse(long, int, int, ParseResult)} instead.
+     *
+     * @param address     memory address
+     * @param length      available bytes
+     * @param columnCount expected number of columns (from table header)
+     * @return parse result
+     * @throws IlpV4ParseException if parsing fails
+     */
+    public static ParseResult parse(long address, int length, int columnCount) throws IlpV4ParseException {
+        ParseResult result = new ParseResult();
+        parse(address, length, columnCount, result);
+        return result;
     }
 
     /**
@@ -186,7 +232,7 @@ public final class IlpV4Schema {
         }
     }
 
-    private static ParseResult parseFullSchema(long address, int length, int columnCount, int offset) throws IlpV4ParseException {
+    private static void parseFullSchema(long address, int length, int columnCount, int offset, ParseResult result) throws IlpV4ParseException {
         IlpV4ColumnDef[] columns = new IlpV4ColumnDef[columnCount];
         IlpV4Varint.DecodeResult decodeResult = new IlpV4Varint.DecodeResult();
         long limit = address + length; // Absolute end address
@@ -237,7 +283,7 @@ public final class IlpV4Schema {
         // Compute hash over column definitions (consistent with create())
         long schemaHash = computeSchemaHash(columns);
 
-        return ParseResult.fullSchema(new IlpV4Schema(columns, schemaHash), offset);
+        result.setFullSchema(new IlpV4Schema(columns, schemaHash), offset);
     }
 
     private static ParseResult parseFullSchemaFromArray(byte[] buf, int bufOffset, int length, int columnCount, int offset) throws IlpV4ParseException {
@@ -420,11 +466,14 @@ public final class IlpV4Schema {
 
     /**
      * Gets all column definitions.
+     * <p>
+     * Returns the internal array directly (no copy) for zero-allocation access.
+     * Callers must not modify the returned array.
      *
-     * @return copy of column definitions array
+     * @return column definitions array (do not modify)
      */
     public IlpV4ColumnDef[] getColumns() {
-        return columns.clone();
+        return columns;
     }
 
     /**
