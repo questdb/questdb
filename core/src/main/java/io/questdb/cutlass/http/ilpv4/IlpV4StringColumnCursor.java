@@ -43,7 +43,7 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.TYPE_STRING;
  * Returns {@link DirectUtf8Sequence} flyweights pointing directly to wire memory.
  * <b>Zero-allocation</b> on the hot path - no String objects created during iteration.
  */
-public class IlpV4StringColumnCursor implements IlpV4ColumnCursor {
+public final class IlpV4StringColumnCursor implements IlpV4ColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final DirectUtf8String valueUtf8 = new DirectUtf8String(); // Flyweight for current value

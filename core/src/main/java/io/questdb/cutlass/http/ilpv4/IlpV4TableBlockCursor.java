@@ -320,7 +320,7 @@ public class IlpV4TableBlockCursor implements Mutable {
      * <p>
      * The returned cursor is positioned at the current row after {@link #nextRow()}.
      */
-    public IlpV4ColumnCursor getColumn(int index) {
+    public final IlpV4ColumnCursor getColumn(int index) {
         return columnCursors.getQuick(index);
     }
 

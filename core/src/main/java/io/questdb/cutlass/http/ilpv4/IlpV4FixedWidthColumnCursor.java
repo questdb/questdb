@@ -41,7 +41,7 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
  * [values]: (rowCount - nullCount) * valueSize bytes
  * </pre>
  */
-public class IlpV4FixedWidthColumnCursor implements IlpV4ColumnCursor {
+public final class IlpV4FixedWidthColumnCursor implements IlpV4ColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
 

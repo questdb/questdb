@@ -41,7 +41,7 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.TYPE_BOOLEAN;
  * <p>
  * Values are bit-packed, with one bit per non-null value.
  */
-public class IlpV4BooleanColumnCursor implements IlpV4ColumnCursor {
+public final class IlpV4BooleanColumnCursor implements IlpV4ColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
 

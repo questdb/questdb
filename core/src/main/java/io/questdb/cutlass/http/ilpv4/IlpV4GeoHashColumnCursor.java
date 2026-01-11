@@ -40,7 +40,7 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.TYPE_GEOHASH;
  * [values]: rowCount * ceil(precision/8) bytes
  * </pre>
  */
-public class IlpV4GeoHashColumnCursor implements IlpV4ColumnCursor {
+public final class IlpV4GeoHashColumnCursor implements IlpV4ColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final IlpV4Varint.DecodeResult decodeResult = new IlpV4Varint.DecodeResult();

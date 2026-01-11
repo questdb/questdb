@@ -47,7 +47,7 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.TYPE_SYMBOL;
  * Dictionary is parsed once during initialization. Symbol values are accessed
  * via dictionary index for zero-allocation iteration.
  */
-public class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
+public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final IlpV4Varint.DecodeResult decodeResult = new IlpV4Varint.DecodeResult();

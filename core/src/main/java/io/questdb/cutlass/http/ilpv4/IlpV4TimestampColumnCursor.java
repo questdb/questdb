@@ -42,7 +42,7 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4TimestampDecoder.*;
  * <p>
  * The cursor maintains Gorilla decoder state internally for streaming decoding.
  */
-public class IlpV4TimestampColumnCursor implements IlpV4ColumnCursor {
+public final class IlpV4TimestampColumnCursor implements IlpV4ColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final IlpV4GorillaDecoder gorillaDecoder = new IlpV4GorillaDecoder();
