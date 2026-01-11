@@ -795,6 +795,9 @@ public class ExpressionParser {
 
             do {
                 ExpressionNode orderExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                if (orderExpr == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
+                }
                 tok = SqlUtil.fetchNext(lexer);
 
                 int direction = QueryModel.ORDER_DIRECTION_ASCENDING;
@@ -807,7 +810,7 @@ public class ExpressionParser {
                 windowCol.addOrderBy(orderExpr, direction);
 
                 if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close OVER clause");
                 }
             } while (tok.charAt(0) == ',');
         }
@@ -824,8 +827,28 @@ public class ExpressionParser {
             }
 
             if (framingMode != -1) {
+                int frameModePos = lexer.lastTokenPosition();
+                // GROUPS mode requires ORDER BY
+                if (framingMode == WindowColumn.FRAMING_GROUPS && windowCol.getOrderBy().size() == 0) {
+                    throw SqlException.$(frameModePos, "GROUPS mode requires an ORDER BY clause");
+                }
                 windowCol.setFramingMode(framingMode);
                 tok = parseWindowFrameClause(lexer, windowCol, sqlParserCallback, decls);
+
+                // RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column
+                if (framingMode == WindowColumn.FRAMING_RANGE && windowCol.getOrderBy().size() != 1) {
+                    int loKind = windowCol.getRowsLoKind();
+                    int hiKind = windowCol.getRowsHiKind();
+                    boolean hasOffset = (loKind == WindowColumn.PRECEDING || loKind == WindowColumn.FOLLOWING)
+                            && windowCol.getRowsLoExpr() != null;
+                    if (!hasOffset) {
+                        hasOffset = (hiKind == WindowColumn.PRECEDING || hiKind == WindowColumn.FOLLOWING)
+                                && windowCol.getRowsHiExpr() != null;
+                    }
+                    if (hasOffset) {
+                        throw SqlException.$(frameModePos, "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
+                    }
+                }
             }
         }
 
@@ -1009,7 +1032,7 @@ public class ExpressionParser {
             int excludePos = lexer.lastTokenPosition();
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'current', 'group', 'ties' or 'no others' expected after 'exclude'");
+                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
             }
 
             if (SqlKeywords.isCurrentKeyword(tok)) {
@@ -1033,7 +1056,7 @@ public class ExpressionParser {
                 }
                 windowCol.setExclusionKind(WindowColumn.EXCLUDE_NO_OTHERS, excludePos);
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'current', 'group', 'ties' or 'no others' expected after 'exclude'");
+                throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
             }
             tok = SqlUtil.fetchNext(lexer);
         }
@@ -1399,6 +1422,26 @@ public class ExpressionParser {
                                     }
 
                                     if (nextTok != null && SqlKeywords.isOverKeyword(nextTok)) {
+                                        // Check if window function is part of an expression context where it's not allowed
+                                        // Allowed: standalone window function, window function in CASE branches
+                                        // Not allowed: window functions in arithmetic expressions, function calls (e.g., cast)
+                                        if (opStack.size() > 1) {
+                                            for (int i = 0, n = opStack.size(); i < n; i++) {
+                                                ExpressionNode stackNode = opStack.peek(i);
+                                                if (stackNode.type == ExpressionNode.OPERATION) {
+                                                    // Arithmetic/comparison operators
+                                                    throw SqlException.$(lexer.lastTokenPosition(), "Nested window functions' context are not currently supported.");
+                                                }
+                                                // Check for function calls: LITERAL followed by CONTROL '('
+                                                if (stackNode.type == ExpressionNode.CONTROL && Chars.equals(stackNode.token, '(') && i + 1 < n) {
+                                                    ExpressionNode prevNode = opStack.peek(i + 1);
+                                                    if (prevNode.type == ExpressionNode.LITERAL && !SqlKeywords.isCaseKeyword(prevNode.token)) {
+                                                        // This is a function call containing the window function
+                                                        throw SqlException.$(lexer.lastTokenPosition(), "Nested window functions' context are not currently supported.");
+                                                    }
+                                                }
+                                            }
+                                        }
                                         // This is a window function - parse the OVER clause
                                         // First, update node to be a function
                                         node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);

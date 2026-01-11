@@ -1830,4 +1830,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "'nulls' expected after 'respect'"
         );
     }
+
+    @Test
+    public void testWindowFunctionUnterminatedOverClause() {
+        // Missing closing parenthesis for OVER clause
+        assertFail(
+                "f(c) over (partition by b order by ts",
+                35,
+                "')' expected to close OVER clause"
+        );
+    }
 }
