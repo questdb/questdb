@@ -35,12 +35,10 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.TestOnly;
-
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class FunctionFactoryCache {
 
@@ -50,19 +48,16 @@ public class FunctionFactoryCache {
     private final LowerCaseCharSequenceHashSet cursorFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();
-    private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
-    private final LowerCaseCharSequenceHashSet windowFunctionNames = new LowerCaseCharSequenceHashSet();
-
+    // Track loaded plugins (case-insensitive)
+    private final LowerCaseCharSequenceHashSet loadedPlugins = new LowerCaseCharSequenceHashSet();
     // Plugin function support - namespaced plugin functions separate from core functions
     // Structure: pluginName -> functionName -> List<FunctionFactoryDescriptor>
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>>> pluginFunctions =
             new LowerCaseCharSequenceObjHashMap<>();
-
-    // Track loaded plugins (case-insensitive)
-    private final LowerCaseCharSequenceHashSet loadedPlugins = new LowerCaseCharSequenceHashSet();
-
     // Thread safety for plugin function modifications (read lock for lookups, write lock for add/remove)
-    private final ReentrantReadWriteLock pluginLock = new ReentrantReadWriteLock();
+    private final SimpleReadWriteLock pluginLock = new SimpleReadWriteLock();
+    private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet windowFunctionNames = new LowerCaseCharSequenceHashSet();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         boolean enableTestFactories = configuration.enableTestFactories();
@@ -130,129 +125,13 @@ public class FunctionFactoryCache {
         }
     }
 
-    @TestOnly
-    public LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> getFactories() {
-        return factories;
-    }
-
-    public int getFunctionCount() {
-        return factories.size();
-    }
-
-    public ObjList<FunctionFactoryDescriptor> getOverloadList(CharSequence token) {
-        return factories.get(token);
-    }
-
-    public boolean isCursor(CharSequence name) {
-        if (name == null) {
-            return false;
-        }
-        pluginLock.readLock().lock();
-        try {
-            return cursorFunctionNames.contains(name);
-        } finally {
-            pluginLock.readLock().unlock();
-        }
-    }
-
-    public boolean isGroupBy(CharSequence name) {
-        if (name == null) {
-            return false;
-        }
-        pluginLock.readLock().lock();
-        try {
-            if (groupByFunctionNames.contains(name)) {
-                return true;
-            }
-            // For qualified plugin function names, try unquoting the plugin name part
-            final int lastDot = Chars.lastIndexOf(name, 0, name.length(), '.');
-            if (lastDot > 0 && lastDot < name.length() - 1) {
-                String pluginName = name.subSequence(0, lastDot).toString();
-                if (pluginName.startsWith("\"") && pluginName.endsWith("\"")) {
-                    pluginName = pluginName.substring(1, pluginName.length() - 1);
-                }
-                final String functionName = name.subSequence(lastDot + 1, name.length()).toString();
-                final String qualifiedName = pluginName + "." + functionName;
-                return groupByFunctionNames.contains(qualifiedName);
-            }
-            return false;
-        } finally {
-            pluginLock.readLock().unlock();
-        }
-    }
-
-    public boolean isRuntimeConstant(CharSequence name) {
-        if (name == null) {
-            return false;
-        }
-        pluginLock.readLock().lock();
-        try {
-            return runtimeConstantFunctionNames.contains(name);
-        } finally {
-            pluginLock.readLock().unlock();
-        }
-    }
-
-    public boolean isValidNoArgFunction(ExpressionNode node) {
-        final ObjList<FunctionFactoryDescriptor> overload = getOverloadList(node.token);
-        if (overload == null) {
-            return false;
-        }
-
-        for (int i = 0, n = overload.size(); i < n; i++) {
-            FunctionFactoryDescriptor ffd = overload.getQuick(i);
-            if (ffd.getSigArgCount() == 0) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    public boolean isWindow(CharSequence name) {
-        if (name == null) {
-            return false;
-        }
-        pluginLock.readLock().lock();
-        try {
-            return windowFunctionNames.contains(name);
-        } finally {
-            pluginLock.readLock().unlock();
-        }
-    }
-
-    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
-        addFactoryToList(list, new FunctionFactoryDescriptor(factory));
-    }
-
-    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {
-        String name = descriptor.getName();
-        int index = list.keyIndex(name);
-        ObjList<FunctionFactoryDescriptor> overload;
-        if (index < 0) {
-            overload = list.valueAtQuick(index);
-        } else {
-            overload = new ObjList<>(4);
-            list.putAt(index, name, overload);
-        }
-        overload.add(descriptor);
-    }
-
-    private FunctionFactory createNegatingFactory(String name, FunctionFactory factory) throws SqlException {
-        return new NegatingFunctionFactory(name, factory);
-    }
-
-    private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
-        return new ArgSwappingFunctionFactory(name, factory);
-    }
-
     /**
      * Adds plugin functions to the cache under a namespaced plugin name.
      * Functions are stored separately from core functions to allow namespace isolation.
      * Thread-safe with write lock.
      *
      * @param pluginName the plugin name (normalized, no .jar suffix)
-     * @param factories list of FunctionFactory implementations from the plugin
+     * @param factories  list of FunctionFactory implementations from the plugin
      * @throws SqlException if plugin name is invalid or already loaded
      */
     public void addPluginFunctions(String pluginName, ObjList<FunctionFactory> factories) throws SqlException {
@@ -323,6 +202,137 @@ public class FunctionFactoryCache {
         }
     }
 
+    @TestOnly
+    public LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> getFactories() {
+        return factories;
+    }
+
+    public int getFunctionCount() {
+        return factories.size();
+    }
+
+    public ObjList<FunctionFactoryDescriptor> getOverloadList(CharSequence token) {
+        return factories.get(token);
+    }
+
+    /**
+     * Gets the function overload list for a qualified plugin function name.
+     * Thread-safe with read lock.
+     *
+     * @param pluginName   the plugin name
+     * @param functionName the function name
+     * @return the overload list, or null if plugin/function not found
+     */
+    public ObjList<FunctionFactoryDescriptor> getPluginFunction(String pluginName, CharSequence functionName) {
+        pluginLock.readLock().lock();
+        try {
+            final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> pluginFactoryMap =
+                    pluginFunctions.get(pluginName);
+
+            if (pluginFactoryMap == null) {
+                return null;
+            }
+
+            return pluginFactoryMap.get(functionName);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
+    }
+
+    public boolean isCursor(CharSequence name) {
+        if (name == null) {
+            return false;
+        }
+        pluginLock.readLock().lock();
+        try {
+            return cursorFunctionNames.contains(name);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
+    }
+
+    public boolean isGroupBy(CharSequence name) {
+        if (name == null) {
+            return false;
+        }
+        pluginLock.readLock().lock();
+        try {
+            if (groupByFunctionNames.contains(name)) {
+                return true;
+            }
+            // For qualified plugin function names, try unquoting the plugin name part
+            final int lastDot = Chars.lastIndexOf(name, 0, name.length(), '.');
+            if (lastDot > 0 && lastDot < name.length() - 1) {
+                String pluginName = name.subSequence(0, lastDot).toString();
+                if (pluginName.startsWith("\"") && pluginName.endsWith("\"")) {
+                    pluginName = pluginName.substring(1, pluginName.length() - 1);
+                }
+                final String functionName = name.subSequence(lastDot + 1, name.length()).toString();
+                final String qualifiedName = pluginName + "." + functionName;
+                return groupByFunctionNames.contains(qualifiedName);
+            }
+            return false;
+        } finally {
+            pluginLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Returns whether a plugin is currently loaded.
+     * Thread-safe with read lock.
+     *
+     * @param pluginName the plugin name
+     * @return true if the plugin is loaded
+     */
+    public boolean isPluginLoaded(CharSequence pluginName) {
+        try {
+            pluginLock.readLock().lock();
+            return loadedPlugins.contains(pluginName);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
+    }
+
+    public boolean isRuntimeConstant(CharSequence name) {
+        if (name == null) {
+            return false;
+        }
+        pluginLock.readLock().lock();
+        try {
+            return runtimeConstantFunctionNames.contains(name);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
+    }
+
+    public boolean isValidNoArgFunction(ExpressionNode node) {
+        final ObjList<FunctionFactoryDescriptor> overload = getOverloadList(node.token);
+        if (overload == null) {
+            return false;
+        }
+
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            FunctionFactoryDescriptor ffd = overload.getQuick(i);
+            if (ffd.getSigArgCount() == 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public boolean isWindow(CharSequence name) {
+        if (name == null) {
+            return false;
+        }
+        pluginLock.readLock().lock();
+        try {
+            return windowFunctionNames.contains(name);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
+    }
+
     /**
      * Removes all functions for a plugin from the cache.
      * Thread-safe with write lock.
@@ -374,43 +384,28 @@ public class FunctionFactoryCache {
         }
     }
 
-    /**
-     * Returns whether a plugin is currently loaded.
-     * Thread-safe with read lock.
-     *
-     * @param pluginName the plugin name
-     * @return true if the plugin is loaded
-     */
-    public boolean isPluginLoaded(CharSequence pluginName) {
-        pluginLock.readLock().lock();
-        try {
-            return loadedPlugins.contains(pluginName);
-        } finally {
-            pluginLock.readLock().unlock();
-        }
+    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
+        addFactoryToList(list, new FunctionFactoryDescriptor(factory));
     }
 
-    /**
-     * Gets the function overload list for a qualified plugin function name.
-     * Thread-safe with read lock.
-     *
-     * @param pluginName the plugin name
-     * @param functionName the function name
-     * @return the overload list, or null if plugin/function not found
-     */
-    public ObjList<FunctionFactoryDescriptor> getPluginFunction(String pluginName, CharSequence functionName) {
-        pluginLock.readLock().lock();
-        try {
-            final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> pluginFactoryMap =
-                    pluginFunctions.get(pluginName);
-
-            if (pluginFactoryMap == null) {
-                return null;
-            }
-
-            return pluginFactoryMap.get(functionName);
-        } finally {
-            pluginLock.readLock().unlock();
+    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {
+        String name = descriptor.getName();
+        int index = list.keyIndex(name);
+        ObjList<FunctionFactoryDescriptor> overload;
+        if (index < 0) {
+            overload = list.valueAtQuick(index);
+        } else {
+            overload = new ObjList<>(4);
+            list.putAt(index, name, overload);
         }
+        overload.add(descriptor);
+    }
+
+    private FunctionFactory createNegatingFactory(String name, FunctionFactory factory) throws SqlException {
+        return new NegatingFunctionFactory(name, factory);
+    }
+
+    private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
+        return new ArgSwappingFunctionFactory(name, factory);
     }
 }

@@ -1737,6 +1737,17 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'n';
     }
 
+    public static boolean isPluginsKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'p'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'u'
+                && (tok.charAt(3) | 32) == 'g'
+                && (tok.charAt(4) | 32) == 'i'
+                && (tok.charAt(5) | 32) == 'n'
+                && (tok.charAt(6) | 32) == 's';
+    }
+
     public static boolean isQuarterKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'q'

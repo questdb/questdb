@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -50,28 +54,19 @@ public class PluginFunctionTest extends AbstractCairoTest {
         setupPluginDirectory();
     }
 
-    private void setupPluginDirectory() {
-        try {
-            // Get the plugins directory path from configuration
-            final String pluginRoot = configuration.getPluginRoot().toString();
-            final Path pluginDir = Paths.get(pluginRoot);
-
-            // Create plugins directory if it doesn't exist
-            Files.createDirectories(pluginDir);
-
-            // Copy plugin jar from test resources to plugin directory
-            try (InputStream is = getClass().getResourceAsStream("/plugins/" + PLUGIN_JAR)) {
-                if (is != null) {
-                    final Path targetJar = pluginDir.resolve(PLUGIN_JAR);
-                    Files.copy(is, targetJar, StandardCopyOption.REPLACE_EXISTING);
-
-                    // Re-scan plugins to discover the newly added plugin
-                    engine.getPluginManager().scanPlugins();
-                }
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        // Unload any loaded plugins to prevent state leakage between tests
+        if (engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME)) {
+            try {
+                engine.getPluginManager().unloadPlugin(PLUGIN_NAME);
+            } catch (Exception e) {
+                // Ignore - plugin might not be loaded
             }
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to setup plugin directory", e);
         }
+        // Must call parent tearDown to properly clean up engine state
+        super.tearDown();
     }
 
     @Test
@@ -87,65 +82,21 @@ public class PluginFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPluginLoadViaApi() throws Exception {
-        // Test loading via the PluginManager API directly
-        assertMemoryLeak(() -> {
-            // Verify plugin is available
-            io.questdb.std.ObjList<CharSequence> available = engine.getPluginManager().getAvailablePlugins();
-            org.junit.Assert.assertTrue(
-                    "Plugin should be available. Found: " + available,
-                    containsIgnoreCase(available, PLUGIN_NAME)
-            );
-
-            // Load via API
-            engine.getPluginManager().loadPlugin(PLUGIN_NAME);
-
-            // Verify it's loaded
-            io.questdb.std.ObjList<CharSequence> loaded = engine.getPluginManager().getLoadedPlugins();
-            org.junit.Assert.assertTrue(
-                    "Plugin should be loaded. Found: " + loaded,
-                    containsIgnoreCase(loaded, PLUGIN_NAME)
-            );
-
-            // Verify via FunctionFactoryCache
-            org.junit.Assert.assertTrue(
-                    "FunctionFactoryCache should show plugin loaded",
-                    engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME)
-            );
-        });
-    }
-
-    private static boolean containsIgnoreCase(io.questdb.std.ObjList<CharSequence> list, String value) {
-        for (int i = 0, n = list.size(); i < n; i++) {
-            if (io.questdb.std.Chars.equalsIgnoreCase(list.getQuick(i), value)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @Test
-    public void testPluginGroupByFunctionWithoutTable() throws Exception {
-        // Test that plugin GROUP BY functions work without a FROM clause
-        // This was causing StackOverflowError due to circular JoinRecord reference
+    public void testPluginFunctionIsRecognizedAsGroupBy() throws Exception {
+        // Test that the function factory cache correctly identifies plugin GROUP BY functions
         assertMemoryLeak(() -> {
             // Load the plugin
             execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
 
-            // Verify plugin is loaded
-            org.junit.Assert.assertTrue(
-                    "Plugin should be loaded",
-                    engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME)
-            );
+            // Verify the function is recognized as a GROUP BY function
+            final String qualifiedName = PLUGIN_NAME + ".example_weighted_avg";
+            assert engine.getFunctionFactoryCache().isGroupBy(qualifiedName) :
+                    "Plugin GROUP BY function should be recognized: " + qualifiedName;
 
-            // Test plugin GROUP BY function without a table
-            // The quoted syntax is needed because the plugin name contains hyphens
-            // Note: Weighted avg of single value (5 with weight 2) = 5
-            assertSql(
-                    "example_weighted_avg\n" +
-                            "5.0\n",
-                    "SELECT \"" + PLUGIN_NAME + "\".example_weighted_avg(5, 2)"
-            );
+            // Also test with quoted name (as it appears in SQL)
+            final String quotedName = "\"" + PLUGIN_NAME + "\".example_weighted_avg";
+            assert engine.getFunctionFactoryCache().isGroupBy(quotedName) :
+                    "Plugin GROUP BY function with quotes should be recognized: " + quotedName;
         });
     }
 
@@ -198,21 +149,66 @@ public class PluginFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPluginFunctionIsRecognizedAsGroupBy() throws Exception {
-        // Test that the function factory cache correctly identifies plugin GROUP BY functions
+    public void testPluginGroupByFunctionWithoutTable() throws Exception {
+        // Test that plugin GROUP BY functions work without a FROM clause
+        // This was causing StackOverflowError due to circular JoinRecord reference
         assertMemoryLeak(() -> {
             // Load the plugin
             execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
 
-            // Verify the function is recognized as a GROUP BY function
-            final String qualifiedName = PLUGIN_NAME + ".example_weighted_avg";
-            assert engine.getFunctionFactoryCache().isGroupBy(qualifiedName) :
-                    "Plugin GROUP BY function should be recognized: " + qualifiedName;
+            // Verify plugin is loaded
+            org.junit.Assert.assertTrue(
+                    "Plugin should be loaded",
+                    engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME)
+            );
 
-            // Also test with quoted name (as it appears in SQL)
-            final String quotedName = "\"" + PLUGIN_NAME + "\".example_weighted_avg";
-            assert engine.getFunctionFactoryCache().isGroupBy(quotedName) :
-                    "Plugin GROUP BY function with quotes should be recognized: " + quotedName;
+            // Test plugin GROUP BY function without a table
+            // The quoted syntax is needed because the plugin name contains hyphens
+            // Note: Weighted avg of single value (5 with weight 2) = 5
+            assertSql(
+                    "example_weighted_avg\n" +
+                            "5.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".example_weighted_avg(5, 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testPluginLoadIdempotent() throws Exception {
+        // Test that loading the same plugin twice is idempotent
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'"); // Should not throw
+            assert engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME);
+        });
+    }
+
+    @Test
+    public void testPluginLoadViaApi() throws Exception {
+        // Test loading via the PluginManager API directly
+        assertMemoryLeak(() -> {
+            // Verify plugin is available
+            io.questdb.std.ObjList<CharSequence> available = engine.getPluginManager().getAvailablePlugins();
+            org.junit.Assert.assertTrue(
+                    "Plugin should be available. Found: " + available,
+                    containsIgnoreCase(available, PLUGIN_NAME)
+            );
+
+            // Load via API
+            engine.getPluginManager().loadPlugin(PLUGIN_NAME);
+
+            // Verify it's loaded
+            io.questdb.std.ObjList<CharSequence> loaded = engine.getPluginManager().getLoadedPlugins();
+            org.junit.Assert.assertTrue(
+                    "Plugin should be loaded. Found: " + loaded,
+                    containsIgnoreCase(loaded, PLUGIN_NAME)
+            );
+
+            // Verify via FunctionFactoryCache
+            org.junit.Assert.assertTrue(
+                    "FunctionFactoryCache should show plugin loaded",
+                    engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME)
+            );
         });
     }
 
@@ -231,12 +227,94 @@ public class PluginFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPluginLoadIdempotent() throws Exception {
-        // Test that loading the same plugin twice is idempotent
+    public void testShowPlugins() throws Exception {
+        // Test the SHOW PLUGINS command
         assertMemoryLeak(() -> {
+            // Before loading, plugin should be available but not loaded
+            assertSql(
+                    "name\tloaded\n" +
+                            PLUGIN_NAME + "\tfalse\n",
+                    "SHOW PLUGINS"
+            );
+
+            // Load the plugin
             execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
-            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'"); // Should not throw
-            assert engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME);
+
+            // After loading, plugin should show as loaded
+            assertSql(
+                    "name\tloaded\n" +
+                            PLUGIN_NAME + "\ttrue\n",
+                    "SHOW PLUGINS"
+            );
+
+            // Unload the plugin
+            execute("UNLOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // After unloading, plugin should show as not loaded
+            assertSql(
+                    "name\tloaded\n" +
+                            PLUGIN_NAME + "\tfalse\n",
+                    "SHOW PLUGINS"
+            );
         });
+    }
+
+    @Test
+    public void testLoadPluginAuthorizationDenied() throws Exception {
+        // Test that LOAD PLUGIN is denied for read-only security context
+        assertMemoryLeak(() -> {
+            try {
+                ReadOnlySecurityContext.INSTANCE.authorizePluginLoad(PLUGIN_NAME);
+                Assert.fail("Expected CairoException for authorization denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("Write permission denied"));
+            }
+        });
+    }
+
+    @Test
+    public void testUnloadPluginAuthorizationDenied() throws Exception {
+        // Test that UNLOAD PLUGIN is denied for read-only security context
+        assertMemoryLeak(() -> {
+            try {
+                ReadOnlySecurityContext.INSTANCE.authorizePluginUnload(PLUGIN_NAME);
+                Assert.fail("Expected CairoException for authorization denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("Write permission denied"));
+            }
+        });
+    }
+
+    private static boolean containsIgnoreCase(io.questdb.std.ObjList<CharSequence> list, String value) {
+        for (int i = 0, n = list.size(); i < n; i++) {
+            if (io.questdb.std.Chars.equalsIgnoreCase(list.getQuick(i), value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void setupPluginDirectory() {
+        try {
+            // Get the plugins directory path from configuration
+            final String pluginRoot = configuration.getPluginRoot().toString();
+            final Path pluginDir = Paths.get(pluginRoot);
+
+            // Create plugins directory if it doesn't exist
+            Files.createDirectories(pluginDir);
+
+            // Copy plugin jar from test resources to plugin directory
+            try (InputStream is = getClass().getResourceAsStream("/plugins/" + PLUGIN_JAR)) {
+                if (is != null) {
+                    final Path targetJar = pluginDir.resolve(PLUGIN_JAR);
+                    Files.copy(is, targetJar, StandardCopyOption.REPLACE_EXISTING);
+
+                    // Re-scan plugins to discover the newly added plugin
+                    engine.getPluginManager().scanPlugins();
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to setup plugin directory", e);
+        }
     }
 }

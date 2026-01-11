@@ -34,6 +34,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -45,6 +46,7 @@ import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.Enumeration;
+import java.util.concurrent.locks.Lock;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -56,26 +58,25 @@ import java.util.jar.JarFile;
  */
 public class PluginManager implements Closeable {
     private static final Log LOG = LogFactory.getLog(PluginManager.class);
-
-    private final CairoConfiguration configuration;
-    private final FunctionFactoryCache functionFactoryCache;
-    private final FilesFacade ff;
-
     // Maps plugin name -> path to plugin JAR file (stored as String for URL conversion)
     private final LowerCaseCharSequenceObjHashMap<String> availablePlugins = new LowerCaseCharSequenceObjHashMap<>();
-
-    // Maps plugin name -> list of FunctionFactory instances
-    private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactory>> pluginFactories = new LowerCaseCharSequenceObjHashMap<>();
-
-    // Maps plugin name -> URLClassLoader (for cleanup on unload)
-    private final LowerCaseCharSequenceObjHashMap<URLClassLoader> pluginClassLoaders = new LowerCaseCharSequenceObjHashMap<>();
-
-    // Reusable path for file operations
-    private final Path path = new Path();
+    private final CairoConfiguration configuration;
+    private final FilesFacade ff;
     // Reusable for reading native file names
     private final DirectUtf8StringZ fileName = new DirectUtf8StringZ();
+    private final FunctionFactoryCache functionFactoryCache;
+    // Read-write lock for thread-safe plugin operations
+    private final SimpleReadWriteLock lock = new SimpleReadWriteLock();
+    // Reusable path for file operations
+    private final Path path = new Path();
+    // Maps plugin name -> URLClassLoader (for cleanup on unload)
+    private final LowerCaseCharSequenceObjHashMap<URLClassLoader> pluginClassLoaders = new LowerCaseCharSequenceObjHashMap<>();
+    // Maps plugin name -> list of FunctionFactory instances
+    private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactory>> pluginFactories = new LowerCaseCharSequenceObjHashMap<>();
     // Reusable sink for normalized plugin names
     private final StringSink pluginNameSink = new StringSink();
+    private final Lock readLock = lock.readLock();
+    private final Lock writeLock = lock.writeLock();
 
     public PluginManager(
             @NotNull CairoConfiguration configuration,
@@ -87,69 +88,67 @@ public class PluginManager implements Closeable {
     }
 
     /**
-     * Scans the plugin directory and indexes available plugins.
-     * This does NOT load the plugins - they are only indexed for later loading.
-     * Plugins are loaded on-demand when LOAD PLUGIN command is executed.
-     *
-     * @throws CairoException if plugin directory exists but is not readable
+     * Closes the plugin manager and unloads all loaded plugins.
+     * This is called during CairoEngine shutdown.
      */
-    public synchronized void scanPlugins() throws CairoException {
-        final CharSequence pluginRootPath = configuration.getPluginRoot();
-        if (pluginRootPath == null || pluginRootPath.length() == 0) {
-            LOG.info().$("Plugin root not configured").$();
-            return;
-        }
-
-        path.of(pluginRootPath);
-
-        // If directory doesn't exist, that's ok - just log and return
-        if (!ff.exists(path.$())) {
-            LOG.info().$("Plugin directory does not exist: ").$(path).$();
-            return;
-        }
-
-        // Scan for .jar files using FilesFacade
-        final int pathLen = path.size();
-        final long pFind = ff.findFirst(path.$());
-        if (pFind == 0) {
-            return;
-        }
-
+    @Override
+    public void close() {
+        writeLock.lock();
         try {
-            do {
-                final long namePtr = ff.findName(pFind);
-                final int type = ff.findType(pFind);
-
-                // Skip directories and non-files
-                if (type != Files.DT_FILE) {
-                    continue;
+            // Get list of loaded plugins (without acquiring lock since we hold write lock)
+            final ObjList<CharSequence> loadedPlugins = new ObjList<>(pluginClassLoaders.size());
+            for (int i = 0, n = pluginClassLoaders.size(); i < n; i++) {
+                loadedPlugins.add(pluginClassLoaders.keys().getQuick(i));
+            }
+            // Unload all plugins using the unsafe method (we already hold the lock)
+            for (int i = 0, n = loadedPlugins.size(); i < n; i++) {
+                try {
+                    unloadPluginUnsafe(loadedPlugins.getQuick(i));
+                } catch (final Exception e) {
+                    LOG.error().$("Failed to unload plugin ").$(loadedPlugins.getQuick(i)).$(": ").$(e.getMessage()).$();
                 }
-
-                // Get the file name using DirectUtf8StringZ
-                fileName.of(namePtr);
-
-                // Check if it's a .jar file
-                if (!Utf8s.endsWithAscii(fileName, ".jar")) {
-                    continue;
-                }
-
-                // Extract plugin name (strip .jar suffix)
-                final String pluginName = Utf8s.toString(fileName, 0, fileName.size() - 4, (byte) 0);
-
-                // Check for duplicates
-                if (availablePlugins.keyIndex(pluginName) < 0) {
-                    LOG.error().$("Duplicate plugin name: ").$(pluginName).$();
-                    continue;
-                }
-
-                // Store full path as String for later URL conversion
-                path.trimTo(pathLen).concat(fileName).$();
-                final String jarPathStr = path.toString();
-                availablePlugins.put(pluginName, jarPathStr);
-                LOG.info().$("Discovered plugin: ").$(pluginName).$(", JAR: ").$(jarPathStr).$();
-            } while (ff.findNext(pFind) > 0);
+            }
         } finally {
-            ff.findClose(pFind);
+            writeLock.unlock();
+        }
+        path.close();
+    }
+
+    /**
+     * Returns a list of discovered (but not necessarily loaded) plugins.
+     *
+     * @return list of plugin names
+     */
+    @NotNull
+    public ObjList<CharSequence> getAvailablePlugins() {
+        readLock.lock();
+        try {
+            final ObjList<CharSequence> result = new ObjList<>(availablePlugins.size());
+            for (int i = 0, n = availablePlugins.size(); i < n; i++) {
+                result.add(availablePlugins.keys().getQuick(i));
+            }
+            return result;
+        } finally {
+            readLock.unlock();
+        }
+    }
+
+    /**
+     * Returns a list of currently loaded plugins.
+     *
+     * @return list of loaded plugin names
+     */
+    @NotNull
+    public ObjList<CharSequence> getLoadedPlugins() {
+        readLock.lock();
+        try {
+            final ObjList<CharSequence> result = new ObjList<>(pluginClassLoaders.size());
+            for (int i = 0, n = pluginClassLoaders.size(); i < n; i++) {
+                result.add(pluginClassLoaders.keys().getQuick(i));
+            }
+            return result;
+        } finally {
+            readLock.unlock();
         }
     }
 
@@ -161,8 +160,9 @@ public class PluginManager implements Closeable {
      * @param name the plugin name (with or without .jar suffix)
      * @throws SqlException if plugin is not found or fails to load
      */
-    public synchronized void loadPlugin(@NotNull final CharSequence name) throws SqlException {
+    public void loadPlugin(@NotNull final CharSequence name) throws SqlException {
         try {
+            writeLock.lock();
             // Normalize plugin name (strip .jar suffix if present) into reusable sink
             normalizePluginName(name, pluginNameSink);
 
@@ -222,6 +222,80 @@ public class PluginManager implements Closeable {
             throw e;
         } catch (final Exception e) {
             throw SqlException.position(0).put("Failed to load plugin: ").put(name).put(": ").put(e.getMessage());
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    /**
+     * Scans the plugin directory and indexes available plugins.
+     * This does NOT load the plugins - they are only indexed for later loading.
+     * Plugins are loaded on-demand when LOAD PLUGIN command is executed.
+     *
+     * @throws CairoException if plugin directory exists but is not readable
+     */
+    public void scanPlugins() throws CairoException {
+        final CharSequence pluginRootPath = configuration.getPluginRoot();
+        if (pluginRootPath == null || pluginRootPath.length() == 0) {
+            LOG.info().$("Plugin root not configured").$();
+            return;
+        }
+
+        writeLock.lock();
+        try {
+            path.of(pluginRootPath);
+
+            // If directory doesn't exist, that's ok - just log and return
+            if (!ff.exists(path.$())) {
+                LOG.info().$("Plugin directory does not exist: ").$(path).$();
+                return;
+            }
+
+            // Scan for .jar files using FilesFacade
+            final int pathLen = path.size();
+            final long pFind = ff.findFirst(path.$());
+            if (pFind == 0) {
+                return;
+            }
+
+            try {
+                do {
+                    final long namePtr = ff.findName(pFind);
+                    final int type = ff.findType(pFind);
+
+                    // Skip directories and non-files
+                    if (type != Files.DT_FILE) {
+                        continue;
+                    }
+
+                    // Get the file name using DirectUtf8StringZ
+                    fileName.of(namePtr);
+
+                    // Check if it's a .jar file
+                    if (!Utf8s.endsWithAscii(fileName, ".jar")) {
+                        continue;
+                    }
+
+                    // Extract plugin name (strip .jar suffix)
+                    final String pluginName = Utf8s.toString(fileName, 0, fileName.size() - 4, (byte) 0);
+
+                    // Check for duplicates
+                    if (availablePlugins.keyIndex(pluginName) < 0) {
+                        LOG.error().$("Duplicate plugin name: ").$(pluginName).$();
+                        continue;
+                    }
+
+                    // Store full path as String for later URL conversion
+                    path.trimTo(pathLen).concat(fileName).$();
+                    final String jarPathStr = path.toString();
+                    availablePlugins.put(pluginName, jarPathStr);
+                    LOG.info().$("Discovered plugin: ").$(pluginName).$(", JAR: ").$(jarPathStr).$();
+                } while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+            }
+        } finally {
+            writeLock.unlock();
         }
     }
 
@@ -232,97 +306,36 @@ public class PluginManager implements Closeable {
      * @param name the plugin name
      * @throws SqlException if plugin is not loaded
      */
-    public synchronized void unloadPlugin(@NotNull final CharSequence name) throws SqlException {
+    public void unloadPlugin(@NotNull final CharSequence name) throws SqlException {
         try {
-            // Normalize plugin name into reusable sink
-            normalizePluginName(name, pluginNameSink);
-
-            if (!functionFactoryCache.isPluginLoaded(pluginNameSink)) {
-                throw SqlException.position(0).put("Plugin not loaded: ").put(pluginNameSink);
-            }
-
-            // Remove functions from cache
-            functionFactoryCache.removePluginFunctions(pluginNameSink);
-
-            // Clean up classloader (CRITICAL for preventing memory leaks)
-            final int clIndex = pluginClassLoaders.keyIndex(pluginNameSink);
-            if (clIndex < 0) {
-                final URLClassLoader classLoader = pluginClassLoaders.valueAtQuick(clIndex);
-                pluginClassLoaders.removeAt(clIndex);
-                if (classLoader != null) {
-                    try {
-                        classLoader.close();
-                    } catch (final IOException e) {
-                        LOG.error().$("Failed to close classloader for plugin ").$(pluginNameSink).$(": ").$(e).$();
-                    }
-                }
-            }
-
-            // Clean up factories
-            final int factoriesIndex = pluginFactories.keyIndex(pluginNameSink);
-            if (factoriesIndex < 0) {
-                pluginFactories.removeAt(factoriesIndex);
-            }
-
-            LOG.info().$("Successfully unloaded plugin: ").$(pluginNameSink).$();
-        } catch (final SqlException e) {
-            throw e;
-        } catch (final Exception e) {
-            throw SqlException.position(0).put("Failed to unload plugin: ").put(name).put(": ").put(e.getMessage());
+            writeLock.lock();
+            unloadPluginUnsafe(name);
+        } finally {
+            writeLock.unlock();
         }
     }
 
     /**
-     * Returns a list of discovered (but not necessarily loaded) plugins.
+     * Normalizes a plugin name by removing the .jar suffix if present.
+     * Writes the normalized name to the provided sink.
      *
-     * @return list of plugin names
+     * @param name the plugin name
+     * @param sink the sink to write the normalized name to
      */
-    @NotNull
-    public synchronized ObjList<CharSequence> getAvailablePlugins() {
-        final ObjList<CharSequence> result = new ObjList<>(availablePlugins.size());
-        for (int i = 0, n = availablePlugins.size(); i < n; i++) {
-            result.add(availablePlugins.keys().getQuick(i));
+    private static void normalizePluginName(@NotNull final CharSequence name, @NotNull final StringSink sink) {
+        sink.clear();
+        if (Chars.endsWith(name, ".jar")) {
+            sink.put(name, 0, name.length() - 4);
+        } else {
+            sink.put(name);
         }
-        return result;
-    }
-
-    /**
-     * Returns a list of currently loaded plugins.
-     *
-     * @return list of loaded plugin names
-     */
-    @NotNull
-    public synchronized ObjList<CharSequence> getLoadedPlugins() {
-        final ObjList<CharSequence> result = new ObjList<>(pluginClassLoaders.size());
-        for (int i = 0, n = pluginClassLoaders.size(); i < n; i++) {
-            result.add(pluginClassLoaders.keys().getQuick(i));
-        }
-        return result;
-    }
-
-    /**
-     * Closes the plugin manager and unloads all loaded plugins.
-     * This is called during CairoEngine shutdown.
-     */
-    @Override
-    public void close() {
-        // Unload all plugins
-        final ObjList<CharSequence> loadedPlugins = getLoadedPlugins();
-        for (int i = 0, n = loadedPlugins.size(); i < n; i++) {
-            try {
-                unloadPlugin(loadedPlugins.getQuick(i));
-            } catch (final Exception e) {
-                LOG.error().$("Failed to unload plugin ").$(loadedPlugins.getQuick(i)).$(": ").$(e.getMessage()).$();
-            }
-        }
-        path.close();
     }
 
     /**
      * Discovers FunctionFactory implementations in a plugin JAR.
      * Returns an empty list if the JAR contains no FunctionFactory implementations.
      *
-     * @param jarPath path to the JAR file as String
+     * @param jarPath     path to the JAR file as String
      * @param classLoader isolated classloader for loading classes from the JAR
      * @return list of discovered FunctionFactory instances
      */
@@ -371,18 +384,46 @@ public class PluginManager implements Closeable {
     }
 
     /**
-     * Normalizes a plugin name by removing the .jar suffix if present.
-     * Writes the normalized name to the provided sink.
-     *
-     * @param name the plugin name
-     * @param sink the sink to write the normalized name to
+     * Internal method to unload a plugin without acquiring the lock.
+     * Caller must hold the write lock.
      */
-    private static void normalizePluginName(@NotNull final CharSequence name, @NotNull final StringSink sink) {
-        sink.clear();
-        if (Chars.endsWith(name, ".jar")) {
-            sink.put(name, 0, name.length() - 4);
-        } else {
-            sink.put(name);
+    private void unloadPluginUnsafe(@NotNull final CharSequence name) throws SqlException {
+        try {
+            // Normalize plugin name into reusable sink
+            normalizePluginName(name, pluginNameSink);
+
+            if (!functionFactoryCache.isPluginLoaded(pluginNameSink)) {
+                throw SqlException.position(0).put("Plugin not loaded: ").put(pluginNameSink);
+            }
+
+            // Remove functions from cache
+            functionFactoryCache.removePluginFunctions(pluginNameSink);
+
+            // Clean up classloader (CRITICAL for preventing memory leaks)
+            final int clIndex = pluginClassLoaders.keyIndex(pluginNameSink);
+            if (clIndex < 0) {
+                final URLClassLoader classLoader = pluginClassLoaders.valueAtQuick(clIndex);
+                pluginClassLoaders.removeAt(clIndex);
+                if (classLoader != null) {
+                    try {
+                        classLoader.close();
+                    } catch (final IOException e) {
+                        LOG.error().$("Failed to close classloader for plugin ").$(pluginNameSink).$(": ").$(e).$();
+                    }
+                }
+            }
+
+            // Clean up factories
+            final int factoriesIndex = pluginFactories.keyIndex(pluginNameSink);
+            if (factoriesIndex < 0) {
+                pluginFactories.removeAt(factoriesIndex);
+            }
+
+            LOG.info().$("Successfully unloaded plugin: ").$(pluginNameSink).$();
+        } catch (final SqlException e) {
+            throw e;
+        } catch (final Exception e) {
+            throw SqlException.position(0).put("Failed to unload plugin: ").put(name).put(": ").put(e.getMessage());
         }
     }
 }

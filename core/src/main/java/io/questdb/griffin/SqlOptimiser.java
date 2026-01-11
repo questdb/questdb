@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowDateStyleCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowDefaultTransactionReadOnlyCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowMaxIdentifierLengthCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowParametersCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowPluginsRecordCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowServerVersionCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowServerVersionNumCursorFactory;
@@ -3905,6 +3906,9 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case QueryModel.SHOW_CREATE_VIEW:
                     tableFactory = sqlParserCallback.generateShowCreateViewFactory(model, executionContext, path);
+                    break;
+                case QueryModel.SHOW_PLUGINS:
+                    tableFactory = new ShowPluginsRecordCursorFactory();
                     break;
                 default:
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);

@@ -140,6 +140,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizePluginLoad(CharSequence pluginName) {
+    }
+
+    @Override
+    public void authorizePluginUnload(CharSequence pluginName) {
+    }
+
+    @Override
     public void authorizeResumeWal(TableToken tableToken) {
     }
 

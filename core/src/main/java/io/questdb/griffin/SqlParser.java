@@ -2289,6 +2289,8 @@ public class SqlParser {
                     }
                 } else if (isParametersKeyword(tok)) {
                     showKind = QueryModel.SHOW_PARAMETERS;
+                } else if (isPluginsKeyword(tok)) {
+                    showKind = QueryModel.SHOW_PLUGINS;
                 } else if (isServerVersionKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_VERSION;
                 } else if (isServerVersionNumKeyword(tok)) {
@@ -2318,7 +2320,7 @@ public class SqlParser {
                         .put("'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', ")
                         .put("'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', ")
                         .put("'max_identifier_length', 'standard_conforming_strings', ")
-                        .put("'parameters', 'server_version', 'server_version_num', ")
+                        .put("'parameters', 'plugins', 'server_version', 'server_version_num', ")
                         .put("'search_path', 'datestyle', or 'time zone'");
             } else {
                 model.setShowKind(showKind);

@@ -87,6 +87,10 @@ public interface SecurityContext extends Mutable {
 
     void authorizePGWire();
 
+    void authorizePluginLoad(CharSequence pluginName);
+
+    void authorizePluginUnload(CharSequence pluginName);
+
     void authorizeResumeWal(TableToken tableToken);
 
     void authorizeSelect(ViewDefinition viewDefinition);
