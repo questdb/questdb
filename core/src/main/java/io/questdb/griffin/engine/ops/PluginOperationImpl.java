@@ -24,9 +24,10 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.PluginManager;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
@@ -52,8 +53,20 @@ public class PluginOperationImpl implements PluginOperation {
 
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
-            compiler.execute(this, sqlExecutionContext);
+        // Execute plugin load/unload directly without getting a new SqlCompiler.
+        // Getting a new compiler here would cause deadlock because the caller
+        // (CairoEngine.execute) already holds a compiler from the pool.
+        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        final PluginManager pluginManager = engine.getPluginManager();
+
+        if (isLoad) {
+            sqlExecutionContext.getSecurityContext().authorizePluginLoad(pluginName);
+            pluginManager.loadPlugin(pluginName);
+        } else {
+            sqlExecutionContext.getSecurityContext().authorizePluginUnload(pluginName);
+            // Flush query cache BEFORE unloading to invalidate any cached plans using plugin functions
+            engine.flushQueryCache();
+            pluginManager.unloadPlugin(pluginName);
         }
         return future;
     }
