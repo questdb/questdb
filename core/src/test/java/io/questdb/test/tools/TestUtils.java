@@ -1452,7 +1452,7 @@ public final class TestUtils {
                 Path path = new Path();
                 MemoryMARW mem = Vm.getCMARWInstance()
         ) {
-            TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
+            TableUtils.createTable(configuration, mem, null, path, model, tableVersion, tableId, tableToken.getDirName());
         }
     }
 
@@ -1475,7 +1475,7 @@ public final class TestUtils {
             throw new RuntimeException("table already exists: " + tableName);
         }
         path.of(engine.getConfiguration().getDbRoot()).concat(token);
-        TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
+        TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
         if (structure.isWalEnabled()) {
             engine.getTableSequencerAPI().registerTable(tableId, structure, token);

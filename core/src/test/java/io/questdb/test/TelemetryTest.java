@@ -29,9 +29,11 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryJob;
-import io.questdb.TelemetrySystemEvent;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.TableReader;
@@ -41,11 +43,14 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.AbstractTelemetryTask;
 import io.questdb.tasks.TelemetryTask;
@@ -53,6 +58,7 @@ import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -61,8 +67,8 @@ import org.junit.Test;
 import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
-import static io.questdb.TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
+import static io.questdb.TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE;
+import static io.questdb.TelemetryEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
 import static io.questdb.test.TelemetryTest.DBSizeTestType.*;
 
 public class TelemetryTest extends AbstractCairoTest {
@@ -131,6 +137,82 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTelemetryDeduplication() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                TelemetryJob telemetryJob = new TelemetryJob(engine);
+                Telemetry<TelemetryTask> telemetry = engine.getTelemetry();
+
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_TEXT_IMPORT);
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.QUERY_RESULT_EXPORT_CSV);
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP_QUERY_VALIDATE, CompiledQuery.SELECT);
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP_QUERY_VALIDATE, CompiledQuery.SELECT);
+                telemetryJob.runSerially();
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.QUERY_RESULT_EXPORT_CSV);
+                telemetryJob.runSerially();
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP_QUERY_VALIDATE, CompiledQuery.INSERT);
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.QUERY_RESULT_EXPORT_CSV);
+                Misc.free(telemetryJob);
+                refreshTablesInBaseEngine();
+                final String expectedEvent = """
+                        100	1
+                        112	2
+                        110	2
+                        1	7
+                        2	7
+                        101	1
+                        """;
+                assertEventAndOrigin(expectedEvent);
+            }
+        });
+    }
+
+    @Test
+    public void testTelemetryDeduplication1() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull MicrosecondClock getMicrosecondClock() {
+                    return TestUtils.unchecked(() -> new TestMicroClock(MicrosFormatUtils.parseTimestamp("2026-01-08T10:00:00.000Z"), 1));
+                }
+
+                @Override
+                public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
+                    return new DefaultTelemetryConfiguration() {
+                        @Override
+                        public long getThrottleIntervalMicros() {
+                            return 1500;
+                        }
+                    };
+                }
+            })) {
+                TelemetryJob telemetryJob = new TelemetryJob(engine);
+                Telemetry<TelemetryTask> telemetry = engine.getTelemetry();
+
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_TEXT_IMPORT); // record
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_TEXT_IMPORT); // skip
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_TEXT_IMPORT); // record
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, CompiledQuery.SELECT); // record
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, CompiledQuery.INSERT); // record
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, CompiledQuery.INSERT); // skip
+                TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, CompiledQuery.SELECT); // skip
+                Misc.free(telemetryJob);
+                refreshTablesInBaseEngine();
+                final String expectedEvent = """
+                        100	1
+                        112	2
+                        112	2
+                        1	2
+                        2	2
+                        1	2
+                        101	1
+                        """;
+                assertEventAndOrigin(expectedEvent);
+            }
+        });
+    }
+
+    @Test
     public void testTelemetryDoesntCreateTableWhenDisabled() throws Exception {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -167,11 +249,11 @@ public class TelemetryTest extends AbstractCairoTest {
                 refreshTablesInBaseEngine();
 
                 HashSet<Short> expectedClasses = new HashSet<>();
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE);
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_ENV_TYPE_BASE);
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE);
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE);
-                expectedClasses.add(TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_OS_CLASS_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_ENV_TYPE_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_CPU_CLASS_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_DB_SIZE_CLASS_BASE);
+                expectedClasses.add(TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE);
 
                 HashSet<Short> actualClasses = new HashSet<>();
                 try (
@@ -231,7 +313,33 @@ public class TelemetryTest extends AbstractCairoTest {
 
             assertSql(start + middle + end, showCreateTable);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                assertSql(start + " PARTITION BY DAY TTL 1 WEEK" + end, showCreateTable);
+                assertSql(start + " PARTITION BY DAY TTL 4 WEEKS" + end, showCreateTable);
+            }
+        });
+    }
+
+    @Test
+    public void testTelemetryTableUpgrade1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE " + TelemetryTask.TABLE_NAME + " (" +
+                    "created TIMESTAMP, " +
+                    "event SHORT, " +
+                    "origin SHORT" +
+                    ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK");
+
+            String showCreateTable = "SHOW CREATE TABLE " + TelemetryTask.TABLE_NAME;
+            String start = "ddl\n" +
+                    "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
+                    "\tcreated TIMESTAMP,\n" +
+                    "\tevent SHORT,\n" +
+                    "\torigin SHORT\n" +
+                    ") timestamp(created)";
+            String middle = " PARTITION BY DAY TTL 1 WEEK";
+            String end = " BYPASS WAL;\n";
+
+            assertSql(start + middle + end, showCreateTable);
+            try (TelemetryJob ignore = new TelemetryJob(engine)) {
+                assertSql(start + " PARTITION BY DAY TTL 4 WEEKS" + end, showCreateTable);
             }
         });
     }

@@ -45,8 +45,12 @@ public class ViewState {
     private ViewMetadata viewMetadata;
 
     public ViewState(@NotNull ViewDefinition viewDefinition, long updateTimestamp) {
+        this(viewDefinition, ViewMetadata.newInstance(viewDefinition.getViewToken()), updateTimestamp);
+    }
+
+    public ViewState(@NotNull ViewDefinition viewDefinition, @NotNull ViewMetadata viewMetadata, long updateTimestamp) {
         this.viewDefinition = viewDefinition;
-        this.viewMetadata = ViewMetadata.newInstance(viewDefinition.getViewToken());
+        this.viewMetadata = viewMetadata;
         this.updateTimestamp = updateTimestamp;
     }
 

@@ -62,6 +62,7 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -642,14 +643,15 @@ public class CairoEngine implements Closeable, WriterSource {
             BlockFileWriter blockFileWriter,
             Path path,
             boolean ifNotExists,
-            CreateViewOperation struct
+            CreateViewOperation struct,
+            @Nullable RecordMetadata metadata
     ) {
         securityContext.authorizeViewCreate();
         final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         final ViewDefinition viewDefinition = struct.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
-                viewStateStore.createViewState(viewDefinition);
+                viewStateStore.createViewState(viewDefinition, metadata);
             }
         } catch (CairoException e) {
             dropTableOrViewOrMatView(path, viewToken);
@@ -1916,6 +1918,7 @@ public class CairoEngine implements Closeable, WriterSource {
         TableUtils.createTableOrMatViewInVolume(
                 configuration.getFilesFacade(),
                 configuration.getDbRoot(),
+                getTelemetry(),
                 configuration.getMkDirMode(),
                 mem,
                 blockFileWriter,
@@ -1938,6 +1941,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 configuration.getFilesFacade(),
                 configuration.getDbRoot(),
                 configuration.getMkDirMode(),
+                getTelemetry(),
                 mem,
                 blockFileWriter,
                 path,

@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.TelemetryEvent;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -90,6 +92,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
                 }
 
+                context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
                 if (context.isParallelReadParquetEnabled()) {
                     return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(path, metadata));
                 } else {
