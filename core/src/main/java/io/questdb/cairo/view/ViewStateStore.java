@@ -25,6 +25,7 @@
 package io.questdb.cairo.view;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Mutable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -36,7 +37,11 @@ import org.jetbrains.annotations.Nullable;
  */
 public interface ViewStateStore extends Mutable {
 
-    void createViewState(ViewDefinition viewDefinition);
+    default void createViewState(ViewDefinition viewDefinition) {
+        createViewState(viewDefinition, null);
+    }
+
+    void createViewState(ViewDefinition viewDefinition, @Nullable RecordMetadata metadata);
 
     void enqueueCompile(@NotNull TableToken viewToken);
 

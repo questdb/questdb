@@ -25,7 +25,9 @@
 package io.questdb.cairo.view;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordMetadata;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class NoOpViewStateStore implements ViewStateStore {
@@ -37,7 +39,7 @@ public class NoOpViewStateStore implements ViewStateStore {
     }
 
     @Override
-    public void createViewState(ViewDefinition viewDefinition) {
+    public void createViewState(ViewDefinition viewDefinition, @Nullable RecordMetadata metadata) {
     }
 
     @Override

@@ -24,18 +24,45 @@
 
 package io.questdb;
 
-public interface TelemetryConfiguration {
-    long getDbSizeEstimateTimeout();
+public class TelemetryConfigurationWrapper implements TelemetryConfiguration {
+    private final TelemetryConfiguration configuration;
 
-    boolean getDisableCompletely();
+    public TelemetryConfigurationWrapper(TelemetryConfiguration configuration) {
+        this.configuration = configuration;
+    }
 
-    boolean getEnabled();
+    @Override
+    public long getDbSizeEstimateTimeout() {
+        return configuration.getDbSizeEstimateTimeout();
+    }
 
-    int getQueueCapacity();
+    @Override
+    public boolean getDisableCompletely() {
+        return configuration.getDisableCompletely();
+    }
 
-    long getThrottleIntervalMicros();
+    @Override
+    public boolean getEnabled() {
+        return configuration.getEnabled();
+    }
 
-    int getTtlWeeks();
+    @Override
+    public int getQueueCapacity() {
+        return configuration.getQueueCapacity();
+    }
 
-    boolean hideTables();
+    @Override
+    public long getThrottleIntervalMicros() {
+        return configuration.getThrottleIntervalMicros();
+    }
+
+    @Override
+    public int getTtlWeeks() {
+        return configuration.getTtlWeeks();
+    }
+
+    @Override
+    public boolean hideTables() {
+        return configuration.hideTables();
+    }
 }

@@ -47,12 +47,12 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
     private boolean currentElemAscii = true;
 
     public DirectUtf8StringList(long initialCapacity, long initialElementCount) {
-        this(initialCapacity, initialElementCount, true);
+        this(initialCapacity, initialElementCount, false);
     }
 
-    public DirectUtf8StringList(long initialCapacity, long initialElementCount, boolean alloc) {
-        this.sink = new DirectByteSink(initialCapacity, alloc, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
-        this.offsets = new DirectLongList(initialElementCount, alloc, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+    public DirectUtf8StringList(long initialCapacity, long initialElementCount, boolean keepClosed) {
+        this.sink = new DirectByteSink(initialCapacity, MemoryTag.NATIVE_DIRECT_UTF8_SINK, keepClosed);
+        this.offsets = new DirectLongList(initialElementCount, MemoryTag.NATIVE_DIRECT_UTF8_SINK, keepClosed);
     }
 
     @Override
