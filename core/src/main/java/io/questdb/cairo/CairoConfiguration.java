@@ -575,8 +575,6 @@ public interface CairoConfiguration {
 
     int getSqlJitMode();
 
-    int getSqlJitPageAddressCacheThreshold();
-
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();
@@ -611,6 +609,8 @@ public interface CairoConfiguration {
     double getSqlParallelFilterPreTouchThreshold();
 
     int getSqlParallelWorkStealingThreshold();
+
+    long getSqlParallelWorkStealingSpinTimeout();
 
     int getSqlParquetFrameCacheCapacity();
 
