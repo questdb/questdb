@@ -289,18 +289,19 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // Size of data actually in the aux (fixed) file,
                 // THIS IS N+1 size, it used to be N offset, e.g. this used to be pointing at
                 // the last row of the aux vector (column).
-                final long oldAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCount);
+                final long auxSizeOld = columnTypeDriver.getAuxVectorSize(auxRowCount);
                 // Size of data in the aux (fixed) file if it didn't have column top.
                 // this size DOES NOT INCLUDE N+1, so it is N here.
-                final long wouldBeAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
+                final long auxSizeNew = columnTypeDriver.getAuxVectorSize(srcDataMax);
 
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
+
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
                     // Do all of this beyond existing written data, using column as a buffer.
                     // It is also fine in case when last partition contains WAL LAG, since at the
                     // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
-                    newAuxSize = oldAuxSize + wouldBeAuxSize;
+                    newAuxSize = auxSizeOld + auxSizeNew;
 
                     srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -338,7 +339,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // We need to shift copy the original column so that new block points at strings "below"
                     // the nulls we created above.
-                    final long dstOffset = oldAuxSize + columnTypeDriver.auxRowsToBytes(srcDataTop);
+                    final long dstOffset = auxSizeOld + columnTypeDriver.auxRowsToBytes(srcDataTop);
                     final long dstAddr = srcAuxAddr + dstOffset;
                     final long dstAddrSize = newAuxSize - dstOffset;
                     columnTypeDriver.shiftCopyAuxVector(
@@ -354,9 +355,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // null strings we just added.
                     // Call to setPartAuxVectorNull must be after shiftCopyAuxVector
                     // because the data has to be shifted before being overwritten.
-                    columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + oldAuxSize, 0, srcDataTop);
+                    columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + auxSizeOld, 0, srcDataTop);
                     srcDataTop = 0;
-                    srcDataFixOffset = oldAuxSize;
+                    srcDataFixOffset = auxSizeOld;
                 } else {
                     // When we are shuffling "empty" space we can just reduce column top instead
                     // of moving the data.
@@ -384,6 +385,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     newAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
                     srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
+
                     srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
                     srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
                     ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
