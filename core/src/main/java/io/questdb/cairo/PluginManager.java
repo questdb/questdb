@@ -212,10 +212,8 @@ public class PluginManager implements Closeable {
      */
     public synchronized void scanPlugins() throws CairoException {
         final CharSequence pluginRootPath = configuration.getPluginRoot();
-        if (pluginRootPath == null || pluginRootPath.length() == 0) {
-            LOG.info().$("Plugin root not configured").$();
-            return;
-        }
+        //noinspection ConstantValue
+        assert pluginRootPath != null && pluginRootPath.length() > 0;
 
         path.of(pluginRootPath);
 
