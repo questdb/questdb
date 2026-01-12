@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
@@ -176,6 +177,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final SCSequence tempSequence = new SCSequence();
     private final DirectUtf8String utf8String = new DirectUtf8String();
     private SocketAuthenticator authenticator;
+    private PGPipelineEntry bindingServiceConfiguredFor;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
     private boolean freezeRecvBuffer;
@@ -342,6 +344,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         totalReceived = 0;
         transactionState = IMPLICIT_TRANSACTION;
         entryPool.resetCapacity();
+        bindingServiceConfiguredFor = null;
     }
 
     @Override
@@ -927,6 +930,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
         sqlExecutionContext.initNow();
+        bindingServiceConfiguredFor = pipelineCurrentEntry;
         transactionState = pipelineCurrentEntry.msgExecute(
                 sqlExecutionContext,
                 transactionState,
@@ -1061,7 +1065,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
                     pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
                     cachedStatus = CACHE_HIT_SELECT_VALID;
-                    sqlExecutionContext.resetFlags();
+                    sqlExecutionContext.reset();
                 } else {
                     tas.close();
                     cachedStatus = CACHE_HIT_SELECT_INVALID;
@@ -1394,6 +1398,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
             while (true) {
                 try {
+
+                    // we need to repopulate BindingService before sync
+                    // because syncing might access binding data too
+                    if (bindingServiceConfiguredFor != pipelineCurrentEntry && pipelineCurrentEntry.populateBindingServiceForSync(
+                            sqlExecutionContext,
+                            bindVariableValuesCharacterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    )) {
+                        bindingServiceConfiguredFor = pipelineCurrentEntry;
+                    }
                     pipelineCurrentEntry.msgSync(
                             sqlExecutionContext,
                             pendingWriters,
@@ -1416,6 +1431,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         );
                         break;
                     }
+                } catch (PGMessageProcessingException | SqlException e) {
+                    pipelineCurrentEntry.getErrorMessageSink().put(e.getMessage());
+                    pipelineCurrentEntry.msgSync(
+                            sqlExecutionContext,
+                            pendingWriters,
+                            responseUtf8Sink
+                    );
+                    break;
                 }
             }
 
@@ -1426,6 +1449,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
             PGPipelineEntry nextEntry = pipeline.poll();
             if (nextEntry != null || isExec || isError || isClosed) {
+                if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
+                    bindingServiceConfiguredFor = null;
+                }
                 if (!isError) {
                     pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
                 }
@@ -1791,6 +1817,23 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // sendBufferPtr += size;
             // return this;
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int putPartial(Utf8Sequence us, int offset, int length) {
+            if (length <= 0) {
+                return 0;
+            }
+            // Write as much as we can fit in the buffer
+            long available = sendBufferLimit - sendBufferPtr - 1; // -1 because checkCapacity uses < not <=
+            int toWrite = (int) Math.min(length, Math.max(0, available));
+            if (toWrite > 0) {
+                for (int i = 0; i < toWrite; i++) {
+                    Unsafe.getUnsafe().putByte(sendBufferPtr + i, us.byteAt(offset + i));
+                }
+                sendBufferPtr += toWrite;
+            }
+            return toWrite;
         }
 
         @Override

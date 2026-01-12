@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -57,9 +57,9 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
     }
 
     @Override
-    public long nextTimestamp(long timestamp, int numSteps) {
+    public long nextTimestamp(long timestamp, long numSteps) {
         try {
-            return addMonth(timestamp, Math.multiplyExact(numSteps, stepMonths));
+            return addMonth(timestamp, Math.toIntExact(Math.multiplyExact(numSteps, stepMonths)));
         } catch (ArithmeticException e) {
             return Long.MAX_VALUE;
         }

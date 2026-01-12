@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -244,7 +244,7 @@ pub struct ColumnType {
 }
 
 impl ColumnType {
-    pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
+    pub const fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
         let shifted_extra_type_info = extra_type_info << 8;
         let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
             .expect("column type code should never be zero");

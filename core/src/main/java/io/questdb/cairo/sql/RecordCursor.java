@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -140,6 +140,15 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      */
     @Override
     void close();
+
+    /**
+     * Signals the cursor that outer code/cursor will do a limited iteration through
+     * the rows, e.g. it implements LIMIT N. In such a case, some parallel cursors
+     * like async filtered cursor may optimize their execution by limiting the number
+     * of dispatched page frame tasks.
+     */
+    default void expectLimitedIteration() {
+    }
 
     /**
      * Returns the record at the current cursor position.

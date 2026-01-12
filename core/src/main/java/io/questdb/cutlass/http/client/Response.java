@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,22 @@
 
 package io.questdb.cutlass.http.client;
 
+/**
+ * Interface for receiving HTTP response data.
+ */
 public interface Response {
+    /**
+     * Receives the next fragment of response data using the default timeout.
+     *
+     * @return the received fragment
+     */
     Fragment recv();
 
+    /**
+     * Receives the next fragment of response data with the specified timeout.
+     *
+     * @param timeout the timeout in milliseconds
+     * @return the received fragment
+     */
     Fragment recv(int timeout);
 }

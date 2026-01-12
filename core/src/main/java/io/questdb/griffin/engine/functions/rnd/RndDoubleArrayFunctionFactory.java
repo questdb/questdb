@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -115,7 +115,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         Function arg = args.getQuick(argIndex);
         int argPosition = argPositions.getQuick(argIndex);
-        if (!ColumnType.isAssignableFrom(arg.getType(), ColumnType.LONG)) {
+        if (!ColumnType.isSameOrBuiltInWideningCast(arg.getType(), ColumnType.LONG)) {
             throw SqlException.$(argPosition, argName).put(" must be an integer");
         }
         final long valueLong = arg.getLong(null);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -105,18 +105,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Estimates how many buckets are needed to contain a target number of rows.
+     * <p>
+     * Formula: bucketsForRows = (totalBuckets * targetRows) / tableRows
+     * where totalBuckets = (partitionDuration / bucket) * partitionCount
+     */
     // kept public for testing
-    public static long estimateRowsPerBucket(long tableRows, long bucket, long partitionDuration, int partitionCount) {
-        if (partitionCount > 0) {
-            final double bucketToPartition = (double) bucket / partitionDuration;
-            return Math.max(1, (long) ((bucketToPartition * tableRows) / partitionCount));
+    public static long estimateBucketsForRows(long targetRows, long tableRows, long bucket, long partitionDuration, int partitionCount) {
+        if (partitionCount > 0 && tableRows > 0) {
+            // totalBuckets = (partitionDuration / bucket) * partitionCount
+            // bucketsForRows = totalBuckets * targetRows / tableRows
+            // Reorder to avoid overflow: (partitionDuration * partitionCount * targetRows) / (bucket * tableRows)
+            // Use double to handle large values without overflow
+            final double totalBuckets = ((double) partitionDuration / bucket) * partitionCount;
+            return Math.max(1, (long) ((totalBuckets * targetRows) / tableRows));
         }
         return 1;
     }
 
     @Override
     public void close() {
-        LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
+        LOG.debug().$("materialized view refresh job closing [workerId=").$(workerId).I$();
         Misc.free(refreshSqlExecutionContext);
         Misc.free(txnRangeLoader);
     }
@@ -137,15 +147,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Estimates density of rows per SAMPLE BY bucket. The estimate is not very precise as
-     * it doesn't use exact min/max timestamps for each partition, but it should do the job
-     * of splitting large refresh table scans into multiple smaller scans.
+     * Estimates how many buckets are needed to contain a target number of rows.
      */
-    private static long estimateRowsPerBucket(@NotNull TimestampDriver driver, @NotNull TableReader baseTableReader, long bucket) {
+    private static long estimateBucketsForRows(long targetRows, @NotNull TimestampDriver driver, @NotNull TableReader baseTableReader, long bucket) {
         final long tableRows = baseTableReader.size();
         final long partitionDuration = driver.approxPartitionDuration(baseTableReader.getPartitionedBy());
         final int partitionCount = baseTableReader.getPartitionCount();
-        return estimateRowsPerBucket(tableRows, bucket, partitionDuration, partitionCount);
+        return estimateBucketsForRows(targetRows, tableRows, bucket, partitionDuration, partitionCount);
     }
 
     private static void intersectIntervals(LongList intervals, long lo, long hi) {
@@ -332,7 +340,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (periodLo == Numbers.LONG_NULL) {
                     periodLo = baseTableReader.getMinTimestamp();
                 }
-                if (periodLo < rangeTo) {
+                // Check the last refresh txn: -1 means that there was no initial refresh, and we can
+                // ignore this range refresh. If we don't ignore it and later on the base table/view
+                // gets any range replace txns, the subsequent initial refresh may leave some dangling
+                // rows in the view since it only considers min/max timestamps from the table reader.
+                if (periodLo < rangeTo && viewState.getLastRefreshBaseTxn() != -1) {
                     minTs = periodLo;
                     maxTs = rangeTo;
                     // Bump lastPeriodHi once we're done. Its value is exclusive.
@@ -430,10 +442,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (minTs <= maxTs) {
             final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
             final long approxBucketSize = timestampSampler.getApproxBucketSize();
-            final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, approxBucketSize);
-            final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
+            final long rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
 
-            int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+            long step = estimateBucketsForRows(rowsPerQuery, driver, baseTableReader, approxBucketSize);
             final long maxStepDuration = driver.fromMicros(configuration.getMatViewMaxRefreshStepUs());
             while (step > 1 && approxStepDuration(step, approxBucketSize) > maxStepDuration) {
                 // the step is too large, check the duration of a 2x smaller step;
@@ -572,7 +583,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 compiler.getAsm(),
                 factory.getMetadata(),
                 tableWriter.getMetadata(),
-                columnFilter
+                columnFilter,
+                configuration
         );
     }
 
@@ -657,7 +669,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        int intervalStep = intervalIterator.getStep();
+        long intervalStep = intervalIterator.getStep();
         try {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
@@ -756,7 +768,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             if (insertedRows > batchSize && i < maxRetries && intervalStep > 1) {
                                 // Yes, the transaction is large, thus try once again with a proportionally smaller step.
                                 final double transactionRatio = (double) batchSize / insertedRows;
-                                intervalStep = Math.max((int) (transactionRatio * intervalStep) - 1, 1);
+                                intervalStep = Math.max((long) (transactionRatio * intervalStep) - 1, 1);
                                 walWriter.rollback();
                                 LOG.info().$("inserted too many rows in a single iteration, retrying with a reduced step [view=").$(viewTableToken)
                                         .$(", insertedRows=").$(insertedRows)
@@ -871,7 +883,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable LongList refreshIntervals,
             long minTs,
             long maxTs,
-            int step
+            long step
     ) {
         if (tzRules == null || tzRules.hasFixedOffset()) {
             long fixedTzOffset = tzRules != null ? tzRules.getOffset(0) : 0;

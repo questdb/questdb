@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
@@ -57,6 +59,7 @@ public class WalEventCursor {
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
+    private final ViewDefinitionInfo viewDefinitionInfo = new ViewDefinitionInfo();
     private long memSize;
     private long nextOffset = Integer.BYTES;
     private long offset = Integer.BYTES; // skip wal meta version
@@ -122,6 +125,13 @@ public class WalEventCursor {
 
     public byte getType() {
         return type;
+    }
+
+    public ViewDefinitionInfo getViewDefinitionInfo() {
+        if (type != VIEW_DEFINITION) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not VIEW_DEFINITION, type=").put(type);
+        }
+        return viewDefinitionInfo;
     }
 
     public boolean hasNext() {
@@ -245,6 +255,9 @@ public class WalEventCursor {
                 break;
             case MAT_VIEW_INVALIDATE:
                 mvInvalidationInfo.read();
+                break;
+            case VIEW_DEFINITION:
+                viewDefinitionInfo.read();
                 break;
             default:
                 throw CairoException.critical(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
@@ -743,6 +756,43 @@ public class WalEventCursor {
             rndSeed1 = readLong();
             arrayViewPool.clear();
             byteViewPool.clear();
+        }
+    }
+
+    public class ViewDefinitionInfo {
+        private final StringSink sink = new StringSink();
+        private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> viewDependencies = new LowerCaseCharSequenceObjHashMap<>();
+        private String viewSql;
+
+        public LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> getViewDependencies() {
+            return viewDependencies;
+        }
+
+        public String getViewSql() {
+            return viewSql;
+        }
+
+        private void read() {
+            viewSql = readString();
+
+            viewDependencies.clear();
+            final int numOfDependencies = readInt();
+            for (int i = 0; i < numOfDependencies; i++) {
+                final String tableName = readString();
+                final int numOfColumns = readInt();
+                final LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
+                for (int j = 0; j < numOfColumns; j++) {
+                    columns.add(readString());
+                }
+                // table and column names have to be string objects,
+                // they will be used in the view definition
+                viewDependencies.put(tableName, columns);
+            }
+        }
+
+        private String readString() {
+            sink.clear();
+            return sink.put(readStr()).toString();
         }
     }
 }

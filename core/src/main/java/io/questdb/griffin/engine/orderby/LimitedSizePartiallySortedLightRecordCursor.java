@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,8 +35,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 
 /**
- * SortedLightRecordCursor which implements LIMIT clause and assumes that base cursor is already sorted on designated timestamp, which is the first sort key.
- * Base record cursor processing is stopped when enough records with different timestamp values are found.
+ * SortedLightRecordCursor which implements LIMIT clause and assumes that base cursor is
+ * already sorted on designated timestamp, which is the first sort key. Base record cursor
+ * processing is stopped when enough records with different timestamp values are found.
  */
 public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRecordCursor, DynamicLimitCursor {
     private final LimitedSizeLongTreeChain chain;
@@ -114,6 +115,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         this.baseCursor = baseCursor;
+        baseCursor.expectLimitedIteration();
         baseRecord = baseCursor.getRecord();
         if (!isOpen) {
             isOpen = true;

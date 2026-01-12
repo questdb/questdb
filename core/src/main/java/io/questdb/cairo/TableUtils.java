@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
@@ -33,6 +36,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -61,6 +65,7 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -72,6 +77,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3PartitionPurgeTask;
+import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -134,6 +140,7 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final int TABLE_TYPE_MAT = 2;
     public static final int TABLE_TYPE_NON_WAL = 0;
+    public static final int TABLE_TYPE_VIEW = 3;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String TODO_FILE_NAME = "_todo_";
@@ -391,6 +398,7 @@ public final class TableUtils {
     public static void createTable(
             CairoConfiguration configuration,
             MemoryMARW memory,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             Path path,
             TableStructure structure,
             int tableVersion,
@@ -400,12 +408,13 @@ public final class TableUtils {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getDbRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
+        createTable(ff, root, telemetry, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
     }
 
     public static void createTable(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             MemoryMARW memory,
             Path path,
@@ -414,12 +423,13 @@ public final class TableUtils {
             int tableId,
             CharSequence dirName
     ) {
-        createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
+        createTable(ff, root, telemetry, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
     }
 
     public static void createTable(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             TableStructure structure,
             int tableVersion,
@@ -430,13 +440,14 @@ public final class TableUtils {
                 Path path = new Path();
                 MemoryMARW mem = Vm.getCMARWInstance()
         ) {
-            createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
+            createTable(ff, root, telemetry, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
         }
     }
 
     public static void createTable(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             MemoryMARW memory,
             Path path,
@@ -445,7 +456,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTableOrMatView(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
+        createTableOrViewOrMatView(ff, root, mkDirMode, telemetry, memory, null, path, tableDir, structure, tableVersion, tableId);
     }
 
     public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
@@ -455,126 +466,10 @@ public final class TableUtils {
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
-    public static void createTableOrMatView(
-            FilesFacade ff,
-            CharSequence root,
-            int mkDirMode,
-            MemoryMARW memory,
-            @Nullable BlockFileWriter blockFileWriter,
-            Path path,
-            CharSequence tableDir,
-            TableStructure structure,
-            int tableVersion,
-            int tableId
-    ) {
-        LOG.debug().$("create table [name=").$safe(tableDir).I$();
-        path.of(root).concat(tableDir).$();
-        if (ff.isDirOrSoftLinkDir(path.$())) {
-            throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
-        }
-        int rootLen = path.size();
-        boolean dirCreated = false;
-        try {
-            if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
-                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
-            }
-            dirCreated = true;
-            createTableOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
-        } catch (Throwable e) {
-            if (dirCreated) {
-                ff.rmdir(path.trimTo(rootLen).slash());
-            }
-            throw e;
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    public static void createTableOrMatViewFiles(
-            FilesFacade ff,
-            MemoryMARW memory,
-            @Nullable BlockFileWriter blockFileWriter,
-            Path path,
-            int rootLen,
-            CharSequence tableDir,
-            TableStructure structure,
-            int tableVersion,
-            int tableId
-    ) {
-        createTableOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
-    }
-
-    public static void createTableOrMatViewFiles(
-            FilesFacade ff,
-            MemoryMARW memory,
-            @Nullable BlockFileWriter blockFileWriter,
-            Path path,
-            int rootLen,
-            CharSequence tableDir,
-            TableStructure structure,
-            int tableVersion,
-            int tableId,
-            CharSequence txnFileName
-    ) {
-        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRONoCache(ff, path.trimTo(rootLen).$(), LOG) : 0;
-        try (MemoryMARW mem = memory) {
-            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            mem.jumpTo(0);
-            final int count = structure.getColumnCount();
-            path.trimTo(rootLen);
-            writeMetadata(structure, tableVersion, tableId, mem);
-            mem.sync(false);
-
-            // create symbol maps
-            int symbolMapCount = 0;
-            for (int i = 0; i < count; i++) {
-                if (ColumnType.isSymbol(structure.getColumnType(i))) {
-                    createSymbolMapFiles(
-                            ff,
-                            mem,
-                            path.trimTo(rootLen),
-                            structure.getColumnName(i),
-                            COLUMN_NAME_TXN_NONE,
-                            structure.getSymbolCapacity(i),
-                            structure.getSymbolCacheFlag(i)
-                    );
-                    symbolMapCount++;
-                }
-            }
-            mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            createColumnVersionFile(mem);
-            mem.sync(false);
-            mem.close();
-
-            resetTodoLog(ff, path, rootLen, mem);
-            // allocate txn scoreboard
-            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
-
-            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
-            createTableNameFile(mem, getTableNameFromDirName(tableDir));
-
-            if (structure.isMatView()) {
-                assert blockFileWriter != null;
-                try (BlockFileWriter writer = blockFileWriter) {
-                    writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                    MatViewDefinition.append(structure.getMatViewDefinition(), writer);
-                }
-            }
-
-            // Create TXN file last, it's used to determine if table exists
-            mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
-            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
-            mem.sync(false);
-        } finally {
-            if (dirFd > 0) {
-                ff.fsyncAndClose(dirFd);
-            }
-        }
-    }
-
     public static void createTableOrMatViewInVolume(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             MemoryMARW memory,
             Path path,
@@ -583,12 +478,13 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTableOrMatViewInVolume(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
+        createTableOrMatViewInVolume(ff, root, telemetry, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
     }
 
     public static void createTableOrMatViewInVolume(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             MemoryMARW memory,
             @Nullable BlockFileWriter blockFileWriter,
@@ -620,9 +516,148 @@ public final class TableUtils {
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }
-            createTableOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    public static void createTableOrViewOrMatView(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            @Nullable Telemetry<TelemetryTask> telemetry,
+            MemoryMARW memory,
+            @Nullable BlockFileWriter blockFileWriter,
+            Path path,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        LOG.debug().$("create table [name=").$safe(tableDir).I$();
+        path.of(root).concat(tableDir).$();
+        if (ff.isDirOrSoftLinkDir(path.$())) {
+            throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
+        }
+        int rootLen = path.size();
+        boolean dirCreated = false;
+        try {
+            if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
+            }
+            dirCreated = true;
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
+        } catch (Throwable e) {
+            if (dirCreated) {
+                ff.rmdir(path.trimTo(rootLen).slash());
+            }
+            throw e;
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    public static void createTableOrViewOrMatViewFiles(
+            FilesFacade ff,
+            MemoryMARW memory,
+            @Nullable BlockFileWriter blockFileWriter,
+            @Nullable Telemetry<TelemetryTask> telemetry,
+            Path path,
+            int rootLen,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+    }
+
+    public static void createTableOrViewOrMatViewFiles(
+            FilesFacade ff,
+            MemoryMARW memory,
+            @Nullable BlockFileWriter blockFileWriter,
+            @Nullable Telemetry<TelemetryTask> telemetry,
+            Path path,
+            int rootLen,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence txnFileName
+    ) {
+        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRONoCache(ff, path.trimTo(rootLen).$(), LOG) : 0;
+        try (MemoryMARW mem = memory) {
+            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            mem.jumpTo(0);
+            path.trimTo(rootLen);
+            writeMetadata(structure, tableVersion, tableId, mem);
+            mem.sync(false);
+
+            // create symbol maps
+            int symbolMapCount = 0;
+            if (!structure.isView()) {
+                for (int i = 0, n = structure.getColumnCount(); i < n; i++) {
+                    int columnType = structure.getColumnType(i);
+                    if (ColumnType.isSymbol(columnType)) {
+                        createSymbolMapFiles(
+                                ff,
+                                mem,
+                                path.trimTo(rootLen),
+                                structure.getColumnName(i),
+                                COLUMN_NAME_TXN_NONE,
+                                structure.getSymbolCapacity(i),
+                                structure.getSymbolCacheFlag(i)
+                        );
+                        symbolMapCount++;
+                    }
+
+                    if (telemetry != null) {
+                        if (ColumnType.isTimestampNano(columnType)) {
+                            TelemetryTask.store(telemetry, TelemetryOrigin.NO_MATTERS, TelemetryEvent.USE_TIMESTAMP_NANOS);
+                        } else if (ColumnType.isArray(columnType)) {
+                            TelemetryTask.store(telemetry, TelemetryOrigin.NO_MATTERS, TelemetryEvent.USE_ARRAY);
+                        }
+                    }
+                }
+
+
+                mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                createColumnVersionFile(mem);
+                mem.sync(false);
+                mem.close();
+
+                resetTodoLog(ff, path, rootLen, mem);
+                // allocate txn scoreboard
+                path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+            }
+
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
+            createTableNameFile(mem, getTableNameFromDirName(tableDir));
+
+            if (structure.isView()) {
+                assert blockFileWriter != null;
+                try (BlockFileWriter writer = blockFileWriter) {
+                    writer.of(path.trimTo(rootLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+                    ViewDefinition.append(structure.getViewDefinition(), writer);
+                }
+            }
+            if (structure.isMatView()) {
+                assert blockFileWriter != null;
+                try (BlockFileWriter writer = blockFileWriter) {
+                    writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    MatViewDefinition.append(structure.getMatViewDefinition(), writer);
+                }
+            }
+
+            // Create TXN file last, it is used to determine if table exists
+            mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
+            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
+            mem.sync(false);
+        } finally {
+            if (dirFd > 0) {
+                ff.fsyncAndClose(dirFd);
+            }
         }
     }
 
@@ -859,6 +894,16 @@ public final class TableUtils {
         return dirName;
     }
 
+    public static int getTableIdFromTableDir(CharSequence dirName) throws NumericException {
+        int suffixIndex = Chars.indexOf(dirName, SYSTEM_TABLE_NAME_SUFFIX);
+        if (suffixIndex == -1) {
+            throw NumericException.instance()
+                    .put("cannot parse table id from table dir name [dirName=").put(dirName)
+                    .put(']');
+        }
+        return Numbers.parseInt(dirName, suffixIndex + 1, dirName.length());
+    }
+
     public static CharSequence getTableNameFromDirName(CharSequence privateName) {
         int suffixIndex = Chars.indexOf(privateName, SYSTEM_TABLE_NAME_SUFFIX);
         if (suffixIndex == -1) {
@@ -1082,6 +1127,12 @@ public final class TableUtils {
             }
         }
         return length > 0 && tableName.charAt(0) != ' ' && tableName.charAt(length - 1) != ' ';
+    }
+
+    public static boolean isViewDefinitionFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+        return ff.exists(path.$());
     }
 
     public static int lengthOf(@Nullable CharSequence columnValue) {

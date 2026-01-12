@@ -27,12 +27,12 @@ stages:
 
     jobs:
       - job: RunOn
+        workspace:
+          clean: all
         displayName: "on"
         strategy:
           matrix:
-            ubuntu-latest:
-              imageName: "ubuntu-latest"
-              poolName: "Azure Pipelines"
+            hetzner:
               os: Linux
               jdk: "1.17"
               testset: "all"
@@ -40,11 +40,16 @@ stages:
               javadoc_step: ""
               javadoc_profile: ""
         pool:
-          vmImage: $(imageName)
-          name: $(poolName)
+          name: hetzner-docker
         timeoutInMinutes: 60
         variables:
           SOURCE_CODE_CHANGED: true
           ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
         steps:
+          - bash: |
+              sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
+              JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
+              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+              echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+              echo "JAVA_HOME will be set to: $JAVA_PATH"
           - template: templates/steps.yml

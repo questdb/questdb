@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -105,8 +105,9 @@ public class TableConverter {
                                 boolean isProtected = tableFlagResolver.isProtected(tableName);
                                 boolean isSystem = tableFlagResolver.isSystem(tableName);
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
+                                boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
                                 boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
-                                final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, isMatView, walEnabled, isSystem, isProtected, isPublic);
+                                final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, isView, isMatView, walEnabled, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
@@ -170,7 +171,7 @@ public class TableConverter {
 
             final byte walType = ff.readNonNegativeByte(fd, 0);
             return switch (walType) {
-                case TABLE_TYPE_WAL, TABLE_TYPE_MAT -> true;
+                case TABLE_TYPE_WAL, TABLE_TYPE_VIEW, TABLE_TYPE_MAT -> true;
                 case TABLE_TYPE_NON_WAL -> false;
                 default ->
                         throw CairoException.critical(ff.errno()).put("could not read walType from file [path=").put(path).put(']');

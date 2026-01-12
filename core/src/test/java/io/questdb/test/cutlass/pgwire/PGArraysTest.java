@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -132,7 +131,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testArrayBindVarEdgeCases() throws Exception {
-        skipOnWalRun();
         // we want bind vars, hence extended mode
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             assertArrayBindVarQueryFails(
@@ -180,8 +178,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testArrayBindWithNull() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[])")) {
                 stmt.execute();
@@ -204,8 +200,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testArrayInsertWrongDimensionCount() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
                 stmt.execute();
@@ -247,8 +241,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testArrayMaxDimensions() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             int dimCount = ColumnType.ARRAY_NDIMS_LIMIT + 1;
             try (PreparedStatement statement = connection.prepareStatement("select ? as arr from long_sequence(1);")) {
@@ -285,8 +277,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testArrayNonFinite() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
 
             // we have to explicitly cast to double[] since in the Simple Mode PG JDBC sends array as string:
@@ -311,8 +301,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testArrayResultSet() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table xd as (select rnd_double_array(2, 9) from long_sequence(5))");
 
@@ -338,7 +326,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testArrayStringResult() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("select current_schemas(true) from long_sequence(1)")) {
                 sink.clear();
@@ -416,9 +403,34 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
-    public void testExplicitCastInsertStringToArrayColum() throws Exception {
-        skipOnWalRun();
+    public void testArrayViewWithBindingVars() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (arr double[], ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("insert into tango values ('{1.0, 2.0}', '2000'), ('{3.0, 4.0}', '2001')");
+                stmt.execute("create view v_tango as select arr[1] as x, arr[2] as y from tango");
+            }
 
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select x, y from v_tango where x = ?")) {
+                stmt.setInt(1, 1);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[DOUBLE],y[DOUBLE]
+                                    1.0,2.0
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExplicitCastInsertStringToArrayColum() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[])")) {
                 stmt.execute();
@@ -427,6 +439,8 @@ public class PGArraysTest extends BasePGTest {
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{1,2,3,4,5}'::double[])")) {
                 stmt.execute();
             }
+
+            drainWalQueue();
 
             try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
                 sink.clear();
@@ -447,8 +461,6 @@ public class PGArraysTest extends BasePGTest {
     @Ignore("todo: this currently fail with binary encoding since client BIND message includes the number of dimensions: 1, " +
             "but the table is created with 2 dimensions. should we allow implicit casting of empty arrays to any dimension?")
     public void testImplicitCastingOfEmptyArraysToDifferentDimension() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
                 stmt.execute();
@@ -457,6 +469,8 @@ public class PGArraysTest extends BasePGTest {
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
                 stmt.setObject(1, new double[0]);
                 stmt.execute();
+
+                drainWalQueue();
 
                 assertPgWireQuery(connection,
                         "select * from x",
@@ -470,8 +484,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testInsertEmptyArray() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[])")) {
                 stmt.execute();
@@ -482,6 +494,8 @@ public class PGArraysTest extends BasePGTest {
                 stmt.setArray(1, arr);
                 stmt.execute();
             }
+
+            drainWalQueue();
 
             try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
                 sink.clear();
@@ -500,8 +514,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testInsertJaggedArray() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeQuery("SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6, 7]] arr FROM long_sequence(1)");
@@ -531,6 +543,9 @@ public class PGArraysTest extends BasePGTest {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("insert into tab values ('{{1.0, 2}, {3, 4}, {5, 6, 7}}'::double[][])");
             }
+
+            drainWalQueue();
+
             assertPgWireQuery(connection, "SELECT * from tab",
                     """
                             arr[ARRAY]
@@ -591,8 +606,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testInsertStringToArrayColum() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
                 stmt.execute();
@@ -606,6 +619,8 @@ public class PGArraysTest extends BasePGTest {
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values (null::string)")) {
                 stmt.execute();
             }
+
+            drainWalQueue();
 
             try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
                 sink.clear();
@@ -627,6 +642,8 @@ public class PGArraysTest extends BasePGTest {
                 stmt.setObject(1, null);
                 stmt.execute();
 
+                drainWalQueue();
+
                 assertPgWireQuery(connection,
                         "select * from x",
                         """
@@ -641,6 +658,8 @@ public class PGArraysTest extends BasePGTest {
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
                 stmt.setObject(1, "{}");
                 stmt.execute();
+
+                drainWalQueue();
 
                 assertPgWireQuery(connection,
                         "select * from x",
@@ -657,8 +676,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testInsertStringToArrayColum_negativeScenarios() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
                 stmt.execute();
@@ -692,15 +709,16 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testSendBufferOverflowNonVanilla() throws Exception {
-        Assume.assumeTrue(walEnabled);
         int dimLen1 = 10 + bufferSizeRnd.nextInt(90);
         int dimLen2 = 10 + bufferSizeRnd.nextInt(90);
         String literal = buildArrayLiteral2d(dimLen1, dimLen2);
         String result = buildArrayResult2d(dimLen1, dimLen2) + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (Statement stmt = conn.createStatement()) {
+                //noinspection SqlSourceToSinkFlow
                 stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(9))");
             }
+            drainWalQueue();
             try (PreparedStatement stmt = conn.prepareStatement("SELECT n, arr[2:,2:] arr FROM tango")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
@@ -725,11 +743,11 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testSendBufferOverflowVanilla() throws Exception {
-        Assume.assumeTrue(walEnabled);
         int elemCount = 100 + bufferSizeRnd.nextInt(900);
         String literal = buildArrayLiteral1d(elemCount);
         String result = buildArrayResult1d(elemCount) + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            //noinspection SqlSourceToSinkFlow
             try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(9)")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
@@ -748,6 +766,44 @@ public class PGArraysTest extends BasePGTest {
             }
         }, () -> {
             recvBufferSize = 4 * elemCount;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
+    public void testSendBufferOverflowVarcharWithArray() throws Exception {
+        // Test with large VARCHAR and large array in the same row
+        int elemCount = 100 + bufferSizeRnd.nextInt(900);
+        int varcharSize = 500 + bufferSizeRnd.nextInt(500);
+
+        String arrayLiteral = buildArrayLiteral1d(elemCount);
+        String arrayResult = buildArrayResult1d(elemCount);
+
+        String varcharGenerator = "lpad('', " + varcharSize + ", 'x')::varchar";
+
+        String expectedVarchar = "x".repeat(varcharSize);
+
+        String result = expectedVarchar + "," + arrayResult + '\n';
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            //noinspection SqlSourceToSinkFlow
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + varcharGenerator + " v, " + arrayLiteral + " arr FROM long_sequence(9)")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("n[BIGINT],v[VARCHAR],arr[ARRAY]\n" +
+                                    "1," + result +
+                                    "2," + result +
+                                    "3," + result +
+                                    "4," + result +
+                                    "5," + result +
+                                    "6," + result +
+                                    "7," + result +
+                                    "8," + result +
+                                    "9," + result,
+                            sink, rs);
+                }
+            }
+        }, () -> {
+            recvBufferSize = 4 * (elemCount + varcharSize);
             forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
         });
     }
@@ -803,8 +859,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testStringToArrayCast() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("select '{\"1\",\"2\",\"3\",\"4\",\"5\"}'::double[] from long_sequence(1)")) {
                 sink.clear();
@@ -823,8 +877,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testTypeRewrites() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             assertPgWireQuery(connection,
                     "select '{1}'::double[] as arr from long_sequence(1)",
@@ -964,10 +1016,4 @@ public class PGArraysTest extends BasePGTest {
         }
         b.append("}");
     }
-
-    private void skipOnWalRun() {
-        Assume.assumeTrue("Test disabled during WAL run.", !walEnabled);
-    }
-
-
 }

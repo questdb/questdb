@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -296,7 +296,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             );
             sqlExecutionContext.setValidationOnly(true);
             final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
+            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_QUERY_VALIDATE);
             state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
             state.setQueryType(cc.getType());
             try {
@@ -355,6 +355,10 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE MAT VIEW");
                     case CompiledQuery.REFRESH_MAT_VIEW ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "REFRESH MAT VIEW");
+                    case CompiledQuery.CREATE_VIEW ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE VIEW");
+                    case CompiledQuery.ALTER_VIEW ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER VIEW");
                     default -> sendConfirmation(state, configuration.getKeepAliveHeader(), "UNKNOWN");
                 }
             } catch (TableReferenceOutOfDateException e) {

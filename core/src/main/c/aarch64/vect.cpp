@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,45 +30,53 @@ extern "C" {
 
 // DOUBLE
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_countDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
-    return countDouble_Vanilla((double*) pDouble, count);
+    return countDouble_Vanilla((double *) pDouble, count);
 }
 
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
-    return sumDouble_Vanilla((double*) pDouble, count);
+    return sumDouble_Vanilla((double *) pDouble, count);
+}
+
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDoubleAcc(JNIEnv *env, jclass cl, jlong pDouble, jlong count, jlong pAccCount) {
+    return sumDoubleAcc_Vanilla((double *) pDouble, count, (int64_t*) pAccCount);
 }
 
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDoubleKahan(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
-    return sumDoubleKahan_Vanilla((double*) pDouble, count);
+    return sumDoubleKahan_Vanilla((double *) pDouble, count);
 }
 
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDoubleNeumaier(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
-    return sumDoubleNeumaier_Vanilla((double*) pDouble, count);
+    return sumDoubleNeumaier_Vanilla((double *) pDouble, count);
 }
 
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_minDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
-    return minDouble_Vanilla((double*) pDouble, count);
+    return minDouble_Vanilla((double *) pDouble, count);
 }
 
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_maxDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
-    return maxDouble_Vanilla((double*) pDouble, count);
+    return maxDouble_Vanilla((double *) pDouble, count);
 }
 
 // INT
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_countInt(JNIEnv *env, jclass cl, jlong pInt, jlong count) {
-    return countInt_Vanilla((int*) pInt, count);
+    return countInt_Vanilla((int *) pInt, count);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_sumInt(JNIEnv *env, jclass cl, jlong pInt, jlong count) {
-    return sumInt_Vanilla((int*) pInt, count);
+    return sumInt_Vanilla((int *) pInt, count);
+}
+
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumIntAcc(JNIEnv *env, jclass cl, jlong pInt, jlong count, jlong pAccCount) {
+    return sumIntAcc_Vanilla((int32_t *) pInt, count, (int64_t *) pAccCount);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_minInt(JNIEnv *env, jclass cl, jlong pInt, jlong count) {
-    return minInt_Vanilla((int*) pInt, count);
+    return minInt_Vanilla((int *) pInt, count);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_maxInt(JNIEnv *env, jclass cl, jlong pInt, jlong count) {
-    return maxInt_Vanilla((int*) pInt, count);
+    return maxInt_Vanilla((int *) pInt, count);
 }
 
 // LONG
@@ -79,6 +87,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_countLong(JNIEnv *env, jclass c
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_sumLong(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
     return sumLong_Vanilla((int64_t *) pLong, count);
+}
+
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumLongAcc(JNIEnv *env, jclass cl, jlong pLong, jlong count, jlong pAccCount) {
+    return sumLongAcc_Vanilla((int64_t *) pLong, count, (int64_t *) pAccCount);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_minLong(JNIEnv *env, jclass cl, jlong pLong, jlong count) {

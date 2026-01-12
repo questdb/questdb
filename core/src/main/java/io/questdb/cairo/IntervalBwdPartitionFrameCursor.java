@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -119,7 +119,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
-                long lo = timestampFinder.findTimestamp(intervalLo - 1, 0, hi);
+                long lo = intervalLo > Long.MIN_VALUE ? timestampFinder.findTimestamp(intervalLo - 1, 0, hi) : 0;
                 if (hi > lo) {
                     size += (hi - lo);
 
@@ -237,9 +237,9 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                     final byte format = reader.getPartitionFormat(currentPartition);
                     if (format == PartitionFormat.PARQUET) {
-                        assert parquetDecoder.getFileAddr() != -1 : "parquet decoder is not initialized";
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetDecoder = parquetDecoder;
+                        frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(currentPartition);
+                        assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
                     } else {
                         assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;

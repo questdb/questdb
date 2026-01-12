@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,11 +30,14 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 // When enabled, this class tracks TableReader usage of partitions.
 // The TableWriter and O3PartitionPurgeJob check if the particular partition version is in use to prevent partition overwrite bugs.
 // This is supposed to be disabled in production runs and only enabled in tests or on special debugging occasions via configuration.
 public class PartitionOverwriteControl {
     private static final Log LOG = LogFactory.getLog(PartitionOverwriteControl.class);
+    private final AtomicInteger errorCount = new AtomicInteger();
     ConcurrentHashMap<ObjList<ReaderPartitionUsage>> readerPartitionUsageMap = new ConcurrentHashMap<>();
     private boolean enabled;
 
@@ -75,6 +78,10 @@ public class PartitionOverwriteControl {
         this.enabled = true;
     }
 
+    public int getErrorCount() {
+        return errorCount.get();
+    }
+
     public void notifyPartitionMutates(
             TableToken tableToken,
             int timestampType,
@@ -94,6 +101,7 @@ public class PartitionOverwriteControl {
                             long visibleRows = TxReader.getPartitionSizeByRawIndex(readerPartitionUsage.partitionsList, partitionBlockIndex);
 
                             if (usedPartitionNameTxn == partitionNameTxn && visibleRows > mutateFromRow) {
+                                errorCount.incrementAndGet();
                                 throw CairoException.critical(0).put("partition is overwritten while being in use by a reader [table=").put(tableToken.getTableName())
                                         .put(", partition=").ts(timestampType, partitionTimestamp)
                                         .put(", partitionNameTxn=").put(partitionNameTxn)

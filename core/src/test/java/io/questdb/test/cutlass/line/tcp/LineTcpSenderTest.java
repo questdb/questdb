@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -445,6 +445,43 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testDecimalDefaultValuesWithoutWal() throws Exception {
+        runInContext(r -> {
+            engine.execute("""
+                    CREATE TABLE decimal_test (
+                        dec8 DECIMAL(2, 0),
+                        dec16 DECIMAL(4, 1),
+                        dec32 DECIMAL(8, 2),
+                        dec64 DECIMAL(16, 4),
+                        dec128 DECIMAL(34, 8),
+                        dec256 DECIMAL(64, 16),
+                        value INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            assertTableExists(engine, "decimal_test");
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                sender.table("decimal_test")
+                        .longColumn("value", 1)
+                        .at(100_000, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, "decimal_test", 1);
+                assertTable("""
+                        dec8\tdec16\tdec32\tdec64\tdec128\tdec256\tvalue\tts
+                        \t\t\t\t\t\t1\t1970-01-01T00:00:00.100000Z
+                        """, "decimal_test");
+            }
+        });
+    }
+
+    @Test
     public void testDouble_edgeValues() throws Exception {
         final boolean isMicros = ColumnType.isTimestampMicro(timestampType.getTimestampType());
         runInContext(r -> {
@@ -843,7 +880,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
         });
     }
-
 
     @Test
     public void testInsertDecimalTextFormatPrecisionOverflow() throws Exception {

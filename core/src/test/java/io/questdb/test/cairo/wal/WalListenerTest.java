@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -188,7 +189,7 @@ public class WalListenerTest extends AbstractCairoTest {
             // No data event, segment closed ignored
             Assert.assertEquals(0, listener.events.size());
 
-            engine.dropTableOrMatView(Path.getThreadLocal(""), tableToken2.get());
+            engine.dropTableOrViewOrMatView(Path.getThreadLocal(""), tableToken2.get());
 
             Assert.assertEquals(
                     new WalListenerEvent(
@@ -312,40 +313,12 @@ public class WalListenerTest extends AbstractCairoTest {
         }
     }
 
-    static class WalListenerEvent {
-        public final TableToken oldTableToken;
-        public final int segmentId;
-        public final int segmentTxn;
-        public final TableToken tableToken;
-        public final long timestamp;
-        public final long txn;
-        public final WalListenerEventType type;
-        public final int walId;
-
-        WalListenerEvent(
-                WalListenerEventType type,
-                TableToken tableToken,
-                long txn,
-                long timestamp,
-                int walId,
-                int segmentId,
-                int segmentTxn,
-                TableToken oldTableToken
-        ) {
-            this.type = type;
-            this.tableToken = tableToken;
-            this.txn = txn;
-            this.timestamp = timestamp;
-            this.walId = walId;
-            this.segmentId = segmentId;
-            this.segmentTxn = segmentTxn;
-            this.oldTableToken = oldTableToken;
-        }
+    record WalListenerEvent(WalListenerEventType type, TableToken tableToken, long txn, long timestamp, int walId,
+                            int segmentId, int segmentTxn, TableToken oldTableToken) {
 
         @Override
         public boolean equals(Object obj) {
-            if (obj instanceof WalListenerEvent) {
-                WalListenerEvent that = (WalListenerEvent) obj;
+            if (obj instanceof WalListenerEvent that) {
                 return this.type == that.type &&
                         Objects.equals(this.tableToken, that.tableToken) &&
                         this.txn == that.txn &&
@@ -359,7 +332,7 @@ public class WalListenerTest extends AbstractCairoTest {
         }
 
         @Override
-        public String toString() {
+        public @NotNull String toString() {
             return "WalListenerEvent{" +
                     "type=" + type +
                     ", tableToken=" + tableToken +

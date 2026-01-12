@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -226,7 +226,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 LOG.error().$("could not initialize connection context [fd=").$(connectionContext.getFd())
                         .$(", e=").$safe(e.getFlyweightMessage())
                         .I$();
-                ioContextFactory.done(connectionContext);
                 disconnect(connectionContext, DISCONNECT_REASON_TLS_SESSION_INIT_FAILED);
             }
         }

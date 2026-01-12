@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.mp.SOCountDownLatch;
@@ -34,44 +33,14 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
-@RunWith(Parameterized.class)
 public class TxnScoreboardPoolTest extends AbstractCairoTest {
-    private static int SCOREBOARD_FORMAT = 2;
-
-    public TxnScoreboardPoolTest(int version) throws Exception {
-        if (version != SCOREBOARD_FORMAT) {
-            SCOREBOARD_FORMAT = version;
-            tearDownStatic();
-            setUpStatic();
-        }
-    }
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
-        AbstractCairoTest.setUpStatic();
-    }
-
-    @Parameterized.Parameters(name = "V{0}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {1},
-                {2},
-        });
-    }
 
     @Test
     public void testConcurrentRelease() throws Exception {
@@ -142,8 +111,6 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
 
     @Test
     public void testDelayedCloseOnClear() throws Exception {
-        Assume.assumeTrue(SCOREBOARD_FORMAT == 2);
-
         assertMemoryLeak(() -> {
             engine.execute("create table x (i int)");
             TableToken token = engine.verifyTableName("x");
@@ -154,30 +121,6 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
             Assert.assertTrue(sc1.acquireTxn(0, 10));
 
             sc1.close();
-        });
-    }
-
-    @Test
-    public void testNonWalTableRename() throws Exception {
-        assertMemoryLeak(() -> {
-            Assume.assumeFalse(Os.isWindows() || SCOREBOARD_FORMAT != 1);
-
-            engine.execute("create table x (i int)");
-            TableToken token = engine.verifyTableName("x");
-
-            TxnScoreboard sc1 = engine.getTxnScoreboard(token);
-            Assert.assertTrue(sc1.acquireTxn(0, 10));
-
-            engine.execute("rename table x to x1");
-            engine.execute("create table x (i int)");
-            TableToken token2 = engine.verifyTableName("x");
-
-            TxnScoreboard sc2 = engine.getTxnScoreboard(token2);
-            Assert.assertTrue(sc2.isRangeAvailable(0, 100));
-            Assert.assertTrue(sc2.acquireTxn(0, 1));
-
-            sc1.close();
-            sc2.close();
         });
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,9 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
 
+/**
+ * Abstract base class for chunked HTTP response handling.
+ */
 public abstract class AbstractChunkedResponse implements Response, Fragment {
     private final static int CRLF_LEN = 2;
     private static final int STATE_CHUNK_DATA = 1;
@@ -49,12 +52,25 @@ public abstract class AbstractChunkedResponse implements Response, Fragment {
     private boolean receive = true;
     private int state = STATE_CHUNK_SIZE;
 
+    /**
+     * Constructs a new chunked response handler.
+     *
+     * @param bufLo          the low address of the buffer
+     * @param bufHi          the high address of the buffer
+     * @param defaultTimeout the default timeout in milliseconds
+     */
     public AbstractChunkedResponse(long bufLo, long bufHi, int defaultTimeout) {
         this.bufLo = bufLo;
         this.bufHi = bufHi;
         this.defaultTimeout = defaultTimeout;
     }
 
+    /**
+     * Begins processing a new chunk of response data.
+     *
+     * @param lo the low address of the data
+     * @param hi the high address of the data
+     */
     public void begin(long lo, long hi) {
         this.dataLo = lo;
         this.dataHi = hi;
@@ -219,5 +235,13 @@ public abstract class AbstractChunkedResponse implements Response, Fragment {
         return Unsafe.getUnsafe().getByte(addr);
     }
 
+    /**
+     * Receives data into the buffer or throws an exception.
+     *
+     * @param bufLo   the low address of the buffer
+     * @param bufHi   the high address of the buffer
+     * @param timeout the timeout in milliseconds
+     * @return the number of bytes received
+     */
     protected abstract int recvOrDie(long bufLo, long bufHi, int timeout);
 }

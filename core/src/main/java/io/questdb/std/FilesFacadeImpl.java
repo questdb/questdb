@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -314,7 +314,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public void madvise(long address, long len, int advise) {
-        if (advise > -1) {
+        if (address != 0 && advise > -1) {
             Files.madvise(address, len, advise);
         }
     }

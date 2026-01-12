@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 public interface PoolListener {
     short EV_CREATE = 10;
     short EV_CREATE_EX = 14;
+    short EV_DROPPED = 27;
     short EV_EXPIRE = 17;
     short EV_EX_RESEND = 21;
     short EV_FULL = 25;
@@ -51,6 +52,7 @@ public interface PoolListener {
     byte SRC_SQL_COMPILER = 6;
     byte SRC_TABLE_METADATA = 7;
     byte SRC_TABLE_REGISTRY = 5;
+    byte SRC_VIEW_WAL_WRITER = 8;
     byte SRC_WAL_WRITER = 4;
     byte SRC_WRITER = 1;
 

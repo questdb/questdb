@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -182,7 +182,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getTextConfiguration().getTextLexerStringPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getTextConfiguration().getTimestampAdapterPoolCapacity());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getTextConfiguration().getUtf8SinkSize());
-        Assert.assertEquals(2, configuration.getCairoConfiguration().getScoreboardFormat());
         Assert.assertEquals(0, configuration.getHttpServerConfiguration().getBindIPv4Address());
         Assert.assertEquals(9000, configuration.getHttpServerConfiguration().getBindPort());
 
@@ -206,6 +205,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
@@ -277,6 +277,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertModelPoolCapacity());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getCompileViewModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getInsertModelBatchSize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getCreateTableModelBatchSize());
@@ -302,9 +303,12 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
         Assert.assertEquals(0.05, configuration.getCairoConfiguration().getSqlParallelFilterPreTouchThreshold(), 0.000001);
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelTopKEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
+        Assert.assertEquals(50_000, configuration.getCairoConfiguration().getSqlParallelWorkStealingSpinTimeout());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
@@ -315,6 +319,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxCapacity());
         Assert.assertEquals(Numbers.SIZE_1GB, configuration.getCairoConfiguration().getGroupByPresizeMaxHeapSize());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorDefaultChunkSize());
+        Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getGroupByParallelTopKThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlOrderBySortEnabled());
         Assert.assertEquals(600, configuration.getCairoConfiguration().getSqlOrderByRadixSortThreshold());
 
@@ -323,7 +328,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
-        Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlJitPageAddressCacheThreshold());
         Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
 
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getRndFunctionMemoryPageSize());
@@ -473,6 +477,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWalPurgeInterval());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getWalRecreateDistressedSequencerAttempts());
         Assert.assertEquals(120_000, configuration.getCairoConfiguration().getInactiveWalWriterTTL());
+        Assert.assertEquals(60_000, configuration.getCairoConfiguration().getInactiveViewWalWriterTTL());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
         Assert.assertTrue(configuration.getCairoConfiguration().getWalEnabledDefault());
@@ -1753,6 +1758,57 @@ public class PropServerConfigurationTest {
     public void testWebConsolePathChangeUpdatesDefaultDependenciesFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
 
+        final ObjList<FuzzItem> pathsThatCanBePinned = getFuzzItemObjList();
+
+        String webConsolePath = rnd.nextString(64);
+        Properties properties = new Properties();
+        properties.setProperty("http.context.web.console", webConsolePath);
+        int pinCount = rnd.nextInt(pathsThatCanBePinned.size() - 1) + 1; // at least one
+        IntHashSet pinnedIndexes = new IntHashSet();
+        for (int i = 0; i < pinCount; i++) {
+            int index = rnd.nextPositiveInt() % pathsThatCanBePinned.size();
+            FuzzItem item = pathsThatCanBePinned.getQuick(index);
+            properties.setProperty(item.key, item.value);
+            pinnedIndexes.add(index);
+        }
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        var expected = new ObjHashSet<>();
+
+        for (int i = 0; i < pathsThatCanBePinned.size(); i++) {
+            expected.clear();
+            FuzzItem item = pathsThatCanBePinned.getQuick(i);
+            if (pinnedIndexes.contains(i)) {
+                expected.add(item.value);
+            }
+
+            for (int j = 0; j < item.webConsoleExpectedValue.size(); j++) {
+                expected.add(webConsolePath + item.webConsoleExpectedValue.get(j));
+            }
+            Assert.assertEquals(
+                    expected.toString(),
+                    item.getter.apply(configuration.getHttpServerConfiguration()).toString()
+            );
+        }
+
+        // check the ILP did not move
+        Assert.assertEquals(
+                HttpFullFatServerConfiguration.CONTEXT_PATH_ILP.toString(),
+                configuration.getHttpServerConfiguration().getContextPathILP().toString()
+        );
+
+        Assert.assertEquals(
+                "[/ping]",
+                configuration.getHttpServerConfiguration().getContextPathILPPing().toString()
+        );
+
+        Utf8SequenceObjHashMap<Utf8Sequence> redirectMap = configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRedirectMap();
+        Assert.assertEquals(2, redirectMap.size());
+        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath)).toString());
+        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath + "/")).toString());
+    }
+
+    private static @NotNull ObjList<FuzzItem> getFuzzItemObjList() {
         final ObjList<FuzzItem> pathsThatCanBePinned = new ObjList<>();
         pathsThatCanBePinned.add(
                 new FuzzItem(
@@ -1801,53 +1857,7 @@ public class PropServerConfigurationTest {
                         HttpFullFatServerConfiguration::getContextPathExec
                 )
         );
-
-        String webConsolePath = rnd.nextString(64);
-        Properties properties = new Properties();
-        properties.setProperty("http.context.web.console", webConsolePath);
-        int pinCount = rnd.nextInt(pathsThatCanBePinned.size() - 1) + 1; // at least one
-        IntHashSet pinnedIndexes = new IntHashSet();
-        for (int i = 0; i < pinCount; i++) {
-            int index = rnd.nextPositiveInt() % pathsThatCanBePinned.size();
-            FuzzItem item = pathsThatCanBePinned.getQuick(index);
-            properties.setProperty(item.key, item.value);
-            pinnedIndexes.add(index);
-        }
-
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        var expected = new ObjHashSet<>();
-
-        for (int i = 0; i < pathsThatCanBePinned.size(); i++) {
-            expected.clear();
-            FuzzItem item = pathsThatCanBePinned.getQuick(i);
-            if (pinnedIndexes.contains(i)) {
-                expected.add(item.value);
-            }
-
-            for (int j = 0; j < item.webConsoleExpectedValue.size(); j++) {
-                expected.add(webConsolePath + item.webConsoleExpectedValue.get(j));
-            }
-            Assert.assertEquals(
-                    expected.toString(),
-                    item.getter.apply(configuration.getHttpServerConfiguration()).toString()
-            );
-        }
-
-        // check the ILP did not move
-        Assert.assertEquals(
-                HttpFullFatServerConfiguration.CONTEXT_PATH_ILP.toString(),
-                configuration.getHttpServerConfiguration().getContextPathILP().toString()
-        );
-
-        Assert.assertEquals(
-                "[/ping]",
-                configuration.getHttpServerConfiguration().getContextPathILPPing().toString()
-        );
-
-        Utf8SequenceObjHashMap<Utf8Sequence> redirectMap = configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRedirectMap();
-        Assert.assertEquals(2, redirectMap.size());
-        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath)).toString());
-        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath + "/")).toString());
+        return pathsThatCanBePinned;
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws Exception {
@@ -1922,7 +1932,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getTextConfiguration().getTextLexerStringPoolCapacity());
         Assert.assertEquals(512, configuration.getTextConfiguration().getTimestampAdapterPoolCapacity());
         Assert.assertEquals(8192, configuration.getTextConfiguration().getUtf8SinkSize());
-        Assert.assertEquals(1, configuration.getScoreboardFormat());
         Assert.assertEquals(4194304, configuration.getSqlCopyBufferSize());
         Assert.assertEquals(64, configuration.getCopyPoolCapacity());
         Assert.assertEquals("test-id-42", configuration.getSnapshotInstanceId());
@@ -1930,6 +1939,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
+        Assert.assertEquals(16, configuration.getViewLexerPoolCapacity());
         Assert.assertFalse(configuration.isMatViewEnabled());
         Assert.assertTrue(configuration.getDefaultSymbolCacheFlag());
         Assert.assertEquals(512, configuration.getDefaultSymbolCapacity());
@@ -1993,6 +2003,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getWithClauseModelPoolCapacity());
         Assert.assertEquals(512, configuration.getRenameTableModelPoolCapacity());
         Assert.assertEquals(128, configuration.getInsertModelPoolCapacity());
+        Assert.assertEquals(32, configuration.getCompileViewModelPoolCapacity());
         Assert.assertEquals(256, configuration.getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(2001, configuration.getSampleByIndexSearchPageSize());
         Assert.assertFalse(configuration.getSampleByDefaultAlignmentCalendar());
@@ -2016,21 +2027,27 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
         Assert.assertEquals(0.1, configuration.getSqlParallelFilterPreTouchThreshold(), 0.000001);
+        Assert.assertEquals(100, configuration.getSqlParallelFilterDispatchLimit());
         Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
+        Assert.assertFalse(configuration.isSqlParallelWindowJoinEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
         Assert.assertEquals(100, configuration.getSqlOrderByRadixSortThreshold());
         Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
+        Assert.assertEquals(100_000, configuration.getSqlParallelWorkStealingSpinTimeout());
         Assert.assertEquals(42, configuration.getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
         Assert.assertEquals(100, configuration.getSqlPageFrameMinRows());
         Assert.assertEquals(128, configuration.getPageFrameReduceShardCount());
         Assert.assertEquals(1024, configuration.getPageFrameReduceQueueCapacity());
+        Assert.assertEquals(4096, configuration.getVectorAggregateQueueCapacity());
         Assert.assertEquals(8, configuration.getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(4, configuration.getPageFrameReduceColumnListCapacity());
         Assert.assertEquals(2048, configuration.getGroupByMergeShardQueueCapacity());
         Assert.assertEquals(100, configuration.getGroupByShardingThreshold());
+        Assert.assertEquals(1000, configuration.getGroupByParallelTopKThreshold());
+        Assert.assertEquals(8, configuration.getGroupByTopKQueueCapacity());
         Assert.assertFalse(configuration.isGroupByPresizeEnabled());
         Assert.assertEquals(100_000, configuration.getGroupByPresizeMaxCapacity());
         Assert.assertEquals(1024, configuration.getGroupByPresizeMaxHeapSize());
@@ -2041,7 +2058,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2, configuration.getSqlJitIRMemoryMaxPages());
         Assert.assertEquals(1024, configuration.getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(1, configuration.getSqlJitBindVarsMemoryMaxPages());
-        Assert.assertEquals(1024, configuration.getSqlJitPageAddressCacheThreshold());
         Assert.assertTrue(configuration.isSqlJitDebugEnabled());
 
         Assert.assertEquals(16384, configuration.getRndFunctionMemoryPageSize());
@@ -2072,6 +2088,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(333, configuration.getWalPurgeInterval());
         Assert.assertEquals(13, configuration.getWalRecreateDistressedSequencerAttempts());
         Assert.assertEquals(333303, configuration.getInactiveWalWriterTTL());
+        Assert.assertEquals(3330, configuration.getInactiveViewWalWriterTTL());
         Assert.assertEquals(128, configuration.getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.isWalSupported());
         Assert.assertTrue(configuration.getWalEnabledDefault());
@@ -2079,6 +2096,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(23, configuration.getWalApplyLookAheadTransactionCount());
         Assert.assertFalse(configuration.isTableTypeConversionEnabled());
         Assert.assertEquals(100, configuration.getWalWriterPoolMaxSegments());
+        Assert.assertEquals(50, configuration.getViewWalWriterPoolMaxSegments());
         Assert.assertEquals(120, configuration.getO3LagCalculationWindowsSize());
         Assert.assertEquals(100, configuration.getWalSegmentRolloverRowCount());
         Assert.assertEquals(42.2d, configuration.getWalLagRowsMultiplier(), 0.00001);

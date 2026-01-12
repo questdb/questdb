@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,22 +28,6 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class ShortVectorAggregateTest extends AbstractCairoTest {
-
-    @Test
-    public void testAvgVanilla() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
-            execute("create table abc as (select x, x::short y from temp)");
-
-            assertSql(
-                    """
-                            x\ty
-                            25.1492699999998\t25.14927
-                            """,
-                    "select avg(x) x, avg(y) y from abc"
-            );
-        });
-    }
 
     @Test
     public void testKeyedIntAvg() throws Exception {
@@ -489,6 +473,26 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                             -32768\t-32768
                             """,
                     "select min(x) x, min(y) y from abc"
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y from temp)");
+
+            assertSql(
+                    """
+                            avg_x\tavg_y\tsum_x\tsum_y\tmin_x\tmin_y\tmax_x\tmax_y
+                            25.14927\t25.14927\t2514927\t2514927\t-32768\t-32768\t32767\t32767
+                            """,
+                    "select avg(x) avg_x, avg(y) avg_y, " +
+                            "sum(x) sum_x, sum(y) sum_y, " +
+                            "min(x) min_x, min(y) min_y, " +
+                            "max(x) max_x, max(y) max_y " +
+                            "from abc"
             );
         });
     }

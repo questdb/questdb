@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -66,7 +66,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
             final int argCount = args.size();
             countFunc = args.getQuick(0);
 
-            if (argCount == 1 && ColumnType.isAssignableFrom(countFunc.getType(), ColumnType.LONG)) {
+            if (argCount == 1 && ColumnType.isConvertibleFrom(countFunc.getType(), ColumnType.LONG)) {
                 try {
                     return new CursorFunction(
                             new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
@@ -79,9 +79,9 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
             if (
                     argCount > 2
-                            && ColumnType.isAssignableFrom((countFunc = args.getQuick(0)).getType(), ColumnType.LONG)
-                            && ColumnType.isAssignableFrom((seedLoFunc = args.getQuick(1)).getType(), ColumnType.LONG)
-                            && ColumnType.isAssignableFrom((seedHiFunc = args.getQuick(2)).getType(), ColumnType.LONG)
+                            && ColumnType.isSameOrBuiltInWideningCast((countFunc = args.getQuick(0)).getType(), ColumnType.LONG)
+                            && ColumnType.isSameOrBuiltInWideningCast((seedLoFunc = args.getQuick(1)).getType(), ColumnType.LONG)
+                            && ColumnType.isSameOrBuiltInWideningCast((seedHiFunc = args.getQuick(2)).getType(), ColumnType.LONG)
             ) {
                 return new CursorFunction(
                         new SeedingLongSequenceCursorFactory(

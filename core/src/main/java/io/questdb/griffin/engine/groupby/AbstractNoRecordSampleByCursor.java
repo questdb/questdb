@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,7 +79,18 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function sampleToFunc,
             int sampleToFuncPos
     ) {
-        super(timestampSampler, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
+        super(
+                timestampSampler,
+                timestampType,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos,
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
+        );
         this.timestampIndex = timestampIndex;
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
@@ -118,6 +129,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         areTimestampsInitialized = false;
         sampleFromFunc.init(baseCursor, executionContext);
         sampleToFunc.init(baseCursor, executionContext);
+        allocator.reopen();
     }
 
     @Override

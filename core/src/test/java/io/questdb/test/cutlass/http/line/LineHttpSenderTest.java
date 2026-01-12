@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -664,8 +664,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                                     CREATE TABLE 'arr_auto_creation_test' (\s
                                     \tarr DOUBLE[],
                                     \ttimestamp TIMESTAMP
-                                    ) timestamp(timestamp) PARTITION BY DAY WAL
-                                    WITH maxUncommittedRows=500000, o3MaxLag=600000000us;
+                                    ) timestamp(timestamp) PARTITION BY DAY;
                                     """);
                 }
             }
@@ -885,7 +884,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 final CairoEngine engine = questdb.getEngine();
                 engine.setDdlListener(new DefaultDdlListener() {
                     @Override
-                    public void onTableOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                    public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
                         try {
                             // assert that this is the expected table name and id
                             final int tableId = (int) engine.getTableIdGenerator().getCurrentId();
@@ -896,7 +895,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             Assert.assertNull(engine.getTableTokenIfExists("tab"));
 
                             // assert that others competing to create the same table, cannot lock the table name 
-                            Assert.assertNull(engine.lockTableName("tab", tableId, false, true));
+                            Assert.assertNull(engine.lockTableName("tab", tableId, false, false, true));
                         } catch (Throwable th) {
                             th.printStackTrace(System.out);
                             failed.set(true);
@@ -917,6 +916,49 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 if (failed.get()) {
                     Assert.fail("Failed in DDL listener, check log for exception");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalDefaultValuesWal() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
+            )) {
+                serverMain.execute("""
+                        CREATE TABLE decimal_test (
+                            dec8 DECIMAL(2, 0),
+                            dec16 DECIMAL(4, 1),
+                            dec32 DECIMAL(8, 2),
+                            dec64 DECIMAL(16, 4),
+                            dec128 DECIMAL(34, 8),
+                            dec256 DECIMAL(64, 16),
+                            value INT,
+                            ts TIMESTAMP
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                serverMain.awaitTxn("decimal_test", 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table("decimal_test")
+                            .longColumn("value", 1)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTxn("decimal_test", 1);
+                serverMain.assertSql("decimal_test",
+                        """
+                                dec8\tdec16\tdec32\tdec64\tdec128\tdec256\tvalue\tts
+                                \t\t\t\t\t\t1\t1970-01-02T03:46:40.000000Z
+                                """);
             }
         });
     }

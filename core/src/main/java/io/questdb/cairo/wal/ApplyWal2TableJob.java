@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -56,6 +56,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
@@ -70,13 +71,13 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.TelemetrySystemEvent.*;
+import static io.questdb.TelemetryEvent.*;
 import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -85,12 +86,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
+    private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
     private final CairoEngine engine;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
-    private final BlockFileWriter mvStateWriter;
     private final OperationExecutor operationExecutor;
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
@@ -115,14 +116,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().walMetrics();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
-        mvStateWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
+        blockFileWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
     }
 
     @Override
     public void close() {
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
-        Misc.free(mvStateWriter);
+        Misc.free(blockFileWriter);
     }
 
     private static long calculateSkipTransactionCount(long initialSeqTxn, WalTxnDetails walTxnDetails) {
@@ -170,9 +171,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     if (!WalTxnType.isDataType(walTxnType)) {
                         firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
+                        continue;
                     }
                 } else {
                     firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
+                    continue;
                 }
 
                 // If the future transaction is a replace range operation
@@ -429,6 +432,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                             mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                             mvRefreshTask.invalidationReason = matViewInvalidationReason;
                                         }
+                                        if (metadataChangeOp.shouldCompileDependentViews()) {
+                                            engine.enqueueCompileView(tableToken);
+                                        }
                                     } catch (Throwable th) {
                                         // Don't mark transaction as applied if exception occurred
                                         writer.setSeqTxn(seqTxn - 1);
@@ -516,6 +522,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 finishedAll = finishedAll || (writer.getAppliedSeqTxn() == transactionLogCursor.getMaxTxn() && !transactionLogCursor.hasNext());
                 if (totalTransactionCount > 0) {
+                    double amplification = rowsAdded > 0 ? Numbers.roundUp(Numbers.roundUp(100.0 * physicalRowsAdded / rowsAdded, 2) / 100.0, 2) : 0;
+                    long throughput = rowsAdded * 1000000L / Math.max(1, insertTimespan);
                     LOG.info().$("job ")
                             .$(finishedAll ? "finished" : "ejected")
                             .$(" [table=").$(writer.getTableToken())
@@ -523,9 +531,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$(", transactions=").$(totalTransactionCount)
                             .$(", rows=").$(rowsAdded)
                             .$(", time=").$(insertTimespan / 1000)
-                            .$("ms, rate=").$(rowsAdded * 1000000L / Math.max(1, insertTimespan))
-                            .$("rows/s, ampl=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
+                            .$("ms, rate=").$(throughput)
+                            .$("rows/s, ampl=").$(amplification)
                             .I$();
+                    engine.getRecentWriteTracker().recordMergeStats(writer.getTableToken(), amplification, throughput);
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
@@ -534,9 +543,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } catch (Throwable th) {
                 // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will
                 // be returned to the pool and dirty writes will be rolled back. We have to update the sequencer
-                // on the state of the writer and revert any dirty txns that might have advanced. We do that
-                // by equalizing writerTxn and dirtyWriterTxn.
-                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getAppliedSeqTxn());
+                // on the state of the writer and revert any dirty txns that might have advanced.
+                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getSeqTxn());
                 throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
@@ -565,8 +573,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return;
         }
 
-        if (throwable instanceof CairoException) {
-            CairoException cairoException = (CairoException) throwable;
+        if (throwable instanceof CairoException cairoException) {
             if (cairoException.isOutOfMemory()) {
                 if (txnTracker != null) {
                     txnTracker.getMemPressureControl().onOutOfMemory();
@@ -589,7 +596,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
 
         try {
-            telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            telemetryFacade.store(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             LogRecord logRecord = LOG.critical().$("job failed, table suspended [table=").$(tableToken);
             if (lastAttemptSeqTxn > -1) {
                 logRecord.$(", seqTxn=").$(lastAttemptSeqTxn);
@@ -624,7 +631,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case MAT_VIEW_DATA:
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                 long skipTxnCount = calculateSkipTransactionCount(seqTxn, txnDetails);
-
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
                 if (skipTxnCount > 0) {
@@ -643,7 +649,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 final long latency = microClock.getTicks() - start;
                 long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
                 long lastCommittedSeqTxn = writer.getAppliedSeqTxn();
-
                 lastCommittedRows = 0;
                 for (long s = seqTxn; s <= lastCommittedSeqTxn; s++) {
                     long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
@@ -652,6 +657,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency);
                     lastCommittedRows += walRowCount;
                 }
+
+                // Decrement pending WAL row count and track dedup after successful processing
+                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, writer.getDedupRowsRemovedSinceLastCommit());
 
                 if (writer.getTableToken().isMatView()) {
                     for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
@@ -734,7 +742,27 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 // WAL-E files can be deleted by the purge job after a commit.
                 // Update the materialized view state before committing the transaction.
-                writer.setSeqTxn(seqTxn);
+                writer.markSeqTxnCommitted(seqTxn);
+                lastCommittedRows = 0;
+                return 1;
+            case VIEW_DEFINITION:
+                final TableToken viewToken = writer.getTableToken();
+                try (WalEventReader eventReader = walEventReader) {
+                    final Path path = Path.PATH2.get();
+                    path.of(engine.getConfiguration().getDbRoot()).concat(viewToken);
+                    path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                    final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
+                    final WalEventCursor.ViewDefinitionInfo info = walEventCursor.getViewDefinitionInfo();
+                    engine.updateViewDefinition(viewToken, info.getViewSql(), info.getViewDependencies(), seqTxn, blockFileWriter, path);
+                } catch (CairoException e) {
+                    LOG.error().$("could not update view definition [view=").$(viewToken)
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
+                    throw e;
+                }
+                // WAL-E files can be deleted by the purge job after a commit.
+                // Update the view state before committing the transaction.
                 writer.markSeqTxnCommitted(seqTxn);
                 lastCommittedRows = 0;
                 return 1;
@@ -850,7 +878,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn
     ) {
-        try (BlockFileWriter stateWriter = mvStateWriter) {
+        try (BlockFileWriter stateWriter = blockFileWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
             MatViewState.append(
                     lastRefreshTimestamp,

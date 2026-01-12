@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -84,7 +84,8 @@ public class MatViewTimerJob extends SynchronizedJob {
         }
 
         try {
-            if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+            final int refreshType = viewDefinition.getRefreshType();
+            if (refreshType != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                 // The refresh is not immediate, i.e. it's either manual or timer.
                 // Create a special timer that will enqueue refresh intervals update tasks.
                 // We could cache the intervals right in the refresh job when there is a new base table commit,
@@ -97,16 +98,15 @@ public class MatViewTimerJob extends SynchronizedJob {
             long timerStartUs = viewDefinition.getTimerStartUs();
             TimeZoneRules timerTzRules = viewDefinition.getTimerTzRulesUs();
 
-            if (viewDefinition.getPeriodLength() > 0) {
-                // It's a period mat view, so first add the period timer.
+            if (viewDefinition.getPeriodLength() > 0 && refreshType != MatViewDefinition.REFRESH_TYPE_MANUAL) {
+                // It's a non-manual period mat view, so first add the period timer.
                 createPeriodTimer(viewDefinition, nowUs);
-
                 // "Normal" timer start is volatile in case of period mat views.
                 timerStartUs = nowUs;
                 timerTzRules = null;
             }
 
-            if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
+            if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // The view has timer refresh, so add a "normal" timer for it.
                 createTimer(viewDefinition, timerStartUs, timerTzRules, nowUs);
             }
@@ -147,7 +147,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                 .$(", start=").$ts(MicrosTimestampDriver.INSTANCE, startUs)
                 .$(", tz=").$(viewDefinition.getTimerTimeZone())
                 .$(", length=").$(length).$(lengthUnit)
-                .$(", delay=").$(delayInterval).$(delayUnit)
+                .$(", delay=").$(delayInterval).$(delayUnit != 0 ? delayUnit : ' ')
                 .I$();
     }
 

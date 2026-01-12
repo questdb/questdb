@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -82,16 +82,6 @@ public class VarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarSampleIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
-            assertSql(
-                    "var_samp\n841.6666666666666\n", "select var_samp(x) from tbl1"
-            );
-        });
-    }
-
-    @Test
-    public void testVarSampleLong256Values() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select x cast(x as long256) from long_sequence(100))");
             assertSql(
                     "var_samp\n841.6666666666666\n", "select var_samp(x) from tbl1"
             );

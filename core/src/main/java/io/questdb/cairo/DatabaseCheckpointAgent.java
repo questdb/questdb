@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.cairo.view.ViewGraph;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
@@ -70,8 +72,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
-import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
@@ -81,7 +82,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final boolean lightweightCheckpointSupported;
     private final ReentrantLock lock = new ReentrantLock();
     private final MessageBus messageBus;
     private final WalWriterMetadata metadata; // protected with #lock
@@ -111,7 +111,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
-        this.lightweightCheckpointSupported = configuration.getScoreboardFormat() > 1;
     }
 
     @TestOnly
@@ -134,12 +133,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         } finally {
             lock.unlock();
         }
-    }
-
-    @Override
-    public boolean partitionsLocked() {
-        // With new version of scoreboard there is no need to pause partition clean jobs
-        return !lightweightCheckpointSupported && isInProgress();
     }
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
@@ -282,6 +275,35 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     }
                                 }
 
+                                if (tableToken.isView()) {
+                                    final ViewGraph viewGraph = engine.getViewGraph();
+                                    final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tableToken);
+                                    if (viewDefinition != null) {
+                                        matViewFileWriter.of(path.trimTo(rootLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+                                        ViewDefinition.append(viewDefinition, matViewFileWriter);
+                                        tableNameRegistryStore.logAddTable(tableToken);
+
+                                        path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
+                                        if (ff.mkdirs(path.slash(), configuration.getMkDirMode()) != 0) {
+                                            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
+                                        }
+                                        metadata.clear();
+                                        long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
+                                        path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
+                                        metadata.switchTo(path, path.size(), true);
+                                        metadata.close(true, Vm.TRUNCATE_TO_POINTER);
+
+                                        mem.smallFile(ff, path.concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                        mem.putLong(lastTxn);
+                                        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+                                        LOG.info().$("view included in the checkpoint [view=").$(tableToken).I$();
+                                    } else {
+                                        LOG.info().$("skipping, view is concurrently dropped [view=").$(tableToken).I$();
+                                    }
+                                    break;
+                                }
+
                                 TableReader reader = null;
                                 try {
                                     try {
@@ -311,7 +333,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     reader.getMetadata().dumpTo(mem);
                                     mem.close(false);
                                     // Copy _txn file.
-                                    path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
+                                    path.trimTo(rootLen).concat(TXN_FILE_NAME);
                                     mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                     reader.getTxFile().dumpTo(mem);
                                     mem.close(false);
@@ -321,21 +343,19 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     reader.getColumnVersionReader().dumpTo(mem);
                                     mem.close(false);
 
-                                    if (lightweightCheckpointSupported) {
-                                        long txn = reader.getTxn();
-                                        TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
-                                        if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
-                                            throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
-                                        }
-                                        scoreboardTxns.add(txn);
-                                        scoreboardTxns.add(
-                                                Numbers.encodeLowHighInts(
-                                                        reader.getMetadata().getPartitionBy(),
-                                                        reader.getMetadata().getTimestampType()
-                                                )
-                                        );
-                                        scoreboards.add(scoreboard);
+                                    long txn = reader.getTxn();
+                                    TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
+                                    if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
+                                        throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
                                     }
+                                    scoreboardTxns.add(txn);
+                                    scoreboardTxns.add(
+                                            Numbers.encodeLowHighInts(
+                                                    reader.getMetadata().getPartitionBy(),
+                                                    reader.getMetadata().getTimestampType()
+                                            )
+                                    );
+                                    scoreboards.add(scoreboard);
 
                                     if (isWalTable) {
                                         // Add entry to table name registry copy.
@@ -347,7 +367,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         metadata.switchTo(path, path.size(), true); // dump sequencer metadata to checkpoint's  "db/tableName/txn_seq/_meta"
                                         metadata.close(true, Vm.TRUNCATE_TO_POINTER);
 
-                                        mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                        mem.smallFile(ff, path.concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                                         mem.putLong(lastTxn); // write lastTxn to checkpoint's "db/tableName/txn_seq/_txn"
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
                                     }
@@ -720,6 +740,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             AtomicInteger recoveredTxnFiles = new AtomicInteger();
             AtomicInteger recoveredCVFiles = new AtomicInteger();
             AtomicInteger recoveredWalFiles = new AtomicInteger();
+            AtomicInteger recoveredViewFiles = new AtomicInteger();
             AtomicInteger symbolFilesCount = new AtomicInteger();
             srcPath.trimTo(checkpointRootLen);
             ff.iterateDir(
@@ -729,12 +750,34 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             int srcPathLen = srcPath.size();
                             int dstPathLen = dstPath.size();
 
-                            copyOrError(srcPath, dstPath, ff, recoveredMetaFiles, TableUtils.META_FILE_NAME);
-                            copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredTxnFiles, TableUtils.TXN_FILE_NAME);
-                            copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME);
-                            // Reset _todo_ file otherwise TableWriter will start restoring metadata on open.
-                            TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
-                            rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
+                            // Check if this is a view (views have _view file but no _cv file)
+                            boolean isView = ff.exists(srcPath.trimTo(srcPathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+                            srcPath.trimTo(srcPathLen);
+
+                            if (isView) {
+                                // Views don't have data - only copy the view definition file
+                                srcPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+                                dstPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                                    throw CairoException.critical(ff.errno())
+                                            .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy view definition file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
+                                }
+                                recoveredViewFiles.incrementAndGet();
+                                LOG.info()
+                                        .$("recovered view definition file [src=").$(srcPath)
+                                        .$(", dst=").$(dstPath)
+                                        .I$();
+                                srcPath.trimTo(srcPathLen);
+                                dstPath.trimTo(dstPathLen);
+                            } else {
+                                // Tables and materialized views have data files
+                                copyOrError(srcPath, dstPath, ff, recoveredMetaFiles, TableUtils.META_FILE_NAME);
+                                copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredTxnFiles, TXN_FILE_NAME);
+                                copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME);
+                                // Reset _todo_ file otherwise TableWriter will start restoring metadata on open.
+                                TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
+                                rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
+                            }
 
                             // Go inside SEQ_DIR
                             srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
@@ -751,7 +794,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
                                 } else {
                                     srcPath.trimTo(srcPathLen);
-                                    openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                                    openSmallFile(ff, srcPath, srcPathLen, memFile, TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
                                     long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
 
                                     memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
@@ -784,11 +827,48 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         }
                     }
             );
+
+            // Remove all the table directories that do not exist in the checkpoint.
+            // This will remove any tables that were created after the checkpoint was taken
+            dstPath.trimTo(rootLen).$();
+            ff.iterateDir(
+                    dstPath.$(), (pUtf8NameZ, type) -> {
+                        if (ff.isDirOrSoftLinkDirNoDots(dstPath, rootLen, pUtf8NameZ, type)) {
+                            srcPath.trimTo(snapshotDbLen);
+
+                            // Check if the checkpoint dir is configured to be inside the db dir,
+                            // so we do not delete checkpoint directory itself
+                            if (!Utf8s.startsWith(srcPath, dstPath)) {
+                                srcPath.concat(pUtf8NameZ);
+
+                                // Check that the table exists in the checkpoint
+                                // so that we do not restore tables that were created after the checkpoint was taken
+                                // that may be in an inconsistent state.
+                                if (!ff.exists(srcPath.$())) {
+                                    LOG.advisory().$("removing orphan table directory [dir=").$(dstPath).I$();
+
+                                    if (!ff.rmdir(dstPath)) {
+                                        LOG.critical().$("failed to remove orphan table directory [dir=").$(dstPath)
+                                                .$(", errno=").$(ff.errno()).I$();
+                                        throw CairoException.critical(ff.errno())
+                                                .put("Checkpoint recovery failed. Aborting QuestDB startup; " +
+                                                        "could not remove orphan table directory, " +
+                                                        "remove it manually to continue [dir=").put(dstPath).put(']');
+                                    }
+                                }
+                            }
+                        }
+                    }
+            );
+            dstPath.trimTo(rootLen);
+            srcPath.trimTo(snapshotDbLen);
+
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())
                     .$(", cvFilesCount=").$(recoveredCVFiles.get())
                     .$(", walFilesCount=").$(recoveredWalFiles.get())
+                    .$(", viewFilesCount=").$(recoveredViewFiles.get())
                     .$(", symbolFilesCount=").$(symbolFilesCount.get())
                     .I$();
 

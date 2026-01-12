@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -149,6 +149,25 @@ public class InsertTest extends AbstractCairoTest {
                 Assert.fail("INSERT should fail");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=curr_view]");
+                Assert.assertEquals(12, e.getPosition());
+            }
+        });
+    }
+
+    @Test
+    public void testCannotInsertIntoView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            execute("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
+            execute("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
+
+            execute("create view curr_view as (select ts, max(id) as id from currencies sample by 1h)");
+            try {
+                execute("insert into curr_view values ('JPY', 4, '2019-03-10T03:00:00.000000Z')");
+                Assert.fail("INSERT should fail");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify view [view=curr_view]");
                 Assert.assertEquals(12, e.getPosition());
             }
         });
@@ -652,10 +671,12 @@ public class InsertTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "id\tbase\tcalculated\tts\n" +
-                            "1\t100.50\t110.5500\t1970-01-01T00:00:00.000000Z\n" +
-                            "2\t75.25\t100.0000\t1970-01-01T00:00:01.000000Z\n" +
-                            "3\t200.00\t100.0000\t1970-01-01T00:00:02.000000Z\n",
+                    """
+                            id\tbase\tcalculated\tts
+                            1\t100.50\t110.5500\t1970-01-01T00:00:00.000000Z
+                            2\t75.25\t100.0000\t1970-01-01T00:00:01.000000Z
+                            3\t200.00\t100.0000\t1970-01-01T00:00:02.000000Z
+                            """,
                     "arithmetic"
             );
         });
@@ -672,9 +693,11 @@ public class InsertTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "id\toriginal\tconverted\tts\n" +
-                            "1\t100\t100.00\t1970-01-01T00:00:00.000000Z\n" +
-                            "2\t250\t250.00\t1970-01-01T00:00:01.000000Z\n",
+                    """
+                            id\toriginal\tconverted\tts
+                            1\t100\t100.00\t1970-01-01T00:00:00.000000Z
+                            2\t250\t250.00\t1970-01-01T00:00:01.000000Z
+                            """,
                     "int_to_decimal"
             );
         });
@@ -695,9 +718,11 @@ public class InsertTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "id\tprice\tadjusted\tts\n" +
-                            "2\t1578.024\t789.012\t1970-01-01T00:00:01.000000Z\n" +
-                            "3\t913.578\t456.789\t1970-01-01T00:00:02.000000Z\n",
+                    """
+                            id\tprice\tadjusted\tts
+                            2\t1578.024\t789.012\t1970-01-01T00:00:01.000000Z
+                            3\t913.578\t456.789\t1970-01-01T00:00:02.000000Z
+                            """,
                     "target"
             );
         });
@@ -714,9 +739,11 @@ public class InsertTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "id\tlarge_value\tts\n" +
-                            "1\t12345678901234567890.1234567890\t1970-01-01T00:00:00.000000Z\n" +
-                            "2\t98765432109876543210.9876543210\t1970-01-01T00:00:01.000000Z\n",
+                    """
+                            id\tlarge_value\tts
+                            1\t12345678901234567890.1234567890\t1970-01-01T00:00:00.000000Z
+                            2\t98765432109876543210.9876543210\t1970-01-01T00:00:01.000000Z
+                            """,
                     "high_precision"
             );
         });
@@ -735,11 +762,13 @@ public class InsertTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "id\tprice\trate\tts\n" +
-                            "1\t99.99\t0.1234\t1970-01-01T00:00:00.000000Z\n" +
-                            "2\t1234.56\t1.2345\t1970-01-01T00:00:01.000000Z\n" +
-                            "3\t0.01\t0.0001\t1970-01-01T00:00:02.000000Z\n" +
-                            "4\t9999.99\t9.9999\t1970-01-01T00:00:03.000000Z\n",
+                    """
+                            id\tprice\trate\tts
+                            1\t99.99\t0.1234\t1970-01-01T00:00:00.000000Z
+                            2\t1234.56\t1.2345\t1970-01-01T00:00:01.000000Z
+                            3\t0.01\t0.0001\t1970-01-01T00:00:02.000000Z
+                            4\t9999.99\t9.9999\t1970-01-01T00:00:03.000000Z
+                            """,
                     "decimals"
             );
         });
@@ -764,9 +793,11 @@ public class InsertTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "id\tprice\tname\tactive\tquantity\trate\tsymbol\tts\n" +
-                            "1\t99.99\tItem1\ttrue\t100\t1.5\tABC\t1970-01-01T00:00:00.000000Z\n" +
-                            "2\t150.75\tItem2\tfalse\t50\t2.25\tDEF\t1970-01-01T00:00:01.000000Z\n",
+                    """
+                            id\tprice\tname\tactive\tquantity\trate\tsymbol\tts
+                            1\t99.99\tItem1\ttrue\t100\t1.5\tABC\t1970-01-01T00:00:00.000000Z
+                            2\t150.75\tItem2\tfalse\t50\t2.25\tDEF\t1970-01-01T00:00:01.000000Z
+                            """,
                     "mixed_types"
             );
         });
@@ -784,10 +815,12 @@ public class InsertTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "id\tvalue\tts\n" +
-                            "1\t123.4567\t1970-01-01T00:00:00.000000Z\n" +
-                            "2\t\t1970-01-01T00:00:01.000000Z\n" +
-                            "3\t999.9999\t1970-01-01T00:00:02.000000Z\n",
+                    """
+                            id\tvalue\tts
+                            1\t123.4567\t1970-01-01T00:00:00.000000Z
+                            2\t\t1970-01-01T00:00:01.000000Z
+                            3\t999.9999\t1970-01-01T00:00:02.000000Z
+                            """,
                     "decimal_nulls"
             );
         });

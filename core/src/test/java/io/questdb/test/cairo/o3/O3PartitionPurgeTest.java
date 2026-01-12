@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,16 +70,10 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 @RunWith(Parameterized.class)
 public class O3PartitionPurgeTest extends AbstractCairoTest {
-    private static int SCOREBOARD_FORMAT = 1;
     private static O3PartitionPurgeJob purgeJob;
     private final TestTimestampType timestampType;
 
-    public O3PartitionPurgeTest(int version, TestTimestampType timestampType) throws Exception {
-        if (version != SCOREBOARD_FORMAT) {
-            SCOREBOARD_FORMAT = version;
-            tearDownStatic();
-            setUpStatic();
-        }
+    public O3PartitionPurgeTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
     }
 
@@ -90,18 +84,15 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         AbstractCairoTest.setUpStatic();
         purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
 
-    @Parameterized.Parameters(name = "V{0}-{1}")
+    @Parameterized.Parameters(name = "timestamp={0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {1, TestTimestampType.MICRO},
-                {1, TestTimestampType.NANO},
-                {2, TestTimestampType.MICRO},
-                {2, TestTimestampType.NANO},
+                {TestTimestampType.MICRO},
+                {TestTimestampType.NANO},
         });
     }
 
@@ -143,6 +134,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
                 }
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -215,12 +207,13 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             } finally {
                 Misc.freeObjList(readers);
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
     @Test
     public void testCheckpointDoesNotBlockPurge() throws Exception {
-        Assume.assumeTrue(SCOREBOARD_FORMAT == 2 && Os.type != Os.WINDOWS);
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
@@ -252,6 +245,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 runPartitionPurgeJobs();
                 testPartitionExist(path, len, false, false, true);
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -279,6 +273,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -313,6 +308,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T05").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -403,6 +399,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     txReader.clear();
                 }
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -439,6 +436,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
                 }
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -479,6 +477,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
+                Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
             }
         });
     }
@@ -530,6 +529,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TIMESTAMP_NS_TYPE_NAME.equals(timestampType.getTypeName()) ? "2022-02-24T185959-687500001.3" : "2022-02-24T185959-687501.3");
             Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -566,6 +566,71 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     writer.commit();
                 }
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testPhantomPartition() throws Exception {
+        String phantomPartitionSuffix = "2022-02-24.2";
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                // When the purge job checks if the phantom partition exists, return false
+                // This simulates the partition being removed between directory scanning and the exists check
+                if (Utf8s.endsWithAscii(path, phantomPartitionSuffix)) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            TableToken token;
+            TableModel tm = new TableModel(configuration, "tbl", PartitionBy.DAY)
+                    .col("x", ColumnType.INT)
+                    .timestamp("timestamp", timestampType.getTimestampType());
+            token = createPopulateTable(1, tm, 2000, "2022-02-24T04", 2);
+
+            Path path = Path.getThreadLocal("");
+
+            // Open a reader to hold the initial transaction - this forces partition versioning
+            // Without a reader, the writer can update partitions in place without creating versions
+            // OOO insert - creates .1 version (can't delete .0 because reader holds it)
+            execute("insert into tbl select 4, '2022-02-24T19'");
+
+            // in order insert
+            execute("insert into tbl select 2, '2022-02-26T19'");
+
+            try (TableReader rdr = getReader("tbl")) {
+
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat("2022-02-24.1");
+                Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
+
+                // OOO insert - creates .3 version (skipping .2, which would be the phantom)
+                execute("insert into tbl select 4, '2022-02-24T19'");
+
+                // Now create the phantom .2 partition directory
+                // The phantom is created on disk so it's found during directory scanning,
+                // but our exists() override returns false to simulate it disappearing
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(phantomPartitionSuffix);
+                Assert.assertEquals("Failed to create phantom partition", 0, Files.mkdir(path.$(), 509));
+
+                // Run the purge job with NO readers open - rangeUnlocked will be true
+                // The purge job will:
+                // 1. Scan directories and find .1, .2 (phantom), .3
+                // 2. When processing, check if partition .2 exists (via ff.exists())
+                // 3. Our override returns false, triggering the phantom detection code path
+                // 4. The purge job logs "partition dir removed after scanning" and aborts
+                runPartitionPurgeJobs();
+
+                for (int partitionIndex = 0; partitionIndex < rdr.getPartitionCount(); partitionIndex++) {
+                    rdr.openPartition(partitionIndex);
+                }
+            }
+
+            Assert.assertEquals("Partitions that purged that was in use", 0, engine.getPartitionOverwriteControl().getErrorCount());
+
         });
     }
 
@@ -601,6 +666,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -647,6 +713,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -680,6 +747,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
                 }
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -738,6 +806,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                     rdr.openPartition(0);
                 }
             }
+
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -757,6 +827,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             // The main assertion here is that job runs without exceptions
             runPartitionPurgeJobs();
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -807,6 +878,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             try (TableReader rdr = getReader("tbl")) {
                 rdr.openPartition(0);
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -858,6 +930,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             try (TableReader rdr = getReader("tbl")) {
                 rdr.openPartition(0);
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -899,6 +972,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-11.1").concat("x.d").$();
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -955,6 +1029,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat("1970-01-10T07").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -1016,6 +1091,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             } finally {
                 Misc.free(readers);
             }
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 
@@ -1076,6 +1152,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             } finally {
                 Misc.free(readers);
             }
+
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 }

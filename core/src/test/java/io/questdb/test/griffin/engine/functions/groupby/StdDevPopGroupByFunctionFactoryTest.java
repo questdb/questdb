@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,19 +79,19 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStddevPopIntValues() throws Exception {
+    public void testStddevPopHugeValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
+            execute("create table tbl1 as (select 100_000_000 * x x from long_sequence(1_000_000))");
             assertSql(
-                    "stddev_pop\n28.86607004772212\n", "select stddev_pop(x) from tbl1"
+                    "stddev_pop\n2.886751345946702E13\n", "select stddev_pop(x) from tbl1"
             );
         });
     }
 
     @Test
-    public void testStddevPopLong256Values() throws Exception {
+    public void testStddevPopIntValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select x cast(x as long256) from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
             assertSql(
                     "stddev_pop\n28.86607004772212\n", "select stddev_pop(x) from tbl1"
             );
@@ -114,16 +114,6 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x int)");
             execute("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
-            assertSql(
-                    "stddev_pop\n0.0\n", "select stddev_pop(x) from tbl1"
-            );
-        });
-    }
-
-    @Test
-    public void testStddevPopOverflow() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select 100000000 x from long_sequence(1000000))");
             assertSql(
                     "stddev_pop\n0.0\n", "select stddev_pop(x) from tbl1"
             );

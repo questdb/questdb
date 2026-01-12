@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -86,6 +86,7 @@ public class WalUtils {
     public static final short WAL_FORMAT_VERSION = 0;
     public static final short WALE_FORMAT_VERSION = WAL_FORMAT_VERSION;
     public static final short WALE_MAT_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 1;
+    public static final short WALE_VIEW_FORMAT_VERSION = WALE_MAT_VIEW_FORMAT_VERSION + 1;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_PENDING_FS_MARKER = ".pending";

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,21 +49,10 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class CheckpointFuzzTest extends AbstractFuzzTest {
-    static int SCOREBOARD_FORMAT = 1;
     private static Path triggerFilePath;
-
-    public CheckpointFuzzTest() throws Exception {
-        int scoreboardFormat = TestUtils.generateRandomForTestParams(LOG).nextBoolean() ? 1 : 2;
-        if (scoreboardFormat != SCOREBOARD_FORMAT) {
-            SCOREBOARD_FORMAT = scoreboardFormat;
-            tearDownStatic();
-            setUpStatic();
-        }
-    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         AbstractFuzzTest.setUpStatic();
         triggerFilePath = new Path();
     }

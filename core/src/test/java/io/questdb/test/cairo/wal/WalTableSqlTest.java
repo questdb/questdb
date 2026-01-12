@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1002,6 +1002,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1027,6 +1028,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1051,6 +1053,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1075,6 +1078,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1088,7 +1092,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("drop table " + tableNameNonWal);
 
             assertQueryNoLeakCheck("table_name\n", "all_tables() order by table_name", null, true);
-            assertQueryNoLeakCheck("table_name\n", "select table_name from tables() order by table_name", null, true);
+            assertQueryNoLeakCheck("table_name\n", "select table_name from tables() order by table_name", null, true, true);
             assertQueryNoLeakCheck("relname\npg_class\n", "select relname from pg_class() order by relname", null, true);
         });
     }
@@ -1113,11 +1117,6 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 execute("drop table " + tableName);
                 drainWalQueue();
                 checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
-            }
-
-            if (Os.type == Os.WINDOWS) {
-                // Release WAL writers
-                engine.releaseInactive();
             }
             drainWalQueue();
 
@@ -1736,6 +1735,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
 
@@ -1763,6 +1763,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\t" + newTabledirectoryName.getDirName() + "\n",
                     "select table_name, directoryName from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1826,6 +1827,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
 
@@ -1853,6 +1855,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\t" + newTableDirectoryName.getDirName() + "\n",
                     "select table_name, directoryName from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,18 +48,18 @@ public class CreateTableTestUtils {
         TestUtils.createTable(engine, model);
     }
 
-    public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy, int timestampType) throws Exception {
+    public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy, int timestampType) {
         TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy, timestampType);
         TestUtils.createTable(engine, model);
     }
 
-    public static void createDecimalsTable(CairoEngine engine, int partitionBy, int timestampType) throws Exception {
+    public static void createDecimalsTable(CairoEngine engine, int partitionBy, int timestampType) {
         TableModel model = getDecimalTypesModel(engine.getConfiguration(), partitionBy, timestampType);
         TestUtils.createTable(engine, model);
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false);
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false, false);
         if (tableToken == null) {
             throw CairoException.critical(0).put("table already exists: ").put(model.getTableName());
         }
@@ -255,7 +255,7 @@ public class CreateTableTestUtils {
                 .col("varchar", ColumnType.VARCHAR); // 11
     }
 
-    public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy, int timestampType) throws Exception {
+    public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy, int timestampType) {
         return new TableModel(configuration, "all2", partitionBy)
                 .col("int", ColumnType.INT)
                 .col("short", ColumnType.SHORT)
@@ -276,7 +276,7 @@ public class CreateTableTestUtils {
                 .timestamp(timestampType);
     }
 
-    public static TableModel getDecimalTypesModel(CairoConfiguration configuration, int partitionBy, int timestampType) throws Exception {
+    public static TableModel getDecimalTypesModel(CairoConfiguration configuration, int partitionBy, int timestampType) {
         return new TableModel(configuration, "decimals", partitionBy)
                 .col("dec8", ColumnType.getDecimalType(2, 1))
                 .col("dec16", ColumnType.getDecimalType(4, 2))

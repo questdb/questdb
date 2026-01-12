@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -158,7 +158,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     }
 
     private static boolean isIndexArg(int argType) {
-        return ColumnType.isAssignableFrom(argType, ColumnType.LONG);
+        return ColumnType.isSameOrBuiltInWideningCast(argType, ColumnType.LONG);
     }
 
     private static void validateIndexArgs(ObjList<Function> args, IntList argPositions) throws SqlException {
@@ -167,7 +167,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             int argType = arg.getType();
             if (!isIndexArg(argType) && !ColumnType.isInterval(argType)) {
                 throw SqlException.position(argPositions.get(i))
-                        .put("invalid type for array access [type=").put(argType).put(']');
+                        .put("invalid type for array access [type=").put(ColumnType.nameOf(argType)).put(']');
             }
             if (!arg.isConstant()) {
                 continue;

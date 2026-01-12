@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -107,6 +107,7 @@ public class FuzzRunner {
     private double nullSetProb;
     private int parallelWalCount;
     private double partitionDropProb;
+    private double queryProb;
     private double replaceInsertProb;
     private double rollbackProb;
     private long s0;
@@ -145,13 +146,13 @@ public class FuzzRunner {
     }
 
     public void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase, boolean multiTable, boolean waitApply) {
-        ObjList<WalWriter> writers = new ObjList<>();
-        int tableCount = fuzzTransactions.size();
-        AtomicInteger done = new AtomicInteger();
-        AtomicInteger forceReaderReload = new AtomicInteger();
-        ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
-        ObjList<Thread> applyThreads = new ObjList<>();
-        ObjList<Thread> threads = new ObjList<>();
+        final ObjList<WalWriter> writers = new ObjList<>();
+        final int tableCount = fuzzTransactions.size();
+        final AtomicInteger done = new AtomicInteger();
+        final AtomicInteger forceReaderReload = new AtomicInteger();
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final ObjList<Thread> applyThreads = new ObjList<>();
+        final ObjList<Thread> threads = new ObjList<>();
 
         try {
             for (int i = 0; i < tableCount; i++) {
@@ -294,10 +295,9 @@ public class FuzzRunner {
                         try {
                             writer = TestUtils.getWriter(engine, tableName);
                         } catch (CairoException ex) {
-                            if (ex.isTableDoesNotExist() && transaction.operationList.get(0) instanceof FuzzDropCreateTableOperation) {
+                            if (ex.isTableDoesNotExist() && transaction.operationList.get(0) instanceof FuzzDropCreateTableOperation dropCreateTableOperation) {
                                 // Table is dropped, but failed to recreate.
                                 // Create it again.
-                                FuzzDropCreateTableOperation dropCreateTableOperation = (FuzzDropCreateTableOperation) transaction.operationList.get(0);
                                 if (dropCreateTableOperation.recreateTable(engine)) {
                                     writer = TestUtils.getWriter(engine, tableName);
                                     // Drop and create cycle now complete, move to next transaction.
@@ -437,8 +437,8 @@ public class FuzzRunner {
         return createInitialTable(tableName, true, initialRowCount);
     }
 
-    public TableToken createInitialTableWal(String tableName, String timestampType) throws SqlException {
-        return createInitialTable(tableName, true, initialRowCount, timestampType);
+    public void createInitialTableWal(String tableName, String timestampType) throws SqlException {
+        createInitialTable(tableName, initialRowCount, timestampType);
     }
 
     public TableToken createInitialTableWal(String tableName, int initialRowCount) throws SqlException {
@@ -493,6 +493,7 @@ public class FuzzRunner {
                 setTtlProb,
                 replaceInsertProb,
                 symbolAccessValidationProb,
+                queryProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion()
@@ -606,6 +607,46 @@ public class FuzzRunner {
             double replaceInsertProb,
             double symbolAccessValidationProb
     ) {
+        setFuzzProbabilities(
+                cancelRowsProb,
+                notSetProb,
+                nullSetProb,
+                rollbackProb,
+                colAddProb,
+                colRemoveProb,
+                colRenameProb,
+                colTypeChangeProb,
+                dataAddProb,
+                equalTsRowsProb,
+                partitionDropProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
+                replaceInsertProb,
+                symbolAccessValidationProb,
+                0.0
+        );
+    }
+
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceInsertProb,
+            double symbolAccessValidationProb,
+            double queryProb
+    ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -622,6 +663,7 @@ public class FuzzRunner {
         this.setTtlProb = setTtlProb;
         this.replaceInsertProb = replaceInsertProb;
         this.symbolAccessValidationProb = symbolAccessValidationProb;
+        this.queryProb = queryProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -820,7 +862,7 @@ public class FuzzRunner {
         return engine.verifyTableName(tableName);
     }
 
-    private TableToken createInitialTable(String tableName, boolean isWal, int rowCount, String timestampType) throws SqlException {
+    private void createInitialTable(String tableName, int rowCount, String timestampType) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
         TableToken tempTable = engine.getTableTokenIfExists("data_temp");
 
@@ -846,7 +888,7 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                            "), index(sym2) timestamp(ts) partition by DAY WAL",
                     sqlExecutionContext
             );
             // force few column tops
@@ -856,16 +898,15 @@ public class FuzzRunner {
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
-        return engine.verifyTableName(tableName);
+        engine.verifyTableName(tableName);
     }
 
     @NotNull
     private ObjList<FuzzTransaction> createTransactions(Rnd rnd, String tableNameBase) throws SqlException, NumericException {
-        String tableNameNoWal = tableNameBase + "_nonwal";
-
         createInitialTableWal(tableNameBase, initialRowCount);
 
-        ObjList<FuzzTransaction> transactions = generateTransactions(tableNameBase, rnd);
+        final String tableNameNoWal = tableNameBase + "_nonwal";
+        final ObjList<FuzzTransaction> transactions = generateTransactions(tableNameBase, rnd);
         createInitialTableNonWal(tableNameNoWal, transactions);
 
         applyNonWal(transactions, tableNameNoWal, rnd);
@@ -925,9 +966,7 @@ public class FuzzRunner {
                         walWriter = writers.get(writerIndex);
                     }
 
-                    if (!walWriter.goActive(transaction.structureVersion)) {
-                        throw CairoException.critical(0).put("cannot apply structure change");
-                    }
+                    walWriter.goActive(transaction.structureVersion);
                     if (walWriter.getMetadataVersion() != transaction.structureVersion) {
                         throw CairoException.critical(0)
                                 .put("cannot update wal writer to correct structure version");
@@ -1217,7 +1256,7 @@ public class FuzzRunner {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal);
 
-                String limit = "";
+                String limit = ""; // For debugging
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
                 assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
 
@@ -1236,6 +1275,8 @@ public class FuzzRunner {
             assertCounts(tableNameWal, timestampColumnName);
             assertCounts(tableNameNoWal, timestampColumnName);
             assertStringColDensity(tableNameWal);
+            Assert.assertEquals("expected 0 errors in partition mutation control", 0, engine.getPartitionOverwriteControl().getErrorCount());
+
         } finally {
             Misc.freeObjListAndClear(transactions);
         }
@@ -1263,6 +1304,7 @@ public class FuzzRunner {
                             rnd.nextDouble(),
                             0.0,
                             0.05,
+                            0.1 * rnd.nextDouble(),
                             0.1 * rnd.nextDouble()
                     );
                 }
@@ -1287,13 +1329,14 @@ public class FuzzRunner {
 
             applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
             checkNoSuspendedTables(new ObjHashSet<>());
+            Assert.assertEquals("expected 0 errors in partition mutation control", 0, engine.getPartitionOverwriteControl().getErrorCount());
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
                     String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
                     LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
-                    String limit = "";
+                    String limit = ""; // For debugging
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
                     assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
                     assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameNoWal);

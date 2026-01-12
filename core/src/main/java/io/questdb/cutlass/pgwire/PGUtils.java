@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,20 +58,12 @@ class PGUtils {
     private PGUtils() {
     }
 
-    public static int calculateArrayColBinSize(ArrayView array, int notNullCount) {
-        int headerSize = Integer.BYTES // size field (stores the number returned from this method)
-                + Integer.BYTES // dimension count
-                + Integer.BYTES // "has nulls" flag
-                + Integer.BYTES // component type
-                + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
-        return headerSize +
-                notNullCount *
-                        (Integer.BYTES // element size
-                                + Long.BYTES) + // element value
-                (array.getCardinality() - notNullCount) * // number of NULL elements
-                        Integer.BYTES; // element size, zero for NULL value
+    public static int calculateArrayColBinSizeIncludingHeader(ArrayView array, int notNullCount) {
+        int nullCount = array.getCardinality() - notNullCount;
+        return calculateArrayHeaderSize(array) + calculateArrayResumeColBinSize(notNullCount, nullCount);
     }
 
+    // does NOT include array header size!
     public static int calculateArrayResumeColBinSize(int notNullCount, int nullCount) {
         return notNullCount *
                 (Integer.BYTES // element size
@@ -92,7 +84,7 @@ class PGUtils {
             int columnType,
             int geohashSize,
             long maxBlobSize,
-            int arrayResumePoint
+            int resumePoint
     ) throws PGMessageProcessingException {
         final short typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
@@ -144,7 +136,14 @@ class PGUtils {
                 return geoHashBytes(record.getGeoLong(columnIndex), geohashSize);
             case ColumnType.VARCHAR:
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
-                return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
+                if (vcValue == null) {
+                    return Integer.BYTES;
+                }
+                // resumePoint == -1 means header not sent yet, include it
+                // resumePoint >= 0 is the byte offset of already sent data
+                int vcResumePoint = Math.max(0, resumePoint);
+                int vcRemaining = vcValue.size() - vcResumePoint;
+                return resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
             case ColumnType.STRING:
                 final CharSequence strValue = record.getStrA(columnIndex);
                 return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
@@ -175,8 +174,17 @@ class PGUtils {
                 assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE ||
                         ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
                         : "implemented only for DOUBLE and LONG";
-                int notNullCount = PGUtils.countNotNull(array, arrayResumePoint);
-                return calculateArrayResumeColBinSize(notNullCount, array.getCardinality() - notNullCount);
+
+                int actualResumePoint = Math.max(0, resumePoint);
+                int remainingElements = array.getCardinality() - actualResumePoint; // includes nulls
+                int notNullCount = PGUtils.countNotNull(array, actualResumePoint);
+
+                // -1 = array header was not written yet -> we have to include it in our calculation
+                int size = resumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
+
+                // add remaining elements
+                size += calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
+                return size;
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
@@ -185,18 +193,15 @@ class PGUtils {
 
     public static int countNotNull(ArrayView array, int resumePoint) {
         if (array.isVanilla()) {
-            switch (array.getElemType()) {
-                case ColumnType.DOUBLE:
-                    return array.flatView().countDouble(
-                            array.getFlatViewOffset() + resumePoint,
-                            array.getFlatViewLength() - resumePoint);
-                case ColumnType.LONG:
-                    return array.flatView().countLong(
-                            array.getFlatViewOffset() + resumePoint,
-                            array.getFlatViewLength() - resumePoint);
-                default:
-                    throw new AssertionError("Unsupported array element type: " + array.getElemType());
-            }
+            return switch (array.getElemType()) {
+                case ColumnType.DOUBLE -> array.flatView().countDouble(
+                        array.getFlatViewOffset() + resumePoint,
+                        array.getFlatViewLength() - resumePoint);
+                case ColumnType.LONG -> array.flatView().countLong(
+                        array.getFlatViewOffset() + resumePoint,
+                        array.getFlatViewLength() - resumePoint);
+                default -> throw new AssertionError("Unsupported array element type: " + array.getElemType());
+            };
         } else {
             return countNotNullRecursive(array, 0, 0, resumePoint);
         }
@@ -212,61 +217,56 @@ class PGUtils {
             int columnIndex,
             int typeTag
     ) {
-        switch (typeTag) {
-            case ColumnType.NULL:
-                return Integer.BYTES;
-            case ColumnType.BOOLEAN:
-                return Integer.BYTES + Byte.BYTES;
-            case ColumnType.BYTE:
-                return Integer.BYTES + MAX_BYTE_TEXT_LEN;
-            case ColumnType.SHORT:
-                return Integer.BYTES + MAX_SHORT_TEXT_LEN;
-            case ColumnType.CHAR:
-                return Integer.BYTES + MAX_CHAR_TEXT_LEN;
-            case ColumnType.IPv4:
-                return Integer.BYTES + MAX_IPv4_TEXT_LEN;
-            case ColumnType.INT:
-                return Integer.BYTES + MAX_INT_TEXT_LEN;
-            case ColumnType.LONG:
-                return Integer.BYTES + MAX_LONG_TEXT_LEN;
-            case ColumnType.DATE:
-                return Integer.BYTES + MAX_DATE_TEXT_LEN;
-            case ColumnType.TIMESTAMP:
-                return Integer.BYTES + MAX_TIMESTAMP_TEXT_LEN;
-            case ColumnType.FLOAT:
-                return Integer.BYTES + MAX_FLOAT_TEXT_LEN;
-            case ColumnType.DOUBLE:
-                return Integer.BYTES + MAX_DOUBLE_TEXT_LEN;
-            case ColumnType.UUID:
-                return Integer.BYTES + MAX_UUID_TEXT_LEN;
-            case ColumnType.LONG256:
-                return Integer.BYTES + MAX_LONG256_TEXT_LEN;
-            case ColumnType.GEOBYTE:
-                return Integer.BYTES + MAX_GEOBYTE_TEXT_LEN;
-            case ColumnType.GEOSHORT:
-                return Integer.BYTES + MAX_GEOSHORT_TEXT_LEN;
-            case ColumnType.GEOINT:
-                return Integer.BYTES + MAX_GEOINT_TEXT_LEN;
-            case ColumnType.GEOLONG:
-                return Integer.BYTES + MAX_GEOLONG_TEXT_LEN;
-            case ColumnType.VARCHAR:
+        return switch (typeTag) {
+            case ColumnType.NULL -> Integer.BYTES;
+            case ColumnType.BOOLEAN -> Integer.BYTES + Byte.BYTES;
+            case ColumnType.BYTE -> Integer.BYTES + MAX_BYTE_TEXT_LEN;
+            case ColumnType.SHORT -> Integer.BYTES + MAX_SHORT_TEXT_LEN;
+            case ColumnType.CHAR -> Integer.BYTES + MAX_CHAR_TEXT_LEN;
+            case ColumnType.IPv4 -> Integer.BYTES + MAX_IPv4_TEXT_LEN;
+            case ColumnType.INT -> Integer.BYTES + MAX_INT_TEXT_LEN;
+            case ColumnType.LONG -> Integer.BYTES + MAX_LONG_TEXT_LEN;
+            case ColumnType.DATE -> Integer.BYTES + MAX_DATE_TEXT_LEN;
+            case ColumnType.TIMESTAMP -> Integer.BYTES + MAX_TIMESTAMP_TEXT_LEN;
+            case ColumnType.FLOAT -> Integer.BYTES + MAX_FLOAT_TEXT_LEN;
+            case ColumnType.DOUBLE -> Integer.BYTES + MAX_DOUBLE_TEXT_LEN;
+            case ColumnType.UUID -> Integer.BYTES + MAX_UUID_TEXT_LEN;
+            case ColumnType.LONG256 -> Integer.BYTES + MAX_LONG256_TEXT_LEN;
+            case ColumnType.GEOBYTE -> Integer.BYTES + MAX_GEOBYTE_TEXT_LEN;
+            case ColumnType.GEOSHORT -> Integer.BYTES + MAX_GEOSHORT_TEXT_LEN;
+            case ColumnType.GEOINT -> Integer.BYTES + MAX_GEOINT_TEXT_LEN;
+            case ColumnType.GEOLONG -> Integer.BYTES + MAX_GEOLONG_TEXT_LEN;
+            case ColumnType.VARCHAR -> {
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
-                return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
-            case ColumnType.STRING:
+                yield vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
+            }
+            case ColumnType.STRING -> {
                 final CharSequence strValue = record.getStrA(columnIndex);
-                // take rough upper estimate based on the string length
-                return strValue == null ? Integer.BYTES : Integer.BYTES + 3L * strValue.length();
-            case ColumnType.SYMBOL:
+                // take a rough upper estimate based on the string length
+                yield strValue == null ? Integer.BYTES : Integer.BYTES + 3L * strValue.length();
+            }
+            case ColumnType.SYMBOL -> {
                 final CharSequence symValue = record.getSymA(columnIndex);
-                // take rough upper estimate based on the string length
-                return symValue == null ? Integer.BYTES : Integer.BYTES + 3L * symValue.length();
-            case ColumnType.BINARY:
+                // take a rough upper estimate based on the string length
+                yield symValue == null ? Integer.BYTES : Integer.BYTES + 3L * symValue.length();
+            }
+            case ColumnType.BINARY -> {
                 BinarySequence sequence = record.getBin(columnIndex);
-                return sequence == null ? Integer.BYTES : Integer.BYTES + sequence.length();
-            default:
+                yield sequence == null ? Integer.BYTES : Integer.BYTES + sequence.length();
+            }
+            default -> {
                 assert false : "unsupported type: " + typeTag;
-                return -1;
-        }
+                yield -1;
+            }
+        };
+    }
+
+    private static int calculateArrayHeaderSize(ArrayView array) {
+        return Integer.BYTES // size field (stores the number returned from this method)
+                + Integer.BYTES // dimension count
+                + Integer.BYTES // "has nulls" flag
+                + Integer.BYTES // component type
+                + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
     }
 
     private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex, int resumePoint) {
