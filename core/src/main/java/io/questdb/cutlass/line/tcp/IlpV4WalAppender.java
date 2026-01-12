@@ -192,8 +192,6 @@ public class IlpV4WalAppender {
             long timestamp;
             if (timestampCursor != null && !tableBlock.isColumnNull(timestampColumnInBlock)) {
                 timestamp = ((IlpV4TimestampColumnCursor) timestampCursor).getTimestamp();
-            } else if (timestampCursor != null && timestampCursor instanceof IlpV4FixedWidthColumnCursor && !tableBlock.isColumnNull(timestampColumnInBlock)) {
-                timestamp = ((IlpV4FixedWidthColumnCursor) timestampCursor).getTimestamp();
             } else {
                 timestamp = tud.getTimestampDriver().getTicks();
             }
