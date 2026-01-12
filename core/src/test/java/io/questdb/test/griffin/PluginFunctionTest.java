@@ -285,6 +285,117 @@ public class PluginFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPluginScalarFunction() throws Exception {
+        // Test the scalar example_square function
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test basic squaring
+            assertSql(
+                    "example_square\n" +
+                            "16.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".example_square(4.0)"
+            );
+
+            // Test with negative number
+            assertSql(
+                    "example_square\n" +
+                            "9.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".example_square(-3.0)"
+            );
+
+            // Test with zero
+            assertSql(
+                    "example_square\n" +
+                            "0.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".example_square(0.0)"
+            );
+        });
+    }
+
+    @Test
+    public void testPluginScalarFunctionWithTable() throws Exception {
+        // Test scalar function with table data
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+            execute("CREATE TABLE numbers (val DOUBLE)");
+            execute("INSERT INTO numbers VALUES (2.0), (3.0), (4.0)");
+
+            assertSql(
+                    "val\tsquared\n" +
+                            "2.0\t4.0\n" +
+                            "3.0\t9.0\n" +
+                            "4.0\t16.0\n",
+                    "SELECT val, \"" + PLUGIN_NAME + "\".example_square(val) as squared FROM numbers"
+            );
+        });
+    }
+
+    @Test
+    public void testPluginStringFunction() throws Exception {
+        // Test the string example_reverse function
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test basic reversal
+            assertSql(
+                    "example_reverse\n" +
+                            "olleh\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".example_reverse('hello')"
+            );
+
+            // Test with longer string
+            assertSql(
+                    "example_reverse\n" +
+                            "BDtseuQ\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".example_reverse('QuestDB')"
+            );
+
+            // Test with single character
+            assertSql(
+                    "example_reverse\n" +
+                            "a\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".example_reverse('a')"
+            );
+        });
+    }
+
+    @Test
+    public void testPluginStringFunctionWithTable() throws Exception {
+        // Test string function with table data
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+            execute("CREATE TABLE words (word STRING)");
+            execute("INSERT INTO words VALUES ('abc'), ('hello'), ('QuestDB')");
+
+            assertSql(
+                    "word\treversed\n" +
+                            "abc\tcba\n" +
+                            "hello\tolleh\n" +
+                            "QuestDB\tBDtseuQ\n",
+                    "SELECT word, \"" + PLUGIN_NAME + "\".example_reverse(word) as reversed FROM words"
+            );
+        });
+    }
+
+    @Test
+    public void testPluginFunctionsInFunctionsList() throws Exception {
+        // Test that plugin functions appear in the functions() output
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Query functions() and filter for plugin functions
+            assertSql(
+                    "name\n" +
+                            PLUGIN_NAME + ".example_reverse\n" +
+                            PLUGIN_NAME + ".example_square\n" +
+                            PLUGIN_NAME + ".example_weighted_avg\n",
+                    "SELECT name FROM functions() WHERE name LIKE '" + PLUGIN_NAME + "%' ORDER BY name"
+            );
+        });
+    }
+
     private static boolean containsIgnoreCase(io.questdb.std.ObjList<CharSequence> list, String value) {
         for (int i = 0, n = list.size(); i < n; i++) {
             if (io.questdb.std.Chars.equalsIgnoreCase(list.getQuick(i), value)) {

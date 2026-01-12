@@ -207,6 +207,22 @@ public class FunctionFactoryCache {
         return factories;
     }
 
+    /**
+     * Returns the map of plugin functions for iteration.
+     * Structure: pluginName -> functionName -> List<FunctionFactoryDescriptor>
+     * Thread-safe with read lock held during iteration.
+     *
+     * @return the plugin functions map
+     */
+    public LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>>> getPluginFunctions() {
+        pluginLock.readLock().lock();
+        try {
+            return pluginFunctions;
+        } finally {
+            pluginLock.readLock().unlock();
+        }
+    }
+
     public int getFunctionCount() {
         return factories.size();
     }
