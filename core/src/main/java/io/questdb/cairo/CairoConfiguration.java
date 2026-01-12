@@ -294,9 +294,9 @@ public interface CairoConfiguration {
 
     long getInactiveReaderTTL();
 
-    long getInactiveWalWriterTTL();
-
     long getInactiveViewWalWriterTTL();
+
+    long getInactiveWalWriterTTL();
 
     long getInactiveWriterTTL();
 
@@ -575,8 +575,6 @@ public interface CairoConfiguration {
 
     int getSqlJitMode();
 
-    int getSqlJitPageAddressCacheThreshold();
-
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();
@@ -611,6 +609,8 @@ public interface CairoConfiguration {
     double getSqlParallelFilterPreTouchThreshold();
 
     int getSqlParallelWorkStealingThreshold();
+
+    long getSqlParallelWorkStealingSpinTimeout();
 
     int getSqlParquetFrameCacheCapacity();
 
@@ -689,6 +689,8 @@ public interface CairoConfiguration {
 
     int getViewLexerPoolCapacity();
 
+    int getViewWalWriterPoolMaxSegments();
+
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
 
@@ -737,8 +739,6 @@ public interface CairoConfiguration {
     int getWalTxnNotificationQueueCapacity();
 
     int getWalWriterPoolMaxSegments();
-
-    int getViewWalWriterPoolMaxSegments();
 
     int getWindowColumnPoolCapacity();
 
