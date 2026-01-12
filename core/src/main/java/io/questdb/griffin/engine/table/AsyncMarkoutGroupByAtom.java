@@ -211,17 +211,15 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             // Allocators
             this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
-            this.perWorkerAllocators = new ObjList<>(slotCount);
             if (perWorkerGroupByFunctions != null) {
+                this.perWorkerAllocators = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
                     GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
                     perWorkerAllocators.add(allocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
                 }
             } else {
-                for (int i = 0; i < slotCount; i++) {
-                    perWorkerAllocators.add(null);
-                }
+                perWorkerAllocators = null;
             }
 
             // Per-worker combined records
@@ -254,8 +252,8 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
                 Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-        Misc.free(ownerAllocator);
-        Misc.freeObjListAndKeepObjects(perWorkerAllocators);
+        Misc.clear(ownerAllocator);
+        Misc.clearObjList(perWorkerAllocators);
 
         // Clear ASOF join maps
         if (ownerAsOfJoinMap != null) {
@@ -538,6 +536,13 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     @Override
     public void reopen() {
         // Maps and cursors will be opened lazily
+        // The maps will be open lazily by worker threads, but we need to reopen the allocators.
+        ownerAllocator.reopen();
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                perWorkerAllocators.getQuick(i).reopen();
+            }
+        }
     }
 
     @Override

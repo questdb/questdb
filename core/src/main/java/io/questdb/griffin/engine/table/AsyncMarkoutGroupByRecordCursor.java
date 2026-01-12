@@ -107,7 +107,7 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
             mapCursor = Misc.free(mapCursor);
             sequenceCursor = Misc.free(sequenceCursor);
             slavePageFrameCursor = Misc.free(slavePageFrameCursor);
-            slaveTimeFrameAddressCache.clear();
+            Misc.free(slaveTimeFrameAddressCache);
 
             if (frameSequence != null) {
                 LOG.debug()
