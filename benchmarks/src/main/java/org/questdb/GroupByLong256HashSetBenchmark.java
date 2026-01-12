@@ -77,7 +77,7 @@ public class GroupByLong256HashSetBenchmark {
     @Setup(Level.Iteration)
     public void reset() {
         orderedMap.clear();
-        allocator.close();
+        allocator.clear();
         groupByLong256HashSet.setAllocator(allocator);
         ptr = 0;
         rnd.reset();

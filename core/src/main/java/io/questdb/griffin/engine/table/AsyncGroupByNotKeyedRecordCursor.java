@@ -86,7 +86,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
                 if (frameLimit > -1) {
                     frameSequence.await();
                 }
-                frameSequence.clear();
+                frameSequence.reset();
             }
         }
     }
@@ -219,11 +219,12 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     void of(PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+        final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;
+            atom.reopen();
         }
         this.frameSequence = frameSequence;
-        final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         recordA.of(atom.getOwnerMapValue());
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isValueBuilt = false;
