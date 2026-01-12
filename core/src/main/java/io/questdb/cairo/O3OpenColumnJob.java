@@ -271,7 +271,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
             // srcDataMax is the row count in the existing column data.
             // Use Math.max as a defensive guard against srcDataTop > srcDataMax edge cases.
-            final long auxRowCount = Math.max(0L, srcDataMax - srcDataTop);
+            final long auxRowCountOld = Math.max(0L, srcDataMax - srcDataTop);
             if (srcDataTop > 0 && tableWriter.isCommitReplaceMode()) {
                 // Adjust source data lengths limiting to what we need for the range replace merge.
                 long dataMax = 0;
@@ -289,7 +289,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // Size of data actually in the aux (fixed) file,
                 // THIS IS N+1 size, it used to be N offset, e.g. this used to be pointing at
                 // the last row of the aux vector (column).
-                final long auxSizeOld = columnTypeDriver.getAuxVectorSize(auxRowCount);
+                final long auxSizeOld = columnTypeDriver.getAuxVectorSize(auxRowCountOld);
                 // Size of data in the aux (fixed) file if it didn't have column top.
                 // this size DOES NOT INCLUDE N+1, so it is N here.
                 final long auxSizeNew = columnTypeDriver.getAuxVectorSize(srcDataMax);
@@ -305,8 +305,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
-                    if (auxRowCount > 0) {
-                        srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCount - 1);
+                    if (auxRowCountOld > 0) {
+                        srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountOld - 1);
                     }
 
                     // At bottom of source var column set length of strings to null (-1) for as many strings
@@ -369,12 +369,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     }
 
                     srcDataFixOffset = 0;
-                    if (auxRowCount > 0) {
-                        newAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCount);
+                    if (auxRowCountOld > 0) {
+                        newAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCountOld);
                         srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                         ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
 
-                        srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCount - 1);
+                        srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountOld - 1);
                         srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
                         ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
                     }
