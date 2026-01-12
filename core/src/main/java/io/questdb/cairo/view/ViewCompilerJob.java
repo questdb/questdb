@@ -250,8 +250,19 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
         try {
             viewState.lockForWrite();
+            // Skip stale updates - if a more recent update has already been applied
+            if (updateTimestamp < viewState.getUpdateTimestamp()) {
+                LOG.debug().$("skipping stale view state update [view=").$safe(viewToken.getTableName())
+                        .$(", staleTimestamp=").$(updateTimestamp)
+                        .$(", currentTimestamp=").$(viewState.getUpdateTimestamp())
+                        .I$();
+                return;
+            }
             if (viewState.isInvalid() == invalid && viewMetadata == null) {
-                // there is no change, just return
+                // State unchanged, but still update the timestamp to prevent stale updates
+                // from being applied later (e.g., if a slower task with an older timestamp
+                // completes after this one)
+                viewState.updateState(invalid, invalidationReason, viewMetadata, updateTimestamp);
                 return;
             }
             LOG.info().$("updating view state [view=").$safe(viewToken.getTableName())
