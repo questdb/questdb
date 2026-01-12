@@ -259,10 +259,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
                 return;
             }
             if (viewState.isInvalid() == invalid && viewMetadata == null) {
-                // State unchanged, but still update the timestamp to prevent stale updates
-                // from being applied later (e.g., if a slower task with an older timestamp
-                // completes after this one)
-                viewState.updateState(invalid, invalidationReason, viewMetadata, updateTimestamp);
+                // No state change, skip update (timestamp remains unchanged)
                 return;
             }
             LOG.info().$("updating view state [view=").$safe(viewToken.getTableName())
