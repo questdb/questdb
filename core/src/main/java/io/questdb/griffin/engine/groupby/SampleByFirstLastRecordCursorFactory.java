@@ -345,7 +345,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleToFunc,
                     sampleToFuncPos
             );
-            frameAddressCache = new PageFrameAddressCache(configuration);
+            frameAddressCache = new PageFrameAddressCache();
             // We're using page frame memory only and do single scan
             // with no random access, hence cache size of 1.
             frameMemoryPool = new PageFrameMemoryPool(1);
@@ -354,7 +354,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         @Override
         public void close() {
             Misc.free(frameMemoryPool);
-            frameAddressCache.clear();
+            Misc.free(frameAddressCache);
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
         }

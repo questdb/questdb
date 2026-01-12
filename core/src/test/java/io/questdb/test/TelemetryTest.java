@@ -37,6 +37,7 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -226,7 +227,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     "\torigin SHORT\n" +
                     ") timestamp(created)";
             String middle = " PARTITION BY NONE";
-            String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
+            String end = " BYPASS WAL;\n";
 
             assertSql(start + middle + end, showCreateTable);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
@@ -303,7 +304,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     ") timestamp(created)";
             String midOld = " PARTITION BY MONTH";
             String midNew = " PARTITION BY DAY TTL 1 WEEK";
-            String end = " BYPASS WAL\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n";
+            String end = " BYPASS WAL;\n";
 
             assertSql(start + midOld + end, showCreateTable);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
@@ -394,7 +395,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     };
                     TelemetryJob ignored = new TelemetryJob(engine);
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1)
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 TestUtils.printSql(compiler, context, "select event, origin from " + TELEMETRY, sink);
                 TestUtils.assertContains(

@@ -52,12 +52,14 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
     @Override
     protected WalWriterTenant newTenant(
             TableToken tableToken,
+            Entry<WalWriterTenant> rootEntry,
             Entry<WalWriterTenant> entry,
             int index,
             @Nullable ResourcePoolSupervisor<WalWriterTenant> supervisor
     ) {
         return new WalWriterTenant(
                 this,
+                rootEntry,
                 entry,
                 index,
                 tableToken,
@@ -68,19 +70,15 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         );
     }
 
-    @Override
-    protected boolean returnToPool(WalWriterTenant tenant) {
-        // WAL writes are now tracked on each commit in WalWriter.commit0()
-        return super.returnToPool(tenant);
-    }
-
     public static class WalWriterTenant extends WalWriter implements PoolTenant<WalWriterTenant> {
         private final int index;
+        private final Entry<WalWriterTenant> rootEntry;
         private Entry<WalWriterTenant> entry;
         private AbstractMultiTenantPool<WalWriterTenant> pool;
 
-        public WalWriterTenant(
+        private WalWriterTenant(
                 AbstractMultiTenantPool<WalWriterTenant> pool,
+                Entry<WalWriterTenant> rootEntry,
                 Entry<WalWriterTenant> entry,
                 int index,
                 TableToken tableToken,
@@ -91,6 +89,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         ) {
             super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy, recentWriteTracker);
             this.pool = pool;
+            this.rootEntry = rootEntry;
             this.entry = entry;
             this.index = index;
         }
@@ -128,6 +127,12 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
             return index;
         }
 
+        @Override
+        public Entry<WalWriterTenant> getRootEntry() {
+            return rootEntry;
+        }
+
+        @Override
         public void goodbye() {
             entry = null;
             pool = null;
@@ -146,6 +151,11 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void toSink(@NotNull CharSink<?> sink) {
             sink.put("WalWriterTenant{index=").put(index).put(", tableToken=").put(getTableToken()).put('}');
+        }
+
+        @Override
+        public void updateTableToken(TableToken ignoredTableToken) {
+            // goActive() will update table token
         }
     }
 }

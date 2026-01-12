@@ -230,6 +230,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
+                allocator.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             Function.init(keyFunctions, managedCursor, executionContext, null);

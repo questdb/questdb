@@ -2590,7 +2590,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
                     // Don't block the queue even if the command is unknown
                     commandSubSeq.done(cursor);
-                    break;
             }
         } else {
             LOG.info()
@@ -4179,7 +4178,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i), i);
 
-            if (type > -1) {
+            if (type > -1 && !tableToken.isView()) {
                 if (ColumnType.isSymbol(type)) {
                     final int symbolIndexInTxWriter = denseSymbolMapWriters.size();
                     long symbolTableNameTxn = columnVersionWriter.getSymbolTableNameTxn(i);
@@ -5258,7 +5257,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (tempMem16b != 0) {
                 tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
-            LOG.info().$("closed [table=").$(tableToken).I$();
+            LOG.debug().$("closed [table=").$(tableToken).I$();
         }
     }
 

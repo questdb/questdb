@@ -100,6 +100,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
     protected void _close() {
         super._close();
         Misc.free(simpleMapValue);
+        Misc.free(cursor);
     }
 
     @Override

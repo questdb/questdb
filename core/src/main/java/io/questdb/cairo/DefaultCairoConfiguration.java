@@ -237,6 +237,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCompileViewModelPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public @NotNull CharSequence getConfRoot() {
         return confRoot;
     }
@@ -442,6 +447,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveViewWalWriterTTL() {
+        return 30_000;
+    }
+
+    @Override
     public long getInactiveWalWriterTTL() {
         return 60_000;
     }
@@ -576,11 +586,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getMaxUncommittedRows() {
-        return 1000;
-    }
-
-    @Override
-    public int getRecentWriteTrackerCapacity() {
         return 1000;
     }
 
@@ -756,6 +761,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPivotColumnPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getPoolSegmentSize() {
+        return 32;
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return 64;
     }
@@ -773,6 +788,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getReaderPoolMaxSegments() {
         return 5;
+    }
+
+    @Override
+    public int getRecentWriteTrackerCapacity() {
+        return 1000;
     }
 
     @Override
@@ -973,11 +993,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlJitPageAddressCacheThreshold() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
     public int getSqlJoinContextPoolCapacity() {
         return 64;
     }
@@ -1048,6 +1063,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelWorkStealingSpinTimeout() {
+        return 50_000; // 50us
+    }
+
+    @Override
     public int getSqlParallelWorkStealingThreshold() {
         return 16;
     }
@@ -1055,6 +1075,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlParquetFrameCacheCapacity() {
         return 3;
+    }
+
+    @Override
+    public int getSqlPivotMaxProducedColumns() {
+        return 5_000;
     }
 
     @Override
@@ -1225,6 +1250,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getVectorAggregateQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getViewLexerPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return 3;
     }
 
     @Override

@@ -94,14 +94,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -148,13 +148,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
+                                            from trades t
+                                            left join prices p
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts
                                         ) order by ts
                                 )
@@ -198,13 +198,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
+                                            from trades t
+                                            left join prices p
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1, ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts
                                         ) order by ts
                                 )
@@ -326,14 +326,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -458,30 +458,42 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testCalcSize() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
-            assertSkipToAndCalculateSize("select t.sym, t.price, t.ts, sum(t.price) as window_price " +
-                    "from trades t " +
-                    "window join prices p " +
-                    "on (t.sym = p.sym) " +
-                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                    "order by t.ts, t.sym", 20);
-            assertSkipToAndCalculateSize("select t.sym, t.price, t.ts, sum(t.price) as window_price " +
-                    "from trades t " +
-                    "window join prices p " +
-                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                    "order by t.ts, t.sym", 20);
-            assertSkipToAndCalculateSize("select t.sym, t.price, t.ts, sum(t.price) as window_price " +
-                    "from trades t " +
-                    "window join prices p " +
-                    "on t.sym = p.sym " +
-                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                    " where t.price < 450 " +
-                    "order by t.ts, t.sym", 3);
-            assertSkipToAndCalculateSize("select t.sym, t.price, t.ts, sum(t.price) as window_price " +
-                    "from trades t " +
-                    "window join prices p " +
-                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                    " where t.price < 450 " +
-                    "order by t.ts, t.sym", 3);
+            assertSkipToAndCalculateSize(
+                    "select t.sym, t.price, t.ts, sum(t.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                            "order by t.ts, t.sym",
+                    20
+            );
+            assertSkipToAndCalculateSize(
+                    "select t.sym, t.price, t.ts, sum(t.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                            "order by t.ts, t.sym",
+                    20
+            );
+            assertSkipToAndCalculateSize(
+                    "select t.sym, t.price, t.ts, sum(t.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on t.sym = p.sym " +
+                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                            " where t.price < 450 " +
+                            "order by t.ts, t.sym",
+                    3
+            );
+            assertSkipToAndCalculateSize(
+                    "select t.sym, t.price, t.ts, sum(t.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                            " where t.price < 450 " +
+                            "order by t.ts, t.sym",
+                    3
+            );
         });
     }
 
@@ -553,14 +565,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
-                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300 
-                                        union 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and p.price < 300) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -608,14 +620,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
-                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) 
-                                        union 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts)
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -662,14 +674,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
-                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 or p.price > 300 )  
-                                        union 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 or p.price > 300 )
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and (p.price < 200 or p.price > 300)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -717,14 +729,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
-                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 and p.price > 300 )  
-                                        union 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 and p.price > 300 )
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and (p.price < 200 and p.price > 300)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -773,14 +785,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
-                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA' )  
-                                        union 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA' )
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and (t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA')) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -840,14 +852,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from (select * from trades where price < 300) t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
-                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300 
-                                        union 
+                                            from (select * from trades where price < 300) t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from (select * from trades where price < 300) t 
-                                            join prices p 
+                                            from (select * from trades where price < 300) t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and p.price < 300) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -896,14 +908,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from (select * from trades where price < 300) t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
-                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300 
-                                        union 
+                                            from (select * from trades where price < 300) t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300
+                                        union
                                             select sym,price,ts,price1, ts1 pts   from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from (select * from trades where price < 300) t 
-                                            join prices p 
+                                            from (select * from trades where price < 300) t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and p.price < 300) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -1100,12 +1112,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t
-                                            left join prices p 
+                                            left join prices p
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) and p.price > 0
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on p.ts <= dateadd('m', 1, t.ts) and p.price > 0) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -1190,12 +1202,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from (select * from trades where price > 0) t
-                                            left join prices p 
+                                            left join prices p
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) and p.price > 0
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from (select * from trades where price > 0) t 
-                                            join prices p 
+                                            from (select * from trades where price > 0) t
+                                            join prices p
                                             on p.ts <= dateadd('m', 1, t.ts) and p.price > 0) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -1572,14 +1584,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from t 
-                                            join prices p 
+                                            from t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -1708,14 +1720,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -1761,13 +1773,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
+                                            from trades t
+                                            left join prices p
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -1850,14 +1862,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('s', -1, t.ts) AND p.ts <= dateadd('s', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('s', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -1908,14 +1920,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('s', -1, t.ts) AND p.ts <= dateadd('s', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from t 
-                                            join prices p 
+                                            from t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('s', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -1972,14 +1984,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -2031,13 +2043,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
+                                            from trades t
+                                            left join prices p
                                             on p.ts >= dateadd('m', -15, t.ts) AND p.ts <= dateadd('m', -14, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on p.ts <= dateadd('m', -15, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -2079,14 +2091,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', -5, t.ts) AND p.ts <= dateadd('m', -4, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -5, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -2421,8 +2433,8 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             // count is resolved to the first slave
-            expect = includePrevailing ?
-                    replaceTimestampSuffix("""
+            expect = replaceTimestampSuffix(
+                    """
                             ts	sym	window_price1	window_price2	cnt
                             2023-01-01T09:00:00.000000Z		null	null	3
                             2023-01-01T09:01:00.000000Z		null	null	3
@@ -2444,30 +2456,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5	1
                             2023-01-01T09:18:00.000000Z	META	601.5	601.5	1
                             2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5	1
-                            """, leftTableTimestampType.getTypeName())
-                    : replaceTimestampSuffix("""
-                    ts	sym	window_price1	window_price2	cnt
-                    2023-01-01T09:00:00.000000Z		null	null	3
-                    2023-01-01T09:01:00.000000Z		null	null	3
-                    2023-01-01T09:02:00.000000Z		null	null	3
-                    2023-01-01T09:03:00.000000Z		null	null	3
-                    2023-01-01T09:04:00.000000Z		null	null	3
-                    2023-01-01T09:05:00.000000Z		null	null	3
-                    2023-01-01T09:06:00.000000Z		null	null	3
-                    2023-01-01T09:07:00.000000Z		null	null	3
-                    2023-01-01T09:08:00.000000Z		null	null	2
-                    2023-01-01T09:09:00.000000Z		null	null	1
-                    2023-01-01T09:10:00.000000Z	TSLA	399.5	400.5	2
-                    2023-01-01T09:11:00.000000Z	TSLA	400.5	400.5	1
-                    2023-01-01T09:12:00.000000Z	AMZN	499.5	500.5	2
-                    2023-01-01T09:13:00.000000Z	AMZN	500.5	501.5	1
-                    2023-01-01T09:14:00.000000Z	META	599.5	601.5	2
-                    2023-01-01T09:15:00.000000Z	META	600.5	601.5	1
-                    2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5	1
-                    2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5	1
-                    2023-01-01T09:18:00.000000Z	META	601.5	601.5	1
-                    2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5	1
-                    """, leftTableTimestampType.getTypeName());
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
             assertQueryAndPlan(
                     expect,
                     "Sort\n" +
@@ -2689,13 +2680,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
+                                            from trades t
+                                            left join prices p
                                             on p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', -1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on p.ts <= dateadd('m', -2, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -2738,13 +2729,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
+                                            from trades t
+                                            left join prices p
                                             on p.ts >= dateadd('m', -3, t.ts) AND p.ts <= dateadd('m', -2, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on p.ts <= dateadd('m', -3, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -2787,13 +2778,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from t 
-                                            left join prices p 
+                                            from t
+                                            left join prices p
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from t 
-                                            join prices p 
+                                            from t
+                                            join prices p
                                             on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -2828,6 +2819,328 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinOrderByDescAsyncFast() throws Exception {
+        // Tests AsyncWindowJoinFastRecordCursorFactory with ORDER BY ts DESC
+        // Factory selection: parallel enabled (default), symbol join condition, no LIMIT
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            final String prevailing = includePrevailing ? "include" : "exclude";
+
+            if (!includePrevailing) {
+                printSql(
+                        "select t.sym, t.price, t.ts, sum(p.price) window_price " +
+                                "from trades t " +
+                                "left join prices p " +
+                                "on (t.sym = p.sym) " +
+                                " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                                "order by t.ts desc;",
+                        sink
+                );
+            } else {
+                printSql(
+                        """
+                                select sym,price,ts, sum(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                                        union
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from trades t
+                                            join prices p
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts desc;
+                                """,
+                        sink
+                );
+            }
+            assertQueryAndPlan(
+                    sink,
+                    String.format("""
+                                    Sort
+                                      keys: [ts desc]
+                                        Async Window Fast Join workers: 1
+                                          vectorized: true
+                                          symbol: sym=sym
+                                          window lo: 60000000%1$s preceding (%2$s prevailing)
+                                          window hi: 60000000%1$s following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """,
+                            nanoZeros,
+                            prevailing
+                    ),
+                    String.format(
+                            """
+                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                                    FROM trades t
+                                    WINDOW JOIN prices p
+                                    ON (t.sym = p.sym)
+                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts DESC
+                                    """,
+                            prevailing
+                    ),
+                    "ts###DESC",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinOrderByDescAsyncNonFast() throws Exception {
+        // Tests AsyncWindowJoinRecordCursorFactory with ORDER BY ts DESC
+        // Factory selection: parallel enabled (default), no symbol join condition, no LIMIT
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            final String prevailing = includePrevailing ? "include" : "exclude";
+
+            if (!includePrevailing) {
+                printSql(
+                        "select t.sym, t.price, t.ts, sum(p.price) window_price " +
+                                "from trades t " +
+                                "left join prices p " +
+                                "on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                                "order by t.ts desc;",
+                        sink
+                );
+            } else {
+                printSql(
+                        """
+                                select sym,price,ts, sum(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price
+                                            from trades t
+                                            left join prices p
+                                            on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                                        union
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from trades t
+                                            join prices p
+                                            on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts
+                                        ) order by ts
+                                )
+                                order by ts desc;
+                                """,
+                        sink
+                );
+            }
+            assertQueryAndPlan(
+                    sink,
+                    String.format(
+                            """
+                                    Sort
+                                      keys: [ts desc, sym]
+                                        Async Window Join workers: 1
+                                          vectorized: true
+                                          window lo: 60000000%1$s preceding (%2$s prevailing)
+                                          window hi: 60000000%1$s following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """,
+                            nanoZeros,
+                            prevailing
+                    ),
+                    String.format(
+                            """
+                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                                    FROM trades t
+                                    WINDOW JOIN prices p
+                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts DESC, t.sym
+                                    """,
+                            prevailing
+                    ),
+                    "ts###DESC",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinOrderByDescNonAsyncFast() throws Exception {
+        // Tests WindowJoinFastRecordCursorFactory with ORDER BY ts DESC
+        // Factory selection: LIMIT on master forces non-async, symbol join condition
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            final String prevailing = includePrevailing ? "include" : "exclude";
+
+            if (!includePrevailing) {
+                printSql(
+                        "select t.sym, t.price, t.ts, sum(p.price) window_price " +
+                                "from (select * from trades limit 10) t " +
+                                "left join prices p " +
+                                "on (t.sym = p.sym) " +
+                                " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                                "order by t.ts desc;",
+                        sink
+                );
+            } else {
+                printSql(
+                        """
+                                with t as (select * from trades limit 10)
+                                select sym,price,ts, sum(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price
+                                            from t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                                        union
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from t
+                                            join prices p
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts desc;
+                                """,
+                        sink
+                );
+            }
+            assertQueryAndPlan(
+                    sink,
+                    String.format(
+                            """
+                                    Sort
+                                      keys: [ts desc]
+                                        Window Fast Join
+                                          vectorized: true
+                                          symbol: sym=sym
+                                          window lo: 60000000%1$s preceding (%2$s prevailing)
+                                          window hi: 60000000%1$s following
+                                            Limit value: 10 skip-rows: 0 take-rows: 10
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """,
+                            nanoZeros,
+                            prevailing
+                    ),
+                    String.format(
+                            """
+                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                                    FROM (SELECT * FROM trades LIMIT 10) t
+                                    WINDOW JOIN prices p
+                                    ON (t.sym = p.sym)
+                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts DESC
+                                    """,
+                            prevailing
+                    ),
+                    "ts###DESC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinOrderByDescNonAsyncNonFast() throws Exception {
+        // Tests WindowJoinRecordCursorFactory with ORDER BY DESC
+        // Factory selection: LIMIT on master forces non-async, expression-based join (no symbol match)
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            final String prevailing = includePrevailing ? "include" : "exclude";
+
+            if (!includePrevailing) {
+                printSql(
+                        "select t.sym, t.price, t.ts, sum(p.price) window_price " +
+                                "from (select * from trades limit 10) t " +
+                                "left join prices p " +
+                                "on concat(t.sym, '_0') = concat(p.sym, '_0') " +
+                                " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                                "order by t.ts desc;",
+                        sink
+                );
+            } else {
+                printSql(
+                        """
+                                with t as (select * from trades limit 10)
+                                select sym,price,ts, sum(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price
+                                            from t
+                                            left join prices p
+                                            on concat(t.sym, '_0') = concat(p.sym, '_0')
+                                            and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                                        union
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from t
+                                            join prices p
+                                            on concat(t.sym, '_0') = concat(p.sym, '_0') and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts desc;
+                                """,
+                        sink
+                );
+            }
+            assertQueryAndPlan(
+                    sink,
+                    String.format(
+                            """
+                                    Sort
+                                      keys: [ts desc]
+                                        Window Join
+                                          window lo: 60000000%1$s preceding (%2$s prevailing)
+                                          window hi: 60000000%1$s following
+                                          join filter: concat([t.sym,'_0'])=concat([p.sym,'_0'])
+                                            Limit value: 10 skip-rows: 0 take-rows: 10
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """,
+                            nanoZeros,
+                            prevailing
+                    ),
+                    String.format(
+                            """
+                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                                    FROM (SELECT * FROM trades LIMIT 10) t
+                                    WINDOW JOIN prices p
+                                    ON (concat(t.sym, '_0') = concat(p.sym, '_0'))
+                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts DESC
+                                    """,
+                            prevailing
+                    ),
+                    "ts###DESC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinProjection() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -2844,14 +3157,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -2900,14 +3213,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym != p.sym and p.price > 100) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym != p.sym and p.price > 100)
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym != p.sym and p.price > 100) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -2995,11 +3308,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """
                             SELECT t.ts, t.sym, t.price, first(val0) agg0, last(val1) agg1, sum(val1) agg2, last(val1) agg3
                             FROM trades t
-                            WINDOW JOIN prices p 
+                            WINDOW JOIN prices p
                             """ +
                             "RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
                             """
-                                    ORDER BY t.ts, t.sym""",
+                                    ORDER BY t.ts, t.sym
+                                    """,
                     "ts",
                     true,
                     false
@@ -3142,7 +3456,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     	null	2023-01-01T09:06:00.000000Z	null
                                     	null	2023-01-01T09:07:00.000000Z	null
                                     	null	2023-01-01T09:08:00.000000Z	null
-                                    	null	2023-01-01T09:09:00.000000Z	null
+                                    	null	2023-01-01T09:09:00.000000Z	399.5
                                     TSLA	400.0	2023-01-01T09:10:00.000000Z	800.0
                                     TSLA	401.0	2023-01-01T09:11:00.000000Z	900.0
                                     AMZN	500.0	2023-01-01T09:12:00.000000Z	1000.0
@@ -3193,13 +3507,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from t 
-                                            left join prices p 
+                                            from t
+                                            left join prices p
                                             on t.sym = p.sym and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from t 
-                                            join prices p 
+                                            from t
+                                            join prices p
                                             on t.sym = p.sym and p.ts <= dateadd('m', 1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -3498,13 +3812,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
+                                            from trades t
+                                            left join prices p
                                             on (0 = 1) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (0 = 1) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -3546,13 +3860,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
+                                            from trades t
+                                            left join prices p
                                             on (0 = 1) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (0 = 1) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -3604,10 +3918,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         from trades t
                                         left join prices p
                                         on (t.sym = p.sym) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                    union 
+                                    union
                                         select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                        from trades t 
-                                        join prices p 
+                                        from trades t
+                                        join prices p
                                         on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                     ) order by ts
                                 )
@@ -3666,13 +3980,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price, p.ts pts
-                                            from trades t 
-                                            left join prices p 
+                                            from trades t
+                                            left join prices p
                                             on (t.sym = p.sym) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )

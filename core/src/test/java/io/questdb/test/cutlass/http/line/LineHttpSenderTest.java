@@ -664,8 +664,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                                     CREATE TABLE 'arr_auto_creation_test' (\s
                                     \tarr DOUBLE[],
                                     \ttimestamp TIMESTAMP
-                                    ) timestamp(timestamp) PARTITION BY DAY WAL
-                                    WITH maxUncommittedRows=500000, o3MaxLag=600000000us;
+                                    ) timestamp(timestamp) PARTITION BY DAY;
                                     """);
                 }
             }
@@ -885,7 +884,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 final CairoEngine engine = questdb.getEngine();
                 engine.setDdlListener(new DefaultDdlListener() {
                     @Override
-                    public void onTableOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                    public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
                         try {
                             // assert that this is the expected table name and id
                             final int tableId = (int) engine.getTableIdGenerator().getCurrentId();
@@ -896,7 +895,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             Assert.assertNull(engine.getTableTokenIfExists("tab"));
 
                             // assert that others competing to create the same table, cannot lock the table name 
-                            Assert.assertNull(engine.lockTableName("tab", tableId, false, true));
+                            Assert.assertNull(engine.lockTableName("tab", tableId, false, false, true));
                         } catch (Throwable th) {
                             th.printStackTrace(System.out);
                             failed.set(true);

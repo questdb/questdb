@@ -956,7 +956,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 }
                 frameSequence.await();
                 Misc.freeIfCloseable(frameSequence.getSymbolTableSource());
-                frameSequence.clear();
+                frameSequence.reset();
             }
         });
     }
@@ -1359,8 +1359,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void resetFlags() {
-            sqlExecutionContext.resetFlags();
+        public void reset() {
+            sqlExecutionContext.reset();
         }
 
         @Override

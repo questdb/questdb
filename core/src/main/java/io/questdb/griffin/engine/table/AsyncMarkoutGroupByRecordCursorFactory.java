@@ -160,12 +160,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
 
-            this.cursor = new AsyncMarkoutGroupByRecordCursor(
-                    configuration,
-                    recordFunctions,
-                    sequenceFactory,
-                    slaveFactory
-            );
+            this.cursor = new AsyncMarkoutGroupByRecordCursor(recordFunctions, sequenceFactory, slaveFactory);
         } catch (Throwable th) {
             close();
             throw th;

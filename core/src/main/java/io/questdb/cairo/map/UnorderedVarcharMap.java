@@ -212,7 +212,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         size = 0;
         nResizes = 0;
         Vect.memset(memStart, memLimit - memStart, 0);
-        Misc.free(allocator); // free all memory, but allocator remains usable for further allocations
+        Misc.clear(allocator);
     }
 
     @Override
@@ -323,13 +323,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
             restoreInitialCapacity();
         }
+        allocator.reopen();
     }
 
+    @Override
     public void reopen() {
         if (memStart == 0) {
             // handles both mem and offsets
             restoreInitialCapacity();
         }
+        allocator.reopen();
     }
 
     @Override

@@ -339,6 +339,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 isOpen = true;
                 recordKeyMap.reopen();
                 dataMap.reopen();
+                allocator.reopen();
             }
             circuitBreaker = executionContext.getCircuitBreaker();
             managedRecord = managedCursor.getRecord();

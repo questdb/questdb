@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.map.Map;
@@ -81,7 +80,6 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     private TablePageFrameCursor slavePageFrameCursor;
 
     public AsyncMarkoutGroupByRecordCursor(
-            CairoConfiguration configuration,
             ObjList<Function> recordFunctions,
             RecordCursorFactory sequenceFactory,
             RecordCursorFactory slaveFactory
@@ -91,7 +89,7 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         this.slaveFactory = slaveFactory;
         this.recordA = new VirtualRecord(recordFunctions);
         this.recordB = new VirtualRecord(recordFunctions);
-        this.slaveTimeFrameAddressCache = new PageFrameAddressCache(configuration);
+        this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
         this.isOpen = true;
     }
 
@@ -120,7 +118,7 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
                 if (frameLimit > -1) {
                     frameSequence.await();
                 }
-                frameSequence.clear();
+                frameSequence.reset();
             }
         }
     }

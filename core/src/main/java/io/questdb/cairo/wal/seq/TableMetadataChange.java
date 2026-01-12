@@ -37,4 +37,11 @@ public interface TableMetadataChange {
     default String matViewInvalidationReason() {
         return null;
     }
+
+    /**
+     * Returns true if the operation should trigger the re-compilation of dependent views.
+     */
+    default boolean shouldCompileDependentViews() {
+        return false;
+    }
 }

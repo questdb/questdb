@@ -165,12 +165,11 @@ include(FetchContent)
 FetchContent_Declare(
         asmjit
         GIT_REPOSITORY https://github.com/questdb/asmjit.git
-        GIT_TAG 4ec760a3d1f69e32ba460ecd2513f29b8428700b # Fixed typos in documentation
+        GIT_TAG f64c90818ff2ef87ec4f73f44d0a7e73fbff3229 # Improved overhead benchmarks
 )
 
 FetchContent_MakeAvailable(asmjit)
-include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
-include_directories(${asmjit_SOURCE_DIR}/src SYSTEM)
+include_directories(${asmjit_SOURCE_DIR} SYSTEM)
 add_compile_definitions(ASMJIT_NO_STDCXX)
 
 # use this is for debug purposes
@@ -182,6 +181,7 @@ endif ()
 
 if (JIT_TEST)
     include_directories(${asmjit_SOURCE_DIR}/test SYSTEM)
+    include_directories(${asmjit_SOURCE_DIR}/asmjit-testing/commons SYSTEM)
     add_executable(jittests src/test/c/jittests/test_app.cpp)
     target_link_libraries(jittests questdb)
 endif ()
@@ -209,7 +209,8 @@ if (OS_LINUX)
     target_link_libraries(liburing INTERFACE ${SOURCE_DIR}/src/liburing.a)
 endif ()
 
-add_library(questdb SHARED ${SOURCE_FILES} ${ASMJIT_SRC})
+add_library(questdb SHARED ${SOURCE_FILES})
+target_link_libraries(questdb asmjit::asmjit)
 
 set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused-parameter;-fPIC;-fno-rtti;-fno-exceptions")
 
