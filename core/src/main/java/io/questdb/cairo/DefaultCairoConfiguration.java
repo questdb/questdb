@@ -988,11 +988,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlJitPageAddressCacheThreshold() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
     public int getSqlJoinContextPoolCapacity() {
         return 64;
     }
@@ -1060,6 +1055,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public double getSqlParallelFilterPreTouchThreshold() {
         return 0.05;
+    }
+
+    @Override
+    public long getSqlParallelWorkStealingSpinTimeout() {
+        return 50_000; // 50us
     }
 
     @Override

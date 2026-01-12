@@ -35,10 +35,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     private final int noStealingThreshold;
+    private final long spinTimeoutNanos;
     private AtomicInteger startedCounter;
 
-    public AdaptiveWorkStealingStrategy(int noStealingThreshold) {
+    public AdaptiveWorkStealingStrategy(int noStealingThreshold, long spinTimeoutNanos) {
         this.noStealingThreshold = noStealingThreshold;
+        this.spinTimeoutNanos = spinTimeoutNanos;
     }
 
     @Override
@@ -50,15 +52,27 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     @Override
     public boolean shouldSteal(int finishedCount) {
         // Give shared workers a chance to pick up the tasks.
-        for (int i = 0; i < noStealingThreshold; i++) {
-            Os.pause();
-            // Check if the number of picked up tasks is more than the threshold.
-            if (startedCounter.get() - finishedCount >= noStealingThreshold) {
-                // A sufficient number of tasks is taken by other workers,
-                // so let's spin while those workers are doing their job.
+        // The spin duration is time-based to ensure consistent behavior
+        // across different CPU architectures (Intel vs AMD have very different
+        // PAUSE instruction latencies).
+        final int initialStartedCount = startedCounter.get();
+        if (initialStartedCount - finishedCount >= noStealingThreshold) {
+            // A sufficient number of tasks is taken by other workers,
+            // so let's spin while those workers are doing their job.
+            return false;
+        }
+
+        // Give the OS scheduler a chance to kick in.
+        Os.pause();
+
+        final long deadline = System.nanoTime() + spinTimeoutNanos;
+        do {
+            Thread.onSpinWait();
+            // Check if someone picked up a task.
+            if (startedCounter.get() > initialStartedCount) {
                 return false;
             }
-        }
+        } while (System.nanoTime() < deadline);
         return true;
     }
 }

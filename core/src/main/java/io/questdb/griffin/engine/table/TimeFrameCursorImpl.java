@@ -77,14 +77,14 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             @NotNull RecordMetadata metadata
     ) {
         this.metadata = metadata;
-        frameAddressCache = new PageFrameAddressCache(configuration);
-        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        this.frameAddressCache = new PageFrameAddressCache();
+        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
-        frameAddressCache.clear();
+        Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
     }
 

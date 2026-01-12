@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -54,7 +55,7 @@ import java.io.Closeable;
 
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
-public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Plannable {
+public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -150,8 +151,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
                 Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-        Misc.free(ownerAllocator);
-        Misc.freeObjListAndKeepObjects(perWorkerAllocators);
+        Misc.clear(ownerAllocator);
+        Misc.clearObjList(perWorkerAllocators);
     }
 
     @Override
@@ -267,6 +268,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
 
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
+    }
+
+    @Override
+    public void reopen() {
+        ownerAllocator.reopen();
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                perWorkerAllocators.getQuick(i).reopen();
+            }
+        }
     }
 
     @Override

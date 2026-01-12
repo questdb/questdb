@@ -92,7 +92,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         super(metadata);
         try {
             this.base = base;
-            this.frameAddressCache = new PageFrameAddressCache(configuration);
+            this.frameAddressCache = new PageFrameAddressCache();
             this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             this.vafList = new ObjList<>(vafList.size());
             this.vafList.addAll(vafList);
@@ -219,7 +219,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void close() {
-            frameAddressCache.clear();
+            Misc.free(frameAddressCache);
             frameCursor = Misc.free(frameCursor);
         }
 

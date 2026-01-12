@@ -61,6 +61,8 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -68,6 +70,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
+
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
@@ -128,6 +132,46 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     @Override
     public long startedAtTimestamp() {
         return startedAtTimestamp.get();
+    }
+
+    /*
+     * Remove all the table directories that do not exist in the checkpoint.
+     * This will remove any tables that were created after the checkpoint was taken
+     */
+    private static void removeNonCheckpointedTableDirs(FilesFacade ff, Path dstPath, int rootLen, Path srcPath, int snapshotDbLen) {
+        dstPath.trimTo(rootLen).$();
+        LOG.info().$("searching ").$(dstPath).$(" for orphaned table dirs").$();
+        ff.iterateDir(
+                dstPath.$(), (pUtf8NameZ, type) -> {
+                    if (ff.isDirOrSoftLinkDirNoDots(dstPath, rootLen, pUtf8NameZ, type)) {
+                        srcPath.trimTo(snapshotDbLen);
+
+                        // Check if the checkpoint dir is configured to be inside the db dir,
+                        // so we do not delete checkpoint directory itself
+                        if (!Utf8s.startsWith(srcPath, dstPath)) {
+                            srcPath.concat(pUtf8NameZ);
+
+                            // Check that the table exists in the checkpoint
+                            // so that we do not restore tables that were created after the checkpoint was taken
+                            // that may be in an inconsistent state.
+                            if (!ff.exists(srcPath.$())) {
+                                LOG.advisory().$("removing orphan table directory [dir=").$(dstPath).I$();
+
+                                if (!ff.rmdir(dstPath)) {
+                                    LOG.critical().$("failed to remove orphan table directory [dir=").$(dstPath)
+                                            .$(", errno=").$(ff.errno()).I$();
+                                    throw CairoException.critical(ff.errno())
+                                            .put("Checkpoint recovery failed. Aborting QuestDB startup; " +
+                                                    "could not remove orphan table directory, " +
+                                                    "remove it manually to continue [dir=").put(dstPath).put(']');
+                                }
+                            }
+                        }
+                    }
+                }
+        );
+        dstPath.trimTo(rootLen);
+        srcPath.trimTo(snapshotDbLen);
     }
 
     private void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, CharSequence checkpointRoot, boolean isIncrementalBackup) throws SqlException {
@@ -285,7 +329,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         metadata.switchTo(path, path.size(), true);
                                         metadata.close(true, Vm.TRUNCATE_TO_POINTER);
 
-                                        mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                        mem.smallFile(ff, path.concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                                         mem.putLong(lastTxn);
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
 
@@ -325,7 +369,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     reader.getMetadata().dumpTo(mem);
                                     mem.close(false);
                                     // Copy _txn file.
-                                    path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
+                                    path.trimTo(rootLen).concat(TXN_FILE_NAME);
                                     mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                     reader.getTxFile().dumpTo(mem);
                                     mem.close(false);
@@ -773,6 +817,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         }
                     }
             );
+
+            removeNonCheckpointedTableDirs(ff, dstPath, rootLen, srcPath, snapshotDbLen);
+
             recoveryAgent.finalizeParallelTasks();
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())

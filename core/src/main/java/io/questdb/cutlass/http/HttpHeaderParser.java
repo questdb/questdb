@@ -62,7 +62,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private final ObjectPool<DirectUtf8String> csPool;
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
     private final HttpHeaderParameterValue parameterValue = new HttpHeaderParameterValue();
-    private final DirectUtf8Sink sink = new DirectUtf8Sink(0, true);
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(0);
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;

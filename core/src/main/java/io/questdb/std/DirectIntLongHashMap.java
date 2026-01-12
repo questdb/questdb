@@ -171,7 +171,7 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
             }
         } while (index != index0);
 
-        throw CairoException.critical(0).put("corrupt int hash set");
+        throw CairoException.critical(0).put("corrupt int-long hash table");
     }
 
     private void putAt0(long index, int key, long value) {
@@ -182,7 +182,7 @@ public class DirectIntLongHashMap implements Mutable, QuietCloseable, Reopenable
 
     private void rehash(int newCapacity) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("int-int hash table capacity overflow");
+            throw CairoException.nonCritical().put("int-long hash table capacity overflow");
         }
 
         final int oldCapacity = capacity;

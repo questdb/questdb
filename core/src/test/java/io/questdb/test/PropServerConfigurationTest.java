@@ -308,6 +308,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
+        Assert.assertEquals(50_000, configuration.getCairoConfiguration().getSqlParallelWorkStealingSpinTimeout());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
@@ -327,7 +328,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
-        Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlJitPageAddressCacheThreshold());
         Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
 
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getRndFunctionMemoryPageSize());
@@ -2035,6 +2035,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
         Assert.assertEquals(100, configuration.getSqlOrderByRadixSortThreshold());
         Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
+        Assert.assertEquals(100_000, configuration.getSqlParallelWorkStealingSpinTimeout());
         Assert.assertEquals(42, configuration.getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
         Assert.assertEquals(100, configuration.getSqlPageFrameMinRows());
@@ -2057,7 +2058,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2, configuration.getSqlJitIRMemoryMaxPages());
         Assert.assertEquals(1024, configuration.getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(1, configuration.getSqlJitBindVarsMemoryMaxPages());
-        Assert.assertEquals(1024, configuration.getSqlJitPageAddressCacheThreshold());
         Assert.assertTrue(configuration.isSqlJitDebugEnabled());
 
         Assert.assertEquals(16384, configuration.getRndFunctionMemoryPageSize());
