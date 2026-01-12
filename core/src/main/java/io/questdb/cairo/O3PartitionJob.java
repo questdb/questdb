@@ -2174,10 +2174,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                     timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
 
-                                    // Remove empty partition dir
-                                    Path path = Path.getThreadLocal(pathToTable);
-                                    setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
-                                    tableWriter.getConfiguration().getFilesFacade().rmdir(path);
+                                    removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
 
                                     // nothing to do, skip the partition
                                     updatePartition(
@@ -2243,16 +2240,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // No merge anymore, free the merge index
                         timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
 
-                        // Remove empty partition dir to not create a partition that is not used but can be counted
-                        // by partition purging logic as a valid version
-                        Path path = Path.getThreadLocal(pathToTable);
-                        setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
-                        if (!tableWriter.getConfiguration().getFilesFacade().rmdir(path)) {
-                            // This is not critical, the read error will be transient
-                            LOG.error().$("could not remove phantom partition dir, " +
-                                    "it may cause transient missing file read errors" +
-                                    " [path=").$(path).I$();
-                        }
+                        removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
 
                         prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
@@ -2637,6 +2625,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
+        }
+    }
+
+    private static void removePhantomPartitionDir(
+            Path pathToTable,
+            TableWriter tableWriter,
+            long partitionTimestamp,
+            long txn
+    ) {
+        // Remove empty partition dir to not create a partition that is not used but can be counted
+        // by partition purging logic as a valid version
+        Path path = Path.getThreadLocal(pathToTable);
+        setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
+        FilesFacade ff = tableWriter.getConfiguration().getFilesFacade();
+        if (!ff.rmdir(path)) {
+            // This is not critical, the read error will be transient
+            LOG.error().$("could not remove phantom partition dir, it may cause transient missing file read errors [errno=").$(ff.errno()).$(", path=").$(path).I$();
         }
     }
 
