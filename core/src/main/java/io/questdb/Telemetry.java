@@ -70,6 +70,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private final boolean enabled;
     private final IntLongHashMap lastEventTimestamps;
     private final int maxFileNameLen;
+    private final QueueConsumer<T> taskConsumer;
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
     private final TelemetryType<T> telemetryType;
@@ -77,7 +78,6 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private long dbSizeEstimateStartTimestamp;
     private RingQueue<T> telemetryQueue;
     private TableWriter writer;
-    private final QueueConsumer<T> taskConsumer = this::consume;
 
     public Telemetry(TelemetryTypeBuilder<T> builder, CairoConfiguration configuration) {
         TelemetryType<T> type = builder.build(configuration);
@@ -95,6 +95,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             ttlWeeks = telemetryConfiguration.getTtlWeeks();
             ThrottleInterval = telemetryConfiguration.getThrottleIntervalMicros();
             lastEventTimestamps = new IntLongHashMap();
+            taskConsumer = ThrottleInterval > 0 ? this::consumeThrottled : this::consumeDirect;
         } else {
             telemetryType = null;
             clock = null;
@@ -105,6 +106,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
             lastEventTimestamps = null;
             ttlWeeks = 0;
             ThrottleInterval = 0;
+            taskConsumer = null;
         }
     }
 
@@ -124,19 +126,6 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
         } finally {
             telemetryQueue = Misc.free(telemetryQueue);
         }
-    }
-
-    public void consume(T task) {
-        long timestamp = clock.getTicks();
-        if (ThrottleInterval > 0) {
-            int eventKey = task.getEventKey();
-            if (lastEventTimestamps.get(eventKey) + ThrottleInterval > timestamp) {
-                return;
-            }
-            lastEventTimestamps.put(eventKey, timestamp);
-        }
-
-        task.writeTo(writer, timestamp);
     }
 
     public void consumeAll() {
@@ -285,6 +274,20 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
         }
         // 6 - 1001+ tables
         return TelemetryEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 6;
+    }
+
+    private void consumeDirect(T task) {
+        task.writeTo(writer, clock.getTicks());
+    }
+
+    private void consumeThrottled(T task) {
+        long timestamp = clock.getTicks();
+        int eventKey = task.getEventKey();
+        if (lastEventTimestamps.get(eventKey) + ThrottleInterval > timestamp) {
+            return;
+        }
+        lastEventTimestamps.put(eventKey, timestamp);
+        task.writeTo(writer, timestamp);
     }
 
     private short getDBSizeClass(CairoConfiguration configuration) {
