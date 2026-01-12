@@ -229,16 +229,24 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                 }
 
                 // Move to next function within current plugin
+                // Note: plugin may have been unloaded - check for null
                 if (pluginFuncNames != null && pluginFuncIndex < pluginFuncNames.size() - 1) {
                     pluginFuncIndex++;
                     LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> pluginFuncMap =
                             pluginFunctions.get(currentPluginName);
-                    funcDescriptors = pluginFuncMap.get(pluginFuncNames.get(pluginFuncIndex));
-                    descriptorIndex = 0;
-                    qualifiedNameSink.clear();
-                    qualifiedNameSink.put(currentPluginName).put('.').put(pluginFuncNames.get(pluginFuncIndex));
-                    record.init(qualifiedNameSink, funcDescriptors.get(0).getFactory());
-                    return true;
+                    if (pluginFuncMap != null) {
+                        funcDescriptors = pluginFuncMap.get(pluginFuncNames.get(pluginFuncIndex));
+                        if (funcDescriptors != null && funcDescriptors.size() > 0) {
+                            descriptorIndex = 0;
+                            qualifiedNameSink.clear();
+                            qualifiedNameSink.put(currentPluginName).put('.').put(pluginFuncNames.get(pluginFuncIndex));
+                            record.init(qualifiedNameSink, funcDescriptors.get(0).getFactory());
+                            return true;
+                        }
+                    }
+                    // Plugin was unloaded mid-iteration - reset and try next plugin
+                    pluginFuncNames = null;
+                    funcDescriptors = null;
                 }
 
                 // Move to next plugin
@@ -251,11 +259,13 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                         pluginFuncNames = pluginFuncMap.keys();
                         pluginFuncIndex = 0;
                         funcDescriptors = pluginFuncMap.get(pluginFuncNames.get(0));
-                        descriptorIndex = 0;
-                        qualifiedNameSink.clear();
-                        qualifiedNameSink.put(currentPluginName).put('.').put(pluginFuncNames.get(0));
-                        record.init(qualifiedNameSink, funcDescriptors.get(0).getFactory());
-                        return true;
+                        if (funcDescriptors != null && funcDescriptors.size() > 0) {
+                            descriptorIndex = 0;
+                            qualifiedNameSink.clear();
+                            qualifiedNameSink.put(currentPluginName).put('.').put(pluginFuncNames.get(0));
+                            record.init(qualifiedNameSink, funcDescriptors.get(0).getFactory());
+                            return true;
+                        }
                     }
                 }
 
