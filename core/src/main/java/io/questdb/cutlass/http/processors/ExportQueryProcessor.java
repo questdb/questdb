@@ -90,6 +90,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
+import static io.questdb.TelemetryEvent.QUERY_RESULT_EXPORT_CSV;
+import static io.questdb.TelemetryEvent.QUERY_RESULT_EXPORT_PARQUET;
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
@@ -183,12 +185,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
                     state.setQueryCacheable(cc.isCacheable());
-                    sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
+                    sqlExecutionContext.storeTelemetry(state.getExportModel().isParquetFormat() ?
+                            QUERY_RESULT_EXPORT_PARQUET : QUERY_RESULT_EXPORT_CSV, TelemetryOrigin.HTTP);
                 }
             } else {
                 state.setQueryCacheable(true);
                 sqlExecutionContext.setCacheHit(true);
-                sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);
+                sqlExecutionContext.storeTelemetry(state.getExportModel().isParquetFormat() ?
+                        QUERY_RESULT_EXPORT_PARQUET : QUERY_RESULT_EXPORT_CSV, TelemetryOrigin.HTTP);
             }
 
             if (state.recordCursorFactory != null) {

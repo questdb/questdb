@@ -53,7 +53,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         this.metadata = metadata;
         recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
-        frameAddressCache = new PageFrameAddressCache(configuration);
+        frameAddressCache = new PageFrameAddressCache();
         frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
@@ -62,7 +62,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         Misc.free(frameMemoryPool);
         Misc.free(recordA);
         Misc.free(recordB);
-        frameAddressCache.clear();
+        Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
     }
 

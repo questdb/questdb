@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.LongList;
+import io.questdb.std.DirectLongList;
 
 /**
  * Represents page frame as a set of per column contiguous memory.
@@ -33,27 +33,65 @@ import io.questdb.std.LongList;
  */
 public interface PageFrameMemory {
 
+    /**
+     * Returns aux (index) vector address for a var-size column.
+     */
     long getAuxPageAddress(int columnIndex);
 
-    LongList getAuxPageAddresses();
+    /**
+     * Returns flat list of aux page addresses for all frames.
+     * Use with {@link #getColumnOffset()} for efficient access.
+     */
+    DirectLongList getAuxPageAddresses();
 
-    LongList getAuxPageSizes();
+    /**
+     * Returns flat list of aux page sizes for all frames.
+     */
+    DirectLongList getAuxPageSizes();
 
     int getColumnCount();
 
+    /**
+     * Returns pre-computed offset into flat column arrays for this frame.
+     * Usage: {@code getPageAddresses().getQuick(getColumnOffset() + columnIndex)}
+     */
+    int getColumnOffset();
+
+    /**
+     * Returns frame format: {@link PartitionFormat#NATIVE} or {@link PartitionFormat#PARQUET}.
+     */
     byte getFrameFormat();
 
     int getFrameIndex();
 
+    /**
+     * Returns data vector address for a column.
+     */
     long getPageAddress(int columnIndex);
 
-    LongList getPageAddresses();
+    /**
+     * Returns flat list of data page addresses for all frames.
+     * Use with {@link #getColumnOffset()} for efficient access.
+     */
+    DirectLongList getPageAddresses();
 
+    /**
+     * Returns data vector size for a column.
+     */
     long getPageSize(int columnIndex);
 
-    LongList getPageSizes();
+    /**
+     * Returns flat list of data page sizes for all frames.
+     */
+    DirectLongList getPageSizes();
 
+    /**
+     * Returns row ID offset used to compute real row IDs.
+     */
     long getRowIdOffset();
 
+    /**
+     * Returns true if any column has a column top (zero address).
+     */
     boolean hasColumnTops();
 }

@@ -28,7 +28,8 @@
 // Altered source of asmjit_test_compiler.h
 // from AsmJit - Machine code generation for C++
 
-#include <asmjit/asmjit.h>
+#include <asmjit/core.h>
+#include <asmjit/x86.h>
 #include <memory>
 #include <vector>
 
@@ -38,10 +39,10 @@
 class SimpleErrorHandler : public asmjit::ErrorHandler {
 public:
     SimpleErrorHandler()
-    : _err(asmjit::kErrorOk) {}
+    : _err(asmjit::Error::kOk) {}
 
-    void handleError(asmjit::Error err, const char* message, asmjit::BaseEmitter* origin) override {
-        asmjit::DebugUtils::unused(origin);
+    void handle_error(asmjit::Error err, const char* message, asmjit::BaseEmitter* origin) override {
+        (void)origin;
         _err = err;
         _message.assign(message);
     }

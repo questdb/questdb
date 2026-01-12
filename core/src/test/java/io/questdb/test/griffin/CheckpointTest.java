@@ -997,6 +997,103 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreOrphanDirRemovalFailure() throws Exception {
+        final String snapshotId = "id1";
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean rmdir(Path name, boolean lazy) {
+                if (Utf8s.containsAscii(name, "tiesto~")) {
+                    return false;
+                }
+                return super.rmdir(name, lazy);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            drainWalQueue();
+
+            // 2. Checkpoint
+            execute("checkpoint create");
+
+            // 3. Drop table and create a new one after checkpoint
+            execute("drop table test");
+            drainWalQueue();
+            drainPurgeJob();
+
+            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+
+
+            // 4. Restore from the checkpoint - rmdir for tiesto will fail but restore should complete
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Aborting QuestDB startup; could not remove orphan table directory, remove it manually to continue");
+                TestUtils.assertContains(e.getFlyweightMessage(), "dbRoot/tiesto~");
+            } finally {
+                execute("checkpoint release");
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointWithTableDropAndTableCreate() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
+            execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
+            drainWalQueue();
+
+            // 2. Checkpoint
+            execute("checkpoint create;");
+
+            // 3. Drop table and create a new one after checkpoint
+            execute("drop table test;");
+            drainWalQueue();
+            drainPurgeJob();
+
+            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+
+            // 4. Restore from the checkpoint
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            execute("CHECKPOINT RELEASE;");
+
+            // 5. Validate the restored table exists and new table does not
+            assertSql(
+                    """
+                            ts	name	val
+                            2023-09-20T12:00:00.000000Z	a	10
+                            2023-09-20T13:00:00.000000Z	b	20
+                            2023-09-20T14:00:00.000000Z	c	30
+                            """,
+                    "test;"
+            );
+
+            assertException("tiesto;", 0, "table does not exist [table=tiesto]");
+        });
+    }
+
+    @Test
     public void testCheckpointWithViewAlters() throws Exception {
         final String snapshotId = "id1";
         assertMemoryLeak(() -> {
