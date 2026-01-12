@@ -374,6 +374,13 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public Request putByteNoBoundCheckUnsafe(byte b) {
+            checkCapacity(1);
+            Unsafe.getUnsafe().putByte(ptr, b);
+            ptr++;
+            return this;
+        }
+
         @Override
         public Request put(@Nullable CharSequence cs) {
             Utf8Sink.super.put(cs);
@@ -427,6 +434,12 @@ public abstract class HttpClient implements QuietCloseable {
             ptr += Double.BYTES;
         }
 
+        public void putFloat(float value) {
+            checkCapacity(Float.BYTES);
+            Unsafe.getUnsafe().putFloat(ptr, value);
+            ptr += Float.BYTES;
+        }
+
         @Override
         public void putInt(int value) {
             checkCapacity(Integer.BYTES);
@@ -439,6 +452,18 @@ public abstract class HttpClient implements QuietCloseable {
             checkCapacity(Long.BYTES);
             Unsafe.getUnsafe().putLong(ptr, value);
             ptr += Long.BYTES;
+        }
+
+        public void putLongBE(long value) {
+            checkCapacity(Long.BYTES);
+            Unsafe.getUnsafe().putLong(ptr, Long.reverseBytes(value));
+            ptr += Long.BYTES;
+        }
+
+        public void putShort(short value) {
+            checkCapacity(Short.BYTES);
+            Unsafe.getUnsafe().putShort(ptr, value);
+            ptr += Short.BYTES;
         }
 
         @Override

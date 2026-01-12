@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.ilpv4;
 
+import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
@@ -38,75 +39,53 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
  * This encoder produces the binary wire format defined in the ILP v4 specification.
  * It handles message headers, table blocks, schemas, and column data.
  * <p>
- * The encoder writes to an {@link IlpV4OutputSink}, which can be backed by either
- * a native memory buffer (for TCP) or an HTTP client request buffer (for HTTP).
+ * The encoder writes directly to an {@link HttpClient.Request} buffer.
  */
 public class IlpV4MessageEncoder implements Closeable {
 
     private static final int GORILLA_BUFFER_SIZE = 64 * 1024; // 64KB for Gorilla encoding
 
-    private IlpV4OutputSink sink;
-    private IlpV4NativeBufferSink ownedSink; // Only set if we own the sink
+    private HttpClient.Request request;
     private byte flags;
     // Pooled BitWriter to avoid allocation on every timestamp column
     private final IlpV4BitWriter bitWriter = new IlpV4BitWriter();
-    // Temporary buffer for Gorilla encoding (used when sink doesn't support direct writes)
+    // Temporary buffer for Gorilla encoding
     private long gorillaBuffer;
     private int gorillaBufferCapacity;
 
     /**
-     * Creates an encoder with its own native buffer.
-     */
-    public IlpV4MessageEncoder() {
-        this(64 * 1024); // 64KB initial buffer
-    }
-
-    /**
-     * Creates an encoder with its own native buffer of the specified initial capacity.
-     */
-    public IlpV4MessageEncoder(int initialCapacity) {
-        this.ownedSink = new IlpV4NativeBufferSink(initialCapacity);
-        this.sink = this.ownedSink;
-        this.flags = 0;
-    }
-
-    /**
-     * Creates an encoder that writes to the provided sink.
+     * Creates an encoder that writes to the provided request.
      *
-     * @param sink the output sink to write to
+     * @param request the HTTP request to write to
      */
-    public IlpV4MessageEncoder(IlpV4OutputSink sink) {
-        this.sink = sink;
-        this.ownedSink = null;
+    public IlpV4MessageEncoder(HttpClient.Request request) {
+        this.request = request;
         this.flags = 0;
     }
 
     /**
-     * Sets the output sink for this encoder.
+     * Sets the HTTP request for this encoder.
      * <p>
-     * This allows reusing the encoder with different sinks (e.g., for HTTP where
+     * This allows reusing the encoder with different requests (e.g., for HTTP where
      * each request has its own buffer).
      *
-     * @param sink the output sink to write to
+     * @param request the HTTP request to write to
      */
-    public void setSink(IlpV4OutputSink sink) {
-        this.sink = sink;
+    public void setRequest(HttpClient.Request request) {
+        this.request = request;
     }
 
     /**
-     * Returns the output sink.
+     * Returns the HTTP request.
      */
-    public IlpV4OutputSink getSink() {
-        return sink;
+    public HttpClient.Request getRequest() {
+        return request;
     }
 
     /**
      * Resets the encoder for a new message.
      */
     public void reset() {
-        if (ownedSink != null) {
-            ownedSink.reset();
-        }
         flags = 0;
     }
 
@@ -135,25 +114,23 @@ public class IlpV4MessageEncoder implements Closeable {
      * @param payloadLength total payload length (not including header)
      */
     public void writeHeader(int tableCount, int payloadLength) {
-        sink.ensureCapacity(HEADER_SIZE);
-
         // Magic "ILP4"
-        sink.putByte((byte) 'I');
-        sink.putByte((byte) 'L');
-        sink.putByte((byte) 'P');
-        sink.putByte((byte) '4');
+        request.putByte((byte) 'I');
+        request.putByte((byte) 'L');
+        request.putByte((byte) 'P');
+        request.putByte((byte) '4');
 
         // Version
-        sink.putByte(VERSION_1);
+        request.putByte(VERSION_1);
 
         // Flags
-        sink.putByte(flags);
+        request.putByte(flags);
 
         // Table count (uint16)
-        sink.putShort((short) tableCount);
+        request.putShort((short) tableCount);
 
         // Payload length (uint32)
-        sink.putInt(payloadLength);
+        request.putInt(payloadLength);
     }
 
     /**
@@ -165,8 +142,8 @@ public class IlpV4MessageEncoder implements Closeable {
      * @param payloadLength the actual payload length
      */
     public void updatePayloadLength(int payloadLength) {
-        // Payload length is at offset 8 in the header
-        Unsafe.getUnsafe().putInt(sink.addressAt(8), payloadLength);
+        // Payload length is at offset 8 in the header (from content start)
+        Unsafe.getUnsafe().putInt(request.getContentStart() + 8, payloadLength);
     }
 
     /**
@@ -229,7 +206,6 @@ public class IlpV4MessageEncoder implements Closeable {
      */
     public void writeNullBitmap(boolean[] nulls, int count) {
         int bitmapSize = (count + 7) / 8;
-        sink.ensureCapacity(bitmapSize);
 
         for (int i = 0; i < bitmapSize; i++) {
             byte b = 0;
@@ -239,7 +215,7 @@ public class IlpV4MessageEncoder implements Closeable {
                     b |= (1 << bit);
                 }
             }
-            sink.putByte(b);
+            request.putByte(b);
         }
     }
 
@@ -251,13 +227,12 @@ public class IlpV4MessageEncoder implements Closeable {
      */
     public void writeNullBitmapPacked(long[] nullsPacked, int count) {
         int bitmapSize = (count + 7) / 8;
-        sink.ensureCapacity(bitmapSize);
 
         for (int byteIdx = 0; byteIdx < bitmapSize; byteIdx++) {
             int longIndex = byteIdx >>> 3;  // byteIdx / 8
             int byteInLong = byteIdx & 7;   // byteIdx % 8
             byte b = (byte) ((nullsPacked[longIndex] >>> (byteInLong * 8)) & 0xFF);
-            sink.putByte(b);
+            request.putByte(b);
         }
     }
 
@@ -266,7 +241,6 @@ public class IlpV4MessageEncoder implements Closeable {
      */
     public void writeBooleanColumn(boolean[] values, int count) {
         int packedSize = (count + 7) / 8;
-        sink.ensureCapacity(packedSize);
 
         for (int i = 0; i < packedSize; i++) {
             byte b = 0;
@@ -276,7 +250,7 @@ public class IlpV4MessageEncoder implements Closeable {
                     b |= (1 << bit);
                 }
             }
-            sink.putByte(b);
+            request.putByte(b);
         }
     }
 
@@ -284,9 +258,8 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes a byte column.
      */
     public void writeByteColumn(byte[] values, int count) {
-        sink.ensureCapacity(count);
         for (int i = 0; i < count; i++) {
-            sink.putByte(values[i]);
+            request.putByte(values[i]);
         }
     }
 
@@ -294,9 +267,8 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes a short column.
      */
     public void writeShortColumn(short[] values, int count) {
-        sink.ensureCapacity(count * 2);
         for (int i = 0; i < count; i++) {
-            sink.putShort(values[i]);
+            request.putShort(values[i]);
         }
     }
 
@@ -304,9 +276,8 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes an int column.
      */
     public void writeIntColumn(int[] values, int count) {
-        sink.ensureCapacity(count * 4);
         for (int i = 0; i < count; i++) {
-            sink.putInt(values[i]);
+            request.putInt(values[i]);
         }
     }
 
@@ -314,9 +285,8 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes a long column.
      */
     public void writeLongColumn(long[] values, int count) {
-        sink.ensureCapacity(count * 8);
         for (int i = 0; i < count; i++) {
-            sink.putLong(values[i]);
+            request.putLong(values[i]);
         }
     }
 
@@ -324,9 +294,8 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes a float column.
      */
     public void writeFloatColumn(float[] values, int count) {
-        sink.ensureCapacity(count * 4);
         for (int i = 0; i < count; i++) {
-            sink.putFloat(values[i]);
+            request.putFloat(values[i]);
         }
     }
 
@@ -334,9 +303,8 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes a double column.
      */
     public void writeDoubleColumn(double[] values, int count) {
-        sink.ensureCapacity(count * 8);
         for (int i = 0; i < count; i++) {
-            sink.putDouble(values[i]);
+            request.putDouble(values[i]);
         }
     }
 
@@ -349,14 +317,14 @@ public class IlpV4MessageEncoder implements Closeable {
             writeByte(IlpV4TimestampDecoder.ENCODING_GORILLA);
 
             // Write first timestamp
-            sink.putLong(values[0]);
+            request.putLong(values[0]);
 
             if (valueCount == 1) {
                 return;
             }
 
             // Write second timestamp
-            sink.putLong(values[1]);
+            request.putLong(values[1]);
 
             if (valueCount == 2) {
                 return;
@@ -379,9 +347,9 @@ public class IlpV4MessageEncoder implements Closeable {
                 prevTimestamp = values[i];
             }
 
-            // Flush and copy to sink
+            // Flush and copy to request
             int bytesWritten = bitWriter.finish();
-            sink.putBytes(gorillaBuffer, bytesWritten);
+            request.putBlockOfBytes(gorillaBuffer, bytesWritten);
         } else {
             if (useGorilla) {
                 writeByte(IlpV4TimestampDecoder.ENCODING_UNCOMPRESSED);
@@ -454,9 +422,6 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes a string column with offset array.
      */
     public void writeStringColumn(String[] strings, int count) {
-        // Calculate total size needed for offset array
-        int offsetArraySize = (count + 1) * 4;
-
         // Calculate total data length
         int totalDataLen = 0;
         for (int i = 0; i < count; i++) {
@@ -465,16 +430,14 @@ public class IlpV4MessageEncoder implements Closeable {
             }
         }
 
-        sink.ensureCapacity(offsetArraySize + totalDataLen);
-
         // Write offset array
         int runningOffset = 0;
-        sink.putInt(0);
+        request.putInt(0);
         for (int i = 0; i < count; i++) {
             if (strings[i] != null) {
                 runningOffset += utf8Length(strings[i]);
             }
-            sink.putInt(runningOffset);
+            request.putInt(runningOffset);
         }
 
         // Write string data
@@ -507,27 +470,27 @@ public class IlpV4MessageEncoder implements Closeable {
     }
 
     /**
-     * Encodes a string as UTF-8 directly to the sink.
+     * Encodes a string as UTF-8 directly to the request.
      */
     private void encodeUtf8Direct(String s) {
         for (int i = 0, n = s.length(); i < n; i++) {
             char c = s.charAt(i);
             if (c < 0x80) {
-                sink.putByte((byte) c);
+                request.putByte((byte) c);
             } else if (c < 0x800) {
-                sink.putByte((byte) (0xC0 | (c >> 6)));
-                sink.putByte((byte) (0x80 | (c & 0x3F)));
+                request.putByte((byte) (0xC0 | (c >> 6)));
+                request.putByte((byte) (0x80 | (c & 0x3F)));
             } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
                 char c2 = s.charAt(++i);
                 int codePoint = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
-                sink.putByte((byte) (0xF0 | (codePoint >> 18)));
-                sink.putByte((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
-                sink.putByte((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
-                sink.putByte((byte) (0x80 | (codePoint & 0x3F)));
+                request.putByte((byte) (0xF0 | (codePoint >> 18)));
+                request.putByte((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
+                request.putByte((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
+                request.putByte((byte) (0x80 | (codePoint & 0x3F)));
             } else {
-                sink.putByte((byte) (0xE0 | (c >> 12)));
-                sink.putByte((byte) (0x80 | ((c >> 6) & 0x3F)));
-                sink.putByte((byte) (0x80 | (c & 0x3F)));
+                request.putByte((byte) (0xE0 | (c >> 12)));
+                request.putByte((byte) (0x80 | ((c >> 6) & 0x3F)));
+                request.putByte((byte) (0x80 | (c & 0x3F)));
             }
         }
     }
@@ -552,10 +515,9 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes UUID column data (big-endian).
      */
     public void writeUuidColumn(long[] highBits, long[] lowBits, int count) {
-        sink.ensureCapacity(count * 16);
         for (int i = 0; i < count; i++) {
-            sink.putLongBE(highBits[i]);
-            sink.putLongBE(lowBits[i]);
+            request.putLongBE(highBits[i]);
+            request.putLongBE(lowBits[i]);
         }
     }
 
@@ -572,39 +534,22 @@ public class IlpV4MessageEncoder implements Closeable {
      */
     public void writeDoubleArrayColumn(byte[] dims, int[] shapes, double[] data,
                                        int valueCount, int shapeOffset, int dataOffset) {
-        // Calculate total size needed
+        // Write each row's array
         int shapeIdx = 0;
         int dataIdx = 0;
-        int totalSize = 0;
         for (int row = 0; row < valueCount; row++) {
             int nDims = dims[row];
-            // 1 byte for nDims + 4 bytes per dimension + 8 bytes per element
-            int elemCount = 1;
-            for (int d = 0; d < nDims; d++) {
-                elemCount *= shapes[shapeIdx + d];
-            }
-            totalSize += 1 + (nDims * 4) + (elemCount * 8);
-            shapeIdx += nDims;
-        }
-
-        sink.ensureCapacity(totalSize);
-
-        // Write each row's array
-        shapeIdx = 0;
-        dataIdx = 0;
-        for (int row = 0; row < valueCount; row++) {
-            int nDims = dims[row];
-            sink.putByte((byte) nDims);
+            request.putByte((byte) nDims);
 
             int elemCount = 1;
             for (int d = 0; d < nDims; d++) {
                 int dimLen = shapes[shapeIdx++];
-                sink.putInt(dimLen);
+                request.putInt(dimLen);
                 elemCount *= dimLen;
             }
 
             for (int e = 0; e < elemCount; e++) {
-                sink.putDouble(data[dataIdx++]);
+                request.putDouble(data[dataIdx++]);
             }
         }
     }
@@ -622,39 +567,22 @@ public class IlpV4MessageEncoder implements Closeable {
      */
     public void writeLongArrayColumn(byte[] dims, int[] shapes, long[] data,
                                      int valueCount, int shapeOffset, int dataOffset) {
-        // Calculate total size needed
+        // Write each row's array
         int shapeIdx = 0;
         int dataIdx = 0;
-        int totalSize = 0;
         for (int row = 0; row < valueCount; row++) {
             int nDims = dims[row];
-            // 1 byte for nDims + 4 bytes per dimension + 8 bytes per element
-            int elemCount = 1;
-            for (int d = 0; d < nDims; d++) {
-                elemCount *= shapes[shapeIdx + d];
-            }
-            totalSize += 1 + (nDims * 4) + (elemCount * 8);
-            shapeIdx += nDims;
-        }
-
-        sink.ensureCapacity(totalSize);
-
-        // Write each row's array
-        shapeIdx = 0;
-        dataIdx = 0;
-        for (int row = 0; row < valueCount; row++) {
-            int nDims = dims[row];
-            sink.putByte((byte) nDims);
+            request.putByte((byte) nDims);
 
             int elemCount = 1;
             for (int d = 0; d < nDims; d++) {
                 int dimLen = shapes[shapeIdx++];
-                sink.putInt(dimLen);
+                request.putInt(dimLen);
                 elemCount *= dimLen;
             }
 
             for (int e = 0; e < elemCount; e++) {
-                sink.putLong(data[dataIdx++]);
+                request.putLong(data[dataIdx++]);
             }
         }
     }
@@ -671,16 +599,12 @@ public class IlpV4MessageEncoder implements Closeable {
      * @param valueCount number of values to write
      */
     public void writeDecimal64Column(byte scale, long[] values, int valueCount) {
-        // 1 byte for scale + 8 bytes per value
-        int totalSize = 1 + (valueCount * 8);
-        sink.ensureCapacity(totalSize);
-
         // Write scale (shared for entire column)
-        sink.putByte(scale);
+        request.putByte(scale);
 
         // Write values (big-endian for decimal compatibility)
         for (int i = 0; i < valueCount; i++) {
-            sink.putLongBE(values[i]);
+            request.putLongBE(values[i]);
         }
     }
 
@@ -695,17 +619,13 @@ public class IlpV4MessageEncoder implements Closeable {
      * @param valueCount number of values to write
      */
     public void writeDecimal128Column(byte scale, long[] high, long[] low, int valueCount) {
-        // 1 byte for scale + 16 bytes per value
-        int totalSize = 1 + (valueCount * 16);
-        sink.ensureCapacity(totalSize);
-
         // Write scale (shared for entire column)
-        sink.putByte(scale);
+        request.putByte(scale);
 
         // Write values (big-endian: high then low)
         for (int i = 0; i < valueCount; i++) {
-            sink.putLongBE(high[i]);
-            sink.putLongBE(low[i]);
+            request.putLongBE(high[i]);
+            request.putLongBE(low[i]);
         }
     }
 
@@ -722,19 +642,15 @@ public class IlpV4MessageEncoder implements Closeable {
      * @param valueCount number of values to write
      */
     public void writeDecimal256Column(byte scale, long[] hh, long[] hl, long[] lh, long[] ll, int valueCount) {
-        // 1 byte for scale + 32 bytes per value
-        int totalSize = 1 + (valueCount * 32);
-        sink.ensureCapacity(totalSize);
-
         // Write scale (shared for entire column)
-        sink.putByte(scale);
+        request.putByte(scale);
 
         // Write values (big-endian: hh, hl, lh, ll)
         for (int i = 0; i < valueCount; i++) {
-            sink.putLongBE(hh[i]);
-            sink.putLongBE(hl[i]);
-            sink.putLongBE(lh[i]);
-            sink.putLongBE(ll[i]);
+            request.putLongBE(hh[i]);
+            request.putLongBE(hl[i]);
+            request.putLongBE(lh[i]);
+            request.putLongBE(ll[i]);
         }
     }
 
@@ -742,35 +658,35 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes a single byte.
      */
     public void writeByte(byte value) {
-        sink.putByte(value);
+        request.putByte(value);
     }
 
     /**
      * Writes a short (little-endian).
      */
     public void writeShort(short value) {
-        sink.putShort(value);
+        request.putShort(value);
     }
 
     /**
      * Writes an int (little-endian).
      */
     public void writeInt(int value) {
-        sink.putInt(value);
+        request.putInt(value);
     }
 
     /**
      * Writes a long (little-endian).
      */
     public void writeLong(long value) {
-        sink.putLong(value);
+        request.putLong(value);
     }
 
     /**
      * Writes a long in big-endian order.
      */
     public void writeLongBigEndian(long value) {
-        sink.putLongBE(value);
+        request.putLongBE(value);
     }
 
     /**
@@ -784,9 +700,8 @@ public class IlpV4MessageEncoder implements Closeable {
 
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         writeVarint(bytes.length);
-        sink.ensureCapacity(bytes.length);
         for (byte b : bytes) {
-            sink.putByte(b);
+            request.putByte(b);
         }
     }
 
@@ -794,59 +709,29 @@ public class IlpV4MessageEncoder implements Closeable {
      * Writes a varint (unsigned LEB128).
      */
     public void writeVarint(long value) {
-        sink.ensureCapacity(10);
         while (value > 0x7F) {
-            sink.putByte((byte) ((value & 0x7F) | 0x80));
+            request.putByte((byte) ((value & 0x7F) | 0x80));
             value >>>= 7;
         }
-        sink.putByte((byte) value);
+        request.putByte((byte) value);
     }
 
     /**
-     * Returns the current position (bytes written).
+     * Returns the current position (bytes written to content).
      */
     public int getPosition() {
-        return sink.position();
+        return request.getContentLength();
     }
 
     /**
-     * Sets the position.
-     */
-    public void setPosition(int pos) {
-        sink.position(pos);
-    }
-
-    /**
-     * Returns the buffer capacity.
-     */
-    public int getCapacity() {
-        return sink.capacity();
-    }
-
-    /**
-     * Returns the buffer address (for backward compatibility).
+     * Returns the buffer address at content start.
      */
     public long getBufferAddress() {
-        return sink.addressAt(0);
-    }
-
-    /**
-     * Copies the encoded data to a byte array.
-     */
-    public byte[] toByteArray() {
-        if (sink instanceof IlpV4NativeBufferSink) {
-            return ((IlpV4NativeBufferSink) sink).toByteArray();
-        }
-        throw new UnsupportedOperationException("toByteArray() only supported for native buffer sink");
+        return request.getContentStart();
     }
 
     @Override
     public void close() {
-        if (ownedSink != null) {
-            ownedSink.close();
-            ownedSink = null;
-            sink = null;
-        }
         if (gorillaBuffer != 0) {
             Unsafe.free(gorillaBuffer, gorillaBufferCapacity, MemoryTag.NATIVE_DEFAULT);
             gorillaBuffer = 0;

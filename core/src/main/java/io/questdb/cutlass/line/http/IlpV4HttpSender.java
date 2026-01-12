@@ -52,7 +52,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
@@ -129,7 +128,7 @@ public class IlpV4HttpSender implements Sender {
         this.hosts = hosts;
         this.ports = ports;
         this.currentAddressIndex = 0;
-        // Create encoder without its own buffer - we'll set the sink before each flush
+        // Create encoder without its own buffer - we'll set the request before each flush
         this.encoder = new IlpV4MessageEncoder(null);
         this.tableBuffers = new HashMap<>();
         this.tableOrder = new ObjList<>();
@@ -571,14 +570,13 @@ public class IlpV4HttpSender implements Sender {
 
         request.withContent();
 
-        // Create sink that writes directly to the HTTP request buffer
-        IlpV4HttpRequestSink sink = new IlpV4HttpRequestSink(request);
-        encoder.setSink(sink);
+        // Set the request directly on the encoder
+        encoder.setRequest(request);
         encoder.setGorillaEnabled(gorillaEnabled);
 
         // Write placeholder header (will be patched later)
         for (int i = 0; i < HEADER_SIZE; i++) {
-            sink.putByte((byte) 0);
+            request.putByte((byte) 0);
         }
 
         // Encode each table directly to the HTTP request buffer
