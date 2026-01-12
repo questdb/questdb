@@ -73,7 +73,7 @@ public class GroupByCharSequenceLongHashMapBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        allocator.close();
+        allocator.clear();
         groupByCharSequenceLongHashMap.setAllocator(allocator);
         mapPtr = 0;
         rnd.reset();
