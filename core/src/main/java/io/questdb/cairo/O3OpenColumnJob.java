@@ -293,7 +293,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // Size of data in the aux (fixed) file if it didn't have column top.
                 // this size DOES NOT INCLUDE N+1, so it is N here.
                 final long auxSizeNew = columnTypeDriver.getAuxVectorSize(srcDataMax);
+                final long auxRowCountNew = Math.max(0L, srcDataMax - srcDataTop);
 
+                // if column top on the partition column is in the middle of the prefix
+                // we need to materialize nulls
+                // if the prefix is new O3 data it means the O3 data comes first in the merged result
+                // and the column top will also not work so we need to materialize nulls too
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
 
                     // Extend the existing column down, we will be discarding it anyway.
@@ -318,9 +323,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataSize += reservedBytesForColTopNulls;
                     // This value may be lower than auxRowCount.
                     // We use it when copying non-column top column data.
-                    final long copyAuxRowCount = Math.max(0L, srcDataMax - srcDataTop);
-                    if (copyAuxRowCount > 0) {
-                        srcDataSize += columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, copyAuxRowCount - 1);
+                    if (auxRowCountNew > 0) {
+                        srcDataSize += columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountNew - 1);
                     }
                     srcDataAddr = srcDataSize > 0 ? mapRW(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : srcDataAddr;
                     ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -328,12 +332,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // Set var column values to null first srcDataTop times
                     columnTypeDriver.setDataVectorEntriesToNull(srcDataAddr + srcDataOffset, srcDataTop);
 
-                    if (copyAuxRowCount > 0) {
+                    if (auxRowCountNew > 0) {
                         // Copy var column data
                         Vect.memcpy(
                                 srcDataAddr + srcDataOffset + reservedBytesForColTopNulls,
                                 srcDataAddr,
-                                columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, copyAuxRowCount - 1)
+                                columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountNew - 1)
                         );
                     }
 
@@ -346,7 +350,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             -reservedBytesForColTopNulls,
                             srcAuxAddr,
                             0,
-                            copyAuxRowCount - 1, // inclusive, -1 is tolerated by the driver
+                            auxRowCountNew - 1, // inclusive, -1 is tolerated by the driver
                             dstAddr,
                             dstAddrSize
                     );
@@ -369,12 +373,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     }
 
                     srcDataFixOffset = 0;
-                    if (auxRowCountOld > 0) {
-                        newAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCountOld);
+                    if (auxRowCountNew > 0) {
+                        newAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCountNew);
                         srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                         ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
 
-                        srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountOld - 1);
+                        srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountNew - 1);
                         srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
                         ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
                     }
@@ -2461,6 +2465,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // Size of data in the file we want to merge if it didn't have column top.
                 final long srcDataActualBytesNew = Math.max(0, srcDataMax - srcDataTop) << shl;
 
+                // if column top on the partition column is in the middle of the prefix
+                // we need to materialize nulls
+                // if the prefix is new O3 data it means the O3 data comes first in the merged result
+                // and the column top will also not work so we need to materialize nulls too
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
 
                     // Extend the existing column down, we will be discarding it anyway.
