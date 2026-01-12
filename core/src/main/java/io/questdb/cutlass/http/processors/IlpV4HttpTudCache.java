@@ -36,6 +36,7 @@ import io.questdb.cutlass.line.tcp.SymbolCache;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.http.ilpv4.IlpV4ColumnDef;
 import io.questdb.cutlass.http.ilpv4.IlpV4Constants;
+import io.questdb.cutlass.http.ilpv4.IlpV4TableBlockCursor;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -143,7 +144,8 @@ public class IlpV4HttpTudCache implements QuietCloseable {
     public WalTableUpdateDetails getTableUpdateDetails(
             SecurityContext securityContext,
             Utf8Sequence tableNameUtf8,
-            IlpV4ColumnDef[] schema
+            IlpV4ColumnDef[] schema,
+            IlpV4TableBlockCursor cursor
     ) {
         int key = tableUpdateDetails.keyIndex(tableNameUtf8);
         if (key < 0) {
@@ -152,7 +154,7 @@ public class IlpV4HttpTudCache implements QuietCloseable {
 
         tableNameUtf16.clear();
         Utf8s.utf8ToUtf16(tableNameUtf8, tableNameUtf16);
-        TableToken tableToken = getOrCreateTable(securityContext, tableNameUtf16, schema);
+        TableToken tableToken = getOrCreateTable(securityContext, tableNameUtf16, schema, cursor);
         if (tableToken == null) {
             return null;
         }
@@ -198,7 +200,8 @@ public class IlpV4HttpTudCache implements QuietCloseable {
         this.distressed = true;
     }
 
-    private TableToken getOrCreateTable(SecurityContext securityContext, StringSink tableNameUtf16, IlpV4ColumnDef[] schema) {
+    private TableToken getOrCreateTable(SecurityContext securityContext, StringSink tableNameUtf16,
+                                        IlpV4ColumnDef[] schema, IlpV4TableBlockCursor cursor) {
         int maxFileNameLength = engine.getConfiguration().getMaxFileNameLength();
         if (!TableUtils.isValidTableName(tableNameUtf16, maxFileNameLength)) {
             return null;
@@ -218,6 +221,7 @@ public class IlpV4HttpTudCache implements QuietCloseable {
                     engine.getConfiguration(),
                     tableNameUtf16.toString(),
                     schema,
+                    cursor,
                     defaultPartitionBy
             );
 
@@ -247,13 +251,16 @@ public class IlpV4HttpTudCache implements QuietCloseable {
         private final CairoConfiguration configuration;
         private final String tableName;
         private final IlpV4ColumnDef[] schema;
+        private final IlpV4TableBlockCursor cursor;
         private final int partitionBy;
         private int timestampIndex = -1;
 
-        IlpV4TableStructureAdapter(CairoConfiguration configuration, String tableName, IlpV4ColumnDef[] schema, int partitionBy) {
+        IlpV4TableStructureAdapter(CairoConfiguration configuration, String tableName, IlpV4ColumnDef[] schema,
+                                   IlpV4TableBlockCursor cursor, int partitionBy) {
             this.configuration = configuration;
             this.tableName = tableName;
             this.schema = schema;
+            this.cursor = cursor;
             this.partitionBy = partitionBy;
 
             // Find designated timestamp column - empty name with TIMESTAMP or TIMESTAMP_NANOS type
@@ -294,7 +301,17 @@ public class IlpV4HttpTudCache implements QuietCloseable {
             if (columnIndex == getTimestampIndex() && timestampIndex == -1) {
                 return ColumnType.TIMESTAMP;
             }
-            return IlpV4WalAppender.mapIlpV4TypeToQuestDB(schema[columnIndex].getTypeCode());
+            byte typeCode = schema[columnIndex].getTypeCode();
+            // For decimal types, get the scale from the cursor
+            if (typeCode == IlpV4Constants.TYPE_DECIMAL64 ||
+                    typeCode == IlpV4Constants.TYPE_DECIMAL128 ||
+                    typeCode == IlpV4Constants.TYPE_DECIMAL256) {
+                int scale = cursor.getDecimalColumn(columnIndex).getScale() & 0xFF;
+                int tag = IlpV4WalAppender.mapIlpV4TypeToQuestDB(typeCode);
+                int precision = Decimals.getDecimalTagPrecision(tag);
+                return ColumnType.getDecimalType(tag, precision, scale);
+            }
+            return IlpV4WalAppender.mapIlpV4TypeToQuestDB(typeCode);
         }
 
         @Override

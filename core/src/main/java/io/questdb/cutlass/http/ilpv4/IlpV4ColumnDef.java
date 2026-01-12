@@ -126,8 +126,9 @@ public final class IlpV4ColumnDef {
      * @throws IlpV4ParseException if type code is invalid
      */
     public void validate() throws IlpV4ParseException {
-        boolean valid = (typeCode >= TYPE_BOOLEAN && typeCode <= TYPE_VARCHAR)
-                || typeCode == TYPE_TIMESTAMP_NANOS;
+        // Valid type codes: TYPE_BOOLEAN (0x01) through TYPE_DECIMAL256 (0x15)
+        // This includes all basic types, arrays, and decimals
+        boolean valid = (typeCode >= TYPE_BOOLEAN && typeCode <= TYPE_DECIMAL256);
         if (!valid) {
             throw IlpV4ParseException.create(
                     IlpV4ParseException.ErrorCode.INVALID_COLUMN_TYPE,

@@ -68,12 +68,16 @@ public class IlpV4TableBlockCursor implements Mutable {
     private int[] stringColumnIndices = new int[16];
     private int[] symbolColumnIndices = new int[16];
     private int[] geoHashColumnIndices = new int[16];
+    private int[] arrayColumnIndices = new int[16];
+    private int[] decimalColumnIndices = new int[16];
     private int booleanColumnCount;
     private int fixedWidthColumnCount;
     private int timestampColumnCount;
     private int stringColumnCount;
     private int symbolColumnCount;
     private int geoHashColumnCount;
+    private int arrayColumnCount;
+    private int decimalColumnCount;
 
     // Schema cache reference
     private IlpV4SchemaCache schemaCache;
@@ -153,6 +157,8 @@ public class IlpV4TableBlockCursor implements Mutable {
         stringColumnCount = 0;
         symbolColumnCount = 0;
         geoHashColumnCount = 0;
+        arrayColumnCount = 0;
+        decimalColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
             IlpV4ColumnDef colDef = columnDefs[i];
             byte typeCode = colDef.getTypeCode();
@@ -184,6 +190,8 @@ public class IlpV4TableBlockCursor implements Mutable {
             stringColumnIndices = new int[capacity];
             symbolColumnIndices = new int[capacity];
             geoHashColumnIndices = new int[capacity];
+            arrayColumnIndices = new int[capacity];
+            decimalColumnIndices = new int[capacity];
         }
     }
 
@@ -270,6 +278,31 @@ public class IlpV4TableBlockCursor implements Mutable {
                 }
                 geoHashColumnIndices[geoHashColumnCount++] = colIndex;
                 return geoCursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength);
+
+            case TYPE_DOUBLE_ARRAY:
+            case TYPE_LONG_ARRAY:
+                IlpV4ArrayColumnCursor arrCursor;
+                if (cursor instanceof IlpV4ArrayColumnCursor) {
+                    arrCursor = (IlpV4ArrayColumnCursor) cursor;
+                } else {
+                    arrCursor = new IlpV4ArrayColumnCursor();
+                    columnCursors.setQuick(colIndex, arrCursor);
+                }
+                arrayColumnIndices[arrayColumnCount++] = colIndex;
+                return arrCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength);
+
+            case TYPE_DECIMAL64:
+            case TYPE_DECIMAL128:
+            case TYPE_DECIMAL256:
+                IlpV4DecimalColumnCursor decCursor;
+                if (cursor instanceof IlpV4DecimalColumnCursor) {
+                    decCursor = (IlpV4DecimalColumnCursor) cursor;
+                } else {
+                    decCursor = new IlpV4DecimalColumnCursor();
+                    columnCursors.setQuick(colIndex, decCursor);
+                }
+                decimalColumnIndices[decimalColumnCount++] = colIndex;
+                return decCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength);
 
             default:
                 throw IlpV4ParseException.create(
@@ -370,6 +403,14 @@ public class IlpV4TableBlockCursor implements Mutable {
             int col = geoHashColumnIndices[i];
             columnNullFlags[col] = getGeoHashColumn(col).advanceRow();
         }
+        for (int i = 0; i < arrayColumnCount; i++) {
+            int col = arrayColumnIndices[i];
+            columnNullFlags[col] = getArrayColumn(col).advanceRow();
+        }
+        for (int i = 0; i < decimalColumnCount; i++) {
+            int col = decimalColumnIndices[i];
+            columnNullFlags[col] = getDecimalColumn(col).advanceRow();
+        }
     }
 
     /**
@@ -444,6 +485,20 @@ public class IlpV4TableBlockCursor implements Mutable {
     }
 
     /**
+     * Returns the column cursor cast to array type.
+     */
+    public IlpV4ArrayColumnCursor getArrayColumn(int index) {
+        return (IlpV4ArrayColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns the column cursor cast to decimal type.
+     */
+    public IlpV4DecimalColumnCursor getDecimalColumn(int index) {
+        return (IlpV4DecimalColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
      * Resets row iteration to the beginning.
      */
     public void resetRowIteration() {
@@ -479,6 +534,8 @@ public class IlpV4TableBlockCursor implements Mutable {
         stringColumnCount = 0;
         symbolColumnCount = 0;
         geoHashColumnCount = 0;
+        arrayColumnCount = 0;
+        decimalColumnCount = 0;
 
         // Clear all column cursors
         for (int i = 0; i < columnCursors.size(); i++) {

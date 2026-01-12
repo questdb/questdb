@@ -25,10 +25,18 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.http.ilpv4.*;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
@@ -45,7 +53,7 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
  *   <li>Timestamp column handling</li>
  * </ul>
  */
-public class IlpV4WalAppender {
+public class IlpV4WalAppender implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(IlpV4WalAppender.class);
 
     private final boolean autoCreateNewColumns;
@@ -54,6 +62,10 @@ public class IlpV4WalAppender {
     // Reusable mapping arrays
     private int[] columnIndexMap;  // Maps ILP column index to QuestDB column index
     private int[] columnTypeMap;   // QuestDB column types
+    private byte[] ilpTypes;       // ILP type codes for conversion
+
+    // Reusable array for writing array columns
+    private final DirectArray reusableArray = new DirectArray();
 
     /**
      * Creates a new WAL appender.
@@ -66,6 +78,12 @@ public class IlpV4WalAppender {
         this.maxFileNameLength = maxFileNameLength;
         this.columnIndexMap = new int[64];
         this.columnTypeMap = new int[64];
+        this.ilpTypes = new byte[64];
+    }
+
+    @Override
+    public void close() {
+        reusableArray.close();
     }
 
     /**
@@ -106,6 +124,7 @@ public class IlpV4WalAppender {
         if (columnIndexMap.length < columnCount) {
             columnIndexMap = new int[columnCount];
             columnTypeMap = new int[columnCount];
+            ilpTypes = new byte[columnCount];
         }
 
         TableWriterAPI writer = tud.getWriter();
@@ -120,7 +139,6 @@ public class IlpV4WalAppender {
 
         // Phase 1: Resolve column indices and create missing columns
         int timestampColumnInBlock = -1;
-        byte[] ilpTypes = new byte[columnCount];  // Track ILP types for conversion
         for (int i = 0; i < columnCount; i++) {
             IlpV4ColumnDef colDef = tableBlock.getColumnDef(i);
             String columnName = colDef.getName();
@@ -145,7 +163,7 @@ public class IlpV4WalAppender {
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
                         securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
                         try {
-                            int newColumnType = mapIlpV4TypeToQuestDB(colDef.getTypeCode());
+                            int newColumnType = mapIlpV4TypeToQuestDB(colDef.getTypeCode(), tableBlock, i);
                             writer.addColumn(columnName, newColumnType, securityContext);
                             columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnName));
                         } catch (CairoException e) {
@@ -314,9 +332,139 @@ public class IlpV4WalAppender {
                 r.putGeoHash(columnIndex, ((IlpV4GeoHashColumnCursor) cursor).getGeoHash());
                 break;
 
-            default:
-                LOG.error().$("unsupported column type [type=").$(columnType).$(']').$();
+            case ColumnType.DECIMAL64: {
+                IlpV4DecimalColumnCursor decCursor = (IlpV4DecimalColumnCursor) cursor;
+                int wireScale = decCursor.getScale() & 0xFF;
+                int columnScale = ColumnType.getDecimalScale(columnType);
+                if (wireScale == columnScale) {
+                    // Scales match - write directly without conversion
+                    r.putLong(columnIndex, decCursor.getDecimal64());
+                } else {
+                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                    decimal.ofRaw(decCursor.getDecimal64());
+                    decimal.setScale(wireScale);
+                    decimal.rescale(columnScale);
+                    DecimalUtil.store(decimal, r, columnIndex, columnType);
+                }
                 break;
+            }
+
+            case ColumnType.DECIMAL128: {
+                IlpV4DecimalColumnCursor decCursor = (IlpV4DecimalColumnCursor) cursor;
+                int wireScale = decCursor.getScale() & 0xFF;
+                int columnScale = ColumnType.getDecimalScale(columnType);
+                if (wireScale == columnScale) {
+                    // Scales match - write directly without conversion
+                    r.putDecimal128(columnIndex, decCursor.getDecimal128Hi(), decCursor.getDecimal128Lo());
+                } else {
+                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                    decimal.ofRaw(decCursor.getDecimal128Hi(), decCursor.getDecimal128Lo());
+                    decimal.setScale(wireScale);
+                    decimal.rescale(columnScale);
+                    DecimalUtil.store(decimal, r, columnIndex, columnType);
+                }
+                break;
+            }
+
+            case ColumnType.DECIMAL256: {
+                IlpV4DecimalColumnCursor decCursor = (IlpV4DecimalColumnCursor) cursor;
+                int wireScale = decCursor.getScale() & 0xFF;
+                int columnScale = ColumnType.getDecimalScale(columnType);
+                if (wireScale == columnScale) {
+                    // Scales match - write directly without conversion
+                    r.putDecimal256(columnIndex,
+                            decCursor.getDecimal256Hh(),
+                            decCursor.getDecimal256Hl(),
+                            decCursor.getDecimal256Lh(),
+                            decCursor.getDecimal256Ll());
+                } else {
+                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                    decimal.ofRaw(
+                            decCursor.getDecimal256Hh(),
+                            decCursor.getDecimal256Hl(),
+                            decCursor.getDecimal256Lh(),
+                            decCursor.getDecimal256Ll()
+                    );
+                    decimal.setScale(wireScale);
+                    decimal.rescale(columnScale);
+                    DecimalUtil.store(decimal, r, columnIndex, columnType);
+                }
+                break;
+            }
+
+            default:
+                if (ColumnType.isArray(columnType)) {
+                    writeArrayFromCursor(r, columnIndex, columnType, ilpType, (IlpV4ArrayColumnCursor) cursor);
+                } else {
+                    LOG.error().$("unsupported column type [type=").$(columnType).$(']').$();
+                }
+                break;
+        }
+    }
+
+    /**
+     * Writes an array value from cursor to a row.
+     */
+    private void writeArrayFromCursor(TableWriter.Row r, int columnIndex, int columnType,
+                                       byte ilpType, IlpV4ArrayColumnCursor cursor) {
+        int nDims = cursor.getNDims();
+        int totalElements = cursor.getTotalElements();
+
+        // Determine element type
+        short elemType = cursor.isDoubleArray() ? ColumnType.DOUBLE : ColumnType.LONG;
+        int encodedType = ColumnType.encodeArrayType(elemType, nDims);
+
+        // Set up the reusable array with the correct type and shape
+        reusableArray.setType(encodedType);
+        for (int d = 0; d < nDims; d++) {
+            reusableArray.setDimLen(d, cursor.getDimSize(d));
+        }
+        reusableArray.applyShape();
+
+        // Copy data from cursor to reusable array
+        MemoryA mem = reusableArray.startMemoryA();
+        long srcAddr = cursor.getValuesAddress();
+        if (cursor.isDoubleArray()) {
+            for (int i = 0; i < totalElements; i++) {
+                mem.putDouble(Unsafe.getUnsafe().getDouble(srcAddr + (long) i * 8));
+            }
+        } else {
+            for (int i = 0; i < totalElements; i++) {
+                mem.putLong(Unsafe.getUnsafe().getLong(srcAddr + (long) i * 8));
+            }
+        }
+
+        r.putArray(columnIndex, reusableArray);
+    }
+
+    /**
+     * Maps an ILP v4 type code to QuestDB column type, with cursor access for decimal scale.
+     *
+     * @param ilpType    ILP v4 type code
+     * @param tableBlock table block cursor for accessing decimal scale
+     * @param colIndex   column index
+     * @return QuestDB column type
+     */
+    private static int mapIlpV4TypeToQuestDB(int ilpType, IlpV4TableBlockCursor tableBlock, int colIndex) {
+        // For decimal types, we need to get the scale from the cursor
+        switch (ilpType) {
+            case TYPE_DECIMAL64: {
+                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
+                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64);
+                return ColumnType.getDecimalType(ColumnType.DECIMAL64, precision, scale);
+            }
+            case TYPE_DECIMAL128: {
+                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
+                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128);
+                return ColumnType.getDecimalType(ColumnType.DECIMAL128, precision, scale);
+            }
+            case TYPE_DECIMAL256: {
+                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
+                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256);
+                return ColumnType.getDecimalType(ColumnType.DECIMAL256, precision, scale);
+            }
+            default:
+                return mapIlpV4TypeToQuestDB(ilpType);
         }
     }
 
@@ -343,6 +491,11 @@ public class IlpV4WalAppender {
             case TYPE_UUID -> ColumnType.UUID;
             case TYPE_LONG256 -> ColumnType.LONG256;
             case TYPE_GEOHASH -> ColumnType.GEOLONG; // Default to GEOLONG, precision handled separately
+            case TYPE_DOUBLE_ARRAY -> ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, false);
+            case TYPE_LONG_ARRAY -> throw new IllegalArgumentException("Long arrays are not supported, only double arrays");
+            case TYPE_DECIMAL64 -> ColumnType.DECIMAL64;
+            case TYPE_DECIMAL128 -> ColumnType.DECIMAL128;
+            case TYPE_DECIMAL256 -> ColumnType.DECIMAL256;
             default -> throw new IllegalArgumentException("Unknown ILP v4 type: " + ilpType);
         };
     }

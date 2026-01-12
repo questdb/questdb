@@ -107,6 +107,7 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
     public void close() {
         Misc.free(tudCache);
         Misc.free(streamingDecoder);
+        Misc.free(walAppender);
         if (bufferAddress != 0) {
             Unsafe.free(bufferAddress, bufferSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferAddress = 0;
@@ -144,7 +145,7 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
             while (messageCursor.hasNextTable()) {
                 IlpV4TableBlockCursor tableBlock = messageCursor.nextTable();
 
-                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(securityContext, tableBlock.getTableNameUtf8(), tableBlock.getSchema());
+                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(securityContext, tableBlock.getTableNameUtf8(), tableBlock.getSchema(), tableBlock);
                 if (tud == null) {
                     reject(Status.INTERNAL_ERROR, "failed to create table update details for: " + tableBlock.getTableName(), fd);
                     return;
