@@ -48,6 +48,16 @@ public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     }
 
     @Override
+    public long getThrottleIntervalMicros() {
+        return Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getTtlWeeks() {
+        return 4;
+    }
+
+    @Override
     public boolean hideTables() {
         return false;
     }

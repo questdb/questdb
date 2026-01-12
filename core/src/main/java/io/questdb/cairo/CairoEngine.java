@@ -1916,6 +1916,7 @@ public class CairoEngine implements Closeable, WriterSource {
         TableUtils.createTableOrMatViewInVolume(
                 configuration.getFilesFacade(),
                 configuration.getDbRoot(),
+                getTelemetry(),
                 configuration.getMkDirMode(),
                 mem,
                 blockFileWriter,
@@ -1938,6 +1939,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 configuration.getFilesFacade(),
                 configuration.getDbRoot(),
                 configuration.getMkDirMode(),
+                getTelemetry(),
                 mem,
                 blockFileWriter,
                 path,
