@@ -972,11 +972,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlJitPageAddressCacheThreshold() {
-        return getDelegate().getSqlJitPageAddressCacheThreshold();
-    }
-
-    @Override
     public int getSqlJoinContextPoolCapacity() {
         return getDelegate().getSqlJoinContextPoolCapacity();
     }
@@ -1049,6 +1044,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlParallelWorkStealingThreshold() {
         return getDelegate().getSqlParallelWorkStealingThreshold();
+    }
+
+    @Override
+    public long getSqlParallelWorkStealingSpinTimeout() {
+        return getDelegate().getSqlParallelWorkStealingSpinTimeout();
     }
 
     @Override

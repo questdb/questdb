@@ -120,7 +120,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // functions[n].type == columnTypes[n+1]
 
             this.base = base;
-            this.frameAddressCache = new PageFrameAddressCache(configuration);
+            this.frameAddressCache = new PageFrameAddressCache();
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
@@ -330,7 +330,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            frameAddressCache.clear();
+            Misc.free(frameAddressCache);
             frameCursor = Misc.free(frameCursor);
             raf.reset(pRostiBig, ROSTI_MINIMIZED_SIZE);
         }

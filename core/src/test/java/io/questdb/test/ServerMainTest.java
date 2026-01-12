@@ -622,7 +622,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.jit.ir.memory.max.pages\tQDB_CAIRO_SQL_JIT_IR_MEMORY_MAX_PAGES\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.jit.ir.memory.page.size\tQDB_CAIRO_SQL_JIT_IR_MEMORY_PAGE_SIZE\t8192\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.jit.mode\tQDB_CAIRO_SQL_JIT_MODE\ton\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.jit.page.address.cache.threshold\tQDB_CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.join.context.pool.capacity\tQDB_CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.join.metadata.max.resizes\tQDB_CAIRO_SQL_JOIN_METADATA_MAX_RESIZES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.join.metadata.page.size\tQDB_CAIRO_SQL_JOIN_METADATA_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
@@ -651,6 +650,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.groupby.topk.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_TOPK_THRESHOLD\t5000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.topk.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_TOPK_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.work.stealing.threshold\tQDB_CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD\t16\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.work.stealing.spin.timeout\tQDB_CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT\t50000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.read.parquet.enabled\tQDB_CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parquet.frame.cache.capacity\tQDB_CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.rename.table.model.pool.capacity\tQDB_CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +

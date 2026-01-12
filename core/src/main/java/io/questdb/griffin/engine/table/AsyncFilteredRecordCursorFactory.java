@@ -121,6 +121,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        base.changePageFrameSizes(minRows, maxRows);
+    }
+
+    @Override
     public PageFrameSequence<AsyncFilterAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, order);
     }

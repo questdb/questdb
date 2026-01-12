@@ -99,10 +99,10 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         this.slaveMetadata = slaveMetadata;
         this.columnSplit = columnSplit;
         this.isMasterFiltered = isMasterFiltered;
-        slaveTimeFrameAddressCache = new PageFrameAddressCache(configuration);
+        this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
         this.crossIndex = columnIndex;
-        masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        groupByRecord = new VirtualRecord(groupByFunctions);
+        this.masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        this.groupByRecord = new VirtualRecord(groupByFunctions);
         final JoinRecord jr = new JoinRecord(columnSplit);
         jr.of(masterRecord, groupByRecord);
         if (columnIndex != null) {
@@ -129,7 +129,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         if (isOpen) {
             Misc.free(slaveFrameCursor);
-            slaveTimeFrameAddressCache.clear();
+            Misc.free(slaveTimeFrameAddressCache);
             if (masterFrameSequence != null) {
                 LOG.debug()
                         .$("closing [shard=").$(masterFrameSequence.getShard())
@@ -143,7 +143,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 if (frameLimit > -1) {
                     masterFrameSequence.await();
                 }
-                masterFrameSequence.clear();
+                masterFrameSequence.reset();
             }
             isOpen = false;
         }
@@ -488,10 +488,14 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             TablePageFrameCursor slaveFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
+        if (!isOpen) {
+            isOpen = true;
+            atom.reopen();
+        }
         this.masterFrameSequence = masterFrameSequence;
         this.slaveFrameCursor = slaveFrameCursor;
         this.executionContext = executionContext;
-        isOpen = true;
         allFramesActive = true;
         isSlaveTimeFrameCacheBuilt = false;
         frameIndex = -1;
@@ -500,7 +504,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         frameValueOffset = -1;
         frameRowCount = -1;
         masterRecord.of(masterFrameSequence.getSymbolTableSource());
-        final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
         valueSizeBytes = atom.getValueSizeBytes();
         groupByValue = atom.getOwnerGroupByValue();
         groupByRecord.of(groupByValue);

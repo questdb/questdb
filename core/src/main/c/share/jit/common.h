@@ -25,7 +25,9 @@
 #ifndef QUESTDB_JIT_COMMON_H
 #define QUESTDB_JIT_COMMON_H
 
-#include <asmjit/asmjit.h>
+#include <asmjit/core.h>
+#include <asmjit/x86.h>
+#include <asmjit/support/arenavector.h>
 
 enum class data_type_t : uint8_t {
     i8,
@@ -97,11 +99,9 @@ struct jit_value_t {
 
     inline jit_value_t &operator=(const jit_value_t &other) noexcept = default;
 
-    inline const asmjit::x86::Ymm &ymm() const noexcept { return op_.as<asmjit::x86::Ymm>(); }
+    inline const asmjit::x86::Vec &vec() const noexcept { return op_.as<asmjit::x86::Vec>(); }
 
-    inline const asmjit::x86::Xmm &xmm() const noexcept { return op_.as<asmjit::x86::Xmm>(); }
-
-    inline const asmjit::x86::Gpq &gp() const noexcept { return op_.as<asmjit::x86::Gpq>(); }
+    inline const asmjit::x86::Gp &gp() const noexcept { return op_.as<asmjit::x86::Gp>(); }
 
     inline data_type_t dtype() const noexcept { return type_; }
 
@@ -188,7 +188,7 @@ struct ConstantCache {
     }
 
     // Find a float constant and return its register
-    bool findFloat(double value, asmjit::x86::Xmm &out_reg) const {
+    bool findFloat(double value, asmjit::x86::Vec &out_reg) const {
         for (size_t i = 0; i < count; ++i) {
             if (is_float[i] && float_values[i] == value) {
                 out_reg = xmm_regs[i];
@@ -209,7 +209,7 @@ struct ConstantCache {
     }
 
     // Add a float constant
-    void addFloat(double value, asmjit::x86::Xmm reg) {
+    void addFloat(double value, asmjit::x86::Vec reg) {
         if (count < MAX_CONSTANTS) {
             is_float[count] = true;
             float_values[count] = value;
@@ -224,7 +224,7 @@ private:
     int64_t int_values[MAX_CONSTANTS];
     double float_values[MAX_CONSTANTS];
     asmjit::x86::Gp gp_regs[MAX_CONSTANTS];
-    asmjit::x86::Xmm xmm_regs[MAX_CONSTANTS];
+    asmjit::x86::Vec xmm_regs[MAX_CONSTANTS];
 };
 
 // Cache for loaded column values to avoid redundant loads within a single row iteration
@@ -245,7 +245,7 @@ struct ColumnValueCache {
     }
 
     // Find a cached float/double value for a column
-    bool findXmm(int32_t column_idx, data_type_t type, asmjit::x86::Xmm &out_reg) const {
+    bool findXmm(int32_t column_idx, data_type_t type, asmjit::x86::Vec &out_reg) const {
         for (size_t i = 0; i < count; ++i) {
             if (column_idxs[i] == column_idx && types[i] == type && is_xmm[i]) {
                 out_reg = xmm_regs[i];
@@ -267,7 +267,7 @@ struct ColumnValueCache {
     }
 
     // Add a float/double column value
-    void addXmm(int32_t column_idx, data_type_t type, asmjit::x86::Xmm reg) {
+    void addXmm(int32_t column_idx, data_type_t type, asmjit::x86::Vec reg) {
         if (count < MAX_VALUES) {
             column_idxs[count] = column_idx;
             types[count] = type;
@@ -288,7 +288,7 @@ private:
     data_type_t types[MAX_VALUES];
     bool is_xmm[MAX_VALUES];
     asmjit::x86::Gp gp_regs[MAX_VALUES];
-    asmjit::x86::Xmm xmm_regs[MAX_VALUES];
+    asmjit::x86::Vec xmm_regs[MAX_VALUES];
 };
 
 // Cache for pre-broadcasted constants in YMM registers for AVX2 SIMD loops
@@ -298,7 +298,7 @@ struct ConstantCacheYmm {
     ConstantCacheYmm() : count(0) {}
 
     // Find an integer constant and return its YMM register
-    bool findInt(int64_t value, asmjit::x86::Ymm &out_reg) const {
+    bool findInt(int64_t value, asmjit::x86::Vec &out_reg) const {
         for (size_t i = 0; i < count; ++i) {
             if (!is_float[i] && int_values[i] == value) {
                 out_reg = ymm_regs[i];
@@ -309,7 +309,7 @@ struct ConstantCacheYmm {
     }
 
     // Find a float constant and return its YMM register
-    bool findFloat(double value, asmjit::x86::Ymm &out_reg) const {
+    bool findFloat(double value, asmjit::x86::Vec &out_reg) const {
         for (size_t i = 0; i < count; ++i) {
             if (is_float[i] && float_values[i] == value) {
                 out_reg = ymm_regs[i];
@@ -320,7 +320,7 @@ struct ConstantCacheYmm {
     }
 
     // Add an integer constant
-    void addInt(int64_t value, asmjit::x86::Ymm reg) {
+    void addInt(int64_t value, asmjit::x86::Vec reg) {
         if (count < MAX_CONSTANTS) {
             is_float[count] = false;
             int_values[count] = value;
@@ -330,7 +330,7 @@ struct ConstantCacheYmm {
     }
 
     // Add a float constant
-    void addFloat(double value, asmjit::x86::Ymm reg) {
+    void addFloat(double value, asmjit::x86::Vec reg) {
         if (count < MAX_CONSTANTS) {
             is_float[count] = true;
             float_values[count] = value;
@@ -344,7 +344,7 @@ private:
     bool is_float[MAX_CONSTANTS];
     int64_t int_values[MAX_CONSTANTS];
     double float_values[MAX_CONSTANTS];
-    asmjit::x86::Ymm ymm_regs[MAX_CONSTANTS];
+    asmjit::x86::Vec ymm_regs[MAX_CONSTANTS];
 };
 
 #endif //QUESTDB_JIT_COMMON_H
