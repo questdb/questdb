@@ -169,11 +169,3 @@ target_compile_definitions(jemalloc PUBLIC -DJEMALLOC_PROF=1)
 
 # for RTLD_NEXT
 target_compile_options(jemalloc PUBLIC -D_GNU_SOURCE)
-
-# jemalloc_preload - forces reliable background thread initialization
-# by toggling background_thread off/on via mallctl
-if (OS_LINUX)
-    add_library(jemalloc_preload SHARED "src/main/c/linux/jemalloc_preload.c")
-    target_compile_options(jemalloc_preload PRIVATE -fPIC -O2 -D_GNU_SOURCE)
-    target_link_libraries(jemalloc_preload dl)
-endif ()

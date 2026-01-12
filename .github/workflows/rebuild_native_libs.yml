@@ -128,14 +128,12 @@ jobs:
           mkdir -p src/main/bin/linux-x86-64/
           cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-x86-64/
           cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/linux-x86-64/
-          cp target/classes/io/questdb/bin-local/libjemalloc_preload.so src/main/bin/linux-x86-64/
       - name: Save linux-x86-64 Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
             core/src/main/bin/linux-x86-64/libjemalloc.so
-            core/src/main/bin/linux-x86-64/libjemalloc_preload.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-22.04-arm
@@ -166,7 +164,6 @@ jobs:
           mkdir -p src/main/bin/linux-aarch64/
           cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-aarch64/
           cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/linux-aarch64/
-          cp target/classes/io/questdb/bin-local/libjemalloc_preload.so src/main/bin/linux-aarch64/
       - name: Check git status
         run: |
           git config --global --add safe.directory /__w/questdb/questdb
@@ -177,7 +174,6 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
             core/src/main/bin/linux-aarch64/libjemalloc.so
-            core/src/main/bin/linux-aarch64/libjemalloc_preload.so
           key: nativelibs-armlinux-${{ github.sha }}
   build-cxx-windows:
     runs-on: ubuntu-24.04
@@ -253,7 +249,6 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
             core/src/main/bin/linux-x86-64/libjemalloc.so
-            core/src/main/bin/linux-x86-64/libjemalloc_preload.so
           key: nativelibs-linux-${{ github.sha }}
       - name: Restore linux-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
@@ -261,7 +256,6 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
             core/src/main/bin/linux-aarch64/libjemalloc.so
-            core/src/main/bin/linux-aarch64/libjemalloc_preload.so
           key: nativelibs-armlinux-${{ github.sha }}
       - name: Restore Windows CXX Library from Cache
         uses: actions/cache/restore@v3
@@ -280,23 +274,19 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
           git add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
           git add core/src/main/bin/linux-x86-64/libjemalloc.so
-          git add core/src/main/bin/linux-x86-64/libjemalloc_preload.so
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
           git add core/src/main/bin/linux-aarch64/libjemalloc.so
-          git add core/src/main/bin/linux-aarch64/libjemalloc_preload.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
-
+          
           echo "Removing exec permissions in Git index..."
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
-
+          
           git update-index --chmod=-x core/src/main/bin/linux-x86-64/libjemalloc.so
           git update-index --chmod=-x core/src/main/bin/linux-aarch64/libjemalloc.so
-          git update-index --chmod=-x core/src/main/bin/linux-x86-64/libjemalloc_preload.so
-          git update-index --chmod=-x core/src/main/bin/linux-aarch64/libjemalloc_preload.so
-
+          
           git commit -m "Rebuild CXX libraries"
       - name: Check git status after
         run: |

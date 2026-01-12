@@ -40,7 +40,6 @@
             <directory>src/main/bin/${platform.dir.name}</directory>
             <includes>
                 <include>${jemalloc.so}</include>
-                <include>${jemalloc_preload.so}</include>
             </includes>
             <outputDirectory>${runtime.name}/bin</outputDirectory>
         </fileSet>
