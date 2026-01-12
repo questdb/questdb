@@ -2195,7 +2195,7 @@ public class CairoEngine implements Closeable, WriterSource {
     protected void initDataID() {
         if (!getConfiguration().isReadOnlyInstance() && !this.dataID.isInitialized()) {
             final Rnd rnd = configuration.getRandom();
-            this.dataID.set(rnd.nextLong(), rnd.nextLong());
+            this.dataID.initialize(rnd.nextLong(), rnd.nextLong());
         }
     }
 

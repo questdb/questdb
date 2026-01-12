@@ -71,6 +71,26 @@ public final class DataID implements Sinkable {
         return new DataID(configuration, id);
     }
 
+    /**
+     * Change the data id to a new value, overwriting any existing value.
+     * This should only be used after point-in-time recovery to give the
+     * recovered database a fresh identity.
+     * <p>
+     * Fails if the data id is not already initialized.
+     * </p>
+     *
+     * @param lo The low bits of the UUID value
+     * @param hi The high bits of the UUID value
+     * @throws CairoException if the data id is not initialized
+     */
+    public synchronized void change(long lo, long hi) {
+        if (!isInitialized()) {
+            throw CairoException.critical(0).put("cannot change DataID: not initialized");
+        }
+        writeUuid(configuration.getFilesFacade(), configuration.getDbRoot(), lo, hi);
+        this.id.of(lo, hi);
+    }
+
     public Uuid get() {
         return id;
     }
@@ -84,30 +104,30 @@ public final class DataID implements Sinkable {
     }
 
     /**
-     * Returns whether the data id has been initialized or not.
-     *
-     * @return true if the data id is initialized.
-     */
-    public boolean isInitialized() {
-        return !Uuid.isNull(id.getLo(), id.getHi());
-    }
-
-    /**
-     * Set the data id to a new value and writes it to `.data_id`.
+     * Initialize the data id to a new value and writes it to `.data_id`.
      * This function should be used with care as it may lead to data losses from restore/replication.
      *
      * @param lo The low bits of the UUID value
      * @param hi The high bits of the UUID value
-     * @return true if the value was changed, or false if it could not be changed
+     * @return true if the value was initialized, or false if it could not be initialized
      * because it was already set.
      */
-    public synchronized boolean set(long lo, long hi) {
+    public synchronized boolean initialize(long lo, long hi) {
         if (isInitialized()) {
             return false;
         }
         writeUuid(configuration.getFilesFacade(), configuration.getDbRoot(), lo, hi);
         this.id.of(lo, hi);
         return true;
+    }
+
+    /**
+     * Returns whether the data id has been initialized or not.
+     *
+     * @return true if the data id is initialized.
+     */
+    public boolean isInitialized() {
+        return !Uuid.isNull(id.getLo(), id.getHi());
     }
 
     @Override
