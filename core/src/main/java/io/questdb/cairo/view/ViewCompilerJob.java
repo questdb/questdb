@@ -196,9 +196,9 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             TableToken tableToken,
             CharSequence invalidationReason,
             long updateTimestamp,
-            ObjList<TableToken> tempSink
+            ObjList<TableToken> invalidateViewsSink
     ) {
-        invalidateDependentViews(engine, tableToken, invalidationReason, updateTimestamp, tempSink);
+        invalidateDependentViews(engine, tableToken, invalidationReason, updateTimestamp, invalidateViewsSink);
         if (tableToken.isView()) {
             updateViewState(engine, tableToken, true, invalidationReason, null, updateTimestamp);
         }
@@ -209,12 +209,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             TableToken tableToken,
             CharSequence invalidationReason,
             long updateTimestamp,
-            ObjList<TableToken> tempSink
+            ObjList<TableToken> invalidateViewsSink
     ) {
-        tempSink.clear();
-        engine.getViewGraph().getDependentViews(tableToken, tempSink);
-        for (int i = 0, n = tempSink.size(); i < n; i++) {
-            final TableToken viewToken = tempSink.get(i);
+        invalidateViewsSink.clear();
+        engine.getViewGraph().getDependentViews(tableToken, invalidateViewsSink);
+        for (int i = 0, n = invalidateViewsSink.size(); i < n; i++) {
+            final TableToken viewToken = invalidateViewsSink.get(i);
             updateViewState(engine, viewToken, true, invalidationReason, null, updateTimestamp);
         }
     }
@@ -279,7 +279,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private void compile(TableToken tableToken, long updateTimestamp) {
         compileDependentViews(tableToken, updateTimestamp);
         if (tableToken.isView()) {
-            compileView(engine, compilerExecutionContext, tableToken, updateTimestamp, compileViewsSink);
+            compileView(engine, compilerExecutionContext, tableToken, updateTimestamp, invalidateViewsSink);
         }
     }
 
