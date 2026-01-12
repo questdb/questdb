@@ -635,6 +635,48 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupWithPartitionPurge() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a table with initial data
+            execute("create table tbl as (" +
+                    "select x, cast('1970-01-10T10' as " + timestampType.getTypeName() + ") + x * 1000000 ts " +
+                    "from long_sequence(10)" +
+                    ") timestamp(ts) partition by DAY WAL dedup upsert keys (ts)");
+
+            // OOO insert to create partition version
+            execute("insert into tbl select 100 + x, '1970-01-10T09' from long_sequence(5)");
+            drainWalQueue();
+
+            // Insert data identical to last X rows (dedup-like scenario) plus new data at the end
+            // This simulates the dedup case where we re-commit existing rows + add new ones
+            execute("insert into tbl " +
+                    "select x, cast('1970-01-10T10' as " + timestampType.getTypeName() + ") + x * 1000000 ts " +
+                    "from long_sequence(10) " +  // identical to original last 10 rows
+                    "union all " +
+                    "select 200 + x, '1970-01-10T11' from long_sequence(5)");  // new data at the end
+
+            drainWalQueue();
+
+
+            // This should lock the partition from being deleted
+            try (TableReader rdr = getReader("tbl")) {
+                rdr.openPartition(0);
+                // Merge data to create another partition version
+                execute("insert into tbl " +
+                        "select x, cast('1970-01-10T10:01' as " + timestampType.getTypeName() + ") + x * 1000000 ts " +
+                        "from long_sequence(10) " +  // identical to original last 10 rows
+                        "union all " +
+                        "select 200 + x, '1970-01-10T11' from long_sequence(5)");  // new data at the end
+
+                drainWalQueue();
+
+                // Partition overwrite control should prevent purge of in-use partition
+                runPartitionPurgeJobs();
+            }
+        });
+    }
+
+    @Test
     public void testPurgeFailed() throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger deleteAttempts = new AtomicInteger();
