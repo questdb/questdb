@@ -4174,7 +4174,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 blockFileWriter,
                                 path,
                                 createViewOp.ignoreIfExists(),
-                                createViewOp
+                                createViewOp,
+                                metadata
                         );
                         viewToken = viewDefinition.getViewToken();
                     } finally {
