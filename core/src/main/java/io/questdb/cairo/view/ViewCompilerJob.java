@@ -52,11 +52,11 @@ import org.jetbrains.annotations.TestOnly;
 
 public class ViewCompilerJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(ViewCompilerJob.class);
+    private final ObjList<TableToken> compileViewsSink = new ObjList<>();
     private final ViewCompilerExecutionContext compilerExecutionContext;
     private final ViewCompilerTask compilerTask = new ViewCompilerTask();
     private final CairoEngine engine;
     private final ObjList<TableToken> invalidateViewsSink = new ObjList<>();
-    private final ObjList<TableToken> compileViewsSink = new ObjList<>();
     private final ViewStateStore stateStore;
     private final ViewGraph viewGraph;
     private final int workerId;
@@ -258,10 +258,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
                         .I$();
                 return;
             }
-            if (viewState.isInvalid() == invalid && viewMetadata == null) {
-                // No state change, skip update (timestamp remains unchanged)
-                return;
-            }
+
             LOG.info().$("updating view state [view=").$safe(viewToken.getTableName())
                     .$(", invalid=").$(invalid)
                     .$(", reason=").$safe(invalidationReason)
