@@ -294,12 +294,12 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
+            Misc.free(allocator);
             if (isOpen) {
-                Misc.free(allocator);
+                isOpen = false;
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
-                isOpen = false;
             }
         }
 
@@ -402,11 +402,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             masterCursor.toTop();
             slaveTimeFrameHelper.toTop();
             GroupByUtils.toTop(groupByFunctions);
+            allocator.clear();
         }
 
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                allocator.reopen();
             }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

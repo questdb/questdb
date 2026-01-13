@@ -56,18 +56,19 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
      * @param memoryTag memory tag for tracking allocations
      */
     public DirectLongList(long capacity, int memoryTag) {
-        this(capacity, true, memoryTag);
+        this(capacity, memoryTag, false);
     }
 
-    public DirectLongList(long capacity, boolean alloc, int memoryTag) {
+    public DirectLongList(long capacity, int memoryTag, boolean keepClosed) {
         this.memoryTag = memoryTag;
-        if (alloc) {
-            this.capacity = (capacity * Long.BYTES);
-            this.address = Unsafe.malloc(this.capacity, memoryTag);
+        final long capacityBytes = capacity * Long.BYTES;
+        this.initialCapacity = capacityBytes;
+        if (!keepClosed) {
+            this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag) : 0;
+            this.capacity = capacityBytes;
             this.pos = address;
-            this.limit = pos + this.capacity;
+            this.limit = pos + capacityBytes;
         }
-        this.initialCapacity = capacity * Long.BYTES;
     }
 
     public void add(long value) {

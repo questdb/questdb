@@ -77,7 +77,7 @@ public class GroupByLong128HashSetBenchmark {
     @Setup(Level.Iteration)
     public void reset() {
         orderedMap.clear();
-        allocator.close();
+        allocator.clear();
         groupByLong128HashSet.setAllocator(allocator);
         ptr = 0;
         rnd.reset();

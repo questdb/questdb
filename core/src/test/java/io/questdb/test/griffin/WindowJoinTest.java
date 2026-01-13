@@ -2819,6 +2819,328 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinOrderByDescAsyncFast() throws Exception {
+        // Tests AsyncWindowJoinFastRecordCursorFactory with ORDER BY ts DESC
+        // Factory selection: parallel enabled (default), symbol join condition, no LIMIT
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            final String prevailing = includePrevailing ? "include" : "exclude";
+
+            if (!includePrevailing) {
+                printSql(
+                        "select t.sym, t.price, t.ts, sum(p.price) window_price " +
+                                "from trades t " +
+                                "left join prices p " +
+                                "on (t.sym = p.sym) " +
+                                " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                                "order by t.ts desc;",
+                        sink
+                );
+            } else {
+                printSql(
+                        """
+                                select sym,price,ts, sum(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                                        union
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from trades t
+                                            join prices p
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts desc;
+                                """,
+                        sink
+                );
+            }
+            assertQueryAndPlan(
+                    sink,
+                    String.format("""
+                                    Sort
+                                      keys: [ts desc]
+                                        Async Window Fast Join workers: 1
+                                          vectorized: true
+                                          symbol: sym=sym
+                                          window lo: 60000000%1$s preceding (%2$s prevailing)
+                                          window hi: 60000000%1$s following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """,
+                            nanoZeros,
+                            prevailing
+                    ),
+                    String.format(
+                            """
+                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                                    FROM trades t
+                                    WINDOW JOIN prices p
+                                    ON (t.sym = p.sym)
+                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts DESC
+                                    """,
+                            prevailing
+                    ),
+                    "ts###DESC",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinOrderByDescAsyncNonFast() throws Exception {
+        // Tests AsyncWindowJoinRecordCursorFactory with ORDER BY ts DESC
+        // Factory selection: parallel enabled (default), no symbol join condition, no LIMIT
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            final String prevailing = includePrevailing ? "include" : "exclude";
+
+            if (!includePrevailing) {
+                printSql(
+                        "select t.sym, t.price, t.ts, sum(p.price) window_price " +
+                                "from trades t " +
+                                "left join prices p " +
+                                "on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                                "order by t.ts desc;",
+                        sink
+                );
+            } else {
+                printSql(
+                        """
+                                select sym,price,ts, sum(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price
+                                            from trades t
+                                            left join prices p
+                                            on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                                        union
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from trades t
+                                            join prices p
+                                            on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts
+                                        ) order by ts
+                                )
+                                order by ts desc;
+                                """,
+                        sink
+                );
+            }
+            assertQueryAndPlan(
+                    sink,
+                    String.format(
+                            """
+                                    Sort
+                                      keys: [ts desc, sym]
+                                        Async Window Join workers: 1
+                                          vectorized: true
+                                          window lo: 60000000%1$s preceding (%2$s prevailing)
+                                          window hi: 60000000%1$s following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """,
+                            nanoZeros,
+                            prevailing
+                    ),
+                    String.format(
+                            """
+                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                                    FROM trades t
+                                    WINDOW JOIN prices p
+                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts DESC, t.sym
+                                    """,
+                            prevailing
+                    ),
+                    "ts###DESC",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinOrderByDescNonAsyncFast() throws Exception {
+        // Tests WindowJoinFastRecordCursorFactory with ORDER BY ts DESC
+        // Factory selection: LIMIT on master forces non-async, symbol join condition
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            final String prevailing = includePrevailing ? "include" : "exclude";
+
+            if (!includePrevailing) {
+                printSql(
+                        "select t.sym, t.price, t.ts, sum(p.price) window_price " +
+                                "from (select * from trades limit 10) t " +
+                                "left join prices p " +
+                                "on (t.sym = p.sym) " +
+                                " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                                "order by t.ts desc;",
+                        sink
+                );
+            } else {
+                printSql(
+                        """
+                                with t as (select * from trades limit 10)
+                                select sym,price,ts, sum(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price
+                                            from t
+                                            left join prices p
+                                            on (t.sym = p.sym)
+                                            and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                                        union
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from t
+                                            join prices p
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts desc;
+                                """,
+                        sink
+                );
+            }
+            assertQueryAndPlan(
+                    sink,
+                    String.format(
+                            """
+                                    Sort
+                                      keys: [ts desc]
+                                        Window Fast Join
+                                          vectorized: true
+                                          symbol: sym=sym
+                                          window lo: 60000000%1$s preceding (%2$s prevailing)
+                                          window hi: 60000000%1$s following
+                                            Limit value: 10 skip-rows: 0 take-rows: 10
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """,
+                            nanoZeros,
+                            prevailing
+                    ),
+                    String.format(
+                            """
+                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                                    FROM (SELECT * FROM trades LIMIT 10) t
+                                    WINDOW JOIN prices p
+                                    ON (t.sym = p.sym)
+                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts DESC
+                                    """,
+                            prevailing
+                    ),
+                    "ts###DESC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinOrderByDescNonAsyncNonFast() throws Exception {
+        // Tests WindowJoinRecordCursorFactory with ORDER BY DESC
+        // Factory selection: LIMIT on master forces non-async, expression-based join (no symbol match)
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
+            final String prevailing = includePrevailing ? "include" : "exclude";
+
+            if (!includePrevailing) {
+                printSql(
+                        "select t.sym, t.price, t.ts, sum(p.price) window_price " +
+                                "from (select * from trades limit 10) t " +
+                                "left join prices p " +
+                                "on concat(t.sym, '_0') = concat(p.sym, '_0') " +
+                                " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                                "order by t.ts desc;",
+                        sink
+                );
+            } else {
+                printSql(
+                        """
+                                with t as (select * from trades limit 10)
+                                select sym,price,ts, sum(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.sym, t.price, t.ts, p.price
+                                            from t
+                                            left join prices p
+                                            on concat(t.sym, '_0') = concat(p.sym, '_0')
+                                            and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                                        union
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
+                                            from t
+                                            join prices p
+                                            on concat(t.sym, '_0') = concat(p.sym, '_0') and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts desc;
+                                """,
+                        sink
+                );
+            }
+            assertQueryAndPlan(
+                    sink,
+                    String.format(
+                            """
+                                    Sort
+                                      keys: [ts desc]
+                                        Window Join
+                                          window lo: 60000000%1$s preceding (%2$s prevailing)
+                                          window hi: 60000000%1$s following
+                                          join filter: concat([t.sym,'_0'])=concat([p.sym,'_0'])
+                                            Limit value: 10 skip-rows: 0 take-rows: 10
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """,
+                            nanoZeros,
+                            prevailing
+                    ),
+                    String.format(
+                            """
+                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                                    FROM (SELECT * FROM trades LIMIT 10) t
+                                    WINDOW JOIN prices p
+                                    ON (concat(t.sym, '_0') = concat(p.sym, '_0'))
+                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                                    ORDER BY t.ts DESC
+                                    """,
+                            prevailing
+                    ),
+                    "ts###DESC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinProjection() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();

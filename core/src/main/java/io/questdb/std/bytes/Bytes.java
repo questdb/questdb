@@ -30,13 +30,6 @@ public class Bytes {
     }
 
     /**
-     * Aligns the given size to 2 bytes.
-     */
-    public static long align2b(long size) {
-        return (size + 1) & ~0x1;
-    }
-
-    /**
      * Aligns the given size to 4 bytes.
      */
     public static long align4b(long size) {

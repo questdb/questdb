@@ -115,6 +115,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
         super._close();
         Misc.free(simpleMapValue);
         Misc.free(simpleMapValueB);
+        Misc.free(cursor);
     }
 
     protected AbstractNoRecordSampleByCursor getRawCursor() {

@@ -95,7 +95,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         if (frameLimit > -1) {
             frameSequence.await();
         }
-        frameSequence.clear();
+        frameSequence.reset();
         Misc.free(frameMemoryPool);
     }
 
