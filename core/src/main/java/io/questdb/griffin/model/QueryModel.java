@@ -121,8 +121,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap columnAliasRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final LowerCaseCharSequenceHashSet overridableDecls = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
@@ -139,6 +139,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
+    private final LowerCaseCharSequenceHashSet overridableDecls = new LowerCaseCharSequenceHashSet();
     // collect frequency of column names from each join model
     // and check if any of columns with frequency > 0 are selected
     // column name frequency of 1 corresponds to map value 0
@@ -146,9 +147,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // list of "and" concatenated expressions
     private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConstants = new IntHashSet();
-    private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final ObjList<PivotForColumn> pivotForColumns = new ObjList<>();
     private final ObjList<QueryColumn> pivotGroupByColumns = new ObjList<>();
+    private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
@@ -529,6 +530,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         cacheable = true;
         pivotGroupByColumnHasNoAlias = false;
         referencedViews.clear();
+        columnAliasRefCounts.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -773,7 +775,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(windowJoinContext, that.windowJoinContext)
                 && Objects.equals(pivotGroupByColumns, that.pivotGroupByColumns)
                 && Objects.equals(pivotForColumns, that.pivotForColumns)
-                && Objects.equals(referencedViews, that.referencedViews);
+                && Objects.equals(referencedViews, that.referencedViews)
+                && Objects.equals(columnAliasRefCounts, that.columnAliasRefCounts);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -821,10 +824,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<QueryColumn> getColumns() {
         return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
-    }
-
-    public LowerCaseCharSequenceHashSet getOverridableDecls() {
-        return overridableDecls;
     }
 
     public ExpressionNode getConstWhereClause() {
@@ -1005,6 +1004,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return outerJoinExpressionClause;
     }
 
+    public LowerCaseCharSequenceHashSet getOverridableDecls() {
+        return overridableDecls;
+    }
+
     public ObjList<ExpressionNode> getParsedWhere() {
         return parsedWhere;
     }
@@ -1024,6 +1027,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public QueryModel getQueryModel() {
         return this;
+    }
+
+    public int getRefCount(CharSequence alias) {
+        return columnAliasRefCounts.get(alias);
     }
 
     public ObjList<ViewDefinition> getReferencedViews() {
@@ -1176,8 +1183,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, isCteModel, modelType, updateTableModel,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues,
-                decls, windowJoinContext, referencedViews, originatingViewNameExpr
+                decls, windowJoinContext, referencedViews, originatingViewNameExpr, columnAliasRefCounts
         );
+    }
+
+    public void incrementColumnRefCount(CharSequence alias, int refCount) {
+        if (columnAliasIndexes.get(alias) > -1) {
+            int keyIndex = columnAliasRefCounts.keyIndex(alias);
+            if (keyIndex < 0) {
+                int old = columnAliasRefCounts.valueAt(keyIndex);
+                columnAliasRefCounts.putAt(keyIndex, alias, old + refCount);
+            } else {
+                columnAliasRefCounts.putAt(keyIndex, alias, refCount);
+            }
+        }
     }
 
     public boolean isArtificialStar() {
