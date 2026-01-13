@@ -38,7 +38,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.TelemetrySystemEvent.*;
+import static io.questdb.TelemetryEvent.*;
 
 /**
  * Mat view refresh state serves the purpose of synchronizing and coordinating
