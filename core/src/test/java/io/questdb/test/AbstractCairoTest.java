@@ -1222,11 +1222,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins, SqlExecutionContext sqlExecutionContext) throws Exception {
         Assert.assertNotNull(contains);
-        Assert.assertFalse("provide matching text", contains.isEmpty());
         try {
             assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
+                if (contains.isEmpty()) {
+                    Assert.fail("position: " + ((FlyweightMessageContainer) e).getPosition() + ", message: " + e.getMessage());
+                }
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
                 Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
             } else {
