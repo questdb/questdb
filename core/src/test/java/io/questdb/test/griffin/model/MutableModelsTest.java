@@ -38,7 +38,7 @@ import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.IntList;
@@ -294,29 +294,29 @@ public class MutableModelsTest {
     }
 
     @Test
-    public void testWindowColumnClear() {
-        WindowColumn column = WindowColumn.FACTORY.newInstance();
+    public void testWindowExpressionClear() {
+        WindowExpression column = WindowExpression.FACTORY.newInstance();
         // QueryColumn fields
         column.of("alias", newExpressionNode(), false, 42);
         // WindowColumn fields
         column.getPartitionBy().add(newExpressionNode());
         column.addOrderBy(newExpressionNode(), QueryModel.ORDER_DIRECTION_DESCENDING);
         column.setRowsLoExpr(newExpressionNode(), 10);
-        column.setRowsLoExprTimeUnit(WindowColumn.TIME_UNIT_SECOND);
+        column.setRowsLoExprTimeUnit(WindowExpression.TIME_UNIT_SECOND);
         column.setRowsHiExpr(newExpressionNode(), 20);
-        column.setRowsHiExprTimeUnit(WindowColumn.TIME_UNIT_MINUTE);
-        column.setRowsLoKind(WindowColumn.FOLLOWING, 30);
-        column.setRowsHiKind(WindowColumn.FOLLOWING, 40);
-        column.setFramingMode(WindowColumn.FRAMING_ROWS);
+        column.setRowsHiExprTimeUnit(WindowExpression.TIME_UNIT_MINUTE);
+        column.setRowsLoKind(WindowExpression.FOLLOWING, 30);
+        column.setRowsHiKind(WindowExpression.FOLLOWING, 40);
+        column.setFramingMode(WindowExpression.FRAMING_ROWS);
         column.setRowsLo(100);
         column.setRowsHi(200);
-        column.setExclusionKind(WindowColumn.EXCLUDE_CURRENT_ROW, 50);
+        column.setExclusionKind(WindowExpression.EXCLUDE_CURRENT_ROW, 50);
         column.setIgnoreNulls(true);
         column.setNullsDescPos(60);
-        assertDifferentFromFresh(column, WindowColumn.FACTORY.newInstance());
+        assertDifferentFromFresh(column, WindowExpression.FACTORY.newInstance());
 
         column.clear();
-        assertFieldsEqual(WindowColumn.FACTORY.newInstance(), column);
+        assertFieldsEqual(WindowExpression.FACTORY.newInstance(), column);
     }
 
     @Test
@@ -324,11 +324,11 @@ public class MutableModelsTest {
         WindowJoinContext context = new WindowJoinContext();
         WindowJoinContext freshContext = new WindowJoinContext();
         context.setLoExpr(newExpressionNode(), 10);
-        context.setLoExprTimeUnit(WindowColumn.TIME_UNIT_SECOND);
+        context.setLoExprTimeUnit(WindowExpression.TIME_UNIT_SECOND);
         context.setLo(100);
         context.setLoKind(WindowJoinContext.FOLLOWING, 20);
         context.setHiExpr(newExpressionNode(), 30);
-        context.setHiExprTimeUnit(WindowColumn.TIME_UNIT_MINUTE);
+        context.setHiExprTimeUnit(WindowExpression.TIME_UNIT_MINUTE);
         context.setHi(200);
         context.setHiKind(WindowJoinContext.FOLLOWING, 40);
         context.setIncludePrevailing(false, 50);

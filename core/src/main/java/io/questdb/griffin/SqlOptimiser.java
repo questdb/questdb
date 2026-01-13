@@ -63,7 +63,7 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceHashSet;
@@ -175,6 +175,9 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
+    // Second stack for emitWindowFunctions, separate from sqlNodeStack because
+    // replaceIfWindowFunction calls emitLiterals which clears and reuses sqlNodeStack.
+    private final ArrayDeque<ExpressionNode> windowNodeStack = new ArrayDeque<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -1602,14 +1605,18 @@ public class SqlOptimiser implements Mutable {
         while (node != null) {
             if (node.paramCount < 3) {
                 if (node.rhs != null) {
-                    if (node.rhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
+                    // Skip window functions - they have windowContext set even if function name is also aggregate
+                    if (node.rhs.type == FUNCTION && node.rhs.windowExpression == null
+                            && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
                         return true;
                     }
                     sqlNodeStack.push(node.rhs);
                 }
 
                 if (node.lhs != null) {
-                    if (node.lhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
+                    // Skip window functions - they have windowContext set even if function name is also aggregate
+                    if (node.lhs.type == FUNCTION && node.lhs.windowExpression == null
+                            && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
                         return true;
                     }
                     node = node.lhs;
@@ -1623,7 +1630,54 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, k = node.paramCount; i < k; i++) {
                     ExpressionNode arg = node.args.getQuick(i);
                     if (arg != null) {
-                        if (arg.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(arg.token)) {
+                        // Skip window functions - they have windowContext set even if function name is also aggregate
+                        if (arg.type == FUNCTION && arg.windowExpression == null
+                                && functionParser.getFunctionFactoryCache().isGroupBy(arg.token)) {
+                            return true;
+                        }
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean checkForChildWindowFunctions(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return true;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    if (node.rhs.windowExpression != null) {
+                        return true;
+                    }
+                    sqlNodeStack.push(node.rhs);
+                }
+
+                if (node.lhs != null) {
+                    if (node.lhs.windowExpression != null) {
+                        return true;
+                    }
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        if (arg.windowExpression != null) {
                             return true;
                         }
                         sqlNodeStack.push(arg);
@@ -2444,12 +2498,77 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void emitWindowFunctions(
+            @Transient ExpressionNode node,
+            QueryModel windowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        // Use windowNodeStack (not sqlNodeStack) because replaceIfWindowFunction
+        // calls emitLiterals which clears and reuses sqlNodeStack for its own traversal.
+        windowNodeStack.clear();
+        while (!windowNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        ExpressionNode n = replaceIfWindowFunction(
+                                node.rhs,
+                                windowModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                baseModel
+                        );
+                        if (node.rhs == n) {
+                            windowNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = n;
+                        }
+                    }
+
+                    ExpressionNode n = replaceIfWindowFunction(
+                            node.lhs,
+                            windowModel,
+                            translatingModel,
+                            innerVirtualModel,
+                            baseModel
+                    );
+                    if (n == node.lhs) {
+                        node = node.lhs;
+                    } else {
+                        node.lhs = n;
+                        node = null;
+                    }
+                } else {
+                    for (int i = 0, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        ExpressionNode n = replaceIfWindowFunction(
+                                e,
+                                windowModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                baseModel
+                        );
+                        if (e == n) {
+                            windowNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, n);
+                        }
+                    }
+                    node = windowNodeStack.poll();
+                }
+            } else {
+                node = windowNodeStack.poll();
+            }
+        }
+    }
+
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
             if (qc.isWindowColumn()) {
-                final WindowColumn ac = (WindowColumn) qc;
+                final WindowExpression ac = (WindowExpression) qc;
                 emitLiteralsTopDown(ac.getPartitionBy(), target);
                 emitLiteralsTopDown(ac.getOrderBy(), target);
             }
@@ -4741,6 +4860,29 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
+    private ExpressionNode replaceIfWindowFunction(
+            @Transient ExpressionNode node,
+            QueryModel windowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        if (node != null && node.windowExpression != null) {
+            WindowExpression wc = node.windowExpression;
+            // Create alias for the window column if not already set
+            CharSequence alias = wc.getAlias();
+            if (alias == null) {
+                alias = createColumnAlias(node, windowModel);
+                wc.of(alias, node);
+            }
+            windowModel.addBottomUpColumn(wc);
+            // Emit literals referenced by the window column to inner models
+            emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
+            return nextLiteral(alias);
+        }
+        return node;
+    }
+
     private ExpressionNode replaceIfGroupByExpressionOrAggregate(
             ExpressionNode node,
             QueryModel groupByModel,
@@ -6495,6 +6637,27 @@ public class SqlOptimiser implements Mutable {
         // more specifically we are dealing with something like
         // select sum(f(x)) - sum(f(y)) from tab
         // we don't know if "f(x)" is a function call or a literal, e.g. sum(x)
+
+        // Check for window functions nested inside operations (e.g., row_number() OVER (...)::string)
+        // Window functions need to be extracted to windowModel before processing aggregates.
+        // However, if the expression ALSO contains aggregate functions (like sum() OVER (...)),
+        // let the aggregate handling take precedence - it may optimize to GROUP BY.
+        if (checkForChildWindowFunctions(qc.getAst()) && !checkForChildAggregates(qc.getAst())) {
+            emitWindowFunctions(
+                    qc.getAst(),
+                    windowModel,
+                    translatingModel,
+                    innerVirtualModel,
+                    baseModel
+            );
+            qc = ensureAliasUniqueness(outerVirtualModel, qc);
+            outerVirtualModel.addBottomUpColumn(qc);
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+            rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
+            return rewriteStatus;
+        }
+
         QueryModel aggModel = isWindowJoin ? windowJoinModel : groupByModel;
         final int beforeSplit = aggModel.getBottomUpColumns().size();
         if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
@@ -7075,7 +7238,7 @@ public class SqlOptimiser implements Mutable {
                     // window model, we can copy columns from window_translation model to
                     // either only to translation model or both translation model and the
                     // inner virtual models.
-                    final WindowColumn ac = (WindowColumn) qc;
+                    final WindowExpression ac = (WindowExpression) qc;
                     int innerColumnsPre = innerVirtualModel.getBottomUpColumns().size();
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
@@ -7896,16 +8059,16 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 QueryColumn qc = queryColumns.getQuick(i);
                 if (qc.isWindowColumn()) {
-                    final WindowColumn ac = (WindowColumn) qc;
+                    final WindowExpression ac = (WindowExpression) qc;
                     // preceding and following accept non-negative values only
                     long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
                     long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
 
                     switch (ac.getRowsLoKind()) {
-                        case WindowColumn.PRECEDING:
+                        case WindowExpression.PRECEDING:
                             rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
                             break;
-                        case WindowColumn.FOLLOWING:
+                        case WindowExpression.FOLLOWING:
                             //rowsLo = rowsLo;
                             break;
                         default:
@@ -7915,10 +8078,10 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     switch (ac.getRowsHiKind()) {
-                        case WindowColumn.PRECEDING:
+                        case WindowExpression.PRECEDING:
                             rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
                             break;
-                        case WindowColumn.FOLLOWING:
+                        case WindowExpression.FOLLOWING:
                             //rowsHi = rowsHi;
                             break;
                         default:
@@ -8077,7 +8240,8 @@ public class SqlOptimiser implements Mutable {
         return Long.MAX_VALUE;
     }
 
-    @SuppressWarnings("unused")
+    @SuppressWarnings({"unused", "RedundantThrows"})
+    // this method is used by Enterprise version
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
     }
 
