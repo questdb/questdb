@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2026 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,20 +24,29 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DerivedArrayView;
+import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.std.Misc;
 
-public final class ByteFunctionMemoizer extends ByteFunction implements MemoizerFunction {
+public final class ArrayFunctionMemoizer extends ArrayFunction implements MemoizerFunction {
+    private final DerivedArrayView derivedArray = new DerivedArrayView();
     private final Function fn;
     private boolean validValue;
-    private byte value;
 
-    public ByteFunctionMemoizer(Function fn) {
+    public ArrayFunctionMemoizer(Function fn) {
         this.fn = fn;
+    }
+
+    @Override
+    public void close() {
+        MemoizerFunction.super.close();
+        Misc.free(derivedArray);
     }
 
     @Override
@@ -46,12 +55,17 @@ public final class ByteFunctionMemoizer extends ByteFunction implements Memoizer
     }
 
     @Override
-    public byte getByte(Record rec) {
+    public ArrayView getArray(Record rec) {
         if (!validValue) {
-            value = fn.getByte(rec);
+            ArrayView view = fn.getArray(rec);
+            if (view == null) {
+                derivedArray.ofNull();
+            } else {
+                derivedArray.of(view);
+            }
             validValue = true;
         }
-        return value;
+        return derivedArray;
     }
 
     @Override

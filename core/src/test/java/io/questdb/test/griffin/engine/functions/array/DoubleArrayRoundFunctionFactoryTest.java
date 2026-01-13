@@ -188,7 +188,7 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
                                         "Sort light\n" +
                                         "  keys: [sym]\n" +
                                         "    VirtualRecord\n" +
-                                        "      functions: [sym,round(sum,-2)]\n" +
+                                        "      functions: [sym,round(sum,2)]\n" +
                                         "        Async Group By workers: 4\n" +
                                         "          keys: [sym]\n" +
                                         "          values: [sum(array_sum(roundbook))]\n" +
