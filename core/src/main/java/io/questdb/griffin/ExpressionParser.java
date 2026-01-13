@@ -590,11 +590,17 @@ public class ExpressionParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        // Save opStack bottom - we need to isolate the inner parseExpr from the outer context
+        // Save stack bottoms - we need to isolate the inner parseExpr from the outer context
         // This prevents the inner parseExpr from seeing/popping items from the outer expression
         // (e.g., a CASE node that belongs to the outer expression)
         int savedOpStackBottom = opStack.getBottom();
         opStack.setBottom(opStack.sizeRaw());
+
+        int savedParamCountStackBottom = paramCountStack.bottom();
+        paramCountStack.setBottom(paramCountStack.sizeRaw());
+
+        int savedArgStackDepthStackBottom = argStackDepthStack.bottom();
+        argStackDepthStack.setBottom(argStackDepthStack.sizeRaw());
 
         try {
             // Reuse the tree builder to avoid allocations
@@ -602,8 +608,10 @@ public class ExpressionParser {
             parseExpr(lexer, windowExprTreeBuilder, sqlParserCallback, decls);
             return windowExprTreeBuilder.getResult();
         } finally {
-            // Restore opStack bottom
+            // Restore stack bottoms
             opStack.setBottom(savedOpStackBottom);
+            paramCountStack.setBottom(savedParamCountStackBottom);
+            argStackDepthStack.setBottom(savedArgStackDepthStackBottom);
         }
     }
 

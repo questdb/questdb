@@ -37,10 +37,6 @@ public class SqlKeywords {
     protected static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
     private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
 
-    public static boolean iRightParen(CharSequence tok) {
-        return tok.length() == 1 && tok.charAt(0) == ')';
-    }
-
     public static boolean isAddKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'a'
@@ -1816,6 +1812,10 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'g'
                 && (tok.charAt(3) | 32) == 'h'
                 && (tok.charAt(4) | 32) == 't';
+    }
+
+    public static boolean isRightParen(CharSequence tok) {
+        return tok.length() == 1 && tok.charAt(0) == ')';
     }
 
     public static boolean isRowKeyword(CharSequence tok) {
