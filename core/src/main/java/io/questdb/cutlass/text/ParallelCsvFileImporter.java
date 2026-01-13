@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
+import io.questdb.Telemetry;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -75,6 +76,7 @@ import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -282,6 +284,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     public static void createTable(
             final FilesFacade ff,
+            Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             final CharSequence root,
             final CharSequence tableDir,
@@ -307,6 +310,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         TableUtils.createTable(
                                 ff,
                                 root,
+                                telemetry,
                                 mkDirMode,
                                 memory,
                                 path,
@@ -1457,6 +1461,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                     createTable(
                             ff,
+                            cairoEngine.getTelemetry(),
                             configuration.getMkDirMode(),
                             configuration.getDbRoot(),
                             tableToken.getDirName(),

@@ -76,6 +76,7 @@ public class TableUtilsTest extends AbstractTest {
             TableUtils.createTableOrMatViewInVolume(
                     FF,
                     dbRoot.getAbsolutePath(),
+                    null,
                     509,
                     null,
                     path,
@@ -106,6 +107,7 @@ public class TableUtilsTest extends AbstractTest {
             TableUtils.createTableOrMatViewInVolume(
                     FF,
                     dbRoot.getAbsolutePath(),
+                    null,
                     509,
                     null,
                     path,
@@ -135,6 +137,7 @@ public class TableUtilsTest extends AbstractTest {
             TableUtils.createTableOrMatViewInVolume(
                     FF,
                     dbRoot.getAbsolutePath(),
+                    null,
                     509,
                     null,
                     path,
