@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.ExpressionParserListener;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -41,8 +41,8 @@ public class RpnBuilder implements ExpressionParserListener {
         } else {
             sink.put(node.token);
             // Serialize window context if present
-            if (node.windowContext != null) {
-                serializeWindowContext(node.windowContext);
+            if (node.windowExpression != null) {
+                serializeWindowContext(node.windowExpression);
             }
             sink.put(' ');
         }
@@ -95,13 +95,13 @@ public class RpnBuilder implements ExpressionParserListener {
             if (timeUnit != 0) {
                 sink.put(' ');
                 switch (timeUnit) {
-                    case WindowColumn.TIME_UNIT_HOUR -> sink.put("hour");
-                    case WindowColumn.TIME_UNIT_MINUTE -> sink.put("minute");
-                    case WindowColumn.TIME_UNIT_SECOND -> sink.put("second");
-                    case WindowColumn.TIME_UNIT_MILLISECOND -> sink.put("millisecond");
-                    case WindowColumn.TIME_UNIT_MICROSECOND -> sink.put("microsecond");
-                    case WindowColumn.TIME_UNIT_NANOSECOND -> sink.put("nanosecond");
-                    case WindowColumn.TIME_UNIT_DAY -> sink.put("day");
+                    case WindowExpression.TIME_UNIT_HOUR -> sink.put("hour");
+                    case WindowExpression.TIME_UNIT_MINUTE -> sink.put("minute");
+                    case WindowExpression.TIME_UNIT_SECOND -> sink.put("second");
+                    case WindowExpression.TIME_UNIT_MILLISECOND -> sink.put("millisecond");
+                    case WindowExpression.TIME_UNIT_MICROSECOND -> sink.put("microsecond");
+                    case WindowExpression.TIME_UNIT_NANOSECOND -> sink.put("nanosecond");
+                    case WindowExpression.TIME_UNIT_DAY -> sink.put("day");
                     default -> sink.put(timeUnit);
                 }
             }
@@ -109,23 +109,23 @@ public class RpnBuilder implements ExpressionParserListener {
         }
 
         switch (kind) {
-            case WindowColumn.PRECEDING -> {
+            case WindowExpression.PRECEDING -> {
                 if (expr == null && isLower) {
                     sink.put("unbounded ");
                 }
                 sink.put("preceding");
             }
-            case WindowColumn.FOLLOWING -> {
+            case WindowExpression.FOLLOWING -> {
                 if (expr == null && !isLower) {
                     sink.put("unbounded ");
                 }
                 sink.put("following");
             }
-            case WindowColumn.CURRENT -> sink.put("current row");
+            case WindowExpression.CURRENT -> sink.put("current row");
         }
     }
 
-    private void serializeWindowContext(WindowColumn wc) {
+    private void serializeWindowContext(WindowExpression wc) {
         if (wc.isIgnoreNulls()) {
             sink.put(" ignore nulls");
         }
@@ -166,13 +166,13 @@ public class RpnBuilder implements ExpressionParserListener {
 
             // Frame mode
             switch (wc.getFramingMode()) {
-                case WindowColumn.FRAMING_ROWS:
+                case WindowExpression.FRAMING_ROWS:
                     sink.put("rows ");
                     break;
-                case WindowColumn.FRAMING_RANGE:
+                case WindowExpression.FRAMING_RANGE:
                     sink.put("range ");
                     break;
-                case WindowColumn.FRAMING_GROUPS:
+                case WindowExpression.FRAMING_GROUPS:
                     sink.put("groups ");
                     break;
             }
@@ -183,16 +183,16 @@ public class RpnBuilder implements ExpressionParserListener {
             serializeFrameBound(wc.getRowsHiExpr(), wc.getRowsHiKind(), wc.getRowsHiExprTimeUnit(), false);
 
             // Exclusion
-            if (wc.getExclusionKind() != WindowColumn.EXCLUDE_NO_OTHERS) {
+            if (wc.getExclusionKind() != WindowExpression.EXCLUDE_NO_OTHERS) {
                 sink.put(" exclude ");
                 switch (wc.getExclusionKind()) {
-                    case WindowColumn.EXCLUDE_CURRENT_ROW:
+                    case WindowExpression.EXCLUDE_CURRENT_ROW:
                         sink.put("current row");
                         break;
-                    case WindowColumn.EXCLUDE_GROUP:
+                    case WindowExpression.EXCLUDE_GROUP:
                         sink.put("group");
                         break;
-                    case WindowColumn.EXCLUDE_TIES:
+                    case WindowExpression.EXCLUDE_TIES:
                         sink.put("ties");
                         break;
                 }

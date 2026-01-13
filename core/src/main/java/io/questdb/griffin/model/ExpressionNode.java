@@ -66,7 +66,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public ExpressionNode rhs;
     public CharSequence token;
     public int type;
-    public WindowColumn windowContext;
+    public WindowExpression windowExpression;
 
     // IMPORTANT: update deepClone method after adding a new field
     private ExpressionNode() {
@@ -141,7 +141,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.intrinsicValue = node.intrinsicValue;
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
-        copy.windowContext = node.windowContext; // shallow copy - WindowColumn is pooled
+        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
         return copy;
     }
 
@@ -158,7 +158,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         queryModel = null;
         innerPredicate = false;
         implemented = false;
-        windowContext = null;
+        windowExpression = null;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {
@@ -176,7 +176,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.paramCount = other.paramCount;
         this.intrinsicValue = other.intrinsicValue;
         this.innerPredicate = other.innerPredicate;
-        this.windowContext = other.windowContext;
+        this.windowExpression = other.windowExpression;
         return this;
     }
 

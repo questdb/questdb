@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
@@ -294,7 +294,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
                             QueryColumn ac = columns.getQuick(2);
                             Assert.assertTrue(ac.isWindowColumn());
-                            WindowColumn ac2 = (WindowColumn) ac;
+                            WindowExpression ac2 = (WindowExpression) ac;
 
                             // start of window expr position
                             Assert.assertEquals(65, ac2.getRowsLoExprPos());
@@ -8157,6 +8157,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x",
                 modelOf("x")
                         .col("id", ColumnType.LONG)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInCaseExpression() throws Exception {
+        // Window function directly inside CASE WHEN condition (two WHEN clauses with same window function)
+        // Both window functions are extracted to select-window layer with different aliases
+        assertQuery(
+                "select-virtual case when row_number = 1 then 'first' when row_number1 = 3 then 'last' else 'middle' end category from (select-window [row_number() row_number over (order by ts), row_number() row_number1 over (order by ts)] row_number() row_number over (order by ts), row_number() row_number1 over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT CASE " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
+                        "  ELSE 'middle' " +
+                        "END AS category " +
+                        "FROM x",
+                modelOf("x")
                         .timestamp("ts")
         );
     }

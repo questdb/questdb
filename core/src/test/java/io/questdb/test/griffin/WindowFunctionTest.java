@@ -217,7 +217,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowFunctionInCaseExpression() throws Exception {
-        // Test window function result used inside CASE expression via subquery
+        // Test window function directly inside CASE WHEN condition
         assertQuery(
                 """
                         category
@@ -226,11 +226,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         last
                         """,
                 "SELECT CASE " +
-                        "  WHEN rn = 1 THEN 'first' " +
-                        "  WHEN rn = 3 THEN 'last' " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
                         "  ELSE 'middle' " +
                         "END AS category " +
-                        "FROM (SELECT row_number() OVER (ORDER BY ts) AS rn FROM x)",
+                        "FROM x",
                 "CREATE TABLE x AS (" +
                         "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY",

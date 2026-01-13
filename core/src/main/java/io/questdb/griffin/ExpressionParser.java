@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -87,7 +87,7 @@ public class ExpressionParser {
     private final ObjStack<Scope> scopeStack = new ObjStack<>();
     private final OperatorRegistry shadowRegistry;
     private final SqlParser sqlParser;
-    private final ObjectPool<WindowColumn> windowColumnPool;
+    private final ObjectPool<WindowExpression> windowExpressionPool;
     private final WindowExprTreeBuilder windowExprTreeBuilder = new WindowExprTreeBuilder();
     private boolean stopOnTopINOperator = false;
 
@@ -97,14 +97,14 @@ public class ExpressionParser {
             ObjectPool<ExpressionNode> expressionNodePool,
             SqlParser sqlParser,
             CharacterStore characterStore,
-            ObjectPool<WindowColumn> windowColumnPool
+            ObjectPool<WindowExpression> windowExpressionPool
     ) {
         this.activeRegistry = activeRegistry;
         this.shadowRegistry = shadowRegistry;
         this.expressionNodePool = expressionNodePool;
         this.sqlParser = sqlParser;
         this.characterStore = characterStore;
-        this.windowColumnPool = windowColumnPool;
+        this.windowExpressionPool = windowExpressionPool;
     }
 
     public static int extractGeoHashSuffix(int position, CharSequence tok) throws SqlException {
@@ -403,25 +403,25 @@ public class ExpressionParser {
             return 0;
         }
         if (SqlKeywords.isHourKeyword(tok) || SqlKeywords.isHoursKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_HOUR;
+            return WindowExpression.TIME_UNIT_HOUR;
         }
         if (SqlKeywords.isMinuteKeyword(tok) || SqlKeywords.isMinutesKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_MINUTE;
+            return WindowExpression.TIME_UNIT_MINUTE;
         }
         if (SqlKeywords.isSecondKeyword(tok) || SqlKeywords.isSecondsKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_SECOND;
+            return WindowExpression.TIME_UNIT_SECOND;
         }
         if (SqlKeywords.isMillisecondKeyword(tok) || SqlKeywords.isMillisecondsKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_MILLISECOND;
+            return WindowExpression.TIME_UNIT_MILLISECOND;
         }
         if (SqlKeywords.isMicrosecondKeyword(tok) || SqlKeywords.isMicrosecondsKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_MICROSECOND;
+            return WindowExpression.TIME_UNIT_MICROSECOND;
         }
         if (SqlKeywords.isNanosecondKeyword(tok) || SqlKeywords.isNanosecondsKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_NANOSECOND;
+            return WindowExpression.TIME_UNIT_NANOSECOND;
         }
         if (SqlKeywords.isDayKeyword(tok) || SqlKeywords.isDaysKeyword(tok)) {
-            return WindowColumn.TIME_UNIT_DAY;
+            return WindowExpression.TIME_UNIT_DAY;
         }
         return 0;
     }
@@ -451,10 +451,10 @@ public class ExpressionParser {
             throw SqlException.$(lexer.lastTokenPosition(), "'(' expected after OVER");
         }
 
-        WindowColumn windowCol = windowColumnPool.next().of(null, functionNode);
+        WindowExpression windowCol = windowExpressionPool.next().of(null, functionNode);
         windowCol.setIgnoreNulls(ignoreNulls);
         windowCol.setNullsDescPos(nullsDescPos);
-        functionNode.windowContext = windowCol;
+        functionNode.windowExpression = windowCol;
 
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
@@ -533,17 +533,17 @@ public class ExpressionParser {
                 if (windowCol.getOrderBy().size() == 0) {
                     throw SqlException.$(frameModePos, "CUMULATIVE requires an ORDER BY clause");
                 }
-                windowCol.setFramingMode(WindowColumn.FRAMING_ROWS);
-                windowCol.setRowsLoKind(WindowColumn.PRECEDING, frameModePos);
-                windowCol.setRowsHiKind(WindowColumn.CURRENT, frameModePos);
+                windowCol.setFramingMode(WindowExpression.FRAMING_ROWS);
+                windowCol.setRowsLoKind(WindowExpression.PRECEDING, frameModePos);
+                windowCol.setRowsHiKind(WindowExpression.CURRENT, frameModePos);
                 tok = SqlUtil.fetchNext(lexer);
             } else {
                 if (SqlKeywords.isRowsKeyword(tok)) {
-                    framingMode = WindowColumn.FRAMING_ROWS;
+                    framingMode = WindowExpression.FRAMING_ROWS;
                 } else if (SqlKeywords.isRangeKeyword(tok)) {
-                    framingMode = WindowColumn.FRAMING_RANGE;
+                    framingMode = WindowExpression.FRAMING_RANGE;
                 } else if (SqlKeywords.isGroupsKeyword(tok)) {
-                    framingMode = WindowColumn.FRAMING_GROUPS;
+                    framingMode = WindowExpression.FRAMING_GROUPS;
                 }
 
                 if (framingMode == -1) {
@@ -552,20 +552,20 @@ public class ExpressionParser {
                 }
 
                 // GROUPS mode requires ORDER BY
-                if (framingMode == WindowColumn.FRAMING_GROUPS && windowCol.getOrderBy().size() == 0) {
+                if (framingMode == WindowExpression.FRAMING_GROUPS && windowCol.getOrderBy().size() == 0) {
                     throw SqlException.$(frameModePos, "GROUPS mode requires an ORDER BY clause");
                 }
                 windowCol.setFramingMode(framingMode);
                 tok = parseWindowFrameClause(lexer, windowCol, sqlParserCallback, decls);
 
                 // RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column
-                if (framingMode == WindowColumn.FRAMING_RANGE && windowCol.getOrderBy().size() != 1) {
+                if (framingMode == WindowExpression.FRAMING_RANGE && windowCol.getOrderBy().size() != 1) {
                     int loKind = windowCol.getRowsLoKind();
                     int hiKind = windowCol.getRowsHiKind();
-                    boolean hasOffset = (loKind == WindowColumn.PRECEDING || loKind == WindowColumn.FOLLOWING)
+                    boolean hasOffset = (loKind == WindowExpression.PRECEDING || loKind == WindowExpression.FOLLOWING)
                             && windowCol.getRowsLoExpr() != null;
                     if (!hasOffset) {
-                        hasOffset = (hiKind == WindowColumn.PRECEDING || hiKind == WindowColumn.FOLLOWING)
+                        hasOffset = (hiKind == WindowExpression.PRECEDING || hiKind == WindowExpression.FOLLOWING)
                                 && windowCol.getRowsHiExpr() != null;
                     }
                     if (hasOffset) {
@@ -620,7 +620,7 @@ public class ExpressionParser {
      */
     private void parseWindowFrameBound(
             GenericLexer lexer,
-            WindowColumn windowCol,
+            WindowExpression windowCol,
             CharSequence tok,
             boolean isLowerBound,
             SqlParserCallback sqlParserCallback,
@@ -641,13 +641,13 @@ public class ExpressionParser {
             tok = SqlUtil.fetchNext(lexer);
             if (tok != null && SqlKeywords.isPrecedingKeyword(tok)) {
                 if (isLowerBound) {
-                    windowCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                    windowCol.setRowsLoKind(WindowExpression.PRECEDING, lexer.lastTokenPosition());
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "frame end cannot be UNBOUNDED PRECEDING, use UNBOUNDED FOLLOWING");
                 }
             } else if (tok != null && SqlKeywords.isFollowingKeyword(tok)) {
                 if (!isLowerBound) {
-                    windowCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
+                    windowCol.setRowsHiKind(WindowExpression.FOLLOWING, lexer.lastTokenPosition());
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "frame start cannot be UNBOUNDED FOLLOWING, use UNBOUNDED PRECEDING");
                 }
@@ -660,9 +660,9 @@ public class ExpressionParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "'row' expected after 'current'");
             }
             if (isLowerBound) {
-                windowCol.setRowsLoKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+                windowCol.setRowsLoKind(WindowExpression.CURRENT, lexer.lastTokenPosition());
             } else {
-                windowCol.setRowsHiKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+                windowCol.setRowsHiKind(WindowExpression.CURRENT, lexer.lastTokenPosition());
             }
         } else {
             // Expression followed by optional time unit and PRECEDING or FOLLOWING
@@ -673,7 +673,7 @@ public class ExpressionParser {
             tok = SqlUtil.fetchNext(lexer);
             char timeUnit = parseTimeUnit(tok);
             if (timeUnit != 0) {
-                if (windowCol.getFramingMode() != WindowColumn.FRAMING_RANGE) {
+                if (windowCol.getFramingMode() != WindowExpression.FRAMING_RANGE) {
                     throw SqlException.$(lexer.lastTokenPosition(), "time units are only valid with RANGE frames, not ROWS or GROUPS");
                 }
                 if (isLowerBound) {
@@ -687,18 +687,18 @@ public class ExpressionParser {
             if (tok != null && SqlKeywords.isPrecedingKeyword(tok)) {
                 if (isLowerBound) {
                     windowCol.setRowsLoExpr(boundExpr, pos);
-                    windowCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                    windowCol.setRowsLoKind(WindowExpression.PRECEDING, lexer.lastTokenPosition());
                 } else {
                     windowCol.setRowsHiExpr(boundExpr, pos);
-                    windowCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                    windowCol.setRowsHiKind(WindowExpression.PRECEDING, lexer.lastTokenPosition());
                 }
             } else if (tok != null && SqlKeywords.isFollowingKeyword(tok)) {
                 if (isLowerBound) {
                     windowCol.setRowsLoExpr(boundExpr, pos);
-                    windowCol.setRowsLoKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
+                    windowCol.setRowsLoKind(WindowExpression.FOLLOWING, lexer.lastTokenPosition());
                 } else {
                     windowCol.setRowsHiExpr(boundExpr, pos);
-                    windowCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
+                    windowCol.setRowsHiKind(WindowExpression.FOLLOWING, lexer.lastTokenPosition());
                 }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
@@ -711,7 +711,7 @@ public class ExpressionParser {
      */
     private CharSequence parseWindowFrameClause(
             GenericLexer lexer,
-            WindowColumn windowCol,
+            WindowExpression windowCol,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
@@ -736,11 +736,11 @@ public class ExpressionParser {
             // Validate frame bounds order
             int loKind = windowCol.getRowsLoKind();
             int hiKind = windowCol.getRowsHiKind();
-            if (hiKind == WindowColumn.PRECEDING) {
-                if (loKind == WindowColumn.CURRENT) {
+            if (hiKind == WindowExpression.PRECEDING) {
+                if (loKind == WindowExpression.CURRENT) {
                     throw SqlException.$(windowCol.getRowsHiKindPos(), "frame starting from CURRENT ROW must end with CURRENT ROW or FOLLOWING");
                 }
-                if (loKind == WindowColumn.FOLLOWING) {
+                if (loKind == WindowExpression.FOLLOWING) {
                     throw SqlException.$(windowCol.getRowsHiKindPos(), "frame starting from FOLLOWING must end with FOLLOWING");
                 }
             }
@@ -750,11 +750,11 @@ public class ExpressionParser {
             parseWindowFrameBound(lexer, windowCol, tok, true, sqlParserCallback, decls);
 
             // In single-bound mode, only PRECEDING is allowed (not FOLLOWING)
-            if (windowCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
+            if (windowCol.getRowsLoKind() == WindowExpression.FOLLOWING) {
                 throw SqlException.$(windowCol.getRowsLoKindPos(), "single-bound frame specification requires PRECEDING, use BETWEEN for FOLLOWING");
             }
 
-            windowCol.setRowsHiKind(WindowColumn.CURRENT, windowCol.getRowsLoKindPos());
+            windowCol.setRowsHiKind(WindowExpression.CURRENT, windowCol.getRowsLoKindPos());
         }
 
         // Check for EXCLUDE clause
@@ -772,20 +772,20 @@ public class ExpressionParser {
                 if (tok == null || !SqlKeywords.isRowKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'row' expected after 'current'");
                 }
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_CURRENT_ROW, excludePos);
+                windowCol.setExclusionKind(WindowExpression.EXCLUDE_CURRENT_ROW, excludePos);
             } else if (SqlKeywords.isGroupKeyword(tok)) {
                 // EXCLUDE GROUP
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_GROUP, excludePos);
+                windowCol.setExclusionKind(WindowExpression.EXCLUDE_GROUP, excludePos);
             } else if (SqlKeywords.isTiesKeyword(tok)) {
                 // EXCLUDE TIES
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_TIES, excludePos);
+                windowCol.setExclusionKind(WindowExpression.EXCLUDE_TIES, excludePos);
             } else if (SqlKeywords.isNoKeyword(tok)) {
                 // EXCLUDE NO OTHERS
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || !SqlKeywords.isOthersKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'others' expected after 'no'");
                 }
-                windowCol.setExclusionKind(WindowColumn.EXCLUDE_NO_OTHERS, excludePos);
+                windowCol.setExclusionKind(WindowExpression.EXCLUDE_NO_OTHERS, excludePos);
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'current row', 'group', 'ties' or 'no others' expected after 'exclude'");
             }

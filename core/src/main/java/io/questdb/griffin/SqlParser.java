@@ -56,7 +56,7 @@ import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.BufferWindowCharSequence;
@@ -145,7 +145,7 @@ public class SqlParser {
     };
     // Track views currently being compiled to detect cycles during query parsing
     private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
-    private final ObjectPool<WindowColumn> windowColumnPool;
+    private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private int digit;
     private boolean pivotMode = false;
@@ -166,7 +166,7 @@ public class SqlParser {
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
-        this.windowColumnPool = new ObjectPool<>(WindowColumn.FACTORY, configuration.getWindowColumnPoolCapacity());
+        this.windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
         this.createTableColumnModelPool = new ObjectPool<>(CreateTableColumnModel.FACTORY, configuration.getCreateTableColumnModelPoolCapacity());
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
@@ -186,7 +186,7 @@ public class SqlParser {
                     expressionNodePool,
                     this,
                     characterStore,
-                    windowColumnPool
+                    windowExpressionPool
             );
         } else {
             this.expressionParser = new ExpressionParser(
@@ -195,7 +195,7 @@ public class SqlParser {
                     expressionNodePool,
                     this,
                     characterStore,
-                    windowColumnPool
+                    windowExpressionPool
             );
         }
         this.digit = 1;
@@ -356,8 +356,8 @@ public class SqlParser {
         }
 
         // Traverse window context expressions (partition by, order by, frame bounds)
-        if (node.windowContext != null) {
-            WindowColumn wc = node.windowContext;
+        if (node.windowExpression != null) {
+            WindowExpression wc = node.windowExpression;
             ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
             for (int i = 0, n = partitionBy.size(); i < n; i++) {
                 partitionBy.set(i, recursiveReplace(partitionBy.get(i), visitor));
@@ -769,7 +769,7 @@ public class SqlParser {
                 alias = createConstColumnAlias(aliasMap);
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
-                if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
+                if (qc.isWindowColumn() && ((WindowExpression) qc).isIgnoreNulls()) {
                     tokenAlias += "_ignore_nulls";
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
@@ -3663,9 +3663,9 @@ public class SqlParser {
                 // ExpressionParser now handles window functions (func(...) OVER (...)) as part of
                 // expression parsing. When windowContext is set, the OVER clause has already been
                 // consumed from the lexer and we can use the parsed WindowColumn directly.
-                if (expr.windowContext != null) {
+                if (expr.windowExpression != null) {
                     // ExpressionParser already parsed the window function with its OVER clause
-                    col = expr.windowContext;
+                    col = expr.windowExpression;
                 } else {
                     // Regular expression (non-window function)
                     if (expr.type == ExpressionNode.QUERY) {
@@ -3841,19 +3841,19 @@ public class SqlParser {
         CharSequence tok = tok(lexer, "'preceding' or time unit");
         char unit = 0;
         if (isNanosecondsKeyword(tok) || isNanosecondKeyword(tok)) {
-            unit = WindowColumn.TIME_UNIT_NANOSECOND;
+            unit = WindowExpression.TIME_UNIT_NANOSECOND;
         } else if (isMicrosecondKeyword(tok) || isMicrosecondsKeyword(tok)) {
-            unit = WindowColumn.TIME_UNIT_MICROSECOND;
+            unit = WindowExpression.TIME_UNIT_MICROSECOND;
         } else if (isMillisecondKeyword(tok) || isMillisecondsKeyword(tok)) {
-            unit = WindowColumn.TIME_UNIT_MILLISECOND;
+            unit = WindowExpression.TIME_UNIT_MILLISECOND;
         } else if (isSecondKeyword(tok) || isSecondsKeyword(tok)) {
-            unit = WindowColumn.TIME_UNIT_SECOND;
+            unit = WindowExpression.TIME_UNIT_SECOND;
         } else if (isMinuteKeyword(tok) || isMinutesKeyword(tok)) {
-            unit = WindowColumn.TIME_UNIT_MINUTE;
+            unit = WindowExpression.TIME_UNIT_MINUTE;
         } else if (isHourKeyword(tok) || isHoursKeyword(tok)) {
-            unit = WindowColumn.TIME_UNIT_HOUR;
+            unit = WindowExpression.TIME_UNIT_HOUR;
         } else if (isDayKeyword(tok) || isDaysKeyword(tok)) {
-            unit = WindowColumn.TIME_UNIT_DAY;
+            unit = WindowExpression.TIME_UNIT_DAY;
         }
         if (unit == 0) {
             lexer.unparseLast();
@@ -4603,7 +4603,7 @@ public class SqlParser {
         queryModelPool.clear();
         queryColumnPool.clear();
         expressionNodePool.clear();
-        windowColumnPool.clear();
+        windowExpressionPool.clear();
         createViewOperationBuilder.clear();
         createMatViewOperationBuilder.clear();
         createTableOperationBuilder.clear();

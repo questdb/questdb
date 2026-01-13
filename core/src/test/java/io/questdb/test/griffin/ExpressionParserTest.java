@@ -1782,6 +1782,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "(sum(x) over (order by ts) - lag(x) over (order by ts)) / avg(x) over (order by ts)");
     }
 
+    @Test
+    public void testWindowFunctionInCaseExpression() throws SqlException {
+        // Window function inside CASE WHEN expression - two occurrences
+        // Both window functions should be parsed with their OVER clauses
+        x(" row_number over (order by ts) 1 = 'first' row_number over (order by ts) 3 = 'last' 'middle' case",
+                "CASE WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' ELSE 'middle' END");
+    }
+
     // Tests for window function argument ordering
     // For regular functions: f(a, b, c) -> RPN: "a b c f"
     // Window functions should follow the same pattern
