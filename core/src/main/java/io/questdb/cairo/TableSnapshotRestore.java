@@ -112,30 +112,45 @@ public class TableSnapshotRestore implements QuietCloseable {
      * @param srcPath            source path (will be modified)
      * @param dstPath            destination path (will be modified)
      * @param recoveredMetaFiles counter for recovered meta files
-     * @param recoveredTxnFiles  counter for recovered txn files
-     * @param recoveredCVFiles   counter for recovered CV files
      */
-    public void copyMetadataFiles(
-            Path srcPath,
-            Path dstPath,
-            AtomicInteger recoveredMetaFiles,
-            AtomicInteger recoveredTxnFiles,
-            AtomicInteger recoveredCVFiles
-    ) {
+    public void copyMetadataFiles(Path srcPath, Path dstPath, AtomicInteger recoveredMetaFiles) {
         int srcPathLen = srcPath.size();
         int dstPathLen = dstPath.size();
         try {
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.META_FILE_NAME, false);
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.TABLE_NAME_FILE, true);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredTxnFiles, TableUtils.TXN_FILE_NAME, false);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME, false);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredCVFiles, MatViewState.MAT_VIEW_STATE_FILE_NAME, true);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredCVFiles, MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME, true);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.TXN_FILE_NAME, false);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.COLUMN_VERSION_FILE_NAME, false);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, MatViewState.MAT_VIEW_STATE_FILE_NAME, true);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME, true);
         } finally {
             srcPath.trimTo(srcPathLen);
             dstPath.trimTo(dstPathLen);
         }
     }
+
+    /**
+     * Copies all view metadata files for a table from source to destination.
+     * Includes: _meta, _name (optional), _txn, _view
+     *
+     * @param srcPath            source path (will be modified)
+     * @param dstPath            destination path (will be modified)
+     * @param recoveredMetaFiles counter for recovered meta files
+     */
+    public void copyViewMetadataFiles(Path srcPath, Path dstPath, AtomicInteger recoveredMetaFiles) {
+        int srcPathLen = srcPath.size();
+        int dstPathLen = dstPath.size();
+        try {
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.META_FILE_NAME, false);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.TABLE_NAME_FILE, true);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.TXN_FILE_NAME, false);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, ViewDefinition.VIEW_DEFINITION_FILE_NAME, false);
+        } finally {
+            srcPath.trimTo(srcPathLen);
+            dstPath.trimTo(dstPathLen);
+        }
+    }
+
 
     public void finalizeParallelTasks() {
         if (futures.size() > 0) {
@@ -308,8 +323,6 @@ public class TableSnapshotRestore implements QuietCloseable {
      * @param srcPath            source path (will be modified)
      * @param dstPath            destination path (will be modified)
      * @param recoveredMetaFiles counter for recovered meta files
-     * @param recoveredTxnFiles  counter for recovered txn files
-     * @param recoveredCVFiles   counter for recovered CV files
      * @param recoveredWalFiles  counter for recovered WAL files
      * @param symbolFilesCount   counter for recovered symbol files
      */
@@ -317,11 +330,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             Path srcPath,
             Path dstPath,
             AtomicInteger recoveredMetaFiles,
-            AtomicInteger recoveredTxnFiles,
-            AtomicInteger recoveredCVFiles,
             AtomicInteger recoveredWalFiles,
             AtomicInteger symbolFilesCount,
-            AtomicInteger recoveredViewFiles,
             boolean rebuildPartitionColumnIndexes
     ) {
         int srcPathLen = srcPath.size();
@@ -332,23 +342,10 @@ public class TableSnapshotRestore implements QuietCloseable {
         srcPath.trimTo(srcPathLen);
 
         if (isView) {
-            // Views don't have data - only copy the view definition file
-            srcPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
-            dstPath.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
-            if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                throw CairoException.critical(ff.errno())
-                        .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy view definition file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
-            }
-            recoveredViewFiles.incrementAndGet();
-            LOG.info()
-                    .$("recovered view definition file [src=").$(srcPath)
-                    .$(", dst=").$(dstPath)
-                    .I$();
-            srcPath.trimTo(srcPathLen);
-            dstPath.trimTo(dstPathLen);
+            copyViewMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
         } else {
             // Copy metadata files from source to the destination table location
-            copyMetadataFiles(srcPath, dstPath, recoveredMetaFiles, recoveredTxnFiles, recoveredCVFiles);
+            copyMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
 
             // Reset _todo_ file to prevent metadata restoration on table open
             TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);

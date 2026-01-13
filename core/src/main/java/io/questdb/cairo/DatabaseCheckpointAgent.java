@@ -833,10 +833,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             recoveryAgent.restoreTableRegistry(srcPath, dstPath, snapshotDbLen, rootLen, nameSink);
 
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
-            AtomicInteger recoveredTxnFiles = new AtomicInteger();
-            AtomicInteger recoveredCVFiles = new AtomicInteger();
             AtomicInteger recoveredWalFiles = new AtomicInteger();
-            AtomicInteger recoveredViewFiles = new AtomicInteger();
             AtomicInteger symbolFilesCount = new AtomicInteger();
             srcPath.trimTo(checkpointRootLen);
             ff.iterateDir(
@@ -848,11 +845,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     srcPath,
                                     dstPath,
                                     recoveredMetaFiles,
-                                    recoveredTxnFiles,
-                                    recoveredCVFiles,
                                     recoveredWalFiles,
                                     symbolFilesCount,
-                                    recoveredViewFiles,
                                     configuration.getCheckpointRecoveryRebuildColumnIndexes()
                             );
                         }
@@ -864,10 +858,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             recoveryAgent.finalizeParallelTasks();
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
-                    .$(", txnFilesCount=").$(recoveredTxnFiles.get())
-                    .$(", cvFilesCount=").$(recoveredCVFiles.get())
                     .$(", walFilesCount=").$(recoveredWalFiles.get())
-                    .$(", viewFilesCount=").$(recoveredViewFiles.get())
                     .$(", symbolFilesCount=").$(symbolFilesCount.get())
                     .I$();
 
