@@ -98,12 +98,14 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Map> perWorkerMaps;
+    private final LongList perWorkerPrevFirstOffsetAsOfRowIds;
     private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     private final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final int sequenceColumnIndex;
     private final LongList sequenceOffsetValues = new LongList();
     private final RecordSink slaveKeyCopier;
     private final int slaveTimestampIndex;
+    private long ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
     private long sequenceRowCount;
 
     public AsyncMarkoutGroupByAtom(
@@ -231,6 +233,11 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
                 record.init(columnSources, columnIndices);
                 perWorkerCombinedRecords.add(record);
             }
+
+            // Per-worker previous master row's first offset ASOF position;
+            // Used as the low boundary for the ASOF JOIN row search in the next reduced frame
+            this.perWorkerPrevFirstOffsetAsOfRowIds = new LongList(slotCount);
+            perWorkerPrevFirstOffsetAsOfRowIds.setAll(slotCount, Long.MIN_VALUE);
         } catch (Throwable th) {
             close();
             throw th;
@@ -264,6 +271,10 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         // Clear time frame cursors
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
+
+        // Clear previous master row's first offset ASOF positions
+        ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
+        perWorkerPrevFirstOffsetAsOfRowIds.setAll(perWorkerPrevFirstOffsetAsOfRowIds.size(), Long.MIN_VALUE);
     }
 
     @Override
@@ -363,6 +374,13 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
         return ownerGroupByFunctions;
+    }
+
+    public long getPrevFirstOffsetAsOfRowId(int slotId) {
+        if (slotId == -1) {
+            return ownerPrevFirstOffsetAsOfRowId;
+        }
+        return perWorkerPrevFirstOffsetAsOfRowIds.getQuick(slotId);
     }
 
     /**
@@ -484,6 +502,10 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
                 map.reopen();
             }
         }
+
+        // Clear previous master row's first offset ASOF positions
+        ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
+        perWorkerPrevFirstOffsetAsOfRowIds.setAll(perWorkerPrevFirstOffsetAsOfRowIds.size(), Long.MIN_VALUE);
     }
 
     /**
@@ -542,6 +564,14 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
                 perWorkerAllocators.getQuick(i).reopen();
             }
+        }
+    }
+
+    public void setPrevFirstOffsetAsOfRowId(int slotId, long rowId) {
+        if (slotId == -1) {
+            this.ownerPrevFirstOffsetAsOfRowId = rowId;
+        } else {
+            perWorkerPrevFirstOffsetAsOfRowIds.setQuick(slotId, rowId);
         }
     }
 

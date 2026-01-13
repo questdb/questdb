@@ -293,7 +293,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
 
             // Track previous master row's first offset ASOF position
             // (master rows move forward in time, so we can start from there)
-            long prevFirstOffsetAsOfRowId = Long.MIN_VALUE;
+            long prevFirstOffsetAsOfRowId = atom.getPrevFirstOffsetAsOfRowId(slotId);
 
             for (long i = 0; i < filteredRowCount; i++) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -320,6 +320,11 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         sequenceRowCount
                 );
             }
+
+            // Cache previous master row's first offset ASOF position,
+            // so that we don't find position for the first offset for
+            // the next frame from scratch.
+            atom.setPrevFirstOffsetAsOfRowId(slotId, prevFirstOffsetAsOfRowId);
         } finally {
             atom.release(slotId);
         }
@@ -515,7 +520,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
 
             // Track previous master row's first offset ASOF position
             // (master rows move forward in time, so we can start from there)
-            long prevFirstOffsetAsOfRowId = Long.MIN_VALUE;
+            long prevFirstOffsetAsOfRowId = atom.getPrevFirstOffsetAsOfRowId(slotId);
 
             for (long r = 0; r < frameRowCount; r++) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -541,6 +546,11 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         sequenceRowCount
                 );
             }
+
+            // Cache previous master row's first offset ASOF position,
+            // so that we don't find position for the first offset for
+            // the next frame from scratch.
+            atom.setPrevFirstOffsetAsOfRowId(slotId, prevFirstOffsetAsOfRowId);
         } finally {
             atom.release(slotId);
         }
