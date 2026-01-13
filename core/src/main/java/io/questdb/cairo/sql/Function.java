@@ -380,16 +380,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getType() == ColumnType.UNDEFINED;
     }
 
-    /**
-     * This method is called exactly once per data row. It provides an opportunity for the function
-     * to perform heavy or volatile computations, cache the results and ensure getXXX() methods use the case instead
-     * of recomputing values.
-     *
-     * @param record the record for data access.
-     */
-    default void memoize(Record record) {
-    }
-
     default void offerStateTo(Function that) {
     }
 
