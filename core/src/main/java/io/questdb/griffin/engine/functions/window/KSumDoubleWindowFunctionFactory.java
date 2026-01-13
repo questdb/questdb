@@ -33,11 +33,9 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -55,7 +53,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 /**
  * Kahan summation window function.
@@ -65,15 +62,14 @@ import io.questdb.std.Vect;
  */
 public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final String NAME = "ksum";
-    private static final String SIGNATURE = NAME + "(D)";
-
     // Column types for partition-based functions: sum, compensation, count
     private static final ArrayColumnTypes KSUM_COLUMN_TYPES;
-    // Column types for partition rows frame: sum, compensation, count, loIdx, startOffset
-    private static final ArrayColumnTypes KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES;
     // Column types for partition range frame: sum, compensation, frameSize, startOffset, size, capacity, firstIdx
     private static final ArrayColumnTypes KSUM_OVER_PARTITION_RANGE_COLUMN_TYPES;
+    // Column types for partition rows frame: sum, compensation, count, loIdx, startOffset
+    private static final ArrayColumnTypes KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    private static final String NAME = "ksum";
+    private static final String SIGNATURE = NAME + "(D)";
 
     @Override
     public String getSignature() {
@@ -395,15 +391,9 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void preparePass2() {
-            RecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            while (cursor.hasNext()) {
-                MapValue value = record.getValue();
-                long count = value.getLong(2);
-                if (count == 0) {
-                    value.putDouble(0, Double.NaN);
-                }
-            }
+            // No-op: map entries are only created when there's at least one finite value,
+            // so no fixup is needed. Partitions with all NULLs have no map entry and
+            // pass2() handles that by returning NaN.
         }
     }
 
@@ -420,7 +410,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int timestampIndex;
-        private double c; // Kahan compensation
         private double sum;
 
         public KSumOverPartitionRangeFrameFunction(
@@ -491,14 +480,12 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                         sum = d;
                         c = 0.0;
                         this.sum = d;
-                        this.c = 0.0;
                         frameSize = 1;
                         size = frameLoBounded ? 1 : 0;
                     } else {
                         sum = 0.0;
                         c = 0.0;
                         this.sum = Double.NaN;
-                        this.c = 0.0;
                         frameSize = 0;
                         size = 1;
                     }
@@ -507,7 +494,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     sum = 0.0;
                     c = 0.0;
                     this.sum = Double.NaN;
-                    this.c = 0.0;
                     frameSize = 0;
                 }
             } else {
@@ -603,10 +589,8 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
                 if (frameSize != 0) {
                     this.sum = sum;
-                    this.c = c;
                 } else {
                     this.sum = Double.NaN;
-                    this.c = 0.0;
                 }
             }
 
@@ -636,15 +620,14 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+            // pass1 is never called when getPassCount() returns ZERO_PASS
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public void reopen() {
             super.reopen();
             sum = Double.NaN;
-            c = 0.0;
         }
 
         @Override
@@ -692,7 +675,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final int frameSize;
         private final MemoryARW memory;
-        private double c; // Kahan compensation
         private double sum;
 
         public KSumOverPartitionRowsFrameFunction(
@@ -755,12 +737,10 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     c = 0.0;
                     count = 1;
                     this.sum = d;
-                    this.c = 0.0;
                 } else {
                     sum = 0.0;
                     c = 0.0;
                     this.sum = Double.NaN;
-                    this.c = 0.0;
                     count = 0;
                 }
 
@@ -787,10 +767,8 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
                 if (count != 0) {
                     this.sum = sum;
-                    this.c = c;
                 } else {
                     this.sum = Double.NaN;
-                    this.c = 0.0;
                 }
 
                 if (frameLoBounded) {
@@ -960,23 +938,9 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             // add new element if not null
             if (Numbers.isFinite(d)) {
-                if (size == capacity) {
-                    long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
-                    long oldAddress = memory.getPageAddress(0) + startOffset;
-
-                    if (firstIdx == 0) {
-                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
-                    } else {
-                        firstIdx %= size;
-                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
-                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
-                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
-                        firstIdx = 0;
-                    }
-
-                    startOffset = newAddress - memory.getPageAddress(0);
-                    capacity <<= 1;
-                }
+                // Buffer should never fill up in non-partitioned range frame because
+                // removals keep size bounded by window size, which is <= initial capacity
+                assert size < capacity : "buffer overflow in KSumOverRangeFrameFunction";
 
                 memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
                 memory.putDouble(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
@@ -1048,8 +1012,8 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            // pass1 is never called when getPassCount() returns ZERO_PASS
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -1274,7 +1238,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
     // Handles ksum() over (partition by x rows between unbounded preceding and current row)
     static class KSumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
-        private double c; // Kahan compensation
         private double sum;
 
         public KSumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
@@ -1316,7 +1279,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             value.putDouble(1, c);
             value.putLong(2, count);
             this.sum = count != 0 ? sum : Double.NaN;
-            this.c = c;
         }
 
         @Override
