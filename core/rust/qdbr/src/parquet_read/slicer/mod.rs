@@ -548,17 +548,26 @@ impl DataPageSlicer for BooleanBitmapSlicer<'_> {
     }
 
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
-        for _ in 0..count {
-            if let Some(val) = self.bitmap_iter.next() {
-                if val {
-                    dest.extend_from_slice(&BOOL_TRUE)?;
+        if count == 0 {
+            return Ok(());
+        }
+
+        const BATCH: usize = 1024;
+        let mut buf = [0u8; BATCH];
+        let mut remaining = count;
+
+        while remaining > 0 {
+            let n = remaining.min(BATCH);
+            for slot in buf.iter_mut().take(n) {
+                *slot = if let Some(val) = self.bitmap_iter.next() {
+                    val as u8
                 } else {
-                    dest.extend_from_slice(&BOOL_FALSE)?;
-                }
-            } else {
-                self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
-                dest.extend_from_slice(&BOOL_FALSE)?;
+                    self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
+                    0
+                };
             }
+            dest.extend_from_slice(&buf[..n])?;
+            remaining -= n;
         }
         Ok(())
     }
@@ -615,9 +624,7 @@ impl<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> DataPageSlic
 
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            let slice = self.inner_slicer.next();
-            (self.converter)(slice, &mut self.buffer);
-            dest.extend_from_slice(&self.buffer)?;
+            self.next_into(dest)?;
         }
         Ok(())
     }
