@@ -315,7 +315,7 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
@@ -6248,7 +6248,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
                 if (qc.isWindowColumn()) {
-                    final WindowColumn ac = (WindowColumn) qc;
+                    final WindowExpression ac = (WindowExpression) qc;
                     final ExpressionNode ast = qc.getAst();
 
                     partitionByFunctions = null;
@@ -6401,7 +6401,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int i = 0, size = functions.size(); i < size; i++) {
                     Function func = functions.getQuick(i);
                     if (func instanceof WindowFunction) {
-                        WindowColumn qc = (WindowColumn) columns.getQuick(i);
+                        WindowExpression qc = (WindowExpression) columns.getQuick(i);
                         if (qc.getOrderBy().size() > 0) {
                             chainTypes.clear();
                             ((WindowFunction) func).initRecordComparator(this, baseMetadata, chainTypes, null,
@@ -6486,7 +6486,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
                 if (qc.isWindowColumn()) {
-                    final WindowColumn ac = (WindowColumn) qc;
+                    final WindowExpression ac = (WindowExpression) qc;
                     final ExpressionNode ast = qc.getAst();
 
                     partitionByFunctions = null;
