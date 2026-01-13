@@ -1602,14 +1602,18 @@ public class SqlOptimiser implements Mutable {
         while (node != null) {
             if (node.paramCount < 3) {
                 if (node.rhs != null) {
-                    if (node.rhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
+                    // Skip window functions - they have windowContext set even if function name is also aggregate
+                    if (node.rhs.type == FUNCTION && node.rhs.windowContext == null
+                            && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
                         return true;
                     }
                     sqlNodeStack.push(node.rhs);
                 }
 
                 if (node.lhs != null) {
-                    if (node.lhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
+                    // Skip window functions - they have windowContext set even if function name is also aggregate
+                    if (node.lhs.type == FUNCTION && node.lhs.windowContext == null
+                            && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
                         return true;
                     }
                     node = node.lhs;
@@ -1623,7 +1627,9 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, k = node.paramCount; i < k; i++) {
                     ExpressionNode arg = node.args.getQuick(i);
                     if (arg != null) {
-                        if (arg.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(arg.token)) {
+                        // Skip window functions - they have windowContext set even if function name is also aggregate
+                        if (arg.type == FUNCTION && arg.windowContext == null
+                                && functionParser.getFunctionFactoryCache().isGroupBy(arg.token)) {
                             return true;
                         }
                         sqlNodeStack.push(arg);

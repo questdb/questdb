@@ -8149,6 +8149,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionArithmeticTwoWindows() throws Exception {
+        // Two window functions in arithmetic operation - sum() is both aggregate and window function name,
+        // but with OVER clause it should be treated as window function, not GROUP BY aggregate
+        assertQuery(
+                "select-virtual sum - lag id_diff from (select-window [lag(id) lag over (order by ts), sum(id) sum over (order by ts)] lag(id) lag over (order by ts), sum(id) sum over (order by ts) from (select [id, ts] from x timestamp (ts)))",
+                "SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x",
+                modelOf("x")
+                        .col("id", ColumnType.LONG)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testOptimiseNotAnd() throws SqlException {
         assertQuery(
                 "select-choose a, b from (select [a, b] from tab where a != b or b != a)",
@@ -12590,13 +12603,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testVWAP() throws SqlException {
+        // Window functions with OVER clause should be preserved as window functions, not converted to GROUP BY
         assertQuery(
                 "select-virtual" +
                         " timestamp," +
                         " symbol," +
                         " sum1 / sum vwap_daily" +
                         " from (" +
-                        "select-group-by [timestamp, symbol, sum(volume) sum, sum(price * volume) sum1] timestamp, symbol, sum(volume) sum, sum(price * volume) sum1" +
+                        "select-window [timestamp, symbol, sum(volume) sum over (partition by symbol, timestamp order by timestamp), sum(price * volume) sum1 over (partition by symbol, timestamp order by timestamp)] timestamp, symbol, sum(volume) sum over (partition by symbol, timestamp order by timestamp), sum(price * volume) sum1 over (partition by symbol, timestamp order by timestamp)" +
                         " from (select [timestamp, symbol, volume, price] from trades timestamp (timestamp) where timestamp > dateadd('d', -(1), now())))",
                 """
                         SELECT
