@@ -477,6 +477,7 @@ pub fn array_to_raw_page(
         primitive_type,
         options,
         encoding,
+        false,
     )
     .map(Page::Data)
 }

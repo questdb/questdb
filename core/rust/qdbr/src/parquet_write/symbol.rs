@@ -163,28 +163,33 @@ pub fn symbol_to_pages(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    required: bool,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + column_values.len();
     let mut null_count = 0;
-
-    // TODO(amunra): Optimize if there's no column top.
-    let deflevels_iter = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
-        } else {
-            let key = column_values[i - column_top];
-            // negative denotes a null value
-            if key > -1 {
-                true
-            } else {
-                null_count += 1;
-                false
-            }
-        }
-    });
     let mut data_buffer = vec![];
-    encode_primitive_def_levels(&mut data_buffer, deflevels_iter, num_rows, options.version)?;
-    let definition_levels_byte_length = data_buffer.len();
+
+    let definition_levels_byte_length = if required {
+        0
+    } else {
+        // TODO(amunra): Optimize if there's no column top.
+        let deflevels_iter = (0..num_rows).map(|i| {
+            if i < column_top {
+                false
+            } else {
+                let key = column_values[i - column_top];
+                // negative denotes a null value
+                if key > -1 {
+                    true
+                } else {
+                    null_count += 1;
+                    false
+                }
+            }
+        });
+        encode_primitive_def_levels(&mut data_buffer, deflevels_iter, num_rows, options.version)?;
+        data_buffer.len()
+    };
 
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     let (dict_buffer, keys, max_key) =
@@ -212,6 +217,7 @@ pub fn symbol_to_pages(
         primitive_type,
         options,
         Encoding::RleDictionary,
+        required,
     )?;
 
     let uniq_vals = if !dict_buffer.is_empty() {

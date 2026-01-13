@@ -73,7 +73,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         final int columnNameSize = columnNames.size() - startSize;
         pendingEntryIndex = columnData.size();
         columnData.add(columnNameSize);
-        columnData.add((long) columnId << 32 | columnType);
+        columnData.add((long) columnId << 32 | (columnType & 0xFFFFFFFFL));
         columnData.add(columnTop);
         columnData.add(columnAddr);
         columnData.add(columnSize);
@@ -96,7 +96,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         final int columnNameSize = columnNames.size() - startSize;
         pendingEntryIndex = columnData.size();
         columnData.add(columnNameSize);
-        columnData.add((long) columnId << 32 | columnType);
+        columnData.add((long) columnId << 32 | (columnType & 0xFFFFFFFFL));
         columnData.add(columnTop);
         columnData.add(0); // columnAddr
         columnData.add(0); // columnSize

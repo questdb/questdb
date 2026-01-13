@@ -143,9 +143,13 @@ public class PartitionEncoder {
                     SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
                     final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
                     final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+                    int encodeColumnType = columnType;
+                    if (!symbolMapReader.containsNullValue()) {
+                        encodeColumnType |= 1 << 31;
+                    }
                     descriptor.addColumn(
                             columnName,
-                            columnType,
+                            encodeColumnType,
                             columnId,
                             colTop,
                             primaryMem.addressOf(0),
