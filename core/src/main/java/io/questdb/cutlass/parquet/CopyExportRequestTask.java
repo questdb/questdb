@@ -285,8 +285,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     }
 
     public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
-        private DirectLongList columnData = new DirectLongList(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
-        private DirectLongList columnMetadata = new DirectLongList(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
+        private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
+        private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
         private long currentFrameRowCount = 0;
         private long currentPartitionIndex = -1;

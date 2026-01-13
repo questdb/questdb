@@ -49,7 +49,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     public DirectUtf8Sink(long initialCapacity, boolean alloc, int memoryTag) {
-        sink = new DirectByteSink(initialCapacity, alloc, memoryTag);
+        sink = new DirectByteSink(initialCapacity, memoryTag, !alloc);
     }
 
     @Override

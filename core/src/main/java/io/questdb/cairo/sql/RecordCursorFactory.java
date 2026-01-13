@@ -72,6 +72,15 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     int SCAN_DIRECTION_FORWARD = 1;
     int SCAN_DIRECTION_OTHER = 0;
 
+    /**
+     * Changes the page frame sizes for this factory.
+     *
+     * @param minRows minimum rows per page frame
+     * @param maxRows maximum rows per page frame
+     */
+    default void changePageFrameSizes(int minRows, int maxRows) {
+    }
+
     @Override
     default void close() {
     }
