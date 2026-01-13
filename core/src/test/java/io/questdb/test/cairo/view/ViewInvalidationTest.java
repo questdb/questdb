@@ -151,7 +151,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     """
                             view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time
                             view1\tselect ts, k, max(v) as value from table1 where v > 4\tview1~3\t\tvalid\t2025-06-19T15:00:05.000000Z
-                            view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z
+                            view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\t2025-06-19T15:00:01.000000Z
                             view3\tview1 union view2\tview3~5\t\tvalid\t2025-06-19T15:00:05.000000Z
                             """,
                     "views() order by view_name",

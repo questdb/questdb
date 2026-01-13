@@ -1845,7 +1845,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByWithNonConstantSelectClauseExpression() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
-
+        allowFunctionMemoization();
         assertMemoryLeak(() -> {
             execute("create table t as (" +
                     "    select 1 as l, 'a' as s " +

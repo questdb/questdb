@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -110,12 +109,6 @@ public interface BinaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getRight().isThreadSafe();
-    }
-
-    @Override
-    default void memoize(Record recordA) {
-        getLeft().memoize(recordA);
-        getRight().memoize(recordA);
     }
 
     @Override

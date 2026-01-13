@@ -28,12 +28,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class ViewStateStoreImpl implements ViewStateStore {
@@ -59,9 +61,12 @@ public class ViewStateStoreImpl implements ViewStateStore {
     }
 
     @Override
-    public void createViewState(ViewDefinition viewDefinition) {
+    public void createViewState(ViewDefinition viewDefinition, @Nullable RecordMetadata metadata) {
         final TableToken viewToken = viewDefinition.getViewToken();
-        final ViewState state = new ViewState(viewDefinition, microsecondClock.getTicks());
+        final ViewMetadata viewMetadata = metadata != null
+                ? ViewMetadata.newInstance(viewToken, metadata)
+                : ViewMetadata.newInstance(viewToken);
+        final ViewState state = new ViewState(viewDefinition, viewMetadata, microsecondClock.getTicks());
 
         final ViewState prevState = stateByTableDirName.putIfAbsent(viewToken.getDirName(), state);
         if (prevState != null) {

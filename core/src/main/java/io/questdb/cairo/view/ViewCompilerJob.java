@@ -52,11 +52,11 @@ import org.jetbrains.annotations.TestOnly;
 
 public class ViewCompilerJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(ViewCompilerJob.class);
+    private final ObjList<TableToken> compileViewsSink = new ObjList<>();
     private final ViewCompilerExecutionContext compilerExecutionContext;
     private final ViewCompilerTask compilerTask = new ViewCompilerTask();
     private final CairoEngine engine;
     private final ObjList<TableToken> invalidateViewsSink = new ObjList<>();
-    private final ObjList<TableToken> compileViewsSink = new ObjList<>();
     private final ViewStateStore stateStore;
     private final ViewGraph viewGraph;
     private final int workerId;
@@ -196,9 +196,9 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             TableToken tableToken,
             CharSequence invalidationReason,
             long updateTimestamp,
-            ObjList<TableToken> tempSink
+            ObjList<TableToken> invalidateViewsSink
     ) {
-        invalidateDependentViews(engine, tableToken, invalidationReason, updateTimestamp, tempSink);
+        invalidateDependentViews(engine, tableToken, invalidationReason, updateTimestamp, invalidateViewsSink);
         if (tableToken.isView()) {
             updateViewState(engine, tableToken, true, invalidationReason, null, updateTimestamp);
         }
@@ -209,12 +209,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             TableToken tableToken,
             CharSequence invalidationReason,
             long updateTimestamp,
-            ObjList<TableToken> tempSink
+            ObjList<TableToken> invalidateViewsSink
     ) {
-        tempSink.clear();
-        engine.getViewGraph().getDependentViews(tableToken, tempSink);
-        for (int i = 0, n = tempSink.size(); i < n; i++) {
-            final TableToken viewToken = tempSink.get(i);
+        invalidateViewsSink.clear();
+        engine.getViewGraph().getDependentViews(tableToken, invalidateViewsSink);
+        for (int i = 0, n = invalidateViewsSink.size(); i < n; i++) {
+            final TableToken viewToken = invalidateViewsSink.get(i);
             updateViewState(engine, viewToken, true, invalidationReason, null, updateTimestamp);
         }
     }
@@ -250,10 +250,15 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
         try {
             viewState.lockForWrite();
-            if (viewState.isInvalid() == invalid && viewMetadata == null) {
-                // there is no change, just return
+            // Skip stale updates - if a more recent update has already been applied
+            if (updateTimestamp < viewState.getUpdateTimestamp()) {
+                LOG.debug().$("skipping stale view state update [view=").$safe(viewToken.getTableName())
+                        .$(", staleTimestamp=").$(updateTimestamp)
+                        .$(", currentTimestamp=").$(viewState.getUpdateTimestamp())
+                        .I$();
                 return;
             }
+
             LOG.info().$("updating view state [view=").$safe(viewToken.getTableName())
                     .$(", invalid=").$(invalid)
                     .$(", reason=").$safe(invalidationReason)
@@ -274,7 +279,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private void compile(TableToken tableToken, long updateTimestamp) {
         compileDependentViews(tableToken, updateTimestamp);
         if (tableToken.isView()) {
-            compileView(engine, compilerExecutionContext, tableToken, updateTimestamp, compileViewsSink);
+            compileView(engine, compilerExecutionContext, tableToken, updateTimestamp, invalidateViewsSink);
         }
     }
 

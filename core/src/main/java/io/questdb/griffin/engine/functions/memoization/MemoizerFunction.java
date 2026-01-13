@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2026 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,20 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine.functions.memoization;
 
-public interface TelemetryConfiguration {
-    long getDbSizeEstimateTimeout();
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 
-    boolean getDisableCompletely();
-
-    boolean getEnabled();
-
-    int getQueueCapacity();
-
-    long getThrottleIntervalMicros();
-
-    int getTtlWeeks();
-
-    boolean hideTables();
+public interface MemoizerFunction extends UnaryFunction {
+    void memoize(Record record);
 }
