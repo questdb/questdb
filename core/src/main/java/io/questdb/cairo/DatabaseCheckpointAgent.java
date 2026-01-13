@@ -47,6 +47,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.preferences.SettingsStore;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -173,6 +174,22 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         );
         dstPath.trimTo(rootLen);
         srcPath.trimTo(snapshotDbLen);
+    }
+
+    /**
+     * Restore _preferences~store from checkpoint to db_root if it exists in the checkpoint.
+     * This will overwrite any existing file at the destination.
+     */
+    private static void restorePreferencesStore(FilesFacade ff, Path dstPath, int rootLen, Path srcPath, int snapshotDbLen) {
+        srcPath.trimTo(snapshotDbLen).concat(SettingsStore.PREFERENCES_FILE_NAME).$();
+        if (ff.exists(srcPath.$())) {
+            dstPath.trimTo(rootLen).concat(SettingsStore.PREFERENCES_FILE_NAME).$();
+            if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                LOG.error().$("could not restore _preferences~store [errno=").$(ff.errno()).I$();
+            } else {
+                LOG.info().$("_preferences~store restored from checkpoint").$();
+            }
+        }
     }
 
     private void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, CharSequence checkpointRoot, boolean isIncrementalBackup) throws SqlException {
@@ -491,6 +508,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                         mem.putStr(configuration.getSnapshotInstanceId());
                         mem.close();
+
+                        // Copy _preferences~store if it exists (contains WebConsole instance name, etc.)
+                        SettingsStore settingsStore = engine.getSettingsStore();
+                        if (settingsStore != null && settingsStore.getVersion() > 0) {
+                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(SettingsStore.PREFERENCES_FILE_NAME).$();
+                            settingsStore.persistTo(path.$(), ff, configuration.getCommitMode());
+                            LOG.info().$("_preferences~store included in the checkpoint").$();
+                        }
 
                         // Flush dirty pages and filesystem metadata to disk
                         if (!isIncrementalBackup && ff.sync() != 0) {
@@ -853,6 +878,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     }
             );
 
+            restorePreferencesStore(ff, dstPath, rootLen, srcPath, snapshotDbLen);
             removeNonCheckpointedTableDirs(ff, dstPath, rootLen, srcPath, snapshotDbLen);
 
             recoveryAgent.finalizeParallelTasks();

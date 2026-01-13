@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -54,6 +55,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -569,54 +571,6 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointRestoreOrphanDirRemovalFailure() throws Exception {
-        final String snapshotId = "id1";
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean rmdir(Path name, boolean lazy) {
-                if (Utf8s.containsAscii(name, "tiesto~")) {
-                    return false;
-                }
-                return super.rmdir(name, lazy);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
-
-            // 1. Create base table with data
-            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
-            drainWalQueue();
-
-            // 2. Checkpoint
-            execute("checkpoint create");
-
-            // 3. Drop table and create a new one after checkpoint
-            execute("drop table test");
-            drainWalQueue();
-            drainPurgeJob();
-
-            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-
-
-            // 4. Restore from the checkpoint - rmdir for tiesto will fail but restore should complete
-            engine.clear();
-            engine.closeNameRegistry();
-            createTriggerFile();
-            try {
-                engine.checkpointRecover();
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Aborting QuestDB startup; could not remove orphan table directory, remove it manually to continue");
-                TestUtils.assertContains(e.getFlyweightMessage(), "dbRoot/tiesto~");
-            } finally {
-                execute("checkpoint release");
-            }
-        });
-    }
-
-    @Test
     public void testCheckpointRecoveryTornKeyEntry_rebuildFalse() throws Exception {
         testCheckpointRecoveryTornKeyEntry(false);
     }
@@ -754,6 +708,54 @@ public class CheckpointTest extends AbstractCairoTest {
             assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
 
             engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreOrphanDirRemovalFailure() throws Exception {
+        final String snapshotId = "id1";
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean rmdir(Path name, boolean lazy) {
+                if (Utf8s.containsAscii(name, "tiesto~")) {
+                    return false;
+                }
+                return super.rmdir(name, lazy);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            drainWalQueue();
+
+            // 2. Checkpoint
+            execute("checkpoint create");
+
+            // 3. Drop table and create a new one after checkpoint
+            execute("drop table test");
+            drainWalQueue();
+            drainPurgeJob();
+
+            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+
+
+            // 4. Restore from the checkpoint - rmdir for tiesto will fail but restore should complete
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Aborting QuestDB startup; could not remove orphan table directory, remove it manually to continue");
+                TestUtils.assertContains(e.getFlyweightMessage(), "dbRoot/tiesto~");
+            } finally {
+                execute("checkpoint release");
+            }
         });
     }
 
@@ -1050,6 +1052,69 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.checkpointRelease();
         });
+    }
+
+    @Test
+    public void testCheckpointRestoresPreferencesStore() throws Exception {
+        File dir1 = temp.newFolder("server1_prefs");
+        File dir2 = temp.newFolder("server2_prefs");
+
+        // Server 1: Set preferences and create checkpoint
+        try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+            SettingsStore settingsStore = server1.getEngine().getSettingsStore();
+
+            // Set preferences
+            try (DirectUtf8Sink preferencesJson = new DirectUtf8Sink(128)) {
+                preferencesJson.put("{\"instance_name\":\"My Test Instance\",\"instance_type\":\"production\"}");
+                settingsStore.save(preferencesJson, SettingsStore.Mode.OVERWRITE, 0L);
+            }
+
+            // Verify preferences were saved (using observe() to avoid registering persistent listener)
+            Assert.assertEquals(1, settingsStore.getVersion());
+            settingsStore.observe(prefs -> {
+                Assert.assertEquals("My Test Instance", prefs.get("instance_name").toString());
+                Assert.assertEquals("production", prefs.get("instance_type").toString());
+            });
+
+            server1.execute("CHECKPOINT CREATE");
+            copyDirectory(dir1, dir2);
+            server1.execute("CHECKPOINT RELEASE");
+
+            // Modify preferences after checkpoint (in source dir - won't affect dir2)
+            try (DirectUtf8Sink preferencesJson = new DirectUtf8Sink(128)) {
+                preferencesJson.put("{\"instance_name\":\"Modified Instance\",\"instance_type\":\"development\"}");
+                settingsStore.save(preferencesJson, SettingsStore.Mode.OVERWRITE, 1L);
+            }
+            Assert.assertEquals(2, settingsStore.getVersion());
+        }
+
+        // Manually modify the preferences file in dir2 to simulate post-checkpoint changes
+        try (SettingsStore tempStore = new SettingsStore(
+                new DefaultCairoConfiguration(dir2.getAbsolutePath() + Files.SEPARATOR + "db"))) {
+            tempStore.init();
+            try (DirectUtf8Sink preferencesJson = new DirectUtf8Sink(128)) {
+                preferencesJson.put("{\"instance_name\":\"Modified Instance\",\"instance_type\":\"development\"}");
+                tempStore.save(preferencesJson, SettingsStore.Mode.OVERWRITE, 1L);
+            }
+            Assert.assertEquals(2, tempStore.getVersion());
+        }
+
+        // Create trigger file to force checkpoint recovery in dir2
+        try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+            Files.touch(triggerPath.$());
+        }
+
+        // Server 2: Start with trigger file - should restore preferences from checkpoint
+        try (TestServerMain server2 = startServerMain(dir2.getAbsolutePath())) {
+            SettingsStore settingsStore = server2.getEngine().getSettingsStore();
+
+            // Verify preferences were restored to checkpoint state
+            Assert.assertEquals("Preferences version should be restored", 1, settingsStore.getVersion());
+            settingsStore.registerListener(prefs -> {
+                Assert.assertEquals("My Test Instance", prefs.get("instance_name").toString());
+                Assert.assertEquals("production", prefs.get("instance_type").toString());
+            });
+        }
     }
 
     @Test
