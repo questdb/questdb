@@ -54,6 +54,7 @@ open module io.questdb {
     exports io.questdb.cutlass.text.types;
 
     exports io.questdb.griffin;
+    exports io.questdb.griffin.udf;
     exports io.questdb.griffin.engine;
     exports io.questdb.griffin.model;
     exports io.questdb.griffin.engine.functions;
