@@ -2505,103 +2505,105 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     private void testCheckpointRecoveryTornKeyEntry(boolean rebuildColumnIndexes) throws Exception {
-        // Test that checkpoint recovery correctly handles corrupted (torn) index key entries.
-        //
-        // Scenario: Simulate a torn write by corrupting the .k index file such that
-        // valueCount != countCheck for a key entry. This represents an incomplete write
-        // that could occur during a crash.
-        //
-        // - When rebuildColumnIndexes=TRUE: Index is rebuilt from scratch, corruption fixed
-        // - When rebuildColumnIndexes=FALSE: Corrupted index is preserved
+        assertMemoryLeak(() -> {
+            // Test that checkpoint recovery correctly handles corrupted (torn) index key entries.
+            //
+            // Scenario: Simulate a torn write by corrupting the .k index file such that
+            // valueCount != countCheck for a key entry. This represents an incomplete write
+            // that could occur during a crash.
+            //
+            // - When rebuildColumnIndexes=TRUE: Index is rebuilt from scratch, corruption fixed
+            // - When rebuildColumnIndexes=FALSE: Corrupted index is preserved
 
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
+            Assume.assumeTrue(Os.type != Os.WINDOWS);
 
-        File dir1 = temp.newFolder("server1_torn_" + rebuildColumnIndexes);
-        File dir2 = temp.newFolder("server2_torn_" + rebuildColumnIndexes);
-        String tableDirName;
+            File dir1 = temp.newFolder("server1_torn_" + rebuildColumnIndexes);
+            File dir2 = temp.newFolder("server2_torn_" + rebuildColumnIndexes);
+            String tableDirName;
 
-        // Server 1: Create data + checkpoint
-        try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
-            server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP) " +
-                    "TIMESTAMP(ts) PARTITION BY YEAR WAL");
-            server1.execute("INSERT INTO t SELECT 'SYM', x, timestamp_sequence(0, 100000000000) " +
-                    "FROM long_sequence(10)");
+            // Server 1: Create data + checkpoint
+            try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+                server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP) " +
+                        "TIMESTAMP(ts) PARTITION BY YEAR WAL");
+                server1.execute("INSERT INTO t SELECT 'SYM', x, timestamp_sequence(0, 100000000000) " +
+                        "FROM long_sequence(10)");
 
-            // Wait for WAL to flush
-            TestUtils.assertEventually(() -> server1.assertSql(
-                    "SELECT sym, x FROM t ORDER BY x",
-                    "sym\tx\n" +
-                            "SYM\t1\n" +
-                            "SYM\t2\n" +
-                            "SYM\t3\n" +
-                            "SYM\t4\n" +
-                            "SYM\t5\n" +
-                            "SYM\t6\n" +
-                            "SYM\t7\n" +
-                            "SYM\t8\n" +
-                            "SYM\t9\n" +
-                            "SYM\t10\n"
-            ));
+                // Wait for WAL to flush
+                TestUtils.assertEventually(() -> server1.assertSql(
+                        "SELECT sym, x FROM t ORDER BY x",
+                        "sym\tx\n" +
+                                "SYM\t1\n" +
+                                "SYM\t2\n" +
+                                "SYM\t3\n" +
+                                "SYM\t4\n" +
+                                "SYM\t5\n" +
+                                "SYM\t6\n" +
+                                "SYM\t7\n" +
+                                "SYM\t8\n" +
+                                "SYM\t9\n" +
+                                "SYM\t10\n"
+                ));
 
-            server1.execute("CHECKPOINT CREATE");
-            tableDirName = server1.getEngine().verifyTableName("t").getDirName();
-            copyDirectory(dir1, dir2);
-            server1.execute("CHECKPOINT RELEASE");
-        }
+                server1.execute("CHECKPOINT CREATE");
+                tableDirName = server1.getEngine().verifyTableName("t").getDirName();
+                copyDirectory(dir1, dir2);
+                server1.execute("CHECKPOINT RELEASE");
+            }
 
-        // Verify index is valid before corruption
-        IndexSnapshot beforeCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
-        Assert.assertEquals("Index should have 10 entries", 10, beforeCorruption.getRowIds(1).size());
-        TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), beforeCorruption.getRowIds(1));
+            // Verify index is valid before corruption
+            IndexSnapshot beforeCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+            Assert.assertEquals("Index should have 10 entries", 10, beforeCorruption.getRowIds(1).size());
+            TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), beforeCorruption.getRowIds(1));
 
-        // Corrupt the index in dir2: make valueCount != countCheck
-        corruptIndexKeyEntry(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+            // Corrupt the index in dir2: make valueCount != countCheck
+            corruptIndexKeyEntry(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
 
-        // Verify corruption was applied - IndexSnapshot reads valueCount, which we incremented to 11
-        IndexSnapshot afterCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
-        Assert.assertEquals("Corrupted index should show 11 entries (valueCount)", 11,
-                afterCorruption.getRowIds(1).size());
+            // Verify corruption was applied - IndexSnapshot reads valueCount, which we incremented to 11
+            IndexSnapshot afterCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+            Assert.assertEquals("Corrupted index should show 11 entries (valueCount)", 11,
+                    afterCorruption.getRowIds(1).size());
 
-        // Create trigger file to force checkpoint recovery
-        try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
-            Files.touch(triggerPath.$());
-        }
+            // Create trigger file to force checkpoint recovery
+            try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+                Files.touch(triggerPath.$());
+            }
 
-        // Server 2: Start with corrupted index
-        try (TestServerMain server2 = startServerMain(
-                dir2.getAbsolutePath(),
-                CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES.getEnvVarName(), String.valueOf(rebuildColumnIndexes)
-        )) {
-            IndexSnapshot afterRecovery = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+            // Server 2: Start with corrupted index
+            try (TestServerMain server2 = startServerMain(
+                    dir2.getAbsolutePath(),
+                    CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES.getEnvVarName(), String.valueOf(rebuildColumnIndexes)
+            )) {
+                IndexSnapshot afterRecovery = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
 
-            if (rebuildColumnIndexes) {
-                // With rebuild=true, index is rebuilt from data files, corruption fixed
-                Assert.assertEquals("Rebuilt index should have 10 entries", 10, afterRecovery.getRowIds(1).size());
-                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecovery.getRowIds(1));
+                if (rebuildColumnIndexes) {
+                    // With rebuild=true, index is rebuilt from data files, corruption fixed
+                    Assert.assertEquals("Rebuilt index should have 10 entries", 10, afterRecovery.getRowIds(1).size());
+                    TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecovery.getRowIds(1));
 
-                // Queries should work correctly
-                server2.assertSql(
-                        "SELECT count() FROM t WHERE sym = 'SYM'",
-                        "count\n10\n"
-                );
-            } else {
-                // With rebuild=false, corrupted index is preserved
-                // valueCount=11 but countCheck=10 - the index file still has the corruption
-                Assert.assertEquals("Corrupted index should still show 11 entries", 11,
-                        afterRecovery.getRowIds(1).size());
-
-                // Query using the corrupted index throws CairoException due to consistency check
-                try {
+                    // Queries should work correctly
                     server2.assertSql(
                             "SELECT count() FROM t WHERE sym = 'SYM'",
                             "count\n10\n"
                     );
-                    Assert.fail("Expected CairoException due to corrupted index");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "cursor could not consistently read index header [corrupt?]");
+                } else {
+                    // With rebuild=false, corrupted index is preserved
+                    // valueCount=11 but countCheck=10 - the index file still has the corruption
+                    Assert.assertEquals("Corrupted index should still show 11 entries", 11,
+                            afterRecovery.getRowIds(1).size());
+
+                    // Query using the corrupted index throws CairoException due to consistency check
+                    try {
+                        server2.assertSql(
+                                "SELECT count() FROM t WHERE sym = 'SYM'",
+                                "count\n10\n"
+                        );
+                        Assert.fail("Expected CairoException due to corrupted index");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "cursor could not consistently read index header [corrupt?]");
+                    }
                 }
             }
-        }
+        });
     }
 
     private void testCheckpointRecoveryWithStaleIndex(boolean rebuildColumnIndexes) throws Exception {
