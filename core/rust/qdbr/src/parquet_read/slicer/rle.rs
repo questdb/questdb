@@ -3,6 +3,7 @@ use crate::parquet_read::slicer::dict_decoder::DictDecoder;
 use crate::parquet_read::slicer::{ByteSink, DataPageSlicer};
 use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
+use std::mem::size_of;
 
 type RepeatIterator = std::iter::RepeatN<u32>;
 type BitbackIterator<'a> = bitpacked::Decoder<'a, u32>;
@@ -79,6 +80,7 @@ impl<'a, 'b> SlicerInner<'a, 'b> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
         // Not supported
         None
@@ -134,17 +136,77 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
         }
     }
 
-    fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
-        self.inner.next_slice(_count)
-    }
-
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        dest.extend_from_slice(self.next())
+        if self.inner.error.is_some() {
+            return dest.extend_from_slice(self.inner.error_value);
+        }
+
+        if let Some(idx) = self.inner.data.next() {
+            if idx < self.dict.len() {
+                dest.extend_from_slice(self.dict.get_dict_value(idx))
+            } else {
+                self.inner.error = Some(fmt_err!(
+                    Layout,
+                    "index {} is out of dict bounds {}",
+                    idx,
+                    self.dict.len()
+                ));
+                dest.extend_from_slice(self.inner.error_value)
+            }
+        } else {
+            match self.decode() {
+                Ok(()) => self.next_into(dest),
+                Err(err) => {
+                    self.inner.error = Some(err);
+                    dest.extend_from_slice(self.inner.error_value)
+                }
+            }
+        }
     }
 
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            self.next_into(dest)?;
+            if self.inner.error.is_some() {
+                dest.extend_from_slice(self.inner.error_value)?;
+                continue;
+            }
+
+            if let Some(idx) = self.inner.data.next() {
+                if idx < self.dict.len() {
+                    dest.extend_from_slice(self.dict.get_dict_value(idx))?;
+                } else {
+                    self.inner.error = Some(fmt_err!(
+                        Layout,
+                        "index {} is out of dict bounds {}",
+                        idx,
+                        self.dict.len()
+                    ));
+                    dest.extend_from_slice(self.inner.error_value)?;
+                }
+            } else {
+                match self.decode() {
+                    Ok(()) => {
+                        // After decode, there must be a value
+                        if let Some(idx) = self.inner.data.next() {
+                            if idx < self.dict.len() {
+                                dest.extend_from_slice(self.dict.get_dict_value(idx))?;
+                            } else {
+                                self.inner.error = Some(fmt_err!(
+                                    Layout,
+                                    "index {} is out of dict bounds {}",
+                                    idx,
+                                    self.dict.len()
+                                ));
+                                dest.extend_from_slice(self.inner.error_value)?;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        self.inner.error = Some(err);
+                        dest.extend_from_slice(self.inner.error_value)?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -239,17 +301,67 @@ impl DataPageSlicer for RleLocalIsGlobalSymbolDecoder<'_, '_> {
         }
     }
 
-    fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
-        self.inner.next_slice(_count)
-    }
-
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        dest.extend_from_slice(self.next())
+        if self.inner.error.is_some() {
+            return dest.extend_from_slice(self.inner.error_value);
+        }
+
+        if let Some(idx) = self.inner.data.next() {
+            dest.extend_from_slice(&idx.to_le_bytes())
+        } else {
+            match self.decode() {
+                Ok(()) => self.next_into(dest),
+                Err(err) => {
+                    self.inner.error = Some(err);
+                    dest.extend_from_slice(self.inner.error_value)
+                }
+            }
+        }
     }
 
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
-        for _ in 0..count {
-            self.next_into(dest)?;
+        const BATCH_SIZE: usize = 128;
+        let mut buffer = [0u32; BATCH_SIZE];
+        let mut remaining = count;
+
+        while remaining > 0 {
+            if self.inner.error.is_some() {
+                for _ in 0..remaining {
+                    dest.extend_from_slice(self.inner.error_value)?;
+                }
+                return Ok(());
+            }
+
+            let batch = remaining.min(BATCH_SIZE);
+            let mut written = 0;
+
+            for slot in buffer.iter_mut().take(batch) {
+                if let Some(idx) = self.inner.data.next() {
+                    *slot = idx;
+                    written += 1;
+                } else {
+                    match self.decode() {
+                        Ok(()) => {
+                            if let Some(idx) = self.inner.data.next() {
+                                *slot = idx;
+                                written += 1;
+                            }
+                        }
+                        Err(err) => {
+                            self.inner.error = Some(err);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if written > 0 {
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(buffer.as_ptr() as *const u8, written * size_of::<u32>())
+                };
+                dest.extend_from_slice(bytes)?;
+                remaining -= written;
+            }
         }
         Ok(())
     }

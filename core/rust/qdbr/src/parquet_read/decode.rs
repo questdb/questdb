@@ -1243,12 +1243,30 @@ fn decode_page0<T: Pushable>(
                     }
                     sink.skip(to_skip);
                     // next, copy the remaining values, if any
+                    // consecutive true/false values together
+                    let mut consecutive_true = 0usize;
+                    let mut consecutive_false = 0usize;
                     while let Some(item) = iter.next() {
                         if item {
-                            sink.push()?;
+                            if consecutive_false > 0 {
+                                sink.push_nulls(consecutive_false)?;
+                                consecutive_false = 0;
+                            }
+                            consecutive_true += 1;
                         } else {
-                            sink.push_null()?;
+                            if consecutive_true > 0 {
+                                sink.push_slice(consecutive_true)?;
+                                consecutive_true = 0;
+                            }
+                            consecutive_false += 1;
                         }
+                    }
+
+                    if consecutive_true > 0 {
+                        sink.push_slice(consecutive_true)?;
+                    }
+                    if consecutive_false > 0 {
+                        sink.push_nulls(consecutive_false)?;
                     }
                 }
                 HybridEncoded::Repeated(is_set, length) => {
