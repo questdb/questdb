@@ -511,7 +511,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                         // Copy _preferences~store if it exists (contains WebConsole instance name, etc.)
                         SettingsStore settingsStore = engine.getSettingsStore();
-                        if (settingsStore != null && settingsStore.getVersion() > 0) {
+                        if (settingsStore.getVersion() > 0) {
                             path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(SettingsStore.PREFERENCES_FILE_NAME).$();
                             settingsStore.persistTo(path.$(), ff, configuration.getCommitMode());
                             LOG.info().$("_preferences~store included in the checkpoint").$();
@@ -861,25 +861,33 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             AtomicInteger recoveredWalFiles = new AtomicInteger();
             AtomicInteger symbolFilesCount = new AtomicInteger();
             srcPath.trimTo(checkpointRootLen);
-            ff.iterateDir(
-                    srcPath.$(), (pUtf8NameZ, type) -> {
-                        if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
-                            dstPath.trimTo(rootLen).concat(pUtf8NameZ);
 
-                            recoveryAgent.restoreTableFiles(
-                                    srcPath,
-                                    dstPath,
-                                    recoveredMetaFiles,
-                                    recoveredWalFiles,
-                                    symbolFilesCount,
-                                    configuration.getCheckpointRecoveryRebuildColumnIndexes()
-                            );
+            try {
+                ff.iterateDir(
+                        srcPath.$(), (pUtf8NameZ, type) -> {
+                            if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
+                                dstPath.trimTo(rootLen).concat(pUtf8NameZ);
+
+                                recoveryAgent.restoreTableFiles(
+                                        srcPath,
+                                        dstPath,
+                                        recoveredMetaFiles,
+                                        recoveredWalFiles,
+                                        symbolFilesCount,
+                                        configuration.getCheckpointRecoveryRebuildColumnIndexes()
+                                );
+                            }
                         }
-                    }
-            );
+                );
 
-            restorePreferencesStore(ff, dstPath, rootLen, srcPath, snapshotDbLen);
-            removeNonCheckpointedTableDirs(ff, dstPath, rootLen, srcPath, snapshotDbLen);
+                restorePreferencesStore(ff, dstPath, rootLen, srcPath, snapshotDbLen);
+                removeNonCheckpointedTableDirs(ff, dstPath, rootLen, srcPath, snapshotDbLen);
+            } catch (Throwable e){
+                LOG.error().$("error during checkpoint recovery, aborting parallel tasks [error=").$(e).I$();
+                recoveryAgent.abortParallelTasks();
+                recoveryAgent.finalizeParallelTasks();
+                throw e;
+            }
 
             recoveryAgent.finalizeParallelTasks();
             LOG.info()
