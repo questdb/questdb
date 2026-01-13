@@ -62,8 +62,8 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -262,10 +262,12 @@ public class CairoEngine implements Closeable, WriterSource {
             initDataID();
 
             settingsStore = new SettingsStore(configuration);
-            settingsStore.init();
 
             tableIdGenerator.open();
             checkpointRecover();
+
+            // Initialize settings store after checkpoint recovery so it reads the restored file
+            settingsStore.init();
 
             // Migrate database files.
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);

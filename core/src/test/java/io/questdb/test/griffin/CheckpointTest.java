@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -54,6 +55,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -1050,6 +1052,69 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.checkpointRelease();
         });
+    }
+
+    @Test
+    public void testCheckpointRestoresPreferencesStore() throws Exception {
+        File dir1 = temp.newFolder("server1_prefs");
+        File dir2 = temp.newFolder("server2_prefs");
+
+        // Server 1: Set preferences and create checkpoint
+        try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+            SettingsStore settingsStore = server1.getEngine().getSettingsStore();
+
+            // Set preferences
+            try (DirectUtf8Sink preferencesJson = new DirectUtf8Sink(128)) {
+                preferencesJson.put("{\"instance_name\":\"My Test Instance\",\"instance_type\":\"production\"}");
+                settingsStore.save(preferencesJson, SettingsStore.Mode.OVERWRITE, 0L);
+            }
+
+            // Verify preferences were saved (using observe() to avoid registering persistent listener)
+            Assert.assertEquals(1, settingsStore.getVersion());
+            settingsStore.observe(prefs -> {
+                Assert.assertEquals("My Test Instance", prefs.get("instance_name").toString());
+                Assert.assertEquals("production", prefs.get("instance_type").toString());
+            });
+
+            server1.execute("CHECKPOINT CREATE");
+            copyDirectory(dir1, dir2);
+            server1.execute("CHECKPOINT RELEASE");
+
+            // Modify preferences after checkpoint (in source dir - won't affect dir2)
+            try (DirectUtf8Sink preferencesJson = new DirectUtf8Sink(128)) {
+                preferencesJson.put("{\"instance_name\":\"Modified Instance\",\"instance_type\":\"development\"}");
+                settingsStore.save(preferencesJson, SettingsStore.Mode.OVERWRITE, 1L);
+            }
+            Assert.assertEquals(2, settingsStore.getVersion());
+        }
+
+        // Manually modify the preferences file in dir2 to simulate post-checkpoint changes
+        try (SettingsStore tempStore = new SettingsStore(
+                new DefaultCairoConfiguration(dir2.getAbsolutePath() + Files.SEPARATOR + "db"))) {
+            tempStore.init();
+            try (DirectUtf8Sink preferencesJson = new DirectUtf8Sink(128)) {
+                preferencesJson.put("{\"instance_name\":\"Modified Instance\",\"instance_type\":\"development\"}");
+                tempStore.save(preferencesJson, SettingsStore.Mode.OVERWRITE, 1L);
+            }
+            Assert.assertEquals(2, tempStore.getVersion());
+        }
+
+        // Create trigger file to force checkpoint recovery in dir2
+        try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+            Files.touch(triggerPath.$());
+        }
+
+        // Server 2: Start with trigger file - should restore preferences from checkpoint
+        try (TestServerMain server2 = startServerMain(dir2.getAbsolutePath())) {
+            SettingsStore settingsStore = server2.getEngine().getSettingsStore();
+
+            // Verify preferences were restored to checkpoint state
+            Assert.assertEquals("Preferences version should be restored", 1, settingsStore.getVersion());
+            settingsStore.registerListener(prefs -> {
+                Assert.assertEquals("My Test Instance", prefs.get("instance_name").toString());
+                Assert.assertEquals("production", prefs.get("instance_type").toString());
+            });
+        }
     }
 
     @Test
