@@ -3234,7 +3234,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // fallback for keyed join when no optimizations are applicable, or when asof_linear hint is used:
-                if (isSingleSymbolJoin(symbolShortCircuit)) {
+                if (listColumnFilterA.getColumnCount() == 1 && isSingleSymbolJoin(symbolShortCircuit)) {
                     // We're falling back to the default Light scan. We can still optimize one thing:
                     // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                     // For that to work, we need code that maps master symbol key to slave symbol key.
