@@ -1700,6 +1700,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionArithmeticWithOrderBy() throws SqlException {
+        // Window function with ORDER BY plus arithmetic
+        x("row_number over (order by ts) 1 +", "row_number() OVER (ORDER BY ts) + 1");
+    }
+
+    @Test
     public void testWindowFunctionDivision() throws SqlException {
         // Two window functions divided by each other
         x("x sum over (partition by y) x count over (partition by y) /",

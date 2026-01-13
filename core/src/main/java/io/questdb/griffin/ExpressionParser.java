@@ -87,8 +87,8 @@ public class ExpressionParser {
     private final ObjStack<Scope> scopeStack = new ObjStack<>();
     private final OperatorRegistry shadowRegistry;
     private final SqlParser sqlParser;
-    private final ObjectPool<WindowExpression> windowExpressionPool;
     private final WindowExprTreeBuilder windowExprTreeBuilder = new WindowExprTreeBuilder();
+    private final ObjectPool<WindowExpression> windowExpressionPool;
     private boolean stopOnTopINOperator = false;
 
     ExpressionParser(
@@ -154,6 +154,18 @@ public class ExpressionParser {
         return (targetTag < ColumnType.BOOLEAN || targetTag > ColumnType.LONG256) &&
                 (!isFromNull || (targetTag != ColumnType.BINARY && targetTag != ColumnType.INTERVAL)) &&
                 !moreCastTargetTypes.contains(targetTag);
+    }
+
+    private static boolean hasOffset(WindowExpression windowExpr) {
+        int loKind = windowExpr.getRowsLoKind();
+        int hiKind = windowExpr.getRowsHiKind();
+        boolean hasOffset = (loKind == WindowExpression.PRECEDING || loKind == WindowExpression.FOLLOWING)
+                && windowExpr.getRowsLoExpr() != null;
+        if (!hasOffset) {
+            hasOffset = (hiKind == WindowExpression.PRECEDING || hiKind == WindowExpression.FOLLOWING)
+                    && windowExpr.getRowsHiExpr() != null;
+        }
+        return hasOffset;
     }
 
     private static SqlException missingArgs(int position) {
@@ -381,6 +393,70 @@ public class ExpressionParser {
         return argStackDepth - node.paramCount + 1;
     }
 
+    private int parseOverExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, ExpressionNode node, int localParamCount, int argStackDepth, int prevBranch) throws SqlException {
+        CharSequence nextTok = SqlUtil.fetchNext(lexer);
+
+        // Check for IGNORE NULLS or RESPECT NULLS before OVER
+        boolean ignoreNulls = false;
+        int nullsDescPos = 0;
+        if (nextTok != null && (SqlKeywords.isIgnoreWord(nextTok) || SqlKeywords.isRespectWord(nextTok))) {
+            boolean isIgnore = SqlKeywords.isIgnoreWord(nextTok);
+            nullsDescPos = lexer.lastTokenPosition();
+            CharSequence nullsWord = SqlUtil.fetchNext(lexer);
+            if (nullsWord != null && SqlKeywords.isNullsWord(nullsWord)) {
+                ignoreNulls = isIgnore;
+                nextTok = SqlUtil.fetchNext(lexer);
+            } else if (nullsWord != null && SqlKeywords.isOverKeyword(nullsWord)) {
+                // User wrote "IGNORE OVER" or "RESPECT OVER" - missing NULLS
+                throw SqlException.$(lexer.lastTokenPosition(), "'nulls' expected after '")
+                        .put(isIgnore ? "ignore" : "respect").put('\'');
+            } else if (nullsWord != null && SqlKeywords.isNullKeyword(nullsWord)) {
+                // User wrote "IGNORE NULL" instead of "IGNORE NULLS" - common typo
+                throw SqlException.$(lexer.lastTokenPosition(), "'nulls' expected, not 'null'");
+            } else {
+                // Not IGNORE/RESPECT NULLS pattern, restore tokens
+                if (nullsWord != null) {
+                    lexer.unparseLast();
+                }
+                lexer.unparseLast();
+                nextTok = SqlUtil.fetchNext(lexer);
+                nullsDescPos = 0;
+            }
+        }
+
+        if (nextTok != null && SqlKeywords.isOverKeyword(nextTok)) {
+            // Check if window function is nested inside a function call (not allowed)
+            // Allowed: standalone, arithmetic expressions, CASE branches
+            // Not allowed: window function as argument to another function (e.g., cast(winfunc() over() as int))
+            for (int i = 0, n = opStack.size(); i < n; i++) {
+                ExpressionNode stackNode = opStack.peek(i);
+                // Check for function calls: LITERAL followed by CONTROL '('
+                if (stackNode.type == ExpressionNode.CONTROL && Chars.equals(stackNode.token, '(') && i + 1 < n) {
+                    ExpressionNode prevNode = opStack.peek(i + 1);
+                    if (prevNode.type == ExpressionNode.LITERAL && !SqlKeywords.isCaseKeyword(prevNode.token)) {
+                        // This is a function call containing the window function
+                        throw SqlException.$(lexer.lastTokenPosition(), "window function is not allowed as an argument to another function");
+                    }
+                }
+            }
+            // This is a window function - parse the OVER clause
+            // First, update node to be a function
+            node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
+            node.type = ExpressionNode.FUNCTION;
+            // Pop the function node before parsing OVER clause
+            // to prevent inner expression parsing from interfering with it
+            opStack.pop();
+            parseWindowClause(lexer, node, sqlParserCallback, decls, ignoreNulls, nullsDescPos);
+            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
+        } else if (nullsDescPos != 0) {
+            // We parsed IGNORE/RESPECT NULLS but no OVER follows
+            throw SqlException.$(lexer.lastTokenPosition(), "'over' expected after 'nulls'");
+        } else if (nextTok != null) {
+            lexer.unparseLast();
+        }
+        return argStackDepth;
+    }
+
     private boolean parsePlus(GenericLexer lexer, int prevBranch, int lastPos) {
         boolean processDefaultBranch = true;
         if (prevBranch == BRANCH_CONSTANT && lastPos > 0) {
@@ -559,18 +635,8 @@ public class ExpressionParser {
                 tok = parseWindowFrameClause(lexer, windowCol, sqlParserCallback, decls);
 
                 // RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column
-                if (framingMode == WindowExpression.FRAMING_RANGE && windowCol.getOrderBy().size() != 1) {
-                    int loKind = windowCol.getRowsLoKind();
-                    int hiKind = windowCol.getRowsHiKind();
-                    boolean hasOffset = (loKind == WindowExpression.PRECEDING || loKind == WindowExpression.FOLLOWING)
-                            && windowCol.getRowsLoExpr() != null;
-                    if (!hasOffset) {
-                        hasOffset = (hiKind == WindowExpression.PRECEDING || hiKind == WindowExpression.FOLLOWING)
-                                && windowCol.getRowsHiExpr() != null;
-                    }
-                    if (hasOffset) {
-                        throw SqlException.$(frameModePos, "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
-                    }
+                if (framingMode == WindowExpression.FRAMING_RANGE && windowCol.getOrderBy().size() != 1 && hasOffset(windowCol)) {
+                    throw SqlException.$(frameModePos, "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
                 }
             }
         }
@@ -1423,67 +1489,7 @@ public class ExpressionParser {
 
                                 // Check for window function OVER clause (including IGNORE/RESPECT NULLS)
                                 if (node.type == ExpressionNode.LITERAL) {
-                                    CharSequence nextTok = SqlUtil.fetchNext(lexer);
-
-                                    // Check for IGNORE NULLS or RESPECT NULLS before OVER
-                                    boolean ignoreNulls = false;
-                                    int nullsDescPos = 0;
-                                    if (nextTok != null && (SqlKeywords.isIgnoreWord(nextTok) || SqlKeywords.isRespectWord(nextTok))) {
-                                        boolean isIgnore = SqlKeywords.isIgnoreWord(nextTok);
-                                        nullsDescPos = lexer.lastTokenPosition();
-                                        CharSequence nullsWord = SqlUtil.fetchNext(lexer);
-                                        if (nullsWord != null && SqlKeywords.isNullsWord(nullsWord)) {
-                                            ignoreNulls = isIgnore;
-                                            nextTok = SqlUtil.fetchNext(lexer);
-                                        } else if (nullsWord != null && SqlKeywords.isOverKeyword(nullsWord)) {
-                                            // User wrote "IGNORE OVER" or "RESPECT OVER" - missing NULLS
-                                            throw SqlException.$(lexer.lastTokenPosition(), "'nulls' expected after '")
-                                                    .put(isIgnore ? "ignore" : "respect").put('\'');
-                                        } else if (nullsWord != null && SqlKeywords.isNullKeyword(nullsWord)) {
-                                            // User wrote "IGNORE NULL" instead of "IGNORE NULLS" - common typo
-                                            throw SqlException.$(lexer.lastTokenPosition(), "'nulls' expected, not 'null'");
-                                        } else {
-                                            // Not IGNORE/RESPECT NULLS pattern, restore tokens
-                                            if (nullsWord != null) {
-                                                lexer.unparseLast();
-                                            }
-                                            lexer.unparseLast();
-                                            nextTok = SqlUtil.fetchNext(lexer);
-                                            nullsDescPos = 0;
-                                        }
-                                    }
-
-                                    if (nextTok != null && SqlKeywords.isOverKeyword(nextTok)) {
-                                        // Check if window function is nested inside a function call (not allowed)
-                                        // Allowed: standalone, arithmetic expressions, CASE branches
-                                        // Not allowed: window function as argument to another function (e.g., cast(winfunc() over() as int))
-                                        for (int i = 0, n = opStack.size(); i < n; i++) {
-                                            ExpressionNode stackNode = opStack.peek(i);
-                                            // Check for function calls: LITERAL followed by CONTROL '('
-                                            if (stackNode.type == ExpressionNode.CONTROL && Chars.equals(stackNode.token, '(') && i + 1 < n) {
-                                                ExpressionNode prevNode = opStack.peek(i + 1);
-                                                if (prevNode.type == ExpressionNode.LITERAL && !SqlKeywords.isCaseKeyword(prevNode.token)) {
-                                                    // This is a function call containing the window function
-                                                    throw SqlException.$(lexer.lastTokenPosition(), "window function is not allowed as an argument to another function");
-                                                }
-                                            }
-                                        }
-                                        // This is a window function - parse the OVER clause
-                                        // First, update node to be a function
-                                        node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
-                                        node.type = ExpressionNode.FUNCTION;
-                                        // Pop the function node before parsing OVER clause
-                                        // to prevent inner expression parsing from interfering with it
-                                        opStack.pop();
-                                        parseWindowClause(lexer, node, sqlParserCallback, decls, ignoreNulls, nullsDescPos);
-                                        argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
-                                        break;
-                                    } else if (nullsDescPos != 0) {
-                                        // We parsed IGNORE/RESPECT NULLS but no OVER follows
-                                        throw SqlException.$(lexer.lastTokenPosition(), "'over' expected after 'nulls'");
-                                    } else if (nextTok != null) {
-                                        lexer.unparseLast();
-                                    }
+                                    argStackDepth = parseOverExpr(lexer, listener, sqlParserCallback, decls, node, localParamCount, argStackDepth, prevBranch);
                                 }
 
                                 argStackDepth = popLiteralAndFunctionOpStack(listener, node, localParamCount, argStackDepth, prevBranch);

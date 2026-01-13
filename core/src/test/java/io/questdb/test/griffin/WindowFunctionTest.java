@@ -499,4 +499,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 true
         );
     }
+
+    @Test
+    public void testWindowFunctionArithmeticWithOrderBy() throws Exception {
+        // Test window function with ORDER BY and arithmetic: row_number() + 1
+        assertQuery(
+                """
+                        adjusted_rank
+                        2
+                        3
+                        4
+                        5
+                        6
+                        """,
+                "SELECT row_number() OVER (ORDER BY ts) + 1 AS adjusted_rank FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
 }
