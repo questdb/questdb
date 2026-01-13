@@ -1727,7 +1727,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         for (int i = 0, size = getColumns().size(); i < size; i++) {
             QueryColumn column = getColumns().getQuick(i);
-            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
+            if (column.isWindowColumn() && ((WindowExpression) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
                 return true;
             }
         }
@@ -1748,25 +1748,25 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         switch (timeUnit) {
             case 0:
                 break;
-            case WindowColumn.TIME_UNIT_NANOSECOND:
+            case WindowExpression.TIME_UNIT_NANOSECOND:
                 sink.putAscii(" nanosecond");
                 break;
-            case WindowColumn.TIME_UNIT_MICROSECOND:
+            case WindowExpression.TIME_UNIT_MICROSECOND:
                 sink.putAscii(" microsecond");
                 break;
-            case WindowColumn.TIME_UNIT_MILLISECOND:
+            case WindowExpression.TIME_UNIT_MILLISECOND:
                 sink.putAscii(" millisecond");
                 break;
-            case WindowColumn.TIME_UNIT_SECOND:
+            case WindowExpression.TIME_UNIT_SECOND:
                 sink.putAscii(" second");
                 break;
-            case WindowColumn.TIME_UNIT_MINUTE:
+            case WindowExpression.TIME_UNIT_MINUTE:
                 sink.putAscii(" minute");
                 break;
-            case WindowColumn.TIME_UNIT_HOUR:
+            case WindowExpression.TIME_UNIT_HOUR:
                 sink.putAscii(" hour");
                 break;
-            case WindowColumn.TIME_UNIT_DAY:
+            case WindowExpression.TIME_UNIT_DAY:
                 sink.putAscii(" day");
                 break;
             default:
@@ -1797,7 +1797,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
                 // this can only be window column
                 if (name != null) {
-                    WindowColumn ac = (WindowColumn) column;
+                    WindowExpression ac = (WindowExpression) column;
                     sink.putAscii(" over (");
                     final ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
                     if (partitionBy.size() > 0) {
@@ -1829,13 +1829,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
                     if (ac.isNonDefaultFrame()) {
                         switch (ac.getFramingMode()) {
-                            case WindowColumn.FRAMING_ROWS:
+                            case WindowExpression.FRAMING_ROWS:
                                 sink.putAscii(" rows");
                                 break;
-                            case WindowColumn.FRAMING_RANGE:
+                            case WindowExpression.FRAMING_RANGE:
                                 sink.putAscii(" range");
                                 break;
-                            case WindowColumn.FRAMING_GROUPS:
+                            case WindowExpression.FRAMING_GROUPS:
                                 sink.putAscii(" groups");
                                 break;
                             default:
@@ -1844,15 +1844,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         sink.put(" between ");
                         if (ac.getRowsLoExpr() != null) {
                             ac.getRowsLoExpr().toSink(sink);
-                            if (ac.getFramingMode() == WindowColumn.FRAMING_RANGE) {
+                            if (ac.getFramingMode() == WindowExpression.FRAMING_RANGE) {
                                 unitToSink(sink, ac.getRowsLoExprTimeUnit());
                             }
 
                             switch (ac.getRowsLoKind()) {
-                                case WindowColumn.PRECEDING:
+                                case WindowExpression.PRECEDING:
                                     sink.putAscii(" preceding");
                                     break;
-                                case WindowColumn.FOLLOWING:
+                                case WindowExpression.FOLLOWING:
                                     sink.putAscii(" following");
                                     break;
                                 default:
@@ -1860,10 +1860,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             }
                         } else {
                             switch (ac.getRowsLoKind()) {
-                                case WindowColumn.PRECEDING:
+                                case WindowExpression.PRECEDING:
                                     sink.putAscii("unbounded preceding");
                                     break;
-                                case WindowColumn.FOLLOWING:
+                                case WindowExpression.FOLLOWING:
                                     sink.putAscii("unbounded following");
                                     break;
                                 default:
@@ -1876,15 +1876,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
                         if (ac.getRowsHiExpr() != null) {
                             ac.getRowsHiExpr().toSink(sink);
-                            if (ac.getFramingMode() == WindowColumn.FRAMING_RANGE) {
+                            if (ac.getFramingMode() == WindowExpression.FRAMING_RANGE) {
                                 unitToSink(sink, ac.getRowsHiExprTimeUnit());
                             }
 
                             switch (ac.getRowsHiKind()) {
-                                case WindowColumn.PRECEDING:
+                                case WindowExpression.PRECEDING:
                                     sink.putAscii(" preceding");
                                     break;
-                                case WindowColumn.FOLLOWING:
+                                case WindowExpression.FOLLOWING:
                                     sink.putAscii(" following");
                                     break;
                                 default:
@@ -1893,10 +1893,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             }
                         } else {
                             switch (ac.getRowsHiKind()) {
-                                case WindowColumn.PRECEDING:
+                                case WindowExpression.PRECEDING:
                                     sink.putAscii("unbounded preceding");
                                     break;
-                                case WindowColumn.FOLLOWING:
+                                case WindowExpression.FOLLOWING:
                                     sink.putAscii("unbounded following");
                                     break;
                                 default:
@@ -1907,16 +1907,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         }
 
                         switch (ac.getExclusionKind()) {
-                            case WindowColumn.EXCLUDE_CURRENT_ROW:
+                            case WindowExpression.EXCLUDE_CURRENT_ROW:
                                 sink.putAscii(" exclude current row");
                                 break;
-                            case WindowColumn.EXCLUDE_GROUP:
+                            case WindowExpression.EXCLUDE_GROUP:
                                 sink.putAscii(" exclude group");
                                 break;
-                            case WindowColumn.EXCLUDE_TIES:
+                            case WindowExpression.EXCLUDE_TIES:
                                 sink.putAscii(" exclude ties");
                                 break;
-                            case WindowColumn.EXCLUDE_NO_OTHERS:
+                            case WindowExpression.EXCLUDE_NO_OTHERS:
                                 sink.putAscii(" exclude no others");
                                 break;
                             default:
