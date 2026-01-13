@@ -8127,9 +8127,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testWindowFunctionCastNoParen() throws Exception {
-        // Window function with cast but NO outer parentheses
+        // Window function with cast - the window function is extracted to select-window,
+        // and the cast operation references it by alias in select-virtual
         assertQuery(
-                "select-window row_number() row_number over (order by ts)::string column from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
+                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
                 "SELECT row_number() OVER (ORDER BY ts)::string FROM x",
                 modelOf("x")
                         .timestamp("ts")
@@ -8138,9 +8139,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testWindowFunctionCastToString() throws Exception {
-        // Window function with cast AND outer parentheses - this is the failing case
+        // Window function with cast AND outer parentheses - same structure as without parentheses
         assertQuery(
-                "select-window row_number() row_number over (order by ts)::string column from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
+                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
                 "SELECT (row_number() OVER (ORDER BY ts))::string FROM x",
                 modelOf("x")
                         .timestamp("ts")

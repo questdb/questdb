@@ -1639,6 +1639,51 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private boolean checkForChildWindowFunctions(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.windowContext != null) {
+                return true;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    if (node.rhs.windowContext != null) {
+                        return true;
+                    }
+                    sqlNodeStack.push(node.rhs);
+                }
+
+                if (node.lhs != null) {
+                    if (node.lhs.windowContext != null) {
+                        return true;
+                    }
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        if (arg.windowContext != null) {
+                            return true;
+                        }
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * Checks whether the given advice is for one table only i.e. consistent table prefix.
      *
@@ -2429,6 +2474,69 @@ public class SqlOptimiser implements Mutable {
                                 baseModel,
                                 groupByNodes,
                                 groupByAliases
+                        );
+                        if (e == n) {
+                            sqlNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, n);
+                        }
+                    }
+                    node = sqlNodeStack.poll();
+                }
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+    }
+
+    private void emitWindowFunctions(
+            @Transient ExpressionNode node,
+            QueryModel windowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        ExpressionNode n = replaceIfWindowFunction(
+                                node.rhs,
+                                windowModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                baseModel
+                        );
+                        if (node.rhs == n) {
+                            sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = n;
+                        }
+                    }
+
+                    ExpressionNode n = replaceIfWindowFunction(
+                            node.lhs,
+                            windowModel,
+                            translatingModel,
+                            innerVirtualModel,
+                            baseModel
+                    );
+                    if (n == node.lhs) {
+                        node = node.lhs;
+                    } else {
+                        node.lhs = n;
+                        node = null;
+                    }
+                } else {
+                    for (int i = 0, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        ExpressionNode n = replaceIfWindowFunction(
+                                e,
+                                windowModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                baseModel
                         );
                         if (e == n) {
                             sqlNodeStack.push(e);
@@ -4741,6 +4849,29 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
+    private ExpressionNode replaceIfWindowFunction(
+            @Transient ExpressionNode node,
+            QueryModel windowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        if (node != null && node.windowContext != null) {
+            WindowColumn wc = node.windowContext;
+            // Create alias for the window column if not already set
+            CharSequence alias = wc.getAlias();
+            if (alias == null) {
+                alias = createColumnAlias(node, windowModel);
+                wc.of(alias, node);
+            }
+            windowModel.addBottomUpColumn(wc);
+            // Emit literals referenced by the window column to inner models
+            emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
+            return nextLiteral(alias);
+        }
+        return node;
+    }
+
     private ExpressionNode replaceIfGroupByExpressionOrAggregate(
             ExpressionNode node,
             QueryModel groupByModel,
@@ -6495,6 +6626,27 @@ public class SqlOptimiser implements Mutable {
         // more specifically we are dealing with something like
         // select sum(f(x)) - sum(f(y)) from tab
         // we don't know if "f(x)" is a function call or a literal, e.g. sum(x)
+
+        // Check for window functions nested inside operations (e.g., row_number() OVER (...)::string)
+        // Window functions need to be extracted to windowModel before processing aggregates.
+        // However, if the expression ALSO contains aggregate functions (like sum() OVER (...)),
+        // let the aggregate handling take precedence - it may optimize to GROUP BY.
+        if (checkForChildWindowFunctions(qc.getAst()) && !checkForChildAggregates(qc.getAst())) {
+            emitWindowFunctions(
+                    qc.getAst(),
+                    windowModel,
+                    translatingModel,
+                    innerVirtualModel,
+                    baseModel
+            );
+            qc = ensureAliasUniqueness(outerVirtualModel, qc);
+            outerVirtualModel.addBottomUpColumn(qc);
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+            rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
+            return rewriteStatus;
+        }
+
         QueryModel aggModel = isWindowJoin ? windowJoinModel : groupByModel;
         final int beforeSplit = aggModel.getBottomUpColumns().size();
         if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
@@ -6691,7 +6843,6 @@ public class SqlOptimiser implements Mutable {
             rewriteStatus |= REWRITE_STATUS_USE_DISTINCT_MODEL;
         }
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        System.out.println(columns.toString());
         final QueryModel baseModel = model.getNestedModel();
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
@@ -8078,7 +8229,8 @@ public class SqlOptimiser implements Mutable {
         return Long.MAX_VALUE;
     }
 
-    @SuppressWarnings("unused")
+    @SuppressWarnings({"unused", "RedundantThrows"})
+    // this method is used by Enterprise version
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
     }
 
