@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFacto
 import io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.KSumDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDateFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagLongFunctionFactory;
@@ -72,6 +73,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             },
             {
                     "i", "j" // sum
+            },
+            {
+                    "i", "j" // ksum
             },
             {
                     "i", "j", // first_value
@@ -3427,6 +3431,131 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     );
                 }
             }
+        });
+    }
+
+    @Test
+    public void testKSumWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double, s symbol) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x/4, x%5, 'k' || (x%3) ::symbol from long_sequence(10)");
+
+            // Test ksum() over partition
+            // i=0: j values are 1,2,3 -> sum=6
+            // i=1: j values are 4,0,1,2 -> sum=7
+            // i=2: j values are 3,4,0 -> sum=7
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tj\tksum
+                            1970-01-01T00:00:00.000001Z\t0\t1.0\t6.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t6.0
+                            1970-01-01T00:00:00.000003Z\t0\t3.0\t6.0
+                            1970-01-01T00:00:00.000004Z\t1\t4.0\t7.0
+                            1970-01-01T00:00:00.000005Z\t1\t0.0\t7.0
+                            1970-01-01T00:00:00.000006Z\t1\t1.0\t7.0
+                            1970-01-01T00:00:00.000007Z\t1\t2.0\t7.0
+                            1970-01-01T00:00:00.000008Z\t2\t3.0\t7.0
+                            1970-01-01T00:00:00.000009Z\t2\t4.0\t7.0
+                            1970-01-01T00:00:00.000010Z\t2\t0.0\t7.0
+                            """),
+                    "select ts, i, j, ksum(j) over (partition by i) from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Test ksum() over unbounded preceding
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tj\tksum
+                            1970-01-01T00:00:00.000001Z\t0\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t3.0
+                            1970-01-01T00:00:00.000003Z\t0\t3.0\t6.0
+                            1970-01-01T00:00:00.000004Z\t1\t4.0\t10.0
+                            1970-01-01T00:00:00.000005Z\t1\t0.0\t10.0
+                            1970-01-01T00:00:00.000006Z\t1\t1.0\t11.0
+                            1970-01-01T00:00:00.000007Z\t1\t2.0\t13.0
+                            1970-01-01T00:00:00.000008Z\t2\t3.0\t16.0
+                            1970-01-01T00:00:00.000009Z\t2\t4.0\t20.0
+                            1970-01-01T00:00:00.000010Z\t2\t0.0\t20.0
+                            """),
+                    "select ts, i, j, ksum(j) over (order by ts rows unbounded preceding) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Test ksum() over sliding window
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tj\tksum
+                            1970-01-01T00:00:00.000001Z\t0\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t3.0
+                            1970-01-01T00:00:00.000003Z\t0\t3.0\t6.0
+                            1970-01-01T00:00:00.000004Z\t1\t4.0\t9.0
+                            1970-01-01T00:00:00.000005Z\t1\t0.0\t7.0
+                            1970-01-01T00:00:00.000006Z\t1\t1.0\t5.0
+                            1970-01-01T00:00:00.000007Z\t1\t2.0\t3.0
+                            1970-01-01T00:00:00.000008Z\t2\t3.0\t6.0
+                            1970-01-01T00:00:00.000009Z\t2\t4.0\t9.0
+                            1970-01-01T00:00:00.000010Z\t2\t0.0\t7.0
+                            """),
+                    "select ts, i, j, ksum(j) over (order by ts rows between 2 preceding and current row) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Test ksum() over () - whole result set
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tj\tksum
+                            1970-01-01T00:00:00.000001Z\t0\t1.0\t20.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t20.0
+                            1970-01-01T00:00:00.000003Z\t0\t3.0\t20.0
+                            1970-01-01T00:00:00.000004Z\t1\t4.0\t20.0
+                            1970-01-01T00:00:00.000005Z\t1\t0.0\t20.0
+                            1970-01-01T00:00:00.000006Z\t1\t1.0\t20.0
+                            1970-01-01T00:00:00.000007Z\t1\t2.0\t20.0
+                            1970-01-01T00:00:00.000008Z\t2\t3.0\t20.0
+                            1970-01-01T00:00:00.000009Z\t2\t4.0\t20.0
+                            1970-01-01T00:00:00.000010Z\t2\t0.0\t20.0
+                            """),
+                    "select ts, i, j, ksum(j) over () from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPrecision() throws Exception {
+        // Test that ksum handles NULL values and basic summation correctly
+        // Kahan summation improves precision for accumulated floating point errors
+        // but extreme cases like 1e16 + 1 - 1e16 are beyond what Kahan can fully compensate
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table precision_tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            // Test with NULL handling and basic precision
+            execute("insert into precision_tab values (1::timestamp, 1.1)");
+            execute("insert into precision_tab values (2::timestamp, 2.2)");
+            execute("insert into precision_tab values (3::timestamp, NULL)");
+            execute("insert into precision_tab values (4::timestamp, 3.3)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1.1\t1.1
+                            1970-01-01T00:00:00.000002Z\t2.2\t3.3000000000000003
+                            1970-01-01T00:00:00.000003Z\tnull\t3.3000000000000003
+                            1970-01-01T00:00:00.000004Z\t3.3\t6.6
+                            """),
+                    "select ts, val, ksum(val) over (order by ts rows unbounded preceding) from precision_tab",
+                    "ts",
+                    false,
+                    true
+            );
         });
     }
 
@@ -8628,7 +8757,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     static {
-        FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
+        FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "ksum(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",
                 "last_value(#COLUMN)", "last_value(#COLUMN) ignore nulls", "last_value(#COLUMN) respect nulls");
 
