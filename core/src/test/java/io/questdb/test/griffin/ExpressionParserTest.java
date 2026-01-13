@@ -1902,6 +1902,33 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionInCaseDifferentOverSpecs() throws SqlException {
+        // Window functions with different OVER specs in THEN vs ELSE
+        x(" x 0 > x sum over (partition by a order by ts) x sum over (order by ts) case",
+                "CASE WHEN x > 0 THEN sum(x) OVER (PARTITION BY a ORDER BY ts) ELSE sum(x) OVER (ORDER BY ts) END");
+    }
+
+    @Test
+    public void testWindowFunctionWithArithmeticInCaseBranches() throws SqlException {
+        // Window function with arithmetic operations in CASE branches
+        x(" x 0 > row_number over (order by ts) 1 + row_number over (order by ts) 1 - case",
+                "CASE WHEN x > 0 THEN row_number() OVER (ORDER BY ts) + 1 ELSE row_number() OVER (ORDER BY ts) - 1 END");
+    }
+
+    @Test
+    public void testWindowFunctionNestedParenthesesWithCast() throws SqlException {
+        // Deeply nested parentheses with cast
+        x("row_number over (order by ts) int ::", "(((row_number() OVER (ORDER BY ts))))::int");
+    }
+
+    @Test
+    public void testWindowFunctionInCaseWithCast() throws SqlException {
+        // Window function with cast inside CASE
+        x(" x 0 > row_number over (order by ts) string :: 'N/A' case",
+                "CASE WHEN x > 0 THEN row_number() OVER (ORDER BY ts)::string ELSE 'N/A' END");
+    }
+
+    @Test
     public void testWindowFunctionPartitionByExpression() throws SqlException {
         x("i avg over (partition by sym '%aaa%' like order by ts)", "avg(i) over (partition by sym like '%aaa%' order by ts)");
     }
