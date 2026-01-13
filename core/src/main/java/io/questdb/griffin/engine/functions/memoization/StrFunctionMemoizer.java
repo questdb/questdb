@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2026 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,14 +29,20 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.str.StringSink;
 
-public final class ByteFunctionMemoizer extends ByteFunction implements MemoizerFunction {
+public final class StrFunctionMemoizer extends StrFunction implements MemoizerFunction {
     private final Function fn;
-    private boolean validValue;
-    private byte value;
+    private final StringSink sinkA = new StringSink();
+    private final StringSink sinkB = new StringSink();
+    // Either null or pointing to the corresponding sink
+    private CharSequence cachedStrA;
+    private CharSequence cachedStrB;
+    private boolean validAValue;
+    private boolean validBValue;
 
-    public ByteFunctionMemoizer(Function fn) {
+    public StrFunctionMemoizer(Function fn) {
         this.fn = fn;
     }
 
@@ -46,17 +52,50 @@ public final class ByteFunctionMemoizer extends ByteFunction implements Memoizer
     }
 
     @Override
-    public byte getByte(Record rec) {
-        if (!validValue) {
-            value = fn.getByte(rec);
-            validValue = true;
-        }
-        return value;
+    public String getName() {
+        return "memoize";
     }
 
     @Override
-    public String getName() {
-        return "memoize";
+    public CharSequence getStrA(final Record rec) {
+        if (!validAValue) {
+            CharSequence strA;
+            if (validBValue) {
+                strA = cachedStrB;
+            } else {
+                strA = fn.getStrA(rec);
+            }
+            if (strA == null) {
+                cachedStrA = null;
+            } else {
+                sinkA.clear();
+                sinkA.put(strA);
+                cachedStrA = sinkA;
+            }
+            validAValue = true;
+        }
+        return cachedStrA;
+    }
+
+    @Override
+    public CharSequence getStrB(final Record rec) {
+        if (!validBValue) {
+            CharSequence strB;
+            if (validAValue) {
+                strB = cachedStrA;
+            } else {
+                strB = fn.getStrB(rec);
+            }
+            if (strB == null) {
+                cachedStrB = null;
+            } else {
+                sinkB.clear();
+                sinkB.put(strB);
+                cachedStrB = sinkB;
+            }
+            validBValue = true;
+        }
+        return cachedStrB;
     }
 
     @Override
@@ -71,7 +110,8 @@ public final class ByteFunctionMemoizer extends ByteFunction implements Memoizer
 
     @Override
     public void memoize(Record record) {
-        validValue = false;
+        validAValue = false;
+        validBValue = false;
     }
 
     @Override

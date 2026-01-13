@@ -38,6 +38,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -552,6 +553,54 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreOrphanDirRemovalFailure() throws Exception {
+        final String snapshotId = "id1";
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean rmdir(Path name, boolean lazy) {
+                if (Utf8s.containsAscii(name, "tiesto~")) {
+                    return false;
+                }
+                return super.rmdir(name, lazy);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            drainWalQueue();
+
+            // 2. Checkpoint
+            execute("checkpoint create");
+
+            // 3. Drop table and create a new one after checkpoint
+            execute("drop table test");
+            drainWalQueue();
+            drainPurgeJob();
+
+            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+
+
+            // 4. Restore from the checkpoint - rmdir for tiesto will fail but restore should complete
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Aborting QuestDB startup; could not remove orphan table directory, remove it manually to continue");
+                TestUtils.assertContains(e.getFlyweightMessage(), "dbRoot/tiesto~");
+            } finally {
+                execute("checkpoint release");
+            }
+        });
+    }
+
+    @Test
     public void testCheckpointRestoresDroppedView() throws Exception {
         final String snapshotId = "id1";
         assertMemoryLeak(() -> {
@@ -996,54 +1045,6 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointRestoreOrphanDirRemovalFailure() throws Exception {
-        final String snapshotId = "id1";
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean rmdir(Path name, boolean lazy) {
-                if (Utf8s.containsAscii(name, "tiesto~")) {
-                    return false;
-                }
-                return super.rmdir(name, lazy);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
-
-            // 1. Create base table with data
-            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
-            drainWalQueue();
-
-            // 2. Checkpoint
-            execute("checkpoint create");
-
-            // 3. Drop table and create a new one after checkpoint
-            execute("drop table test");
-            drainWalQueue();
-            drainPurgeJob();
-
-            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-
-
-            // 4. Restore from the checkpoint - rmdir for tiesto will fail but restore should complete
-            engine.clear();
-            engine.closeNameRegistry();
-            createTriggerFile();
-            try {
-                engine.checkpointRecover();
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Aborting QuestDB startup; could not remove orphan table directory, remove it manually to continue");
-                TestUtils.assertContains(e.getFlyweightMessage(), "dbRoot/tiesto~");
-            } finally {
-                execute("checkpoint release");
-            }
-        });
-    }
-
-    @Test
     public void testCheckpointWithTableDropAndTableCreate() throws Exception {
         final String snapshotId = "id1";
         assertMemoryLeak(() -> {
@@ -1089,6 +1090,53 @@ public class CheckpointTest extends AbstractCairoTest {
             );
 
             assertException("tiesto;", 0, "table does not exist [table=tiesto]");
+        });
+    }
+
+    @Test
+    public void testCheckpointWithViewAlters() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            execute("create view v as select * from test where val > 0;");
+            drainWalAndViewQueues();
+
+            execute("alter view v as select * from test where val > 18;");
+            drainWalAndViewQueues();
+
+            // sanity check: the view exists and works
+            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
+            assertSql("count\n1\n", "select count() from v;");
+
+            execute("checkpoint create;");
+
+            execute("alter view v as select * from test where val > 100;");
+            drainWalAndViewQueues();
+
+            assertSql("count\n0\n", "select count() from v;");
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // the dropped view should be restored
+            assertSql("count\n1\n", "select count() from v;");
+
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+            final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+            Assert.assertNotNull(viewDefinition);
+            Assert.assertEquals("select * from test where val > 18;", viewDefinition.getViewSql());
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken));
+
+            engine.checkpointRelease();
+            assertSql("count\n1\n", "select count() from v;");
         });
     }
 

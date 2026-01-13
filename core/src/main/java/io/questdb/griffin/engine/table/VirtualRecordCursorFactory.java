@@ -36,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -53,15 +54,14 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull PriorityMetadata priorityMetadata,
             @NotNull ObjList<Function> functions,
             @NotNull RecordCursorFactory base,
-            int virtualColumnReservedSlots,
-            boolean allowMemoization
+            int virtualColumnReservedSlots
     ) {
         super(virtualMetadata);
         this.base = base;
         this.functions = functions;
         int functionCount = functions.size();
         boolean supportsRandomAccess = base.recordCursorSupportsRandomAccess();
-        final ObjList<Function> memoizedFunctions = new ObjList<>();
+        final ObjList<MemoizerFunction> memoizedFunctions = new ObjList<>();
         int randomCount = 0;
         for (int i = 0; i < functionCount; i++) {
             Function function = functions.getQuick(i);
@@ -73,8 +73,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
                 randomCount++;
             }
 
-            if (allowMemoization && function.shouldMemoize()) {
-                memoizedFunctions.add(function);
+            if (function instanceof MemoizerFunction) {
+                memoizedFunctions.add((MemoizerFunction) function);
             }
         }
         this.supportsRandomAccess = supportsRandomAccess && randomCount == 0;
