@@ -40,7 +40,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Objects;
 
 public class ExpressionNode implements Mutable, Sinkable {
-
     public static final int ARRAY_ACCESS = 1;
     public static final int ARRAY_CONSTRUCTOR = ARRAY_ACCESS + 1;
     public static final int BIND_VARIABLE = ARRAY_CONSTRUCTOR + 1;
@@ -143,6 +142,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         return copy;
     }
 
+    @Override
     public void clear() {
         args.clear();
         token = null;
@@ -174,30 +174,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.intrinsicValue = other.intrinsicValue;
         this.innerPredicate = other.innerPredicate;
         return this;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        ExpressionNode that = (ExpressionNode) o;
-        return precedence == that.precedence
-                && position == that.position
-                && type == that.type
-                && paramCount == that.paramCount
-                && intrinsicValue == that.intrinsicValue
-                && innerPredicate == that.innerPredicate
-                && implemented == that.implemented
-                && Objects.equals(args, that.args)
-                && Objects.equals(token, that.token)
-                && Objects.equals(queryModel, that.queryModel)
-                && Objects.equals(lhs, that.lhs)
-                && Objects.equals(rhs, that.rhs);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate, implemented);
     }
 
     public boolean isWildcard() {
