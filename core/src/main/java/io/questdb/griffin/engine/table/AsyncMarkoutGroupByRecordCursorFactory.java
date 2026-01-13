@@ -282,7 +282,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
 
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
-            final Map asofJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
+            final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
@@ -308,7 +308,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         baseRowId + r,
                         atom,
                         slaveTimeFrameHelper,
-                        asofJoinMap,
+                        asOfJoinMap,
                         masterKeyCopier,
                         slaveKeyCopier,
                         slaveRecord,
@@ -509,7 +509,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
 
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
-            final Map asofJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
+            final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
@@ -534,7 +534,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         baseRowId + r,
                         atom,
                         slaveTimeFrameHelper,
-                        asofJoinMap,
+                        asOfJoinMap,
                         masterKeyCopier,
                         slaveKeyCopier,
                         slaveRecord,
