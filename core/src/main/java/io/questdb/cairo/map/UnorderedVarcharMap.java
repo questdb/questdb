@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -212,7 +212,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         size = 0;
         nResizes = 0;
         Vect.memset(memStart, memLimit - memStart, 0);
-        Misc.free(allocator); // free all memory, but allocator remains usable for further allocations
+        Misc.clear(allocator);
     }
 
     @Override
@@ -323,13 +323,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
             restoreInitialCapacity();
         }
+        allocator.reopen();
     }
 
+    @Override
     public void reopen() {
         if (memStart == 0) {
             // handles both mem and offsets
             restoreInitialCapacity();
         }
+        allocator.reopen();
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,7 +56,9 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -84,8 +86,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final GroupByAllocator ownerAllocator;
     private final Function ownerFilter;
     private final MapFragment ownerFragment;
-    // Note: all function updaters should be used through a getFunctionUpdater() call
-    // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
@@ -97,8 +97,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
+    // Initialized lazily.
+    private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final ColumnTypes valueTypes;
+    // Initialized lazily.
+    private DirectLongLongSortedList ownerLongTopKList;
     private volatile boolean sharded;
     // A hint whether to shard during the next query execution.
     private boolean shardedHint;
@@ -167,12 +171,40 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             destShards = new ObjList<>(NUM_SHARDS);
             destShards.setPos(NUM_SHARDS);
 
-            final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(asm, columnTypes, listColumnFilter, ownerKeyFunctions, null);
-            ownerMapSink = RecordSinkFactory.getInstance(sinkClass, ownerKeyFunctions);
+            final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
+                    asm,
+                    columnTypes,
+                    listColumnFilter,
+                    ownerKeyFunctions,
+                    null,
+                    null,
+                    null,
+                    null,
+                    configuration
+            );
+            ownerMapSink = RecordSinkFactory.getInstance(
+                    sinkClass,
+                    columnTypes,
+                    listColumnFilter,
+                    ownerKeyFunctions,
+                    null,
+                    null,
+                    null,
+                    null
+            );
             if (perWorkerKeyFunctions != null) {
                 perWorkerMapSinks = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(sinkClass, perWorkerKeyFunctions.getQuick(i)));
+                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(
+                            sinkClass,
+                            columnTypes,
+                            listColumnFilter,
+                            perWorkerKeyFunctions.getQuick(i),
+                            null,
+                            null,
+                            null,
+                            null
+                    ));
                 }
             } else {
                 perWorkerMapSinks = null;
@@ -191,6 +223,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             } else {
                 perWorkerAllocators = null;
             }
+
+            perWorkerLongTopKLists = new ObjList<>(slotCount);
+            perWorkerLongTopKLists.setAll(slotCount, null);
         } catch (Throwable th) {
             close();
             throw th;
@@ -209,8 +244,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-        Misc.free(ownerAllocator);
-        Misc.freeObjListAndKeepObjects(perWorkerAllocators);
+        Misc.clear(ownerAllocator);
+        Misc.clearObjList(perWorkerAllocators);
+        Misc.clear(ownerLongTopKList);
+        Misc.clearObjList(perWorkerLongTopKLists);
     }
 
     @Override
@@ -226,6 +263,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.freeObjList(perWorkerFilters);
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
+        Misc.free(ownerLongTopKList);
+        Misc.freeObjListAndKeepObjects(perWorkerLongTopKLists);
         if (perWorkerKeyFunctions != null) {
             for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
@@ -293,6 +332,26 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
+    public DirectLongLongSortedList getLongTopKList(int slotId, int order, int limit) {
+        if (slotId == -1) {
+            if (ownerLongTopKList == null || ownerLongTopKList.getOrder() != order) {
+                Misc.free(ownerLongTopKList);
+                ownerLongTopKList = DirectLongLongSortedList.getInstance(order, limit, MemoryTag.NATIVE_DEFAULT);
+            }
+            ownerLongTopKList.reopen(limit);
+            return ownerLongTopKList;
+        }
+
+        DirectLongLongSortedList workerList = perWorkerLongTopKLists.getQuick(slotId);
+        if (workerList == null || workerList.getOrder() != order) {
+            Misc.free(workerList);
+            workerList = DirectLongLongSortedList.getInstance(order, limit, MemoryTag.NATIVE_DEFAULT);
+            perWorkerLongTopKLists.setQuick(slotId, workerList);
+        }
+        workerList.reopen(limit);
+        return workerList;
+    }
+
     public RecordSink getMapSink(int slotId) {
         if (slotId == -1 || perWorkerMapSinks == null) {
             return ownerMapSink;
@@ -303,6 +362,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // thread-unsafe
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
         return ownerGroupByFunctions;
+    }
+
+    // thread-unsafe
+    public DirectLongLongSortedList getOwnerLongTopKList() {
+        return ownerLongTopKList;
+    }
+
+    // thread-unsafe
+    public ObjList<DirectLongLongSortedList> getPerWorkerLongTopKLists() {
+        return perWorkerLongTopKLists;
     }
 
     public int getShardCount() {
@@ -516,7 +585,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
             sharded = true;
         }
-        // The maps will be open lazily by worker threads.
+        // The maps will be open lazily by worker threads, but we need to reopen the allocators.
+        ownerAllocator.reopen();
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                perWorkerAllocators.getQuick(i).reopen();
+            }
+        }
     }
 
     public void shardAll() {

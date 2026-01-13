@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,16 +36,13 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
 
-public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperationBuilder, Mutable, Sinkable {
-    public static final ObjectFactory<CreateMatViewOperationBuilderImpl> FACTORY = CreateMatViewOperationBuilderImpl::new;
+public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperationBuilder, Mutable {
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
     private int baseTableNamePosition;

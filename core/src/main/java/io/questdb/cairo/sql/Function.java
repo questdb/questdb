@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -104,13 +104,27 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void close() {
     }
 
+    /**
+     * Called when the cursor is closed.
+     */
     default void cursorClosed() {
     }
 
+    /**
+     * Returns the extended operations for this function, if any.
+     *
+     * @return the function extension, or null if none
+     */
     default FunctionExtension extendedOps() {
         return null;
     }
 
+    /**
+     * Returns the array value from the record.
+     *
+     * @param rec the record to read from
+     * @return the array view
+     */
     ArrayView getArray(Record rec);
 
     BinarySequence getBin(Record rec);
@@ -126,14 +140,20 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     long getDate(Record rec);
 
     /**
-     * Sets the raw value of sink (the scale is caller saved)
+     * Sets the raw value of sink (the scale is caller saved).
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write the decimal value to
      */
     void getDecimal128(Record rec, Decimal128 sink);
 
     short getDecimal16(Record rec);
 
     /**
-     * Sets the raw value of sink (the scale is caller saved)
+     * Sets the raw value of sink (the scale is caller saved).
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write the decimal value to
      */
     void getDecimal256(Record rec, Decimal256 sink);
 
@@ -147,27 +167,69 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     float getFloat(Record rec);
 
+    /**
+     * Returns the geohash byte value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash byte value
+     */
     byte getGeoByte(Record rec);
 
+    /**
+     * Returns the geohash int value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash int value
+     */
     int getGeoInt(Record rec);
 
+    /**
+     * Returns the geohash long value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash long value
+     */
     long getGeoLong(Record rec);
 
+    /**
+     * Returns the geohash short value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash short value
+     */
     short getGeoShort(Record rec);
 
     int getIPv4(Record rec);
 
     int getInt(Record rec);
 
+    /**
+     * Returns the interval value from the record.
+     *
+     * @param rec the record to read from
+     * @return the interval value
+     */
     @NotNull
     Interval getInterval(Record rec);
 
+    /**
+     * Returns the long value from the record.
+     *
+     * @param rec the record to read from
+     * @return the long value
+     */
     long getLong(Record rec);
 
     long getLong128Hi(Record rec);
 
     long getLong128Lo(Record rec);
 
+    /**
+     * Writes the Long256 value to the given sink.
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write to
+     */
     void getLong256(Record rec, CharSink<?> sink);
 
     Long256 getLong256A(Record rec);
@@ -200,6 +262,12 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     CharSequence getSymbol(Record rec);
 
+    /**
+     * Returns the symbol value from the record (alternate buffer).
+     *
+     * @param rec the record to read from
+     * @return the symbol value
+     */
     CharSequence getSymbolB(Record rec);
 
     long getTimestamp(Record rec);
@@ -213,6 +281,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     Utf8Sequence getVarcharB(Record rec);
 
     /**
+     * Returns the size of the varchar value.
+     *
+     * @param rec the record to read from
      * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
      */
     int getVarcharSize(Record rec);
@@ -233,6 +304,25 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return isConstant() || isRuntimeConstant();
     }
 
+    /**
+     * Performs a best-effort comparison to check if two functions are equivalent.
+     * This is used for optimization purposes to identify duplicate or equivalent expressions.
+     * <p>
+     * Note: A false result does not guarantee that the functions are different - it just means
+     * equivalence could not be determined through this best-effort comparison.
+     *
+     * @param obj the function to compare with
+     * @return true if the functions are definitely equivalent, false if they may or may not be equivalent.
+     */
+    default boolean isEquivalentTo(Function obj) {
+        return this == obj;
+    }
+
+    /**
+     * Returns true if this function is non-deterministic.
+     *
+     * @return true if non-deterministic
+     */
     default boolean isNonDeterministic() {
         return false;
     }
@@ -288,16 +378,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
-    }
-
-    /**
-     * This method is called exactly once per data row. It provides an opportunity for the function
-     * to perform heavy or volatile computations, cache the results and ensure getXXX() methods use the case instead
-     * of recomputing values.
-     *
-     * @param record the record for data access.
-     */
-    default void memoize(Record record) {
     }
 
     default void offerStateTo(Function that) {

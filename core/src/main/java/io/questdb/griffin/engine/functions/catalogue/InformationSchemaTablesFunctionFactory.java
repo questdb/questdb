@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -81,7 +81,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
     public static class InformationSchemaTablesCursorFactory extends AbstractRecordCursorFactory {
         private final TableListRecordCursor cursor = new TableListRecordCursor();
-        private final boolean hideTelemetryTables;
+        private final boolean hideTelemetryTable;
         private final CharSequence sysTablePrefix;
         private final CharSequence tempPendingRenameTablePrefix;
         private CairoEngine engine;
@@ -91,7 +91,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
             super(metadata);
             tempPendingRenameTablePrefix = configuration.getTempRenamePendingTablePrefix();
             sysTablePrefix = configuration.getSystemTableNamePrefix();
-            hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
+            hideTelemetryTable = configuration.getTelemetryConfiguration().hideTables();
         }
 
         @Override
@@ -167,7 +167,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
             private boolean isSystemTable(TableToken tableToken) {
                 String tableName = tableToken.getTableName();
-                return (hideTelemetryTables &&
+                return (hideTelemetryTable &&
                         (Chars.equals(tableName, TelemetryTask.TABLE_NAME) ||
                                 Chars.equals(tableName, TELEMETRY_CONFIG_TABLE_NAME)))
                         || Chars.startsWith(tableName, sysTablePrefix)

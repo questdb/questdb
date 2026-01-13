@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -180,7 +180,7 @@ public class CopyImportTest extends AbstractCairoTest {
     public void testDefaultCopyOptions() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                ExportModel model = (ExportModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
+                ExportModel model = (ExportModel) compiler.generateExecutionModel("copy y from 'somefile.csv';", sqlExecutionContext);
 
                 TestUtils.assertEquals("y", model.getTableName());
                 TestUtils.assertEquals("'somefile.csv'", model.getFileName().token);
@@ -1118,10 +1118,10 @@ public class CopyImportTest extends AbstractCairoTest {
 
                         ExportModel model;
                         if (upperCase) {
-                            model = (ExportModel) compiler.testCompileModel("COPY x FROM 'somefile.csv' WITH HEADER TRUE " +
+                            model = (ExportModel) compiler.generateExecutionModel("COPY x FROM 'somefile.csv' WITH HEADER TRUE " +
                                     "PARTITION BY " + partitionBy[p] + " TIMESTAMP 'ts1' FORMAT 'yyyy-MM-ddTHH:mm:ss' DELIMITER ';' ON ERROR " + onError[o] + ";'", sqlExecutionContext);
                         } else {
-                            model = (ExportModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true " +
+                            model = (ExportModel) compiler.generateExecutionModel("copy x from 'somefile.csv' with header true " +
                                     "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
                         }
 

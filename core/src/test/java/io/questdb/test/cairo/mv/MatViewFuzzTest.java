@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,8 +61,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // Timer refresh tests mess with the clock, so set the spin timeout
         // to a large value to avoid false positive errors.
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
-        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, TestUtils.generateRandom(LOG).nextInt(10000));
         spinLockTimeout = SPIN_LOCK_TIMEOUT;
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        node1.setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, rnd.nextInt(10000));
     }
 
     @Test
@@ -72,14 +73,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String mv2Name = testName.getMethodName() + "_mv2";
         final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by 1h";
         final String view2Sql = "select min(min), max(max), ts from " + mvName + " sample by 2h";
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = generateRandom(LOG);
         testMvFuzz(rnd, tableName, mvName, viewSql, mv2Name, view2Sql);
     }
 
     @Test
     public void testBaseTableCanHaveColumnsAdded() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG, 341214560770050L, 1764958653161L);
+            final Rnd rnd = generateRandom(LOG);
             setFuzzParams(rnd, 0.2, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1, true);
@@ -89,7 +90,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testFullRefreshAfterUnsupportedOperations() throws Exception {
         assertMemoryLeak(() -> {
-            final Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
 
             fuzzer.setFuzzCounts(
                     rnd.nextBoolean(),
@@ -186,7 +187,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testInvalidate() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
             // truncate will lead to mat view invalidation
             setFuzzParams(rnd, 0, 0.5);
             setFuzzProperties(rnd);
@@ -197,7 +198,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testManyTablesPeriodView() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runPeriodMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
@@ -207,7 +208,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testManyTablesRefreshJobRace() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
             setFuzzParams(rnd, 1_000, 10_000, 0, 0.0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), false);
@@ -217,7 +218,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testManyTablesTimerView() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runTimerMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
@@ -227,7 +228,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testManyTablesView() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), true);
@@ -236,7 +237,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testMultipleQueryExecutionsPerRefresh() throws Exception {
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = generateRandom(LOG);
         final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();
@@ -248,7 +249,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testMultipleQueryExecutionsPerRefreshDSTShiftBack() throws Exception {
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = generateRandom(LOG);
         final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();
@@ -262,7 +263,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testMultipleQueryExecutionsPerRefreshDSTShiftForward() throws Exception {
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = generateRandom(LOG);
         final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();
@@ -276,7 +277,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testMultipleQueryExecutionsPerRefreshDSTWithOffset() throws Exception {
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = generateRandom(LOG);
         final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();
@@ -290,7 +291,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testMultipleQueryExecutionsPerRefreshSmallSamplingInterval() throws Exception {
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = generateRandom(LOG);
         final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();
@@ -304,7 +305,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testOneView() throws Exception {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = generateRandom(LOG);
         final int mins = 1 + rnd.nextInt(300);
         final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + mins + "m";
         testMvFuzz(rnd, tableName, mvName, viewSql);
@@ -314,7 +315,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testOneView_randomSampleByUnit() throws Exception {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = generateRandom(LOG);
         final char[] units = {'y', 'M', 'w', 'd', 'h', 'm'};
         final char unit = units[rnd.nextInt(units.length)];
         final int interval = 1 + rnd.nextInt(3);
@@ -395,7 +396,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testSelfJoinQuery() throws Exception {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = generateRandom(LOG);
         final int mins = 1 + rnd.nextInt(60);
         final String viewSql = "select first(t2.c2), last(t2.c2), t1.ts from  " + tableName + " t1 asof join " + tableName + " t2 sample by " + mins + "m";
         testMvFuzz(rnd, tableName, mvName, viewSql);
@@ -404,7 +405,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testSingleTablePeriodView() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runPeriodMvFuzz(rnd, getTestName(), 1);
@@ -414,7 +415,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testSingleTableTimerView() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runTimerMvFuzz(rnd, getTestName(), 1);
@@ -425,7 +426,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testStressSqlRecompilation() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 1);
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1, true);
@@ -439,7 +440,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
         setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 10);
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 4, true);

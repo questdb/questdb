@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
-import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
@@ -136,42 +135,30 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
     }
 
     static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.INT:
-                return IntConstant.NULL;
-            case ColumnType.IPv4:
-                return IPv4Constant.NULL;
-            case ColumnType.LONG:
-                return LongConstant.NULL;
-            case ColumnType.FLOAT:
-                return FloatConstant.NULL;
-            case ColumnType.DOUBLE:
-                return DoubleConstant.NULL;
-            case ColumnType.BYTE:
-                return ByteConstant.ZERO;
-            case ColumnType.SHORT:
-                return ShortConstant.ZERO;
-            case ColumnType.GEOBYTE:
-                return GeoByteConstant.NULL;
-            case ColumnType.GEOSHORT:
-                return GeoShortConstant.NULL;
-            case ColumnType.GEOINT:
-                return GeoIntConstant.NULL;
-            case ColumnType.GEOLONG:
-                return GeoLongConstant.NULL;
-            case ColumnType.UUID:
-                return UuidConstant.NULL;
-            case ColumnType.TIMESTAMP:
-                return ColumnType.getTimestampDriver(type).getTimestampConstantNull();
-            default:
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.INT -> IntConstant.NULL;
+            case ColumnType.IPv4 -> IPv4Constant.NULL;
+            case ColumnType.LONG -> LongConstant.NULL;
+            case ColumnType.FLOAT -> FloatConstant.NULL;
+            case ColumnType.DOUBLE -> DoubleConstant.NULL;
+            case ColumnType.BYTE -> ByteConstant.ZERO;
+            case ColumnType.SHORT -> ShortConstant.ZERO;
+            case ColumnType.GEOBYTE -> GeoByteConstant.NULL;
+            case ColumnType.GEOSHORT -> GeoShortConstant.NULL;
+            case ColumnType.GEOINT -> GeoIntConstant.NULL;
+            case ColumnType.GEOLONG -> GeoLongConstant.NULL;
+            case ColumnType.UUID -> UuidConstant.NULL;
+            case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(type).getTimestampConstantNull();
+            default -> {
                 if (ColumnType.isDecimal(type)) {
-                    return DecimalUtil.createNullDecimalConstant(
+                    yield DecimalUtil.createNullDecimalConstant(
                             ColumnType.getDecimalPrecision(type),
                             ColumnType.getDecimalScale(type)
                     );
                 }
                 throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
-        }
+            }
+        };
     }
 
     @NotNull

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -84,7 +84,7 @@ class PGUtils {
             int columnType,
             int geohashSize,
             long maxBlobSize,
-            int arrayResumePoint
+            int resumePoint
     ) throws PGMessageProcessingException {
         final short typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
@@ -136,7 +136,14 @@ class PGUtils {
                 return geoHashBytes(record.getGeoLong(columnIndex), geohashSize);
             case ColumnType.VARCHAR:
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
-                return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
+                if (vcValue == null) {
+                    return Integer.BYTES;
+                }
+                // resumePoint == -1 means header not sent yet, include it
+                // resumePoint >= 0 is the byte offset of already sent data
+                int vcResumePoint = Math.max(0, resumePoint);
+                int vcRemaining = vcValue.size() - vcResumePoint;
+                return resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
             case ColumnType.STRING:
                 final CharSequence strValue = record.getStrA(columnIndex);
                 return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
@@ -168,12 +175,12 @@ class PGUtils {
                         ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
                         : "implemented only for DOUBLE and LONG";
 
-                int actualResumePoint = Math.max(0, arrayResumePoint);
+                int actualResumePoint = Math.max(0, resumePoint);
                 int remainingElements = array.getCardinality() - actualResumePoint; // includes nulls
                 int notNullCount = PGUtils.countNotNull(array, actualResumePoint);
 
                 // -1 = array header was not written yet -> we have to include it in our calculation
-                int size = arrayResumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
+                int size = resumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
 
                 // add remaining elements
                 size += calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,28 +24,24 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.str.CharSink;
 
-public final class Long256FunctionMemoizer extends Long256Function implements UnaryFunction {
+public final class Long256FunctionMemoizer extends Long256Function implements MemoizerFunction {
     private final Function fn;
-    private final Long256Impl valueLeft = new Long256Impl();
-    private final Long256Impl valueRight = new Long256Impl();
-    private Record recordLeft;
-    private Record recordRight;
+    private final Long256Impl valueA = new Long256Impl();
+    private final Long256Impl valueB = new Long256Impl();
+    private boolean validAValue;
+    private boolean validBValue;
 
     public Long256FunctionMemoizer(Function fn) {
-        assert fn.shouldMemoize();
         this.fn = fn;
     }
 
@@ -56,32 +52,38 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
 
     @Override
     public void getLong256(Record rec, CharSink<?> sink) {
-        if (recordLeft == rec) {
-            valueLeft.toSink(sink);
-            return;
+        if (!validAValue) {
+            Long256 long256 = fn.getLong256A(rec);
+            valueA.copyFrom(long256);
+            validAValue = true;
         }
-        if (recordRight == rec) {
-            valueRight.toSink(sink);
-            return;
-        }
-        fn.getLong256(rec, sink);
+        valueA.toSink(sink);
     }
 
     @Override
     public Long256 getLong256A(Record rec) {
-        if (recordLeft == rec) {
-            return valueLeft;
+        if (!validAValue) {
+            if (validBValue) {
+                valueA.copyFrom(valueB);
+            } else {
+                valueA.copyFrom(fn.getLong256A(rec));
+            }
+            validAValue = true;
         }
-        if (recordRight == rec) {
-            return valueRight;
-        }
-        return fn.getLong256A(rec);
+        return valueA;
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
-        // B value is not memoized
-        return fn.getLong256B(rec);
+        if (!validBValue) {
+            if (validAValue) {
+                valueB.copyFrom(valueA);
+            } else {
+                valueB.copyFrom(fn.getLong256B(rec));
+            }
+            validBValue = true;
+        }
+        return valueB;
     }
 
     @Override
@@ -91,9 +93,7 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        recordLeft = NullRecord.INSTANCE;
-        recordRight = NullRecord.INSTANCE;
-        UnaryFunction.super.init(symbolTableSource, executionContext);
+        MemoizerFunction.super.init(symbolTableSource, executionContext);
     }
 
     @Override
@@ -103,45 +103,8 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
 
     @Override
     public void memoize(Record record) {
-        Long256 long256 = fn.getLong256A(record);
-        if (recordLeft == record) {
-            valueLeft.setAll(long256.getLong0(),
-                    long256.getLong1(),
-                    long256.getLong2(),
-                    long256.getLong3());
-        } else if (recordRight == record) {
-            valueRight.setAll(long256.getLong0(),
-                    long256.getLong1(),
-                    long256.getLong2(),
-                    long256.getLong3());
-        } else if (recordLeft == NullRecord.INSTANCE) {
-            recordLeft = record;
-            valueLeft.setAll(long256.getLong0(),
-                    long256.getLong1(),
-                    long256.getLong2(),
-                    long256.getLong3());
-        } else if (recordRight == NullRecord.INSTANCE) {
-            assert supportsRandomAccess();
-            recordRight = record;
-            valueRight.setAll(long256.getLong0(),
-                    long256.getLong1(),
-                    long256.getLong2(),
-                    long256.getLong3());
-        } else {
-            throw CairoException.nonCritical().
-                    put("Long256FunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
-                    .put(recordLeft.toString())
-                    .put(", recordRight=")
-                    .put(recordRight.toString())
-                    .put(", newRecord=")
-                    .put(record.toString())
-                    .put(']');
-        }
-    }
-
-    @Override
-    public boolean shouldMemoize() {
-        return true;
+        validAValue = false;
+        validBValue = false;
     }
 
     @Override

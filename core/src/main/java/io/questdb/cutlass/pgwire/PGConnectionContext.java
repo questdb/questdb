@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1065,7 +1065,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
                     pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
                     cachedStatus = CACHE_HIT_SELECT_VALID;
-                    sqlExecutionContext.resetFlags();
+                    sqlExecutionContext.reset();
                 } else {
                     tas.close();
                     cachedStatus = CACHE_HIT_SELECT_INVALID;
@@ -1817,6 +1817,23 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // sendBufferPtr += size;
             // return this;
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int putPartial(Utf8Sequence us, int offset, int length) {
+            if (length <= 0) {
+                return 0;
+            }
+            // Write as much as we can fit in the buffer
+            long available = sendBufferLimit - sendBufferPtr - 1; // -1 because checkCapacity uses < not <=
+            int toWrite = (int) Math.min(length, Math.max(0, available));
+            if (toWrite > 0) {
+                for (int i = 0; i < toWrite; i++) {
+                    Unsafe.getUnsafe().putByte(sendBufferPtr + i, us.byteAt(offset + i));
+                }
+                sendBufferPtr += toWrite;
+            }
+            return toWrite;
         }
 
         @Override

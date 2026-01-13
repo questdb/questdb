@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 
 public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
@@ -42,6 +43,13 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     public FirstGeoHashGroupByFunctionShort(int type, Function arg) {
         super(type);
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(ptr));
+        }
     }
 
     @Override
@@ -117,6 +125,11 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
         // This method is used to init an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putShort(valueIndex + 1, GeoHashes.SHORT_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

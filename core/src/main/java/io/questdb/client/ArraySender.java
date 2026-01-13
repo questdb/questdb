@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,18 +32,30 @@ public interface ArraySender<T> {
     /**
      * Convenience method to insert a 1D double array. Same semantics as
      * {@link #doubleArray(CharSequence, DoubleArray)} with a 1D {@code DoubleArray}.
+     *
+     * @param name   the column name
+     * @param values the 1D double array values
+     * @return this instance, to support method chaining
      */
     T doubleArray(@NotNull CharSequence name, double[] values);
 
     /**
      * Convenience method to insert a 2D double array. Same semantics as
      * {@link #doubleArray(CharSequence, DoubleArray)} with a 2D {@code DoubleArray}.
+     *
+     * @param name   the column name
+     * @param values the 2D double array values
+     * @return this instance, to support method chaining
      */
     T doubleArray(@NotNull CharSequence name, double[][] values);
 
     /**
      * Convenience method to insert a 3D double array. Same semantics as
      * {@link #doubleArray(CharSequence, DoubleArray)} with a 3D {@code DoubleArray}.
+     *
+     * @param name   the column name
+     * @param values the 3D double array values
+     * @return this instance, to support method chaining
      */
     T doubleArray(@NotNull CharSequence name, double[][][] values);
 
@@ -59,18 +71,30 @@ public interface ArraySender<T> {
     /**
      * Convenience method to insert a 1D {@code long} array. Same semantics as
      * {@link #longArray(CharSequence, LongArray)} with a 1D {@code LongArray}.
+     *
+     * @param name   the column name
+     * @param values the 1D long array values
+     * @return this instance, to support method chaining
      */
     T longArray(@NotNull CharSequence name, long[] values);
 
     /**
      * Convenience method to insert a 2D {@code long} array. Same semantics as
      * {@link #longArray(CharSequence, LongArray)} with a 2D {@code LongArray}.
+     *
+     * @param name   the column name
+     * @param values the 2D long array values
+     * @return this instance, to support method chaining
      */
     T longArray(@NotNull CharSequence name, long[][] values);
 
     /**
      * Convenience method to insert a 3D {@code long} array. Same semantics as
      * {@link #longArray(CharSequence, LongArray)} with a 3D {@code LongArray}.
+     *
+     * @param name   the column name
+     * @param values the 3D long array values
+     * @return this instance, to support method chaining
      */
     T longArray(@NotNull CharSequence name, long[][][] values);
 

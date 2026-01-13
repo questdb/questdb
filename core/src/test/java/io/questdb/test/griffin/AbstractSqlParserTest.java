@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -150,6 +150,10 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         }
     }
 
+    protected void assertCreate(String expected, String query) throws SqlException {
+        assertModel(expected, query, ExecutionModel.CREATE_TABLE);
+    }
+
     protected void assertInsertQuery(TableModel... tableModels) throws SqlException {
         assertModel(
                 "insert into test (test_timestamp, test_value) values ('2020-12-31 15:15:51.663+00:00'::timestamp, '256')",
@@ -164,7 +168,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 () -> {
                     sink.clear();
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
+                        ExecutionModel model = compiler.generateExecutionModel(query, sqlExecutionContext);
                         Assert.assertEquals(model.getModelType(), modelType);
                         ((Sinkable) model).toSink(sink);
                         TestUtils.assertEquals(expected, sink);
@@ -183,10 +187,6 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
     protected void assertUpdate(String expected, String query, TableModel... tableModels) throws SqlException {
         assertModel(expected, query, ExecutionModel.UPDATE, tableModels);
-    }
-
-    protected void assertCreate(String expected, String query) throws SqlException {
-        assertModel(expected, query, ExecutionModel.CREATE_TABLE);
     }
 
     protected void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {

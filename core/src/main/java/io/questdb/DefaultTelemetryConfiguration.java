@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,6 +45,16 @@ public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     @Override
     public int getQueueCapacity() {
         return 16;
+    }
+
+    @Override
+    public long getThrottleIntervalMicros() {
+        return Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getTtlWeeks() {
+        return 4;
     }
 
     @Override

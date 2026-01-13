@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Files;
@@ -95,10 +97,135 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
                 Assert.assertTrue(Files.exists(path.$()));
-
                 sink.clear();
                 sink.put("select a_ts, a_long from read_parquet('x.parquet')");
+                // If projection pushdown is not working, a SelectedRecord operator would appear
+                // above the parquet scan in the plan.
+                final String expectedPlan = parallel ? """
+                        parquet page frame scan
+                          columns: a_ts,a_long
+                        """ : """
+                        parquet file sequential scan
+                          columns: a_ts,a_long
+                        """;
+                assertPlanNoLeakCheck(
+                        sink,
+                        expectedPlan
+                );
+
                 assertSqlCursors0("select a_ts, a_long from x");
+            }
+        });
+    }
+
+    @Test
+    public void testColumnProjectionDifferentOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " rnd_str(4,4,4,2) as a_str," +
+                    " rnd_long() as a_long," +
+                    " rnd_int() as an_int" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                final String expectedPlan = parallel ? """
+                        parquet page frame scan
+                          columns: an_int,a_long,a_str
+                        """ : """
+                        parquet file sequential scan
+                          columns: an_int,a_long,a_str
+                        """;
+                sink.clear();
+                sink.put("select an_int, a_long, a_str from read_parquet('x.parquet')");
+                assertPlanNoLeakCheck(
+                        sink,
+                        expectedPlan
+                );
+                assertSqlCursors0("select an_int, a_long, a_str from x");
+            }
+        });
+    }
+
+    @Test
+    public void testColumnProjectionSingleColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " rnd_str(4,4,4,2) as a_str," +
+                    " rnd_long() as a_long," +
+                    " rnd_int() as an_int" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                sink.clear();
+                sink.put("select a_long from read_parquet('x.parquet')");
+                // Select single column
+                final String expectedPlan = parallel ? """
+                        parquet page frame scan
+                          columns: a_long
+                        """ : """
+                        parquet file sequential scan
+                          columns: a_long
+                        """;
+                assertPlanNoLeakCheck(
+                        sink,
+                        expectedPlan
+                );
+                assertSqlCursors0("select a_long from x");
+            }
+        });
+    }
+
+    @Test
+    public void testColumnProjectionWithExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select" +
+                    " rnd_str(4,4,4,2) as a_str," +
+                    " rnd_long() as a_long," +
+                    " rnd_int() as an_int" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                final String expectedPlan = parallel ? """
+                        VirtualRecord
+                          functions: [a_long+1]
+                            parquet page frame scan
+                              columns: a_long
+                        """ : """
+                        VirtualRecord
+                          functions: [a_long+1]
+                            parquet file sequential scan
+                              columns: a_long
+                        """;
+                assertPlanNoLeakCheck(
+                        "select a_long + 1 from read_parquet('x.parquet')",
+                        expectedPlan
+                );
             }
         });
     }
@@ -185,7 +312,13 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 // No sorting is needed since we recognize the designated timestamp.
                 final String query = "select * from read_parquet('x.parquet') order by ts";
-                final String expectedPlan = parallel ? "parquet page frame scan\n" : "parquet file sequential scan\n";
+                final String expectedPlan = parallel ? """
+                        parquet page frame scan
+                          columns: id,ts
+                        """ : """
+                        parquet file sequential scan
+                          columns: id,ts
+                        """;
                 assertPlanNoLeakCheck(
                         query,
                         expectedPlan
@@ -279,9 +412,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
             execute(
                     "create table y as (select" +
                             " x id," +
+                            " timestamp_sequence(0,10000) as ts1," +
+                            " timestamp_sequence(0,10000)::timestamp_ns as ns," +
                             " 'foobar' str," +
-                            " timestamp_sequence(0,10000) as ts," +
-                            " timestamp_sequence(0,10000)::timestamp_ns as ns" +
                             " from long_sequence(1))"
             );
 
@@ -324,6 +457,60 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOffsetWithMultipleRowGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 5000;
+            execute("create table x as (select" +
+                    " x as id," +
+                    " rnd_long() as a_long" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        1000,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 100, 500");
+                assertSqlCursors0("select * from x limit 100, 500");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 100, 1950");
+                assertSqlCursors0("select * from x limit 100, 1950");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 999, 2501");
+                assertSqlCursors0("select * from x limit 999, 2501");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 5000, 2");
+                assertSqlCursors0("select * from x limit 5000, 2");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 5001, 2");
+                assertSqlCursors0("select * from x limit 5001, 2");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit -2, -1999");
+                assertSqlCursors0("select * from x limit -2, -1999");
+            }
+        });
+    }
+
+    @Test
     public void testMetadata() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1;
@@ -359,9 +546,16 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.put("select * from read_parquet('x.parquet')");
 
                 if (parallel) {
-                    assertPlanNoLeakCheck(sink, "parquet page frame scan\n");
+                    assertPlanNoLeakCheck(sink, """ 
+                            parquet page frame scan
+                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                            """
+                    );
                 } else {
-                    assertPlanNoLeakCheck(sink, "parquet file sequential scan\n");
+                    assertPlanNoLeakCheck(sink, """ 
+                            parquet file sequential scan
+                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                            """);
                 }
 
                 sink.put(" where 1 = 2");

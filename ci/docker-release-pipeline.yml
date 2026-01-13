@@ -116,3 +116,14 @@ jobs:
             preflight check container questdb/questdb:${docker_tag_name}-rhel
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: CmdLine@2
+        displayName: Notify Slack on Failure
+        inputs:
+          script: |
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"🚨 *Docker Build Failed (OSS)*\n\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`"}' \
+              "$(BUILDS_SLACK_HOOK_URL)"
+        condition: failed()
+        env:
+          BUILDS_SLACK_HOOK_URL: $(BUILDS_SLACK_HOOK_URL)

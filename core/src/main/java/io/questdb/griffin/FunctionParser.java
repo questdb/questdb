@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -117,20 +117,6 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
-import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -342,40 +328,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             assert positionStack.size() == functionStack.size();
             if (function != null && function.isConstant() && function.extendedOps() == null) {
                 return functionToConstant(function);
-            }
-
-            // we don't wrap function in a memoizer if it is a group by or window function
-            // otherwise SqlCodeGen would not recognize the function as a Window or GroupBy function
-            if (function != null && !(function instanceof GroupByFunction) && !(function instanceof WindowFunction) && function.shouldMemoize()) {
-                switch (ColumnType.tagOf(function.getType())) {
-                    case ColumnType.LONG:
-                        return new LongFunctionMemoizer(function);
-                    case ColumnType.INT:
-                        return new IntFunctionMemoizer(function);
-                    case ColumnType.TIMESTAMP:
-                        return new TimestampFunctionMemoizer(function);
-                    case ColumnType.DOUBLE:
-                        return new DoubleFunctionMemoizer(function);
-                    case ColumnType.SHORT:
-                        return new ShortFunctionMemoizer(function);
-                    case ColumnType.BOOLEAN:
-                        return new BooleanFunctionMemoizer(function);
-                    case ColumnType.BYTE:
-                        return new ByteFunctionMemoizer(function);
-                    case ColumnType.CHAR:
-                        return new CharFunctionMemoizer(function);
-                    case ColumnType.DATE:
-                        return new DateFunctionMemoizer(function);
-                    case ColumnType.FLOAT:
-                        return new FloatFunctionMemoizer(function);
-                    case ColumnType.IPv4:
-                        return new IPv4FunctionMemoizer(function);
-                    case ColumnType.UUID:
-                        return new UuidFunctionMemoizer(function);
-                    case ColumnType.LONG256:
-                        return new Long256FunctionMemoizer(function);
-                    // other types do not have memoization yet
-                }
             }
             return function;
         } finally {
@@ -968,6 +920,36 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 continue;
             }
 
+            // This block resolves ambiguity between variadic functions (e.g., InSymbolFunctionFactory "in(KV)")
+            // and array functions (e.g., InSymbolVarcharArrayFunctionFactory "in(KØ[])") when bind variables
+            // have undefined types (deferred type inference at bind time).
+            //
+            // Example Problem: For "symbol_col IN ($1)" where $1 is an undefined bind variable, the default overload
+            // rules would match the variadic version "in(KV)" (variadic functions exactly match).
+            // However, when there is only one undefined argument, we want "in(KØ[])" to match instead.
+            //
+            // Solution: When all variadic arguments are undefined, we delegate to the factory's
+            // variadicTypeSupportUndefinedBindVariables() method to decide whether to skip this function.
+            // This gives more specific signatures (like "in(KØ[]")) a chance to match first.
+            //
+            // Note: The function matching logic is intricate and fragile. So introduced this as a minimal fix
+            // to avoid side effects.
+            if (sigVarArg && argCount != sigArgCount) {
+                if (argCount < sigArgCount) {
+                    continue;
+                }
+                boolean variadicTypeAreAllUndefinedVariables = true;
+                for (int argIdx = sigArgCount; argIdx < argCount; argIdx++) {
+                    if (!args.getQuick(argIdx).isUndefined()) {
+                        variadicTypeAreAllUndefinedVariables = false;
+                        break;
+                    }
+                }
+                if (variadicTypeAreAllUndefinedVariables && !factory.variadicTypeSupportUndefinedBindVariables(args)) {
+                    continue;
+                }
+            }
+
             // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = sigArgCount == 0 ? MATCH_EXACT_MATCH : MATCH_NO_MATCH;
@@ -1145,7 +1127,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 final short sigArgType = FunctionFactoryDescriptor.toTypeTag(t);
                 final int argType;
                 if (FunctionFactoryDescriptor.isArray(t)) {
-                    argType = ColumnType.encodeArrayTypeWithWeakDims(sigArgType, true);
+                    // allow varchar array only if the element type in signature is varchar
+                    argType = ColumnType.encodeArrayTypeWithWeakDims(sigArgType, sigArgType != ColumnType.VARCHAR);
                 } else {
                     argType = sigArgType;
                 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -95,7 +95,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         if (frameLimit > -1) {
             frameSequence.await();
         }
-        frameSequence.clear();
+        frameSequence.reset();
         Misc.free(frameMemoryPool);
     }
 
@@ -180,7 +180,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         boolean allFramesActive = true;
         try {
             do {
-                final long cursor = frameSequence.next(dispatchLimit);
+                final long cursor = frameSequence.next(dispatchLimit, false);
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
                     LOG.debug()

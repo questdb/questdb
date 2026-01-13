@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,7 +62,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private final ObjectPool<DirectUtf8String> csPool;
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
     private final HttpHeaderParameterValue parameterValue = new HttpHeaderParameterValue();
-    private final DirectUtf8Sink sink = new DirectUtf8Sink(0, true);
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(0);
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;

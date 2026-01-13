@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,7 +73,7 @@ public class GroupByCharSequenceLongHashMapBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        allocator.close();
+        allocator.clear();
         groupByCharSequenceLongHashMap.setAllocator(allocator);
         mapPtr = 0;
         rnd.reset();

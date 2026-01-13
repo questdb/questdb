@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -90,6 +90,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
+import static io.questdb.TelemetryEvent.QUERY_RESULT_EXPORT_CSV;
+import static io.questdb.TelemetryEvent.QUERY_RESULT_EXPORT_PARQUET;
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
@@ -164,7 +166,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             circuitBreaker.setTimeout(timeout);
             circuitBreaker.resetTimer();
             state.recordCursorFactory = context.getSelectCache().poll(state.sqlText);
-            state.setQueryCacheable(true);
             sqlExecutionContext.with(
                     context.getSecurityContext(),
                     null,
@@ -183,11 +184,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         cc.closeAllButSelect();
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
-                    sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
+                    state.setQueryCacheable(cc.isCacheable());
+                    sqlExecutionContext.storeTelemetry(state.getExportModel().isParquetFormat() ?
+                            QUERY_RESULT_EXPORT_PARQUET : QUERY_RESULT_EXPORT_CSV, TelemetryOrigin.HTTP);
                 }
             } else {
+                state.setQueryCacheable(true);
                 sqlExecutionContext.setCacheHit(true);
-                sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);
+                sqlExecutionContext.storeTelemetry(state.getExportModel().isParquetFormat() ?
+                        QUERY_RESULT_EXPORT_PARQUET : QUERY_RESULT_EXPORT_CSV, TelemetryOrigin.HTTP);
             }
 
             if (state.recordCursorFactory != null) {
@@ -218,7 +223,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
                 } catch (CairoException e) {
-                    state.setQueryCacheable(e.isCacheable());
+                    if (state.isQueryCacheable()) {
+                        state.setQueryCacheable(e.isCacheable());
+                    }
                     internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
                 } catch (CairoError e) {
                     internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);

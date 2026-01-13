@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDependencyList;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -49,14 +50,14 @@ public class MatViewGraph implements Mutable {
     private static final java.lang.ThreadLocal<MatViewDefinition> tlDefinitionTask = new java.lang.ThreadLocal<>();
     private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
-    private final Function<CharSequence, MatViewDependencyList> createDependencyList;
+    private final Function<CharSequence, ViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
-    private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
+    private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
     private final BiFunction<CharSequence, MatViewDefinition, MatViewDefinition> updateDefinitionRef;
 
     public MatViewGraph() {
-        this.createDependencyList = name -> new MatViewDependencyList();
+        this.createDependencyList = name -> new ViewDependencyList();
         this.updateDefinitionRef = this::updateDefinition;
     }
 
@@ -75,7 +76,7 @@ public class MatViewGraph implements Mutable {
                         .put(", baseTable=").put(viewDefinition.getBaseTableName())
                         .put(']');
             }
-            final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
+            final ViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
             final ObjList<TableToken> matViews = list.lockForWrite();
             try {
                 matViews.add(viewToken);
@@ -94,7 +95,7 @@ public class MatViewGraph implements Mutable {
     }
 
     public void getDependentViews(TableToken baseTableToken, ObjList<TableToken> sink) {
-        final MatViewDependencyList list = getOrCreateDependentViews(baseTableToken.getTableName());
+        final ViewDependencyList list = getOrCreateDependentViews(baseTableToken.getTableName());
         final ReadOnlyObjList<TableToken> matViews = list.lockForRead();
         try {
             sink.addAll(matViews);
@@ -140,7 +141,7 @@ public class MatViewGraph implements Mutable {
         final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(viewToken.getDirName());
         if (viewDefinition != null) {
             final CharSequence baseTableName = viewDefinition.getBaseTableName();
-            final MatViewDependencyList dependentViews = dependentViewsByTableName.get(baseTableName);
+            final ViewDependencyList dependentViews = dependentViewsByTableName.get(baseTableName);
             if (dependentViews != null) {
                 final ObjList<TableToken> matViews = dependentViews.lockForWrite();
                 try {
@@ -162,7 +163,7 @@ public class MatViewGraph implements Mutable {
         final MatViewDefinition viewDefinition = definitionsByTableDirName.get(updatedToken.getDirName());
         if (viewDefinition != null) {
             viewDefinition.updateToken(updatedToken);
-            MatViewDependencyList viewList = dependentViewsByTableName.get(viewDefinition.getBaseTableName());
+            ViewDependencyList viewList = dependentViewsByTableName.get(viewDefinition.getBaseTableName());
             if (viewList != null) {
                 var matViews = viewList.lockForWrite();
                 try {
@@ -187,7 +188,7 @@ public class MatViewGraph implements Mutable {
     }
 
     @NotNull
-    private MatViewDependencyList getOrCreateDependentViews(CharSequence baseTableName) {
+    private ViewDependencyList getOrCreateDependentViews(CharSequence baseTableName) {
         return dependentViewsByTableName.computeIfAbsent(baseTableName, createDependencyList);
     }
 
@@ -210,7 +211,7 @@ public class MatViewGraph implements Mutable {
                 continue;
             }
 
-            MatViewDependencyList dependentViews = dependentViewsByTableName.get(currentTableName);
+            ViewDependencyList dependentViews = dependentViewsByTableName.get(currentTableName);
             if (dependentViews != null) {
                 ReadOnlyObjList<TableToken> matViews = dependentViews.lockForRead();
                 try {
@@ -239,7 +240,7 @@ public class MatViewGraph implements Mutable {
         while (!stack.isEmpty()) {
             TableToken top = stack.peek();
             if (!seen.contains(top)) {
-                MatViewDependencyList list = dependentViewsByTableName.get(top.getTableName());
+                ViewDependencyList list = dependentViewsByTableName.get(top.getTableName());
                 if (list == null) {
                     sink.add(top);
                     seen.add(top);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -92,7 +92,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         super(metadata);
         try {
             this.base = base;
-            this.frameAddressCache = new PageFrameAddressCache(configuration);
+            this.frameAddressCache = new PageFrameAddressCache();
             this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             this.vafList = new ObjList<>(vafList.size());
             this.vafList.addAll(vafList);
@@ -201,9 +201,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         private boolean areFunctionsBuilt;
         private MessageBus bus;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private int countDown = 1;
         private int frameCount;
         private PageFrameCursor frameCursor;
+        private boolean isExhausted;
 
         public GroupByNotKeyedVectorRecordCursor(ObjList<? extends Function> functions) {
             this.recordA = new VirtualRecordNoRowid(functions);
@@ -211,15 +211,15 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (countDown > 0) {
-                counter.add(countDown);
-                countDown = 0;
+            if (!isExhausted) {
+                counter.inc();
+                isExhausted = true;
             }
         }
 
         @Override
         public void close() {
-            frameAddressCache.clear();
+            Misc.free(frameAddressCache);
             frameCursor = Misc.free(frameCursor);
         }
 
@@ -230,11 +230,15 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public boolean hasNext() {
+            if (isExhausted) {
+                return false;
+            }
             if (!areFunctionsBuilt) {
                 buildFunctions();
                 areFunctionsBuilt = true;
             }
-            return countDown-- > 0;
+            isExhausted = true;
+            return true;
         }
 
         public GroupByNotKeyedVectorRecordCursor of(
@@ -268,7 +272,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void toTop() {
-            countDown = 1;
+            isExhausted = false;
         }
 
         private void buildFunctions() {
@@ -365,7 +369,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             } catch (DataUnavailableException e) {
-                // We're not yet done, so no need to cancel the circuit breaker. 
+                // We're not yet done, so no need to cancel the circuit breaker.
                 throw e;
             } catch (Throwable e) {
                 sharedCircuitBreaker.cancel();
