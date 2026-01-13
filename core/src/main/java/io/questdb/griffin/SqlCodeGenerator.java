@@ -3109,7 +3109,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
                         RecordSink recordCopierMaster;
-                        if (isSingleSymbolJoin) {
+                        if (listColumnFilterA.getColumnCount() == 1 && isSingleSymbolJoin) {
                             SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
