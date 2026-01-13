@@ -1,6 +1,6 @@
 [submodule "core/src/main/c/share/jemalloc"]
 	path = core/src/main/c/share/jemalloc
-	url = https://github.com/jemalloc/jemalloc.git
+	url = https://github.com/questdb/jemalloc.git
 [submodule "core/src/main/c/share/simdjson"]
 	path = core/src/main/c/share/simdjson
 	url = https://github.com/simdjson/simdjson.git
