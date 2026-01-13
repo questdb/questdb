@@ -163,6 +163,16 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         }
     }
 
+    public void removeAtV2(long index) {
+        if (index < 0) {
+            long deletedPosition = -index - 1;
+            erase(deletedPosition);
+            free++;
+            size--;
+            compactProbeSequence(deletedPosition);
+        }
+    }
+
     @Override
     public void reopen() {
         if (ptr == 0) {
@@ -223,6 +233,28 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         } while (index != index0);
 
         throw CairoException.critical(0).put("corrupt long-long hash table");
+    }
+
+    private void compactProbeSequence(long deletedPosition) {
+        long gapPos = deletedPosition;
+        long scanPos = (gapPos + 1) & mask;
+
+        // Scan forward until we hit an empty slot (end of probe sequence)
+        for (long key = keyAtRaw(scanPos);
+             key != noEntryKey;
+             scanPos = (scanPos + 1) & mask, key = keyAtRaw(scanPos)) {
+
+            long idealPos = Hash.fastHashLong64(key) & mask;
+
+            // Check if moving backward would be beneficial:
+            // 1. scanPos != idealPos: Element is not in its ideal position;
+            // 2. idealPos <= gapPos: Normal case - ideal position is at or before the gap
+            // 3. currentPos < idealPos: Wraparound case - entry wrapped from table end
+            if (scanPos != idealPos && (idealPos <= gapPos || scanPos < idealPos)) {
+                move(scanPos, gapPos);
+                gapPos = scanPos;
+            }
+        }
     }
 
     private void putAt0(long index, long key, long value) {

@@ -25,12 +25,14 @@
 package io.questdb.test.std;
 
 import io.questdb.std.DirectLongLongHashMap;
+import io.questdb.std.Hash;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class DirectLongLongHashMapTest {
+    private static final long NO_KEY = Long.MIN_VALUE;
 
     @Test
     public void testAll() {
@@ -152,5 +154,83 @@ public class DirectLongLongHashMapTest {
                 Assert.assertTrue(map.excludes(i));
             }
         }
+    }
+
+    @Test
+    public void removeCompactsProbeChainWithCircularWraparound() {
+        try (DirectLongLongHashMap map = new DirectLongLongHashMap(8, .999, NO_KEY, -1, MemoryTag.NATIVE_DEFAULT)) {
+            long a0 = keyHashedToPos(map, 5, 0); // hashes to 5, fills [5] (ideal hit)
+            long a1 = keyHashedToPos(map, 5, 1); // hashes to 5, fills [6] (displaced)
+            long a2 = keyHashedToPos(map, 5, 2); // hashes to 5, fills [7] (displaced)
+            long a3 = keyHashedToPos(map, 5, 3); // hashes to 5, fills [0] (displaced, wrapped)
+
+            putAll(map, a0, a1, a2, a3);
+            assertKeysOrder(map, new long[]{a3, NO_KEY, NO_KEY, NO_KEY, NO_KEY, a0, a1, a2});
+
+            map.removeAtV2(map.keyIndex(a0));
+            assertKeysOrder(map, new long[]{NO_KEY, NO_KEY, NO_KEY, NO_KEY, NO_KEY, a1, a2, a3});
+        }
+    }
+
+    @Test
+    public void removePreservesNonDisplacedElements() {
+        try (DirectLongLongHashMap map = new DirectLongLongHashMap(8, .999, NO_KEY, -1, MemoryTag.NATIVE_DEFAULT)) {
+            long a0 = keyHashedToPos(map, 4, 0); // hashes to 4, fills [4] (ideal hit)
+            long b0 = keyHashedToPos(map, 5, 0); // hashes to 5, fills [5] (ideal hit)
+            long c0 = keyHashedToPos(map, 6, 0); // hashes to 6, fills [6] (ideal hit)
+            long b1 = keyHashedToPos(map, 5, 1); // hashes to 5, fills [7] (displaced)
+            long b2 = keyHashedToPos(map, 5, 2); // hashes to 5, fills [0] (displaced, wrapped)
+
+            putAll(map, a0, b0, c0, b1, b2);
+            assertKeysOrder(map, new long[]{b2, NO_KEY, NO_KEY, NO_KEY, a0, b0, c0, b1});
+
+            map.removeAtV2(map.keyIndex(b0));
+            assertKeysOrder(map, new long[]{NO_KEY, NO_KEY, NO_KEY, NO_KEY, a0, b1, c0, b2});
+            map.removeAtV2(map.keyIndex(a0));
+            assertKeysOrder(map, new long[]{NO_KEY, NO_KEY, NO_KEY, NO_KEY, NO_KEY, b1, c0, b2});
+        }
+    }
+
+    @Test
+    public void removeHandlesWrappedTailAndMiddleDeletionsCorrectly() {
+        try (DirectLongLongHashMap map = new DirectLongLongHashMap(8, .999, NO_KEY, -1, MemoryTag.NATIVE_DEFAULT)) {
+            long a0 = keyHashedToPos(map, 5, 0); // hashes to 5, fills [5] (ideal hit)
+            long b0 = keyHashedToPos(map, 6, 0); // hashes to 6, fills [6] (ideal hit)
+            long c0 = keyHashedToPos(map, 7, 0); // hashes to 7, fills [7] (ideal hit)
+            long c1 = keyHashedToPos(map, 7, 1); // hashes to 7, fills [0] (displaced, wrapped)
+            long c2 = keyHashedToPos(map, 7, 2); // hashes to 7, fills [1] (displaced, wrapped)
+
+            putAll(map, a0, b0, c0, c1, c2);
+            assertKeysOrder(map, new long[]{c1, c2, NO_KEY, NO_KEY, NO_KEY, a0, b0, c0});
+
+            map.removeAtV2(map.keyIndex(c1));
+            assertKeysOrder(map, new long[]{c2, NO_KEY, NO_KEY, NO_KEY, NO_KEY, a0, b0, c0});
+
+            map.removeAtV2(map.keyIndex(c0));
+            assertKeysOrder(map, new long[]{NO_KEY, NO_KEY, NO_KEY, NO_KEY, NO_KEY, a0, b0, c2});
+        }
+    }
+
+    private static void putAll(DirectLongLongHashMap map, long... keys) {
+        for (long key : keys)
+            map.put(key, key);
+    }
+
+    /**
+     * @param overlaps - we can create different objects that hash to the same position in the map.
+     *                   e.g., 0 - is the first object that hashes to the position, 1 - the second, etc.
+     * @return a key that hashes to the specified position in the map.
+     */
+    private static long keyHashedToPos(DirectLongLongHashMap map, long pos, int overlaps) {
+        int mapCapacity = map.capacity();
+        long k = Hash.fastHashLong64(1) % mapCapacity;
+        return (k * pos + (long) mapCapacity * overlaps);
+    }
+
+    private static void assertKeysOrder(DirectLongLongHashMap map, long[] expected) {
+        long[] actual = new long[map.capacity()];
+        for (int i = 0; i < map.capacity(); i++)
+            actual[i] = map.keyAtRaw(i);
+        Assert.assertArrayEquals(expected, actual);
     }
 }
