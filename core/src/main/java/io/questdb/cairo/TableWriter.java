@@ -2184,6 +2184,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getMaxTimestamp();
     }
 
+    public long getMinTimestamp() {
+        return txWriter.getMinTimestamp();
+    }
+
     @Override
     public int getMetaMaxUncommittedRows() {
         return metadata.getMaxUncommittedRows();
