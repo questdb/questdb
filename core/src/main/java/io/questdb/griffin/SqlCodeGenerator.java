@@ -916,6 +916,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
+    private static boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
+        return joinColumns.getColumnCount() == 1 &&
+                symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
+                !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+    }
+
     private static long tolerance(QueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
@@ -3078,7 +3084,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 JoinContext slaveContext = slaveModel.getJoinContext();
                 if (!hasLinearHint) {
                     if (slave.supportsTimeFrameCursor()) {
-                        boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit);
+                        boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
                         if (hasDenseHint) {
                             if (isSingleSymbolJoin) {
@@ -3234,7 +3240,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // fallback for keyed join when no optimizations are applicable, or when asof_linear hint is used:
-                if (isSingleSymbolJoin(symbolShortCircuit)) {
+                if (isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA)) {
                     // We're falling back to the default Light scan. We can still optimize one thing:
                     // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                     // For that to work, we need code that maps master symbol key to slave symbol key.
@@ -7727,11 +7733,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
-    }
-
-    private boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit) {
-        return symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
-                !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
     }
 
     private void lookupColumnIndexes(
