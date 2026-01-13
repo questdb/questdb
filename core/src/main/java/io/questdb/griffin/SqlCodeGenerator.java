@@ -4806,7 +4806,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             tempInnerProjectionFunctions.clear();
             tempOuterProjectionFunctions.clear();
             final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
-            final PriorityMetadata priorityMetadata = new PriorityMetadata(columnCount, baseMetadata);
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
             GroupByUtils.assembleGroupByFunctions(
@@ -4824,7 +4823,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     recordFunctionPositions,
                     projectionFunctionFlags,
                     outerProjectionMetadata,
-                    priorityMetadata,
                     valueTypes,
                     keyTypes,
                     listColumnFilterA,
