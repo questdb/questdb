@@ -11,8 +11,6 @@ use std::ptr;
 
 /// Trait for types that can receive bytes (used by DataPageSlicer)
 pub trait ByteSink {
-    /// Extends the sink with bytes from `data`.
-    /// SAFETY: Caller must ensure capacity is sufficient (via reserve).
     fn extend_from_slice(&mut self, data: &[u8]) -> ParquetResult<()>;
 }
 
@@ -606,7 +604,7 @@ pub struct ValueConvertSlicer<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &m
 }
 
 impl<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> DataPageSlicer
-    for ValueConvertSlicer<N, T, F>
+for ValueConvertSlicer<N, T, F>
 {
     #[inline]
     fn next(&mut self) -> &[u8] {
