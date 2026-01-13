@@ -59,6 +59,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
@@ -71,6 +72,7 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
  */
 public class TableSnapshotRestore implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSnapshotRestore.class);
+    private final AtomicBoolean abortParallelTasks = new AtomicBoolean(false);
     private final CairoConfiguration configuration;
     private final ExecutorService executor;
     private final FilesFacade ff;
@@ -93,6 +95,10 @@ public class TableSnapshotRestore implements QuietCloseable {
                 Math.min(configuration.getCheckpointRecoveryThreadpoolMax(), Runtime.getRuntime().availableProcessors())
         );
         this.executor = Executors.newFixedThreadPool(threadCount);
+    }
+
+    public void abortParallelTasks() {
+        abortParallelTasks.set(true);
     }
 
     @Override
@@ -519,6 +525,10 @@ public class TableSnapshotRestore implements QuietCloseable {
             int partitionBy,
             int timestampType
     ) {
+        if (abortParallelTasks.get()) {
+            return;
+        }
+
         // Since we're using an executor, we can't use Path thread locals.
         try (
                 Path path = new Path().put(tablePathStr);
@@ -578,6 +588,10 @@ public class TableSnapshotRestore implements QuietCloseable {
             int partitionBy,
             int timestampType
     ) {
+        if (abortParallelTasks.get()) {
+            return;
+        }
+
         try (
                 Path path = new Path().put(tablePathStr);
                 PartitionDecoder partitionDecoder = new PartitionDecoder();
@@ -706,6 +720,10 @@ public class TableSnapshotRestore implements QuietCloseable {
                 final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
 
                 futures.add(executor.submit(() -> {
+                    if (abortParallelTasks.get()) {
+                        return;
+                    }
+
                     LOG.info().$("rebuilding symbol files [table=").$(tablePathStr)
                             .$(", column=").$safe(columnName)
                             .$(", count=").$(cleanSymbolCount)
