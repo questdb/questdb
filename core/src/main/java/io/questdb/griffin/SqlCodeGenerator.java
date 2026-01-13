@@ -3078,10 +3078,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 JoinContext slaveContext = slaveModel.getJoinContext();
                 if (!hasLinearHint) {
                     if (slave.supportsTimeFrameCursor()) {
-                        boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit);
+                        boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
                         if (hasDenseHint) {
-                            if (listColumnFilterA.getColumnCount() == 1 && isSingleSymbolJoin) {
+                            if (isSingleSymbolJoin) {
                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                 return new AsOfJoinDenseSingleSymbolRecordCursorFactory(
                                         configuration,
@@ -3109,7 +3109,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
                         RecordSink recordCopierMaster;
-                        if (listColumnFilterA.getColumnCount() == 1 && isSingleSymbolJoin) {
+                        if (isSingleSymbolJoin) {
                             SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
@@ -3234,7 +3234,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // fallback for keyed join when no optimizations are applicable, or when asof_linear hint is used:
-                if (listColumnFilterA.getColumnCount() == 1 && isSingleSymbolJoin(symbolShortCircuit)) {
+                if (isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA)) {
                     // We're falling back to the default Light scan. We can still optimize one thing:
                     // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                     // For that to work, we need code that maps master symbol key to slave symbol key.
@@ -7729,8 +7729,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
-    private boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit) {
-        return symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
+    private boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
+        return joinColumns.getColumnCount() == 1 &&
+                symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
     }
 
