@@ -61,7 +61,6 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -89,6 +88,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final ObjList<TxnScoreboard> scoreboards = new ObjList<>();
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
+    private final TxReader txReader;
     private volatile boolean ownsWalPurgeJobRunLock = false;
     private SimpleWaitingLock walPurgeJobRunLock = null;
 
@@ -100,6 +100,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
+        this.txReader = new TxReader(configuration.getFilesFacade());
     }
 
     @TestOnly
@@ -313,23 +314,63 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                                 if (tableToken.isView()) {
                                     final ViewGraph viewGraph = engine.getViewGraph();
-                                    final ViewDefinition viewDefinition = viewGraph.getViewDefinition(tableToken);
+                                    ViewDefinition viewDefinition;
+                                    long lastTxn = -1;
+
+                                    viewDefinition = viewGraph.getViewDefinition(tableToken);
                                     if (viewDefinition != null) {
+
                                         matViewFileWriter.of(path.trimTo(rootLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
                                         ViewDefinition.append(viewDefinition, matViewFileWriter);
-                                        tableNameRegistryStore.logAddTable(tableToken);
 
+                                        // Write table _txn file to checkpoint. Read it safely, it can be changing on view alters.
+                                        try (var trdr = txReader.ofRO(
+                                                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                                ColumnType.TIMESTAMP_MICRO,
+                                                PartitionBy.NOT_APPLICABLE
+                                        )) {
+                                            TableUtils.safeReadTxn(
+                                                    trdr,
+                                                    configuration.getMillisecondClock(),
+                                                    configuration.getSpinLockTimeout()
+                                            );
+                                            if (trdr.seqTxn == viewDefinition.getSeqTxn()) {
+                                                lastTxn = trdr.seqTxn;
+                                                // Dump _txn file to checkpoint
+                                                path.of(checkpointRoot)
+                                                        .concat(configuration.getDbDirectory()).concat(tableToken)
+                                                        .concat(TXN_FILE_NAME)
+                                                        .$();
+                                                mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                                                trdr.dumpTo(mem);
+                                                mem.close(false);
+                                            }
+                                        }
+
+                                        tableNameRegistryStore.logAddTable(tableToken);
                                         path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
                                         if (ff.mkdirs(path.slash(), configuration.getMkDirMode()) != 0) {
                                             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
                                         }
-                                        metadata.clear();
-                                        long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
-                                        path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
-                                        metadata.switchTo(path, path.size(), true);
-                                        metadata.close(true, Vm.TRUNCATE_TO_POINTER);
 
-                                        mem.smallFile(ff, path.concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                        // Copy view _meta file to checkpoint
+                                        final Path auxPath = Path.PATH2.get();
+                                        auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                                        if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                            throw CairoException.critical(ff.errno()).put("could not copy view metadata file [table=").put(tableToken).put(']');
+                                        }
+
+                                        // Copy txn_seq/_meta file to checkpoint
+                                        auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(TableUtils.META_FILE_NAME).$();
+                                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(TableUtils.META_FILE_NAME).$();
+                                        if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                            throw CairoException.critical(ff.errno()).put("could not copy view sequencer metadata file [table=").put(tableToken).put(']');
+                                        }
+
+                                        // Write txn_seq/_txn to checkpoint
+                                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(WalUtils.SEQ_DIR);
+                                        mem.smallFile(ff, path.concat(TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                                         mem.putLong(lastTxn);
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
 
