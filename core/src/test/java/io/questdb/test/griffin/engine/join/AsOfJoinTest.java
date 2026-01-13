@@ -1710,6 +1710,51 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinWithSymbolAndOtherColumnInOnClause_Dense() throws Exception {
+        // Requires asof_dense hint to trigger this path.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t1 (
+                                sym SYMBOL,
+                                val INT,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t2 (
+                                sym SYMBOL,
+                                val INT,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("INSERT INTO t1 VALUES ('A', 1, '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', 1, '2024-01-01T09:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', 2, '2024-01-01T10:00:00.000000Z')");
+
+            // ASOF JOIN with asof_dense hint + symbol AND val in ON clause
+            String query = "SELECT /*+ asof_dense(t1 t2) */ t1.sym, t1.val, t1.ts, t2.sym as sym2, t2.val as val2, t2.ts as ts2 " +
+                    "FROM t1 ASOF JOIN t2 ON (t1.sym = t2.sym) AND (t1.val = t2.val)";
+
+            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+            String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
+            var expected = String.format("""
+                    sym\tval\tts\tsym2\tval2\tts2
+                    A\t1\t2024-01-01T10:00:00.000000%1$s\tA\t1\t2024-01-01T09:00:00.000000%2$s
+                    """, leftSuffix, rightSuffix);
+
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testAsOfJoinWithSymbolAndOtherColumnInOnClause_Fast() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(

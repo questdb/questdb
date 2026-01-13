@@ -3081,7 +3081,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
                         if (hasDenseHint) {
-                            if (isSingleSymbolJoin) {
+                            if (listColumnFilterA.getColumnCount() == 1 && isSingleSymbolJoin) {
                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                 return new AsOfJoinDenseSingleSymbolRecordCursorFactory(
                                         configuration,
