@@ -126,7 +126,7 @@ public class RecentWriteTracker {
     public WriteStats getOrCreateStats(@NotNull TableToken tableToken) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats == null) {
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
             WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
             stats = existing != null ? existing : newStats;
         }
@@ -264,18 +264,21 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Records both write amplification and merge throughput for a specific table.
+     * Records merge statistics for a specific table including write amplification,
+     * throughput, and table timestamps.
      * <p>
-     * This is a convenience method that records both metrics in a single call,
+     * This is a convenience method that records all merge metrics in a single call,
      * avoiding redundant map lookups and using a single lock acquisition.
      *
-     * @param tableToken    the table that was written to
-     * @param amplification the write amplification ratio (physicalRows / logicalRows)
-     * @param throughput    the throughput in rows/second
+     * @param tableToken        the table that was written to
+     * @param amplification     the write amplification ratio (physicalRows / logicalRows)
+     * @param throughput        the throughput in rows/second
+     * @param tableMinTimestamp the minimum timestamp of data in the table
+     * @param tableMaxTimestamp the maximum timestamp of data in the table
      */
-    public void recordMergeStats(@NotNull TableToken tableToken, double amplification, long throughput) {
+    public void recordMergeStats(@NotNull TableToken tableToken, double amplification, long throughput, long tableMinTimestamp, long tableMaxTimestamp) {
         try {
-            getOrCreateStats(tableToken).recordMergeStats(amplification, throughput);
+            getOrCreateStats(tableToken).recordMergeStats(amplification, throughput, tableMinTimestamp, tableMaxTimestamp);
         } catch (Throwable th) {
             LOG.error().$("could not record merge stats [table=").$(tableToken).$(", error=").$(th).I$();
         }
@@ -373,14 +376,14 @@ public class RecentWriteTracker {
      * For existing entries, this method performs zero allocations by reusing the
      * existing {@link WriteStats} object.
      *
-     * @param tableToken the table that was written to
-     * @param timestamp  the write timestamp in microseconds
-     * @param rowCount   the total row count after the write
-     * @param writerTxn  the writer transaction number (not WAL sequence txn)
+     * @param tableToken     the table that was written to
+     * @param writeTimestamp the write timestamp in microseconds
+     * @param rowCount       the total row count after the write
+     * @param writerTxn      the writer transaction number (not WAL sequence txn)
      */
-    public void recordWrite(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn) {
+    public void recordWrite(@NotNull TableToken tableToken, long writeTimestamp, long rowCount, long writerTxn) {
         try {
-            getOrCreateStats(tableToken).updateWriter(timestamp, rowCount, writerTxn);
+            getOrCreateStats(tableToken).updateWriter(writeTimestamp, rowCount, writerTxn);
 
             // Lazy eviction: only clean up when we exceed 2x capacity
             // This amortizes the cleanup cost and reduces contention
@@ -399,15 +402,26 @@ public class RecentWriteTracker {
      * without overwriting fresher data from concurrent writers. Writer data always wins
      * over hydrated data.
      *
-     * @param tableToken   the table that was written to
-     * @param timestamp    the write timestamp in microseconds
-     * @param rowCount     the total row count after the write
-     * @param writerTxn    the writer transaction number (not WAL sequence txn)
-     * @param sequencerTxn the sequencer transaction number from WAL
-     * @param walTimestamp the WAL write timestamp in microseconds (use same as timestamp for hydration)
+     * @param tableToken        the table that was written to
+     * @param writeTimestamp    the write timestamp in microseconds
+     * @param rowCount          the total row count after the write
+     * @param writerTxn         the writer transaction number (not WAL sequence txn)
+     * @param sequencerTxn      the sequencer transaction number from WAL
+     * @param walTimestamp      the WAL write timestamp in microseconds (use same as writeTimestamp for hydration)
+     * @param tableMinTimestamp the minimum timestamp of data in the table
+     * @param tableMaxTimestamp the maximum timestamp of data in the table
      * @return true if entry was inserted, false if entry already existed
      */
-    public boolean recordWriteIfAbsent(@NotNull TableToken tableToken, long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp) {
+    public boolean recordWriteIfAbsent(
+            @NotNull TableToken tableToken,
+            long writeTimestamp,
+            long rowCount,
+            long writerTxn,
+            long sequencerTxn,
+            long walTimestamp,
+            long tableMinTimestamp,
+            long tableMaxTimestamp
+    ) {
         try {
             // Check first to avoid allocation when entry exists
             if (writeStats.containsKey(tableToken)) {
@@ -415,7 +429,10 @@ public class RecentWriteTracker {
             }
 
             // CAS insert - only succeeds if no entry exists
-            WriteStats existing = writeStats.putIfAbsent(tableToken, new WriteStats(timestamp, rowCount, writerTxn, sequencerTxn, walTimestamp));
+            WriteStats existing = writeStats.putIfAbsent(
+                    tableToken,
+                    new WriteStats(writeTimestamp, rowCount, writerTxn, sequencerTxn, walTimestamp, tableMinTimestamp, tableMaxTimestamp)
+            );
             if (existing != null) {
                 // Another thread (likely a writer) inserted first - their data wins
                 return false;
@@ -590,17 +607,23 @@ public class RecentWriteTracker {
         private final AtomicLong walTimestamp;
         // Write amplification histogram - tracks ratio of physical rows written to logical rows
         private final DoubleHistogram writeAmplificationHistogram = new DoubleHistogram(2);
+        // Table data timestamps - min/max timestamp values of actual data in the table (updated during WAL merge)
+        // Protected by mergeStatsLock
+        private long tableMaxTimestamp;
+        private long tableMinTimestamp;
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
         private volatile long timestamp;
         private volatile long writerTxn;
 
-        WriteStats(long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp) {
+        WriteStats(long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp, long tableMinTimestamp, long tableMaxTimestamp) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;
             this.sequencerTxn = new AtomicLong(sequencerTxn);
             this.walTimestamp = new AtomicLong(walTimestamp);
+            this.tableMinTimestamp = tableMinTimestamp;
+            this.tableMaxTimestamp = tableMaxTimestamp;
             this.batchSizeHistogram.setAutoResize(true);
             this.mergeThroughputHistogram.setAutoResize(true);
             this.txnSizeHistogram.setAutoResize(true);
@@ -699,6 +722,40 @@ public class RecentWriteTracker {
          */
         public long getFloorSeqTxn() {
             return floorSeqTxn.get();
+        }
+
+        /**
+         * Returns the maximum timestamp of actual data in the table.
+         * <p>
+         * This is the highest timestamp value present in the table's data,
+         * updated when WAL transactions are merged into the table.
+         *
+         * @return max data timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
+         */
+        public long getTableMaxTimestamp() {
+            mergeStatsLock.readLock().lock();
+            try {
+                return tableMaxTimestamp;
+            } finally {
+                mergeStatsLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the minimum timestamp of actual data in the table.
+         * <p>
+         * This is the lowest timestamp value present in the table's data,
+         * updated when WAL transactions are merged into the table.
+         *
+         * @return min data timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
+         */
+        public long getTableMinTimestamp() {
+            mergeStatsLock.readLock().lock();
+            try {
+                return tableMinTimestamp;
+            } finally {
+                mergeStatsLock.readLock().unlock();
+            }
         }
 
         /**
@@ -1111,14 +1168,18 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Records both write amplification and merge throughput under a single lock.
+         * Records merge statistics including write amplification, throughput, and table timestamps.
          *
-         * @param amplification the write amplification ratio (physicalRows / logicalRows)
-         * @param throughput    the throughput in rows/second
+         * @param amplification     the write amplification ratio (physicalRows / logicalRows)
+         * @param throughput        the throughput in rows/second
+         * @param tableMinTimestamp the minimum timestamp of data in the table
+         * @param tableMaxTimestamp the maximum timestamp of data in the table
          */
-        void recordMergeStats(double amplification, long throughput) {
+        void recordMergeStats(double amplification, long throughput, long tableMinTimestamp, long tableMaxTimestamp) {
             mergeStatsLock.writeLock().lock();
             try {
+                this.tableMinTimestamp = tableMinTimestamp;
+                this.tableMaxTimestamp = tableMaxTimestamp;
                 if (amplification > 0) {
                     writeAmplificationHistogram.recordValue(amplification);
                 }
