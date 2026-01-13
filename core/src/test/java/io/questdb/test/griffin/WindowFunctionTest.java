@@ -239,4 +239,264 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 true
         );
     }
+
+    @Test
+    public void testWindowFunctionWithLimit() throws Exception {
+        // Test window function with LIMIT clause
+        assertQuery(
+                """
+                        rn
+                        1
+                        2
+                        """,
+                "SELECT row_number() OVER (ORDER BY ts) AS rn FROM x LIMIT 2",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTwoWindowColumns() throws Exception {
+        // Test two window functions with different specifications
+        assertQuery(
+                """
+                        id\trn\ttotal
+                        1\t1\t15.0
+                        2\t2\t15.0
+                        3\t3\t15.0
+                        4\t4\t15.0
+                        5\t5\t15.0
+                        """,
+                "SELECT id, " +
+                        "row_number() OVER (ORDER BY ts) AS rn, " +
+                        "sum(id) OVER () AS total " +
+                        "FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowOrderByDesc() throws Exception {
+        // Test window function with ORDER BY DESC
+        assertQuery(
+                """
+                        id\trn
+                        1\t5
+                        2\t4
+                        3\t3
+                        4\t2
+                        5\t1
+                        """,
+                "SELECT id, row_number() OVER (ORDER BY ts DESC) AS rn FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowMultiplePartitionBy() throws Exception {
+        // Test window function with multiple PARTITION BY columns
+        assertQuery(
+                """
+                        a\tb\trn
+                        1\tX\t1
+                        1\tX\t2
+                        1\tY\t1
+                        2\tX\t1
+                        2\tY\t1
+                        """,
+                "SELECT a, b, row_number() OVER (PARTITION BY a, b ORDER BY ts) AS rn FROM x ORDER BY a, b, ts",
+                "CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x <= 3 THEN 1 ELSE 2 END AS a, " +
+                        "  CASE WHEN x IN (1, 2, 4) THEN 'X' ELSE 'Y' END AS b, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFrameRowsBetween() throws Exception {
+        // Test window function with ROWS BETWEEN frame specification
+        // Note: QuestDB only supports PRECEDING and CURRENT ROW for frame end
+        assertQuery(
+                """
+                        id\tmoving_sum
+                        1\t1.0
+                        2\t3.0
+                        3\t5.0
+                        4\t7.0
+                        5\t9.0
+                        """,
+                "SELECT id, sum(id) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS moving_sum FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowAvg() throws Exception {
+        // Test avg() window function
+        assertQuery(
+                """
+                        id\tavg_val
+                        1\t1.0
+                        2\t1.5
+                        3\t2.0
+                        4\t2.5
+                        5\t3.0
+                        """,
+                "SELECT id, avg(id) OVER (ORDER BY ts) AS avg_val FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFirstValue() throws Exception {
+        // Test first_value() window function
+        assertQuery(
+                """
+                        id\tfirst_val
+                        1\t1
+                        2\t1
+                        3\t1
+                        4\t1
+                        5\t1
+                        """,
+                "SELECT id, first_value(id) OVER (ORDER BY ts) AS first_val FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowRank() throws Exception {
+        // Test rank() window function with ties
+        assertQuery(
+                """
+                        val\trnk
+                        1\t1
+                        1\t1
+                        2\t3
+                        3\t4
+                        3\t4
+                        """,
+                "SELECT val, rank() OVER (ORDER BY val) AS rnk FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x IN (1, 2) THEN 1 WHEN x = 3 THEN 2 ELSE 3 END AS val, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowDenseRank() throws Exception {
+        // Test dense_rank() window function with ties
+        assertQuery(
+                """
+                        val\tdrnk
+                        1\t1
+                        1\t1
+                        2\t2
+                        3\t3
+                        3\t3
+                        """,
+                "SELECT val, dense_rank() OVER (ORDER BY val) AS drnk FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x IN (1, 2) THEN 1 WHEN x = 3 THEN 2 ELSE 3 END AS val, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowCount() throws Exception {
+        // Test count() window function
+        assertQuery(
+                """
+                        id\tcnt
+                        1\t1
+                        2\t2
+                        3\t3
+                        4\t4
+                        5\t5
+                        """,
+                "SELECT id, count(*) OVER (ORDER BY ts) AS cnt FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowCumulativeSum() throws Exception {
+        // Test cumulative sum using ROWS UNBOUNDED PRECEDING
+        assertQuery(
+                """
+                        id\tcum_sum
+                        1\t1.0
+                        2\t3.0
+                        3\t6.0
+                        4\t10.0
+                        5\t15.0
+                        """,
+                "SELECT id, sum(id) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS cum_sum FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
 }
