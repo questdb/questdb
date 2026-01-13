@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,8 +42,9 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
-
     private final SampleByFillValueNotKeyedRecordCursor cursor;
+    private final SimpleMapValue simpleMapValue;
+    private final SimpleMapValue simpleMapValueB;
 
     public SampleByFillValueNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -77,8 +78,9 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
                     fillValues,
                     true
             );
-            final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-            final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, new SimpleMapValue(valueCount));
+            this.simpleMapValue = new SimpleMapValue(valueCount);
+            this.simpleMapValueB = new SimpleMapValue(valueCount);
+            final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, simpleMapValueB);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             cursor = new SampleByFillValueNotKeyedRecordCursor(
                     configuration,
@@ -102,9 +104,9 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
 
             );
             peeker.setCursor(cursor);
-        } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            throw e;
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
@@ -112,10 +114,20 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("value");
-        if (cursor.sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL || cursor.sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL)
+        if (cursor.sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL
+                || cursor.sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL) {
             sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
+        }
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(simpleMapValue);
+        Misc.free(simpleMapValueB);
+        Misc.free(cursor);
     }
 
     @Override

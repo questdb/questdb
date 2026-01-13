@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.RecordToRowCopier;
@@ -149,7 +148,7 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                     if (timestampIndex == -1) {
                         rowCount = SqlCompilerImpl.copyUnordered(executionContext, cursor, writer, copier);
                     } else {
-                        if (batchSize != -1) {
+                        if (batchSize > 0) {
                             rowCount = SqlCompilerImpl.copyOrderedBatched(
                                     executionContext,
                                     writer,

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,8 +28,17 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Abstract base class for CharSequence implementations.
+ */
 public abstract class AbstractCharSequence implements CharSequence, CloneableMutable {
 
+    /**
+     * Converts a CharSequence to a String.
+     *
+     * @param cs the CharSequence to convert
+     * @return the String representation
+     */
     public static String getString(CharSequence cs) {
         final Utf16Sink b = Misc.getThreadLocalSink();
         b.put(cs);
@@ -69,6 +78,13 @@ public abstract class AbstractCharSequence implements CharSequence, CloneableMut
         return getString(this);
     }
 
+    /**
+     * Returns a subsequence of this character sequence.
+     *
+     * @param start the start index
+     * @param end   the end index
+     * @return the subsequence
+     */
     protected CharSequence _subSequence(int start, int end) {
         throw new UnsupportedOperationException();
     }

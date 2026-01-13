@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -118,30 +118,21 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     public static int changeColumnTypeTo(Rnd rnd, int columnType) {
         int nextColType = columnType;
-        switch (columnType) {
-            case ColumnType.STRING:
-                return rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
-            case ColumnType.SYMBOL:
-                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
-            case ColumnType.VARCHAR:
-                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
+        return switch (columnType) {
+            case ColumnType.STRING -> rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
+            case ColumnType.SYMBOL -> rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
+            case ColumnType.VARCHAR -> rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> {
                 while (nextColType == columnType) { // disallow noop conversion
                     nextColType = integerColumnTypes[rnd.nextInt(integerColumnTypes.length)];
                 }
-                return nextColType;
-            case ColumnType.FLOAT:
-                return ColumnType.DOUBLE;
-            case ColumnType.DOUBLE:
-                return ColumnType.FLOAT;
-            case TIMESTAMP:
-                return ColumnType.LONG;
-
-        }
-        return columnType;
+                yield nextColType;
+            }
+            case ColumnType.FLOAT -> ColumnType.DOUBLE;
+            case ColumnType.DOUBLE -> ColumnType.FLOAT;
+            case TIMESTAMP -> ColumnType.LONG;
+            default -> columnType;
+        };
     }
 
     @BeforeClass

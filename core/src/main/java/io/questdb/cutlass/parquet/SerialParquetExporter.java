@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -105,6 +105,7 @@ public class SerialParquetExporter implements Closeable {
             throw CairoException.nonCritical().put("parquet export is disabled ['cairo.sql.copy.export.root' is not set]");
         }
 
+        sqlExecutionContext.setNowAndFixClock(task.getNow(), task.getNowTimestampType());
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         TableToken tableToken = null;
         int tempBaseDirLen = 0;
@@ -276,7 +277,7 @@ public class SerialParquetExporter implements Closeable {
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
                 try {
                     fromParquet.trimTo(0);
-                    cairoEngine.dropTableOrMatView(fromParquet, tableToken);
+                    cairoEngine.dropTableOrViewOrMatView(fromParquet, tableToken);
                     copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
                 } catch (CairoException e) {
                     // drop failure doesn't affect task continuation - log and proceed

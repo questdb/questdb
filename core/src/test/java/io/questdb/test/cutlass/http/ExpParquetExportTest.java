@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.http;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
@@ -465,6 +466,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testExportWithNowFunc() throws Exception {
+        getExportTester().withMicrosecondClock(() -> 3000000L)
+                .run((engine, sqlExecutionContext) -> {
+                    sqlExecutionContext.setNowAndFixClock(1000000L, ColumnType.TIMESTAMP_MICRO);
+                    engine.execute("CREATE TABLE basic_parquet_test AS (" +
+                            "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
+                            "FROM long_sequence(5)" +
+                            ")", sqlExecutionContext);
+                    testHttpClient.assertGetParquet("/exp", 1262, "select * from basic_parquet_test where ts < now()");
+                });
+    }
+
+    @Test
     public void testJsonConnectionCounterDoesNotGoNegativeWithConcurrentExports() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -578,7 +592,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     Thread thread = startCancelThread(engine, sqlExecutionContext);
                     thread.start();
                     String expectedError = "cancelled by user";
-                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
+                    testHttpClient.assertGetContains("/exp", expectedError, params);
                     thread.join();
                 });
     }
@@ -598,7 +612,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     thread.start();
                     String expectedError = "cancelled by user";
                     try {
-                        testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
+                        testHttpClient.assertGetContains("/exp", expectedError, params);
                         Assert.fail("server should disconnect");
                     } catch (HttpClientException e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -1318,7 +1332,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("timeout", "1");
                     String expectedError = "timeout, query aborted";
-                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
+                    testHttpClient.assertGetContains("/exp", expectedError, params);
                 });
     }
 
@@ -1333,7 +1347,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("rmode", "nodelay");
 
                     try {
-                        testHttpClient.assertGetContains("/exp", "nothing", params, null, null, 9001);
+                        testHttpClient.assertGetContains("/exp", "nothing", params);
                         Assert.fail();
                     } catch (HttpClientException e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -1361,6 +1375,31 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
 
                     testHttpClient.assertGetParquet("/exp", 2075, tableName);
+                });
+    }
+
+    @Test
+    public void testParquetExportWithPivot() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE monthly_sales (empid INT, amount INT, month SYMBOL)", sqlExecutionContext);
+                    engine.execute("INSERT INTO monthly_sales VALUES " +
+                            "(1, 10000, 'JAN'), (1, 400, 'JAN'), (2, 4500, 'JAN'), (2, 35000, 'JAN'), " +
+                            "(1, 5000, 'FEB'), (1, 3000, 'FEB'), (2, 200, 'FEB'), (2, 90500, 'FEB'), " +
+                            "(1, 6000, 'MAR'), (1, 5000, 'MAR'), (2, 2500, 'MAR'), (2, 9500, 'MAR')", sqlExecutionContext);
+                    testHttpClient.setKeepConnection(true);
+                    testHttpClient.assertGetParquet(
+                            "/exp",
+                            1177,
+                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                    );
+                    engine.execute("INSERT INTO monthly_sales VALUES (3, 9000, 'APRIL')", sqlExecutionContext);
+                    testHttpClient.setKeepConnection(false);
+                    testHttpClient.assertGetParquet(
+                            "/exp",
+                            1453,
+                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                    );
                 });
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -151,6 +151,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.EMPTY, (state, cq, keepAliveHeader) -> sendEmptyQueryNotice(state, keepAliveHeader));
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_MAT_VIEW, this::executeDdl);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_VIEW, this::executeDdl);
+            this.queryExecutors.extendAndSet(CompiledQuery.COMPILE_VIEW, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.ALTER_VIEW, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.REFRESH_MAT_VIEW, sendConfirmation);
 
             // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
@@ -205,7 +208,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             if (factory != null) {
                 // queries with sensitive info are not cached, doLog = true
                 try {
-                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
+                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP);
                     executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
                     LOG.info().$safe(e.getFlyweightMessage()).$();
@@ -488,7 +491,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
+                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 state.setQueryType(cc.getType());
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
@@ -586,7 +589,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.setCompilerNanos(0);
         sqlExecutionContext.setCacheHit(true);
-        executeSelect(state, factory);
+        executeSelect0(state, factory, true);
     }
 
     private void executeDdl(
@@ -636,7 +639,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        executeSelect(state, cq.getRecordCursorFactory());
+        executeSelect0(state, cq.getRecordCursorFactory(), cq.isCacheable());
     }
 
     private void executePseudoSelect(
@@ -652,17 +655,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
         // new import case
         executeSelect0(state, factory, false);
-    }
-
-    private void executeSelect(
-            JsonQueryProcessorState state,
-            RecordCursorFactory factory
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        executeSelect0(
-                state,
-                factory,
-                true
-        );
     }
 
     private void executeSelect0(JsonQueryProcessorState state, RecordCursorFactory factory, boolean queryCacheable)

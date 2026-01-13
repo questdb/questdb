@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -192,7 +192,7 @@ public class WorkerPool implements Closeable {
                 worker.start();
             }
             if (log != null) {
-                log.info().$("worker pool started [pool=").$(poolName).I$();
+                log.debug().$("worker pool started [pool=").$(poolName).I$();
             }
             started.countDown();
         }

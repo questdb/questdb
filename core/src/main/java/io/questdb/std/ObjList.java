@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -82,6 +82,14 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
     }
 
+    public void addReverseAll(ReadOnlyObjList<? extends T> that) {
+        int n = that.size();
+        checkCapacity(pos + n);
+        for (int i = n - 1; i >= 0; i--) {
+            buffer[pos++] = that.getQuick(i);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public void checkCapacity(int capacity) {
         int l = buffer.length;
@@ -111,6 +119,11 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
 
         return false;
+    }
+
+    @Override
+    public ObjList<T> copy() {
+        return new ObjList<>(this);
     }
 
     /**
@@ -314,11 +327,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     @Override
     public int size() {
         return pos;
-    }
-
-    @Override
-    public ObjList<T> copy() {
-        return new ObjList<>(this);
     }
 
     public void sort(Comparator<T> cmp) {

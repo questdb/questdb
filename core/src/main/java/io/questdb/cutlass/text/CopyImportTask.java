@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -547,7 +547,6 @@ public class CopyImportTask {
                             DefaultLifecycleManager.INSTANCE,
                             root,
                             cairoEngine.getDdlListener(tableToken),
-                            cairoEngine.getCheckpointStatus(),
                             cairoEngine,
                             EMPTY_SCOREBOARD_POOL
                     )
@@ -656,11 +655,11 @@ public class CopyImportTask {
 
     public static class PhaseUpdateSymbolKeys {
         CharSequence columnName;
-        int tempTableIndex;
         long partitionSize;
         long partitionTimestamp;
         CharSequence root;
         int symbolCount;
+        int tempTableIndex;
         private CairoEngine cairoEngine;
         private ParallelCsvFileImporter.TableStructureAdapter tableStructure;
 
@@ -875,6 +874,7 @@ public class CopyImportTask {
         private final StringSink tableNameSink = new StringSink();
         private int atomicity;
         private byte columnDelimiter;
+        private Decimal256 decimal256;
         private CairoEngine engine;
         private long errors;
         private int hi;
@@ -893,7 +893,6 @@ public class CopyImportTask {
         private ObjList<TypeAdapter> types;
         private DirectUtf16Sink utf16Sink;
         private DirectUtf8Sink utf8Sink;
-        private Decimal256 decimal256;
         private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
         public void clear() {
@@ -969,6 +968,7 @@ public class CopyImportTask {
             );
             createTable(
                     ff,
+                    engine.getTelemetry(),
                     configuration.getMkDirMode(),
                     importRoot,
                     tableToken.getDirName(),
@@ -988,7 +988,6 @@ public class CopyImportTask {
                             DefaultLifecycleManager.INSTANCE,
                             importRoot,
                             engine.getDdlListener(tableToken),
-                            engine.getCheckpointStatus(),
                             engine,
                             EMPTY_SCOREBOARD_POOL
                     )

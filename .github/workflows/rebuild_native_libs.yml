@@ -22,7 +22,7 @@ jobs:
         # macos-14 = ARM M1
         # macos-15-intel = x64
         # if you change OS definitions then you need to change conditions in cache-save steps below
-        os: [ macos-14, macos-15-intel ]
+        os: [macos-14, macos-15-intel]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -46,21 +46,18 @@ jobs:
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
           mkdir -p core/src/main/bin/darwin-aarch64/
           cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
-          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-aarch64/
       - name: Copy darwin-x86-64 CXX Library to the final directory
         if: ${{ matrix.os == 'macos-15-intel' }}
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-x86-64/
           mkdir -p core/src/main/bin/darwin-x86-64/
           cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-x86-64/
-          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-x86-64/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
-            core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Save darwin-x86-64 Libraries to Cache
         if: ${{ matrix.os == 'macos-15-intel' }}
@@ -68,15 +65,13 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
-            core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-x86-64:
     runs-on: ubuntu-latest
     # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
     # 2.17 is old enough to be compatible with most Linux distributions out there
     container:
-      image:
-        quay.io/pypa/manylinux2014_x86_64
+      image: quay.io/pypa/manylinux2014_x86_64
       volumes:
         - /node20217:/node20217
         - /node20217:/__e/node20
@@ -190,10 +185,6 @@ jobs:
           sudo sysctl -w fs.file-max=500000
           sudo apt-get update -y
           sudo apt-get install -y nasm gcc-mingw-w64 g++-mingw-w64
-      - name: Generate Makefiles
-        run: |
-          cd ./core
-          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: Download windows jni_md.h from JDK 11
         run: |
           cd core
@@ -225,7 +216,13 @@ jobs:
             core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-all-macos,build-cxx-windows, build-all-linux-x86-64, build-all-linux-aarch64 ]
+    needs:
+      [
+        build-all-macos,
+        build-cxx-windows,
+        build-all-linux-x86-64,
+        build-all-linux-aarch64,
+      ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -240,14 +237,12 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
-            core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Restore darwin-x86-64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
-            core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           key: nativelibs-osx-${{ github.sha }}
       - name: Restore linux-x86-64 Libraries from Cache
         uses: actions/cache/restore@v3
@@ -277,26 +272,22 @@ jobs:
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
           git config --global user.email 'jaromir@questdb.io'
           git add core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
-          git add core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           git add core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
-          git add core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           git add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
           git add core/src/main/bin/linux-x86-64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
           git add core/src/main/bin/linux-aarch64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
-          
+
           echo "Removing exec permissions in Git index..."
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
           git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
-          
+
           git update-index --chmod=-x core/src/main/bin/linux-x86-64/libjemalloc.so
           git update-index --chmod=-x core/src/main/bin/linux-aarch64/libjemalloc.so
-          git update-index --chmod=-x core/src/main/bin/darwin-x86-64/libjemalloc.dylib
-          git update-index --chmod=-x core/src/main/bin/darwin-aarch64/libjemalloc.dylib
-          
+
           git commit -m "Rebuild CXX libraries"
       - name: Check git status after
         run: |

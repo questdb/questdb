@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -81,7 +81,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.keyFunctions = keyFunctions;
             this.recordFunctions = recordFunctions;
             // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, null);
+            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, null, configuration);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
         } catch (Throwable e) {
@@ -230,6 +230,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
+                allocator.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             Function.init(keyFunctions, managedCursor, executionContext, null);

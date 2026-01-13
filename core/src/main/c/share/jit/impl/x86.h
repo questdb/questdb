@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,48 +31,50 @@ namespace questdb::x86 {
     using namespace asmjit;
     using namespace asmjit::x86;
 
-    inline Gpd int32_not(Compiler &c, const Gpd &b) {
-        c.not_(b);
-        return b;
+    inline Gp int32_not(Compiler &c, const Gp &b) {
+        Gp r = c.new_gp32();
+        c.mov(r, b);
+        c.xor_(r, 1);
+        return r.as<Gp>();
     }
 
-    inline Gpd int32_and(Compiler &c, const Gpd &b1, const Gpd &b2) {
+    inline Gp int32_and(Compiler &c, const Gp &b1, const Gp &b2) {
         c.and_(b1, b2);
         return b1;
     }
 
-    inline Gpd int32_or(Compiler &c, const Gpd &b1, const Gpd &b2) {
+    inline Gp int32_or(Compiler &c, const Gp &b1, const Gp &b2) {
         c.comment("int32_or_start");
         c.or_(b1, b2);
         c.comment("int32_or_stop");
         return b1;
     }
 
-    inline Gpq int32_to_int64(Compiler &c, const Gpd &rhs, bool check_null) {
+    inline Gp int32_to_int64(Compiler &c, const Gp &rhs, bool check_null) {
         c.comment("int32_to_int64");
-        Gp r = c.newInt64();
+        Gp r = c.new_gp64();
         if (!check_null) {
             c.movsxd(r, rhs);
-            return r.as<Gpq>();
+            return r.as<Gp>();
         }
-        Gp t = c.newInt64();
+        Gp t = c.new_gp64();
         c.cmp(rhs, INT_NULL);
         c.movsxd(t, rhs);
         c.movabs(r, LONG_NULL);
         c.cmovne(r, t);
-        return r.as<Gpq>();
+        return r.as<Gp>();
     }
 
-    inline Xmm int32_to_float(Compiler &c, const Gpd &rhs, bool check_null) {
+    inline Vec int32_to_float(Compiler &c, const Gp &rhs, bool check_null) {
         c.comment("int32_to_float");
-        Xmm r = c.newXmmSs();
+        Vec r =c.new_xmm_ss();
         if (!check_null) {
             c.cvtsi2ss(r, rhs);
             return r;
         }
-        Label l_null = c.newLabel();
-        Label l_exit = c.newLabel();
-        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fc00000); // float NaN
+        Label l_null = c.new_label();
+        Label l_exit = c.new_label();
+        Mem NaN = c.new_int32_const(asmjit::ConstPoolScope::kLocal, 0x7fc00000); // float NaN
 
         c.cmp(rhs, INT_NULL);
         c.je(l_null);
@@ -84,17 +86,17 @@ namespace questdb::x86 {
         return r;
     }
 
-    inline Xmm int32_to_double(Compiler &c, const Gpd &rhs, bool check_null) {
+    inline Vec int32_to_double(Compiler &c, const Gp &rhs, bool check_null) {
         c.comment("int32_to_double");
-        Xmm r = c.newXmmSd();
+        Vec r =c.new_xmm_sd();
         c.xorps(r, r);
         if (!check_null) {
             c.cvtsi2sd(r, rhs);
             return r;
         }
-        Label l_null = c.newLabel();
-        Label l_exit = c.newLabel();
-        Mem NaN = c.newInt64Const(asmjit::ConstPool::kScopeLocal, 0x7ff8000000000000LL); // double NaN
+        Label l_null = c.new_label();
+        Label l_exit = c.new_label();
+        Mem NaN = c.new_int64_const(asmjit::ConstPoolScope::kLocal, 0x7ff8000000000000LL); // double NaN
 
         c.cmp(rhs, INT_NULL);
         c.je(l_null);
@@ -107,18 +109,18 @@ namespace questdb::x86 {
     }
 
     //coverage: we don't have int64 to float conversion for now
-    inline Xmm int64_to_float(Compiler &c, const Gpq &rhs, bool check_null) {
+    inline Vec int64_to_float(Compiler &c, const Gp &rhs, bool check_null) {
         c.comment("int64_to_float");
-        Xmm r = c.newXmmSs();
+        Vec r =c.new_xmm_ss();
         if (!check_null) {
             c.cvtsi2ss(r, rhs);
             return r;
         }
-        Label l_null = c.newLabel();
-        Label l_exit = c.newLabel();
-        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fc00000); // float NaN
+        Label l_null = c.new_label();
+        Label l_exit = c.new_label();
+        Mem NaN = c.new_int32_const(asmjit::ConstPoolScope::kLocal, 0x7fc00000); // float NaN
 
-        Gp n = c.newGpq();
+        Gp n = c.new_gp64();
         c.movabs(n, LONG_NULL);
         c.cmp(rhs, n);
         c.je(l_null);
@@ -130,19 +132,19 @@ namespace questdb::x86 {
         return r;
     }
 
-    inline Xmm int64_to_double(Compiler &c, const Gpq &rhs, bool check_null) {
+    inline Vec int64_to_double(Compiler &c, const Gp &rhs, bool check_null) {
         c.comment("int64_to_double");
-        Xmm r = c.newXmmSd();
+        Vec r =c.new_xmm_sd();
         c.xorps(r, r);
         if (!check_null) {
             c.cvtsi2sd(r, rhs);
             return r;
         }
-        Label l_null = c.newLabel();
-        Label l_exit = c.newLabel();
-        Mem NaN = c.newInt64Const(asmjit::ConstPool::kScopeLocal, 0x7ff8000000000000LL); // double NaN
+        Label l_null = c.new_label();
+        Label l_exit = c.new_label();
+        Mem NaN = c.new_int64_const(asmjit::ConstPoolScope::kLocal, 0x7ff8000000000000LL); // double NaN
 
-        Gp n = c.newGpq();
+        Gp n = c.new_gp64();
         c.movabs(n, LONG_NULL);
         c.cmp(rhs, n);
         c.je(l_null);
@@ -154,88 +156,88 @@ namespace questdb::x86 {
         return r;
     }
 
-    inline Xmm float_to_double(Compiler &c, const Xmm &rhs) {
+    inline Vec float_to_double(Compiler &c, const Vec &rhs) {
         c.comment("float_to_double");
-        Xmm r = c.newXmmSd();
+        Vec r =c.new_xmm_sd();
         c.xorps(r, r);
         c.cvtss2sd(r, rhs);
         return r;
     }
 
-    inline void check_int32_null(Compiler &c, const Gp &dst, const Gpd &lhs, const Gpd &rhs) {
+    inline void check_int32_null(Compiler &c, const Gp &dst, const Gp &lhs, const Gp &rhs) {
         c.cmp(lhs, INT_NULL);
         c.cmove(dst, lhs);
         c.cmp(rhs, INT_NULL);
         c.cmove(dst, rhs);
     }
 
-    inline Gpd int32_neg(Compiler &c, const Gpd &rhs, bool check_null) {
+    inline Gp int32_neg(Compiler &c, const Gp &rhs, bool check_null) {
         c.comment("int32_neg");
 
-        Gp r = c.newInt32();
+        Gp r = c.new_gp32();
         c.mov(r, rhs);
         c.neg(r);
         if (check_null) {
-            Gp t = c.newInt32();
+            Gp t = c.new_gp32();
             c.mov(t, INT_NULL);
             c.cmp(rhs, t);
             c.cmove(r, t);
         }
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpq int64_neg(Compiler &c, const Gpq &rhs, bool check_null) {
+    inline Gp int64_neg(Compiler &c, const Gp &rhs, bool check_null) {
         c.comment("int64_neg");
 
-        Gp r = c.newInt64();
+        Gp r = c.new_gp64();
         c.mov(r, rhs);
         c.neg(r);
         if (check_null) {
-            Gp t = c.newInt64();
+            Gp t = c.new_gp64();
             c.movabs(t, LONG_NULL);
             c.cmp(rhs, t);
             c.cmove(r, rhs);
         }
-        return r.as<Gpq>();
+        return r.as<Gp>();
     }
 
-    inline Gpd int32_add(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool check_null) {
+    inline Gp int32_add(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         c.comment("int32_add");
 
-        Gp r = c.newInt64();
+        Gp r = c.new_gp64();
         c.lea(r, ptr(lhs, rhs));
         if (check_null) check_int32_null(c, r, lhs, rhs);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd int32_sub(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool check_null) {
+    inline Gp int32_sub(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         c.comment("int32_sub");
 
-        Gp r = c.newInt32();
+        Gp r = c.new_gp32();
         c.mov(r, lhs);
         c.sub(r, rhs);
         if (check_null) check_int32_null(c, r, lhs, rhs);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd int32_mul(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool check_null) {
+    inline Gp int32_mul(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         c.comment("int32_mul");
 
-        Gp r = c.newInt32();
+        Gp r = c.new_gp32();
         c.mov(r, lhs);
         c.imul(r, rhs);
         if (check_null) check_int32_null(c, r, lhs, rhs);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd int32_div(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool check_null) {
+    inline Gp int32_div(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         c.comment("int32_div");
 
-        Label l_null = c.newLabel();
-        Label l_exit = c.newLabel();
+        Label l_null = c.new_label();
+        Label l_exit = c.new_label();
 
-        Gp r = c.newInt32();
-        Gp t = c.newInt32();
+        Gp r = c.new_gp32();
+        Gp t = c.new_gp32();
 
         if (!check_null) {
             c.mov(r, lhs);
@@ -247,7 +249,7 @@ namespace questdb::x86 {
             c.bind(l_null);
             c.mov(r, INT_NULL);
             c.bind(l_exit);
-            return r.as<Gpd>();
+            return r.as<Gp>();
         }
         c.mov(r, INT_NULL);
         c.test(rhs, 2147483647); //INT_NULL - 1
@@ -258,12 +260,12 @@ namespace questdb::x86 {
         c.cdq(t, r);
         c.idiv(t, r, rhs);
         c.bind(l_null);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
     inline void check_int64_null(Compiler &c, const Gp &dst, const Gp &lhs, const Gp &rhs) {
         c.comment("check_int64_null");
-        Gp n = c.newGpq();
+        Gp n = c.new_gp64();
         c.movabs(n, LONG_NULL);
         c.cmp(lhs, n);
         c.cmove(dst, lhs);
@@ -271,41 +273,41 @@ namespace questdb::x86 {
         c.cmove(dst, rhs);
     }
 
-    inline Gpq int64_add(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
+    inline Gp int64_add(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         c.comment("int64_add");
 
-        Gp r = c.newInt64();
+        Gp r = c.new_gp64();
         c.lea(r, ptr(lhs, rhs));
         if (check_null) check_int64_null(c, r, lhs, rhs);
-        return r.as<Gpq>();
+        return r.as<Gp>();
     }
 
-    inline Gpq int64_sub(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
+    inline Gp int64_sub(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         c.comment("int64_sub");
-        Gp r = c.newInt64();
+        Gp r = c.new_gp64();
         c.mov(r, lhs);
         c.sub(r, rhs);
         if (check_null) check_int64_null(c, r, lhs, rhs);
-        return r.as<Gpq>();
+        return r.as<Gp>();
     }
 
-    inline Gpq int64_mul(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
+    inline Gp int64_mul(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         c.comment("int64_mul");
-        Gp r = c.newInt64();
+        Gp r = c.new_gp64();
         c.mov(r, lhs);
         c.imul(r, rhs);
         if (check_null) check_int64_null(c, r, lhs, rhs);
-        return r.as<Gpq>();
+        return r.as<Gp>();
     }
 
-    inline Gpq int64_div(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
+    inline Gp int64_div(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         c.comment("int64_div");
 
-        Label l_null = c.newLabel();
-        Label l_exit = c.newLabel();
+        Label l_null = c.new_label();
+        Label l_exit = c.new_label();
 
-        Gp r = c.newInt64();
-        Gp t = c.newInt64();
+        Gp r = c.new_gp64();
+        Gp t = c.new_gp64();
         if (!check_null) {
             c.mov(r, lhs);
             c.test(rhs, rhs);
@@ -316,7 +318,7 @@ namespace questdb::x86 {
             c.bind(l_null);
             c.movabs(r, LONG_NULL);
             c.bind(l_exit);
-            return r.as<Gpq>();
+            return r.as<Gp>();
         }
         c.mov(t, rhs);
         c.mov(r, lhs);
@@ -333,474 +335,553 @@ namespace questdb::x86 {
         c.bind(l_null);
         c.movabs(r, LONG_NULL);
         c.bind(l_exit);
-        return r.as<Gpq>();
+        return r.as<Gp>();
     }
 
-    inline Xmm float_neg(Compiler &c, const Xmm &rhs) {
+    inline Vec float_neg(Compiler &c, const Vec &rhs) {
+        Vec r =c.new_xmm_ss();
+        c.movss(r, rhs);
         int32_t array[4] = {INT_NULL, 0, 0, 0};
-        Mem mem = c.newConst(ConstPool::kScopeLocal, &array, 32);
-        c.xorps(rhs, mem);
-        return rhs;
+        Mem mem = c.new_const(ConstPoolScope::kLocal, &array, 32);
+        c.xorps(r, mem);
+        return r;
     }
 
-    inline Xmm double_neg(Compiler &c, const Xmm &rhs) {
+    inline Vec double_neg(Compiler &c, const Vec &rhs) {
+        Vec r =c.new_xmm_sd();
+        c.movsd(r, rhs);
         int32_t array[4] = {0, INT_NULL, 0, 0};
-        Mem mem = c.newConst(ConstPool::kScopeLocal, &array, 32);
-        c.xorpd(rhs, mem);
-        return rhs;
+        Mem mem = c.new_const(ConstPoolScope::kLocal, &array, 32);
+        c.xorpd(r, mem);
+        return r;
     }
 
-    inline Xmm float_add(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.addss(lhs, rhs);
-        return lhs;
+    inline Vec float_add(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec r =c.new_xmm_ss();
+        c.movss(r, lhs);
+        c.addss(r, rhs);
+        return r;
     }
 
-    inline Xmm float_sub(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.subss(lhs, rhs);
-        return lhs;
+    inline Vec float_sub(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec r =c.new_xmm_ss();
+        c.movss(r, lhs);
+        c.subss(r, rhs);
+        return r;
     }
 
-    inline Xmm float_mul(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.mulss(lhs, rhs);
-        return lhs;
+    inline Vec float_mul(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec r =c.new_xmm_ss();
+        c.movss(r, lhs);
+        c.mulss(r, rhs);
+        return r;
     }
 
-    inline Xmm float_div(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.divss(lhs, rhs);
-        return lhs;
+    inline Vec float_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec r =c.new_xmm_ss();
+        c.movss(r, lhs);
+        c.divss(r, rhs);
+        return r;
     }
 
-    inline Xmm double_add(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.addsd(lhs, rhs);
-        return lhs;
+    inline Vec double_add(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec r =c.new_xmm_sd();
+        c.movsd(r, lhs);
+        c.addsd(r, rhs);
+        return r;
     }
 
-    inline Xmm double_sub(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.subsd(lhs, rhs);
-        return lhs;
+    inline Vec double_sub(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec r =c.new_xmm_sd();
+        c.movsd(r, lhs);
+        c.subsd(r, rhs);
+        return r;
     }
 
-    inline Xmm double_mul(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.mulsd(lhs, rhs);
-        return lhs;
+    inline Vec double_mul(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec r =c.new_xmm_sd();
+        c.movsd(r, lhs);
+        c.mulsd(r, rhs);
+        return r;
     }
 
-    inline Xmm double_div(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        c.divsd(lhs, rhs);
-        return lhs;
+    inline Vec double_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec r =c.new_xmm_sd();
+        c.movsd(r, lhs);
+        c.divsd(r, rhs);
+        return r;
     }
 
-    inline Gpd int32_eq(Compiler &c, const Gpd &lhs, const Gpd &rhs) {
-        Gp r = c.newInt32();
+    inline Gp int32_eq(Compiler &c, const Gp &lhs, const Gp &rhs) {
+        Gp r = c.new_gp32();
         c.xor_(r, r);
         c.cmp(lhs, rhs);
-        c.sete(r.r8Lo());
-        return r.as<Gpd>();
+        c.sete(r.r8_lo());
+        return r.as<Gp>();
     }
 
-    inline Gpd int32_ne(Compiler &c, const Gpd &lhs, const Gpd &rhs) {
-        Gp r = c.newInt32();
+    inline Gp int32_ne(Compiler &c, const Gp &lhs, const Gp &rhs) {
+        Gp r = c.new_gp32();
         c.xor_(r, r);
         c.cmp(lhs, rhs);
-        c.setne(r.r8Lo());
-        return r.as<Gpd>();
+        c.setne(r.r8_lo());
+        return r.as<Gp>();
     }
 
-    inline Gpd int32_lt_gt(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool gt, bool check_null) {
+    inline Gp int32_eq_zero(Compiler &c, const Gp &lhs) {
+        Gp r = c.new_gp32();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.sete(r.r8_lo());
+        return r.as<Gp>();
+    }
+
+    inline Gp int32_ne_zero(Compiler &c, const Gp &lhs) {
+        Gp r = c.new_gp32();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.setne(r.r8_lo());
+        return r.as<Gp>();
+    }
+
+    inline Gp int32_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_null) {
         if (!check_null) {
-            Gp r = c.newInt32();
+            Gp r = c.new_gp32();
             c.xor_(r, r);
             c.cmp(lhs, rhs);
             if (gt) {
-                c.setg(r.r8Lo());
+                c.setg(r.r8_lo());
             } else {
-                c.setl(r.r8Lo());
+                c.setl(r.r8_lo());
             }
-            return r.as<Gpd>();
+            return r.as<Gp>();
         } else {
-            Gp v = c.newInt32();
-            Gp l = c.newInt32();
-            Gp r = c.newInt32();
+            Gp v = c.new_gp32();
+            Gp l = c.new_gp32();
+            Gp r = c.new_gp32();
+            c.xor_(l, l);
             c.cmp(lhs, INT_NULL);
-            c.setne(l.r8Lo());
+            c.setne(l.r8_lo());
+            c.xor_(r, r);
             c.cmp(rhs, INT_NULL);
-            c.setne(r.r8Lo());
+            c.setne(r.r8_lo());
             c.and_(r, l);
+            c.xor_(v, v);
             c.cmp(lhs, rhs);
             if (gt) {
-                c.setg(v.r8Lo());
+                c.setg(v.r8_lo());
             } else {
-                c.setl(v.r8Lo());
+                c.setl(v.r8_lo());
             }
             c.and_(v, r);
-            return v.as<Gpd>();
+            return v.as<Gp>();
         }
     }
 
-    inline Gpd int32_le_ge(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool ge, bool check_null) {
+    inline Gp int32_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_null) {
         if (!check_null) {
-            Gp r = c.newInt32();
+            Gp r = c.new_gp32();
             c.xor_(r, r);
             c.cmp(lhs, rhs);
             if (ge) {
-                c.setge(r.r8Lo());
+                c.setge(r.r8_lo());
             } else {
-                c.setle(r.r8Lo());
+                c.setle(r.r8_lo());
             }
-            return r.as<Gpd>();
+            return r.as<Gp>();
         } else {
-            Gp v = c.newInt32();
-            Gp l = c.newInt32();
-            Gp r = c.newInt32();
+            Gp v = c.new_gp32();
+            Gp l = c.new_gp32();
+            Gp r = c.new_gp32();
 
+            c.xor_(l, l);
             c.cmp(lhs, INT_NULL);
-            c.sete(l.r8Lo());
+            c.sete(l.r8_lo());
+            c.xor_(r, r);
             c.cmp(rhs, INT_NULL);
-            c.setne(r.r8Lo());
+            c.setne(r.r8_lo());
             c.xor_(r, l);
+            c.xor_(v, v);
             c.cmp(lhs, rhs);
             if (ge) {
-                c.setge(v.r8Lo());
+                c.setge(v.r8_lo());
             } else {
-                c.setle(v.r8Lo());
+                c.setle(v.r8_lo());
             }
             c.and_(v, r);
-            return v.as<Gpd>();
+            return v.as<Gp>();
         }
     }
 
-    inline Gpd int32_lt(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool check_null) {
+    inline Gp int32_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int32_lt_gt(c, lhs, rhs, false, check_null);
     }
 
-    inline Gpd int32_le(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool check_null) {
+    inline Gp int32_le(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int32_le_ge(c, lhs, rhs, false, check_null);
     }
 
-    inline Gpd int32_gt(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool check_null) {
+    inline Gp int32_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int32_lt_gt(c, lhs, rhs, true, check_null);
     }
 
-    inline Gpd int32_ge(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool check_null) {
+    inline Gp int32_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int32_le_ge(c, lhs, rhs, true, check_null);
     }
 
-    inline Gpq int64_eq(Compiler &c, const Gpq &lhs, const Gpq &rhs) {
-        Gp r = c.newInt64();
+    inline Gp int64_eq(Compiler &c, const Gp &lhs, const Gp &rhs) {
+        Gp r = c.new_gp64();
         c.xor_(r, r);
         c.cmp(lhs, rhs);
-        c.sete(r.r8Lo());
-        return r.as<Gpq>();
+        c.sete(r.r8_lo());
+        return r.as<Gp>();
     }
 
-    inline Gpq int64_ne(Compiler &c, const Gpq &lhs, const Gpq &rhs) {
-        Gp r = c.newInt64();
+    inline Gp int64_ne(Compiler &c, const Gp &lhs, const Gp &rhs) {
+        Gp r = c.new_gp64();
         c.xor_(r, r);
         c.cmp(lhs, rhs);
-        c.setne(r.r8Lo());
-        return r.as<Gpq>();
+        c.setne(r.r8_lo());
+        return r.as<Gp>();
     }
 
-    inline void int128_cmp(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp mask = c.newInt16();
+    inline Gp int64_eq_zero(Compiler &c, const Gp &lhs) {
+        Gp r = c.new_gp64();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.sete(r.r8_lo());
+        return r.as<Gp>();
+    }
+
+    inline Gp int64_ne_zero(Compiler &c, const Gp &lhs) {
+        Gp r = c.new_gp64();
+        c.xor_(r, r);
+        c.test(lhs, lhs);
+        c.setne(r.r8_lo());
+        return r.as<Gp>();
+    }
+
+    inline void int128_cmp(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp mask = c.new_gp16();
         c.pcmpeqb(lhs, rhs);
         c.pmovmskb(mask, lhs);
         c.cmp(mask, 0xffff);
     }
 
-    inline Gpq int128_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+    inline Gp int128_eq(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp64();
+        c.xor_(r, r);
         int128_cmp(c, lhs, rhs);
-        Gp r = c.newInt64();
-        c.sete(r.r8Lo());
-        return r.as<Gpq>();
+        c.sete(r.r8_lo());
+        return r.as<Gp>();
     }
 
-    inline Gpq int128_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+    inline Gp int128_ne(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp64();
+        c.xor_(r, r);
         int128_cmp(c, lhs, rhs);
-        Gp r = c.newInt64();
-        c.setne(r.r8Lo());
-        return r.as<Gpq>();
+        c.setne(r.r8_lo());
+        return r.as<Gp>();
     }
 
-    inline Gpq int64_lt_gt(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool gt, bool check_null) {
+    inline Gp int64_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_null) {
         if (!check_null) {
-            Gp r = c.newInt64();
+            Gp r = c.new_gp64();
             c.xor_(r, r);
             c.cmp(lhs, rhs);
             if (gt) {
-                c.setg(r.r8Lo());
+                c.setg(r.r8_lo());
             } else {
-                c.setl(r.r8Lo());
+                c.setl(r.r8_lo());
             }
-            return r.as<Gpq>();
+            return r.as<Gp>();
         } else {
-            Gp v = c.newInt64();
-            Gp l = c.newInt64();
-            Gp r = c.newInt64();
+            Gp v = c.new_gp64();
+            Gp l = c.new_gp64();
+            Gp r = c.new_gp64();
+            Gp n = c.new_gp64();
 
-            //c.movsxd(v, LONG_NULL);
-            c.movabs(v, LONG_NULL);
-            c.cmp(lhs, v);
-            c.setne(l.r8Lo());
-            c.cmp(rhs, v);
-            c.setne(r.r8Lo());
+            c.movabs(n, LONG_NULL);
+            c.xor_(l, l);
+            c.cmp(lhs, n);
+            c.setne(l.r8_lo());
+            c.xor_(r, r);
+            c.cmp(rhs, n);
+            c.setne(r.r8_lo());
             c.and_(r, l);
+            c.xor_(v, v);
             c.cmp(lhs, rhs);
             if (gt) {
-                c.setg(v.r8Lo());
+                c.setg(v.r8_lo());
             } else {
-                c.setl(v.r8Lo());
+                c.setl(v.r8_lo());
             }
             c.and_(v, r);
 
-            return v.as<Gpq>();
+            return v.as<Gp>();
         }
     }
 
-    inline Gpq int64_le_ge(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool ge, bool check_null) {
+    inline Gp int64_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_null) {
         if (!check_null) {
-            Gp r = c.newInt64();
+            Gp r = c.new_gp64();
             c.xor_(r, r);
             c.cmp(lhs, rhs);
             if (ge) {
-                c.setge(r.r8Lo());
+                c.setge(r.r8_lo());
             } else {
-                c.setle(r.r8Lo());
+                c.setle(r.r8_lo());
             }
-            return r.as<Gpq>();
+            return r.as<Gp>();
         } else {
-            Gp v = c.newInt64();
-            Gp l = c.newInt64();
-            Gp r = c.newInt64();
+            Gp v = c.new_gp64();
+            Gp l = c.new_gp64();
+            Gp r = c.new_gp64();
+            Gp n = c.new_gp64();
 
-            //c.movsxd(v, LONG_NULL);
-            c.movabs(v, LONG_NULL);
-            c.cmp(lhs, v);
-            c.sete(l.r8Lo());
-            c.cmp(rhs, v);
-            c.setne(r.r8Lo());
+            c.movabs(n, LONG_NULL);
+            c.xor_(l, l);
+            c.cmp(lhs, n);
+            c.sete(l.r8_lo());
+            c.xor_(r, r);
+            c.cmp(rhs, n);
+            c.setne(r.r8_lo());
             c.xor_(r, l);
+            c.xor_(v, v);
             c.cmp(lhs, rhs);
             if (ge) {
-                c.setge(v.r8Lo());
+                c.setge(v.r8_lo());
             } else {
-                c.setle(v.r8Lo());
+                c.setle(v.r8_lo());
             }
             c.and_(v, r);
 
-            return v.as<Gpq>();
+            return v.as<Gp>();
         }
     }
 
-    inline Gpq int64_lt(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
+    inline Gp int64_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int64_lt_gt(c, lhs, rhs, false, check_null);
     }
 
-    inline Gpq int64_le(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
+    inline Gp int64_le(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int64_le_ge(c, lhs, rhs, false, check_null);
     }
 
-    inline Gpq int64_gt(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
+    inline Gp int64_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int64_lt_gt(c, lhs, rhs, true, check_null);
     }
 
-    inline Gpq int64_ge(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
+    inline Gp int64_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int64_le_ge(c, lhs, rhs, true, check_null);
     }
 
     //coverage: double_cmp_epsilon used instead
-    //    inline Gpd double_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-    //        Gp r = c.newInt32();
-    //        c.cmpsd(lhs, rhs, Predicate::kCmpEQ);
+    //    inline Gp  double_eq(Compiler &c, const Vec &lhs, const Vec &rhs) {
+    //        Gp r = c.new_gp32();
+    //        c.cmpsd(lhs, rhs, CmpImm::kCmpEQ);
     //        c.vmovd(r, lhs);
     //        c.neg(r);
-    //        return r.as<Gpd>();
+    //        return r.as<Gp>();
     //    }
     //
-    //    inline Gpd double_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-    //        Gp r = c.newInt32();
-    //        c.cmpsd(lhs, rhs, Predicate::kCmpNEQ);
+    //    inline Gp  double_ne(Compiler &c, const Vec &lhs, const Vec &rhs) {
+    //        Gp r = c.new_gp32();
+    //        c.cmpsd(lhs, rhs, CmpImm::kCmpNEQ);
     //        c.vmovd(r, lhs);
     //        c.neg(r);
-    //        return r.as<Gpd>();
+    //        return r.as<Gp>();
     //    }
 
-    inline Gpd double_lt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpsd(lhs, rhs, Predicate::kCmpLT);
+    inline Gp double_lt(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpsd(lhs, rhs, CmpImm::kLT);
         c.movd(r, lhs);
         c.neg(r);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd double_le(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpsd(lhs, rhs, Predicate::kCmpLE);
+    inline Gp double_le(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpsd(lhs, rhs, CmpImm::kLE);
         c.movd(r, lhs);
         c.neg(r);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd double_gt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpsd(rhs, lhs, Predicate::kCmpLT);
+    inline Gp double_gt(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpsd(rhs, lhs, CmpImm::kLT);
         c.movd(r, rhs);
         c.neg(r);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd double_ge(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpsd(rhs, lhs, Predicate::kCmpLE);
+    inline Gp double_ge(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpsd(rhs, lhs, CmpImm::kLE);
         c.movd(r, rhs);
         c.neg(r);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
     //coverage: float_cmp_epsilon used instead
-    //    inline Gpd float_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-    //        Gp r = c.newInt32();
-    //        c.cmpss(lhs, rhs, Predicate::kCmpEQ);
+    //    inline Gp  float_eq(Compiler &c, const Vec &lhs, const Vec &rhs) {
+    //        Gp r = c.new_gp32();
+    //        c.cmpss(lhs, rhs, CmpImm::kCmpEQ);
     //        c.vmovd(r, lhs);
     //        c.neg(r);
-    //        return r.as<Gpd>();
+    //        return r.as<Gp>();
     //    }
     //
-    //    inline Gpd float_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-    //        Gp r = c.newInt32();
-    //        c.cmpss(lhs, rhs, Predicate::kCmpNEQ);
+    //    inline Gp  float_ne(Compiler &c, const Vec &lhs, const Vec &rhs) {
+    //        Gp r = c.new_gp32();
+    //        c.cmpss(lhs, rhs, CmpImm::kCmpNEQ);
     //        c.vmovd(r, lhs);
     //        c.neg(r);
-    //        return r.as<Gpd>();
+    //        return r.as<Gp>();
     //    }
 
-    inline Gpd float_lt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpss(lhs, rhs, Predicate::kCmpLT);
+    inline Gp float_lt(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpss(lhs, rhs, CmpImm::kLT);
         c.movd(r, lhs);
         c.neg(r);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd float_le(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpss(lhs, rhs, Predicate::kCmpLE);
+    inline Gp float_le(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpss(lhs, rhs, CmpImm::kLE);
         c.movd(r, lhs);
         c.neg(r);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd float_gt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpss(rhs, lhs, Predicate::kCmpLT);
+    inline Gp float_gt(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpss(rhs, lhs, CmpImm::kLT);
         c.movd(r, rhs);
         c.neg(r);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd float_ge(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+    inline Gp float_ge(Compiler &c, const Vec &lhs, const Vec &rhs) {
         c.comment("float_ge_start");
-        Gp r = c.newInt32();
-        c.cmpss(rhs, lhs, Predicate::kCmpLE);
+        Gp r = c.new_gp32();
+        c.cmpss(rhs, lhs, CmpImm::kLE);
         c.movd(r, rhs);
         c.neg(r);
         c.comment("float_ge_stop");
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
     // (isnan(lhs) && isnan(rhs) || fabs(l - r) < 0.0000000001);
-    inline Gpd double_cmp_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double epsilon, bool eq) {
-        c.comment("float_cmp_epsilon_start");
+    inline Gp double_cmp_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon, bool eq) {
+        c.comment("double_cmp_epsilon_start");
         int64_t nans[] = {0x7fffffffffffffff, 0x7fffffffffffffff}; // double NaN
-        Mem nans_memory = c.newConst(ConstPool::kScopeLocal, &nans, 32);
-        Mem d = c.newDoubleConst(ConstPool::kScopeLocal, epsilon);
-        Mem inf_memory = c.newInt64Const(ConstPool::kScopeLocal, 0x7FF0000000000000LL);
-        Label l_nan = c.newLabel();
-        Label l_exit = c.newLabel();
-        Gp r = c.newInt32();
-        Gp int_r = c.newInt64();
-        c.movq(int_r, xmm0);
+        Mem nans_memory = c.new_const(ConstPoolScope::kLocal, &nans, 32);
+        Mem d = c.new_double_const(ConstPoolScope::kLocal, epsilon);
+        Mem inf_memory = c.new_int64_const(ConstPoolScope::kLocal, 0x7FF0000000000000LL);
+        Label l_nan = c.new_label();
+        Label l_exit = c.new_label();
+        Gp r = c.new_gp32();
+        Gp int_r = c.new_gp64();
+        // Work on copies to avoid modifying cached registers
+        Vec lhs =c.new_xmm_sd();
+        Vec rhs =c.new_xmm_sd();
+        c.movsd(lhs, xmm0);
+        c.movsd(rhs, xmm1);
+        c.movq(int_r, lhs);
         c.and_(int_r, inf_memory);
         c.cmp(int_r, inf_memory);
         c.jne(l_nan);
-        if (eq) {
-            c.mov(r.r8Lo(), 1);
-        } else {
-            c.xor_(r, r);
-        }
-        c.movq(int_r, xmm1);
-        c.and_(int_r, inf_memory);
-        c.cmp(int_r, inf_memory);
-        c.jne(l_nan);
-        c.jmp(l_exit);
-
-        c.bind(l_nan);
-        c.subsd(xmm0, xmm1);
-        c.andpd(xmm0, nans_memory);
-        c.movsd(xmm1, d);
-        c.ucomisd(xmm1, xmm0);
-        if (eq) {
-            c.seta(r.r8Lo());
-        } else {
-            c.setbe(r.r8Lo());
-        }
-        c.bind(l_exit);
-        return r.as<Gpd>();
-    }
-
-    inline Gpd double_eq_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double epsilon) {
-        return double_cmp_epsilon(c, xmm0, xmm1, epsilon, true);
-    }
-
-    inline Gpd double_ne_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double epsilon) {
-        return double_cmp_epsilon(c, xmm0, xmm1, epsilon, false);
-    }
-
-    inline Gpd float_cmp_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float epsilon, bool eq) {
-        int32_t nans[] = {0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff}; // float NaN
-        Mem nans_memory = c.newConst(ConstPool::kScopeLocal, &nans, 16);
-        Mem inf_memory = c.newFloatConst(ConstPool::kScopeLocal, 0x7F800000);
-        Mem d = c.newFloatConst(ConstPool::kScopeLocal, epsilon);
-        Label l_nan = c.newLabel();
-        Label l_exit = c.newLabel();
-        c.comment("float_cmp_epsilon_start");
-        Gp int_r = c.newInt32("tmp_int_r");
-        c.movd(int_r, xmm0);
-        c.and_(int_r, 0x7F800000);
-        c.cmp(int_r,  0x7F800000);
-        c.jne(l_nan);
-        Gp r = c.newInt32();
         if (eq) {
             c.mov(r, 1);
         } else {
             c.xor_(r, r);
         }
-        c.movd(int_r, xmm1);
+        c.movq(int_r, rhs);
+        c.and_(int_r, inf_memory);
+        c.cmp(int_r, inf_memory);
+        c.jne(l_nan);
+        c.jmp(l_exit);
+
+        c.bind(l_nan);
+        c.subsd(lhs, rhs);
+        c.andpd(lhs, nans_memory);
+        c.movsd(rhs, d);
+        c.xor_(r, r);
+        c.ucomisd(rhs, lhs);
+        if (eq) {
+            c.seta(r.r8_lo());
+        } else {
+            c.setbe(r.r8_lo());
+        }
+        c.bind(l_exit);
+        c.comment("double_cmp_epsilon_stop");
+        return r.as<Gp>();
+    }
+
+    inline Gp double_eq_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon) {
+        return double_cmp_epsilon(c, xmm0, xmm1, epsilon, true);
+    }
+
+    inline Gp double_ne_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon) {
+        return double_cmp_epsilon(c, xmm0, xmm1, epsilon, false);
+    }
+
+    inline Gp float_cmp_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, float epsilon, bool eq) {
+        c.comment("float_cmp_epsilon_start");
+        int32_t nans[] = {0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff}; // float NaN
+        Mem nans_memory = c.new_const(ConstPoolScope::kLocal, &nans, 16);
+        Mem inf_memory = c.new_float_const(ConstPoolScope::kLocal, 0x7F800000);
+        Mem d = c.new_float_const(ConstPoolScope::kLocal, epsilon);
+        Label l_nan = c.new_label();
+        Label l_exit = c.new_label();
+        Gp int_r = c.new_gp32("tmp_int_r");
+        // Work on copies to avoid modifying cached registers
+        Vec lhs =c.new_xmm_ss();
+        Vec rhs =c.new_xmm_ss();
+        c.movss(lhs, xmm0);
+        c.movss(rhs, xmm1);
+        c.movd(int_r, lhs);
+        c.and_(int_r, 0x7F800000);
+        c.cmp(int_r,  0x7F800000);
+        c.jne(l_nan);
+        Gp r = c.new_gp32();
+        if (eq) {
+            c.mov(r, 1);
+        } else {
+            c.xor_(r, r);
+        }
+        c.movd(int_r, rhs);
         c.and_(int_r, 0x7F800000);
         c.cmp(int_r,  0x7F800000);
         c.jne(l_nan);
         c.jmp(l_exit);
 
         c.bind(l_nan);
-        c.subss(xmm0, xmm1);
-        c.andps(xmm0, nans_memory);
-        c.movss(xmm1, d);
-        c.ucomiss(xmm1, xmm0);
+        c.subss(lhs, rhs);
+        c.andps(lhs, nans_memory);
+        c.movss(rhs, d);
+        c.xor_(r, r);
+        c.ucomiss(rhs, lhs);
         if (eq) {
-            c.seta(r.r8Lo());
+            c.seta(r.r8_lo());
         } else {
-            c.setbe(r.r8Lo());
+            c.setbe(r.r8_lo());
         }
         c.bind(l_exit);
         c.comment("float_cmp_epsilon_stop");
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd float_eq_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float epsilon) {
+    inline Gp float_eq_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, float epsilon) {
         return float_cmp_epsilon(c, xmm0, xmm1, epsilon, true);
     }
 
-    inline Gpd float_ne_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float epsilon) {
+    inline Gp float_ne_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, float epsilon) {
         return float_cmp_epsilon(c, xmm0, xmm1, epsilon, false);
     }
 
