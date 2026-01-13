@@ -246,14 +246,23 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
 
             long idealPos = Hash.fastHashLong64(key) & mask;
 
-            // Check if moving backward would be beneficial:
-            // 1. scanPos != idealPos: Element is not in its ideal position;
-            // 2. idealPos <= gapPos: Normal case - ideal position is at or before the gap
-            // 3. currentPos < idealPos: Wraparound case - entry wrapped from table end
-            if (scanPos != idealPos && (idealPos <= gapPos || scanPos < idealPos)) {
+            if (shouldMoveToFillGap(scanPos, idealPos, gapPos)) {
                 move(scanPos, gapPos);
                 gapPos = scanPos;
             }
+        }
+    }
+
+    private static boolean shouldMoveToFillGap(long elementPos, long idealPos, long gapPos) {
+        if (elementPos < idealPos) {
+            // Entry displaced from its ideal position and wrapped around table boundary
+            // Move if ideal position is before the gap, OR gap is before current position
+            // [ ELEMENT, IDEAL_POS, GAP ] OR [ GAP, ELEMENT, IDEAL_POS ]
+            return idealPos <= gapPos || gapPos <= elementPos;
+        } else {
+            // Move only if ideal, gap, and element are in linear order
+            // [ IDEAL_POS, GAP, ELEMENT ]
+            return idealPos <= gapPos && gapPos <= elementPos;
         }
     }
 

@@ -211,6 +211,44 @@ public class DirectLongLongHashMapTest {
         }
     }
 
+    @Test
+    public void removeMovesElementOnlyWhenNewPositionIsCloserToIdeal() {
+        try (DirectLongLongHashMap map = new DirectLongLongHashMap(8, .999, NO_KEY, -1, MemoryTag.NATIVE_DEFAULT)) {
+            long a = keyHashedToPos(map, 0, 0); // hashes to 0, fills [0] (ideal hit)
+            long b = keyHashedToPos(map, 1, 0); // hashes to 1, fills [1] (ideal hit)
+            long c = keyHashedToPos(map, 1, 1); // hashes to 1, fills [2] (displaced)
+
+            putAll(map, a, b, c);
+            assertKeysOrder(map, new long[]{a, b, c, NO_KEY, NO_KEY, NO_KEY, NO_KEY, NO_KEY});
+
+            map.removeAtV2(map.keyIndex(a));
+            // Element C is displaced from its ideal position (1),
+            // and after deleting A it shouldn’t move to the new gap,
+            // because it is farther from the ideal position.
+            assertKeysOrder(map, new long[]{NO_KEY, b, c, NO_KEY, NO_KEY, NO_KEY, NO_KEY, NO_KEY});
+        }
+    }
+
+    @Test
+    public void removeMovesElementOnlyWhenNewPositionIsCloserToIdealWithWrapAround() {
+        try (DirectLongLongHashMap map = new DirectLongLongHashMap(8, .999, NO_KEY, -1, MemoryTag.NATIVE_DEFAULT)) {
+            long a = keyHashedToPos(map, 0, 0); // hashes to 0, fills [0] (ideal hit)
+            long b = keyHashedToPos(map, 1, 0); // hashes to 1, fills [1] (ideal hit)
+            long c = keyHashedToPos(map, 0, 1); // hashes to 0, fills [2] (displaced)
+            long d = keyHashedToPos(map, 6, 0); // hashes to 6, fills [6] (ideal hit)
+            long e = keyHashedToPos(map, 7, 0); // hashes to 7, fills [7] (ideal hit)
+
+            putAll(map, a, b, c, d, e);
+            assertKeysOrder(map, new long[]{a, b, c, NO_KEY, NO_KEY, NO_KEY, d, e});
+
+            map.removeAtV2(map.keyIndex(d));
+            // Element C is displaced from its ideal position (0),
+            // and after deleting D it shouldn’t move to the new gap,
+            // because it is farther from the ideal position.
+            assertKeysOrder(map, new long[]{a, b, c, NO_KEY, NO_KEY, NO_KEY, NO_KEY, e});
+        }
+    }
+
     private static void putAll(DirectLongLongHashMap map, long... keys) {
         for (long key : keys)
             map.put(key, key);
