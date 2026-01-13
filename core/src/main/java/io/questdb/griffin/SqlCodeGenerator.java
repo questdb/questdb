@@ -916,6 +916,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
+    private static boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
+        return joinColumns.getColumnCount() == 1 &&
+                symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
+                !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+    }
+
     private static long tolerance(QueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
@@ -7727,12 +7733,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
-    }
-
-    private boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
-        return joinColumns.getColumnCount() == 1 &&
-                symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
-                !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
     }
 
     private void lookupColumnIndexes(
