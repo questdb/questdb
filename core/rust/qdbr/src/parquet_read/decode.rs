@@ -1390,7 +1390,7 @@ fn append_array<T: DataPageSlicer>(
         data_mem.reserve(value_size)?;
         for &def_level in def_levels {
             if def_level == max_def_level {
-                data_mem.extend_from_slice(slicer.next())?;
+                slicer.next_into(data_mem)?;
             } else {
                 data_mem.extend_from_slice(&f64::NAN.to_le_bytes())?;
             }

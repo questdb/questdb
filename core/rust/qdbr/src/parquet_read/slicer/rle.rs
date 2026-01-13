@@ -1,6 +1,6 @@
 use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use crate::parquet_read::slicer::dict_decoder::DictDecoder;
-use crate::parquet_read::slicer::DataPageSlicer;
+use crate::parquet_read::slicer::{ByteSink, DataPageSlicer};
 use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 
@@ -138,6 +138,17 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
         self.inner.next_slice(_count)
     }
 
+    fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
+        dest.extend_from_slice(self.next())
+    }
+
+    fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
+        for _ in 0..count {
+            self.next_into(dest)?;
+        }
+        Ok(())
+    }
+
     fn skip(&mut self, count: usize) {
         for _ in 0..count {
             self.next();
@@ -230,6 +241,17 @@ impl DataPageSlicer for RleLocalIsGlobalSymbolDecoder<'_, '_> {
 
     fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
         self.inner.next_slice(_count)
+    }
+
+    fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
+        dest.extend_from_slice(self.next())
+    }
+
+    fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
+        for _ in 0..count {
+            self.next_into(dest)?;
+        }
+        Ok(())
     }
 
     fn skip(&mut self, count: usize) {
