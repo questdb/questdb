@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -185,8 +185,18 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    int getCompileViewModelPoolCapacity();
+
     @NotNull
     CharSequence getConfRoot(); // same as root/../conf
+
+    /**
+     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
+     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
+     */
+    default int getCopierType() {
+        return 0; // COPIER_TYPE_DEFAULT
+    }
 
     @NotNull
     LongSupplier getCopyIDSupplier();
@@ -259,6 +269,8 @@ public interface CairoConfiguration {
 
     int getGroupByMergeShardQueueCapacity();
 
+    long getGroupByParallelTopKThreshold();
+
     int getGroupByPoolCapacity();
 
     long getGroupByPresizeMaxCapacity();
@@ -266,6 +278,8 @@ public interface CairoConfiguration {
     long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
+
+    int getGroupByTopKQueueCapacity();
 
     @NotNull
     default IOURingFacade getIOURingFacade() {
@@ -279,6 +293,8 @@ public interface CairoConfiguration {
     int getInactiveReaderMaxOpenPartitions();
 
     long getInactiveReaderTTL();
+
+    long getInactiveViewWalWriterTTL();
 
     long getInactiveWalWriterTTL();
 
@@ -441,6 +457,10 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getPivotColumnPoolCapacity();
+
+    int getPoolSegmentSize();
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
@@ -461,6 +481,8 @@ public interface CairoConfiguration {
     }
 
     int getReaderPoolMaxSegments();
+
+    int getRecentWriteTrackerCapacity();
 
     int getRenameTableModelPoolCapacity();
 
@@ -553,8 +575,6 @@ public interface CairoConfiguration {
 
     int getSqlJitMode();
 
-    int getSqlJitPageAddressCacheThreshold();
-
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();
@@ -590,7 +610,11 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
+    long getSqlParallelWorkStealingSpinTimeout();
+
     int getSqlParquetFrameCacheCapacity();
+
+    int getSqlPivotMaxProducedColumns();
 
     int getSqlSmallMapKeyCapacity();
 
@@ -662,6 +686,10 @@ public interface CairoConfiguration {
     int getTxnScoreboardEntryCount();
 
     int getVectorAggregateQueueCapacity();
+
+    int getViewLexerPoolCapacity();
+
+    int getViewWalWriterPoolMaxSegments();
 
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
@@ -745,6 +773,8 @@ public interface CairoConfiguration {
      * @return true if SqlParser should return the expression normalized instead of the default behavior.
      */
     boolean isColumnAliasExpressionEnabled();
+
+    boolean isCopierChunkedEnabled();
 
     boolean isDevModeEnabled();
 

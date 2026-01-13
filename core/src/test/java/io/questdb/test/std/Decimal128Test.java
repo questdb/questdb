@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -326,6 +326,16 @@ public class Decimal128Test {
         Decimal128.divide(a, b, result, tgtScale, RoundingMode.HALF_UP);
         BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
         Assert.assertEquals(bdResult, result.toBigDecimal());
+    }
+
+    @Test
+    public void testDivideIncrementOverflow() {
+        Decimal128 a = new Decimal128(0, -1, 19);
+        Decimal128 b = new Decimal128(0, 256, 14);
+
+        a.divide(b, 6, RoundingMode.HALF_UP);
+
+        Assert.assertEquals("720575940379.279360", a.toString());
     }
 
     @Test(expected = NumericException.class)

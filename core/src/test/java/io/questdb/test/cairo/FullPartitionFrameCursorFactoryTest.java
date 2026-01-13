@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
@@ -106,9 +107,9 @@ public class FullPartitionFrameCursorFactoryTest extends AbstractCairoTest {
                 execute("alter table x convert partition to parquet where timestamp >= 0;");
             }
 
-            try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(tableToken, 0, metadata, ORDER_ASC)) {
+            try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(tableToken, 0, metadata, ORDER_ASC, null, 0, false)) {
                 long count = 0;
-                try (PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC)) {
+                try (PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), new IntList(), ORDER_ASC)) {
                     PartitionFrame frame;
                     while ((frame = cursor.next()) != null) {
                         count += frame.getRowHi() - frame.getRowLo();
@@ -124,7 +125,7 @@ public class FullPartitionFrameCursorFactoryTest extends AbstractCairoTest {
                     }
 
                     try {
-                        factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC);
+                        factory.getCursor(new SqlExecutionContextStub(engine), new IntList(), ORDER_ASC);
                         Assert.fail();
                     } catch (TableReferenceOutOfDateException ignored) {
                     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -200,31 +200,43 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                 tableToken.getDirName()
                         ) != TableUtils.TABLE_EXISTS
                 ) {
-                    // Fully deregister the table
-                    Path pathToDelete = Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken);
-                    Path symLinkTarget = null;
-                    if (ff.isSoftLink(path.$())) {
-                        symLinkTarget = Path.getThreadLocal2("");
-                        if (!ff.readLink(pathToDelete, symLinkTarget)) {
-                            symLinkTarget = null;
+                    if (!engine.lockWalWriters(tableToken)) {
+                        // There are active WAL writers
+                        // potentially opened after the table director is scanned above.
+                        LOG.info().$("could not fully remove table, locked by active WAL writers [table=")
+                                .$(tableToken).I$();
+                        return;
+                    }
+                    try {
+                        // Fully deregister the table
+                        Path pathToDelete = Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken);
+                        Path symLinkTarget = null;
+                        if (ff.isSoftLink(path.$())) {
+                            symLinkTarget = Path.getThreadLocal2("");
+                            if (!ff.readLink(pathToDelete, symLinkTarget)) {
+                                symLinkTarget = null;
+                            }
                         }
-                    }
-                    boolean fullyDeleted = ff.rmdir(pathToDelete, false);
-                    if (symLinkTarget != null) {
-                        ff.rmdir(symLinkTarget, false);
-                    }
+                        boolean fullyDeleted = ff.rmdir(pathToDelete, false);
+                        if (symLinkTarget != null) {
+                            ff.rmdir(symLinkTarget, false);
+                        }
 
-                    // Sometimes on Windows sequencer files can be open at this point,
-                    // wait for them to be closed before fully removing the token from name registry
-                    // and marking table as fully deleted.
-                    if (fullyDeleted) {
-                        engine.removeTableToken(tableToken);
-                        LOG.info().$("table is fully dropped [tableDir=").$(pathToDelete).I$();
-                        TableUtils.lockName(pathToDelete);
-                        ff.removeQuiet(pathToDelete.$());
-                    } else {
-                        LOG.info().$("could not fully remove table, some files left on the disk [tableDir=")
-                                .$(pathToDelete).I$();
+                        // Sometimes on Windows sequencer files can be open at this point,
+                        // wait for them to be closed before fully removing the token from name registry
+                        // and marking table as fully deleted.
+                        if (fullyDeleted) {
+                            engine.removeTableToken(tableToken);
+                            LOG.info().$("table is fully dropped [tableDir=").$(pathToDelete).I$();
+                            TableUtils.lockName(pathToDelete);
+                            ff.removeQuiet(pathToDelete.$());
+                        } else {
+                            LOG.info().$("could not fully remove table, some files left on the disk [tableDir=")
+                                    .$(pathToDelete).I$();
+                        }
+                    } finally {
+                        // Unlock WAL writers, even if we removed the entry from the pool already
+                        engine.unlockWalWriters(tableToken);
                     }
                 } else {
                     LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [table=")

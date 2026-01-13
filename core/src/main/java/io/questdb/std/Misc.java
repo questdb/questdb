@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,8 +39,32 @@ public final class Misc {
     private static final ThreadLocal<Decimal256> tlDecimal256 = new ThreadLocal<>(Decimal256::new);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private static final ThreadLocal<Utf8StringSink> tlUtf8Sink = new ThreadLocal<>(Utf8StringSink::new);
+    private static final ThreadLocal<Utf8SinkPool> tlUtf8SinkPool = new ThreadLocal<>(Utf8SinkPool::new);
 
     private Misc() {
+    }
+
+    /**
+     * Acquire a pooled Utf8StringSink for use in recursive/nested contexts.
+     * <p>
+     * IMPORTANT: Every call to acquireUtf8Sink() MUST be paired with a call to
+     * releaseUtf8Sink() in a finally block.
+     * <p>
+     * Example usage:
+     * <pre>
+     * Utf8StringSink sink = Misc.acquireUtf8Sink();
+     * try {
+     *     sink.put(data);
+     *     // ... use sink, including recursive calls that also acquire
+     * } finally {
+     *     Misc.releaseUtf8Sink();
+     * }
+     * </pre>
+     *
+     * @return a cleared Utf8StringSink from the pool
+     */
+    public static Utf8StringSink acquireUtf8Sink() {
+        return tlUtf8SinkPool.get().acquire();
     }
 
     public static <T extends Mutable> T clear(T object) {
@@ -51,10 +75,12 @@ public final class Misc {
     }
 
     public static void clearObjList(ObjList<? extends Mutable> args) {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            Mutable m = args.getQuick(i);
-            if (m != null) {
-                m.clear();
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                Mutable m = args.getQuick(i);
+                if (m != null) {
+                    m.clear();
+                }
             }
         }
     }
@@ -146,9 +172,32 @@ public final class Misc {
         return res;
     }
 
+    public static void releaseUtf8Sink() {
+        tlUtf8SinkPool.get().release();
+    }
+
     private static <T> void freeObjList0(ObjList<T> list) {
         for (int i = 0, n = list.size(); i < n; i++) {
             list.setQuick(i, freeIfCloseable(list.getQuick(i)));
+        }
+    }
+
+    private static class Utf8SinkPool {
+        private final ObjList<Utf8StringSink> pool = new ObjList<>();
+        private int depth;
+
+        Utf8StringSink acquire() {
+            if (depth >= pool.size()) {
+                pool.add(new Utf8StringSink());
+            }
+            Utf8StringSink sink = pool.getQuick(depth++);
+            sink.clear();
+            return sink;
+        }
+
+        void release() {
+            assert depth > 0;
+            depth--;
         }
     }
 }

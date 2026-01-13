@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,9 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -59,6 +61,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
+    private static final IntHashSet SKIP_TELEMETRY_EVENTS = new IntHashSet();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final Decimal128 decimal128 = new Decimal128();
@@ -387,7 +390,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void resetFlags() {
+    public void reset() {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
@@ -396,6 +399,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();
+        Misc.clear(securityContext);
     }
 
     @Override
@@ -491,13 +495,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        resetFlags();
+        reset();
         return this;
     }
 
     public void with(long requestFd) {
         this.requestFd = requestFd;
-        resetFlags();
+        reset();
     }
 
     public void with(BindVariableService bindVariableService) {
@@ -530,11 +534,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
-        resetFlags();
+        reset();
         return this;
     }
 
     private void doStoreTelemetry(short event, short origin) {
+        if (SKIP_TELEMETRY_EVENTS.contains(event)) {
+            return;
+        }
         TelemetryTask.store(telemetry, origin, event);
     }
 
@@ -544,5 +551,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @FunctionalInterface
     private interface TelemetryFacade {
         void store(short event, short origin);
+    }
+
+    static {
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.SET);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.BEGIN);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.COMMIT);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.ROLLBACK);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.DEALLOCATE);
     }
 }

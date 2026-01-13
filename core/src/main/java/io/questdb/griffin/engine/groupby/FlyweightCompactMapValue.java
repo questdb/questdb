@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,11 +37,10 @@ import io.questdb.std.Unsafe;
  * each slot takes 8 bytes.
  * <p>
  * Warning: only suitable for columns up to 8 bytes in size.
+ * {@link FlyweightMapValueImpl} should be used for larger column sizes.
  */
 public class FlyweightCompactMapValue implements FlyweightMapValue {
     private final int columnCount;
-    private final Decimal128 decimal128 = new Decimal128();
-    private final Decimal256 decimal256 = new Decimal256();
     private boolean isNew;
     private long ptr;
 
@@ -123,22 +122,8 @@ public class FlyweightCompactMapValue implements FlyweightMapValue {
     }
 
     @Override
-    public void getDecimal128(int index, Decimal128 sink) {
-        final long addr = getAddress(index);
-        sink.ofRaw(
-                Unsafe.getUnsafe().getLong(addr),
-                Unsafe.getUnsafe().getLong(addr + 8L)
-        );
-    }
-
-    @Override
     public short getDecimal16(int index) {
         return Unsafe.getUnsafe().getShort(getAddress(index));
-    }
-
-    @Override
-    public void getDecimal256(int index, Decimal256 sink) {
-        sink.ofRawAddress(getAddress(index));
     }
 
     @Override
@@ -285,34 +270,32 @@ public class FlyweightCompactMapValue implements FlyweightMapValue {
 
     @Override
     public void putDecimal128(int index, Record record, int colIndex) {
-        record.getDecimal128(colIndex, decimal128);
-        Decimal128.put(decimal128, getAddress(index));
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putDecimal128(int index, Decimal128 decimal128) {
-        Decimal128.put(decimal128, getAddress(index));
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putDecimal128Null(int index) {
-        Decimal128.putNull(getAddress(index));
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putDecimal256(int index, Record record, int colIndex) {
-        record.getDecimal256(colIndex, decimal256);
-        Decimal256.put(decimal256, getAddress(index));
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putDecimal256(int index, Decimal256 decimal256) {
-        Decimal256.put(decimal256, getAddress(index));
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putDecimal256Null(int index) {
-        Decimal256.putNull(getAddress(index));
+        throw new UnsupportedOperationException();
     }
 
     @Override

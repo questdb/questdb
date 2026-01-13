@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -588,7 +588,7 @@ public class NanosTimestampDriver implements TimestampDriver {
             case YEAR -> PARTITION_YEAR_FORMAT;
             case HOUR -> PARTITION_HOUR_FORMAT;
             case WEEK -> PARTITION_WEEK_FORMAT;
-            case NONE -> DEFAULT_FORMAT;
+            case NONE, NOT_APPLICABLE -> DEFAULT_FORMAT;
             default ->
                     throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
         };
@@ -1228,7 +1228,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                     fmtMethod = PARTITION_WEEK_FORMAT;
                     yield CommonUtils.WEEK_PATTERN;
                 }
-                case NONE -> {
+                case NONE, NOT_APPLICABLE -> {
                     fmtMethod = DEFAULT_FORMAT;
                     yield partitionName;
                 }

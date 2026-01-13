@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,9 +41,11 @@ import static org.junit.Assert.fail;
 @RunWith(Parameterized.class)
 public class TtlTest extends AbstractCairoTest {
     private final String wal;
+    private final WalMode walMode;
 
     public TtlTest(WalMode walMode) {
-        this.wal = walMode == WalMode.WITH_WAL ? " WAL" : " BYPASS WAL";
+        this.walMode = walMode;
+        this.wal = walMode == WalMode.WITH_WAL ? " wal;" : " BYPASS WAL;";
     }
 
     @Parameterized.Parameters(name = "{0}")
@@ -106,9 +108,8 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableNotPartitioned() throws Exception {
-        Assume.assumeTrue(wal.equals("BYPASS WAL"));
+        Assume.assumeTrue(walMode == WalMode.NO_WAL);
         execute("CREATE TABLE tango (n LONG)");
-        execute("ALTER TABLE tango SET TTL 0H"); // zero TTL is acceptable
         try {
             execute("ALTER TABLE tango SET TTL 1H");
             fail("Accepted TTL on a non-partitioned table");
@@ -139,18 +140,18 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testCreateSyntaxInvalid() {
-        Assume.assumeTrue(wal.equals("BYPASS WAL"));
+        Assume.assumeTrue(walMode == WalMode.NO_WAL);
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[69] missing argument, should be TTL <number> <unit> or <number_with_unit>", e.getMessage());
+            assertEquals("[69] missing argument, should be <number> <unit> or <number_with_unit>", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL X");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL X", e.getMessage());
+            assertEquals("[70] invalid syntax, should be <number> <unit> but was X", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 12");
@@ -169,14 +170,14 @@ public class TtlTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid argument, should be TTL <number> <unit> or <number_with_unit>",
+            assertEquals("[70] invalid argument, should be <number> <unit> or <number_with_unit>",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL H");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL H",
+            assertEquals("[70] invalid syntax, should be <number> <unit> but was H",
                     e.getMessage());
         }
         try {
@@ -190,11 +191,14 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableLike() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2 HOURS" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2 HOURS " + wal);
         execute("CREATE TABLE samba (LIKE tango)");
-        assertSql("ddl\n" +
-                        "CREATE TABLE 'samba' ( \n\tts TIMESTAMP\n) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS" + wal
-                        + "\nWITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+        assertSql("""
+                        ddl
+                        CREATE TABLE 'samba' (\s
+                        \tts TIMESTAMP
+                        ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS%s
+                        """.formatted(walMode == WalMode.WITH_WAL ? ";" : wal),
                 "SHOW CREATE TABLE samba");
     }
 
@@ -324,7 +328,7 @@ public class TtlTest extends AbstractCairoTest {
     public void testFutureTimestampWipesTableWhenWallClockDisabled() throws Exception {
         // This test verifies the opt-out behavior: when wall clock is disabled,
         // future timestamps will cause TTL to evict data based on maxTimestamp only
-        Assume.assumeTrue(wal.equals(" BYPASS WAL")); // Only test in non-WAL mode for simplicity
+        Assume.assumeTrue(walMode == WalMode.NO_WAL); // Only test in non-WAL mode for simplicity
 
         node1.setProperty(PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, false);
         try {
@@ -611,18 +615,18 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testRandomInsertion() throws Exception {
-        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D" + wal);
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1D" + wal);
         execute("INSERT INTO tango SELECT rnd_timestamp('1970-01-01', '1970-12-01', 0) ts from long_sequence(2_000_000)");
         execute("INSERT INTO tango values ('1970-12-02')");
         drainWalQueue();
-        assertQuery("name\n1970-12-02T00\n",
+        assertQuery("name\n1970-12-02\n",
                 "SELECT name FROM (SHOW PARTITIONS FROM tango)",
                 "", false, true);
     }
 
     @Test
     public void testSyntaxJustWithinRange() throws Exception {
-        Assume.assumeTrue(wal.equals("BYPASS WAL"));
+        Assume.assumeTrue(walMode == WalMode.NO_WAL);
 
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_647 HOURS");
         execute("DROP TABLE tango");
@@ -637,20 +641,20 @@ public class TtlTest extends AbstractCairoTest {
 
     @Test
     public void testSyntaxOutOfRange() {
-        Assume.assumeTrue(wal.equals("BYPASS WAL"));
+        Assume.assumeTrue(walMode == WalMode.NO_WAL);
 
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL -1 HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be TTL <number> <unit> but was TTL -",
+            assertEquals("[70] invalid syntax, should be <number> <unit> but was -",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value out of range: 2147483648. Max value: 2147483647",
+            assertEquals("[70] value out of range: 2147483648. Max value: 2147483647",
                     e.getMessage());
         }
         try {
@@ -671,7 +675,7 @@ public class TtlTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 MONTHS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value out of range: 2147483648. Max value: 2147483647",
+            assertEquals("[70] value out of range: 2147483648. Max value: 2147483647",
                     e.getMessage());
         }
         try {

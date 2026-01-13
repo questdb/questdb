@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -730,7 +731,7 @@ public class LatestByTest extends AbstractCairoTest {
                 // with the same value for the parameter as was injected into the global binding variable service
                 try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
                     BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
-                    localContext.with(localBindings);
+                    localContext.with(AllowAllSecurityContext.INSTANCE, localBindings);
                     localBindings.setStr("sym", "c");
                     assertFactoryCursor(
                             "ts\ts\n" +
@@ -748,7 +749,7 @@ public class LatestByTest extends AbstractCairoTest {
                 // this must yield a different result
                 try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
                     BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
-                    localContext.with(localBindings);
+                    localContext.with(AllowAllSecurityContext.INSTANCE, localBindings);
                     localBindings.setStr("sym", "a");
 
                     assertFactoryCursor(

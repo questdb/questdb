@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ public class CreateTableTestUtils {
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false);
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false, false);
         if (tableToken == null) {
             throw CairoException.critical(0).put("table already exists: ").put(model.getTableName());
         }

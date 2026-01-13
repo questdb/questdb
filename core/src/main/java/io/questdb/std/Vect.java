@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -102,7 +102,7 @@ public final class Vect {
             int dedupColumnCount,
             long dedupColumnData
     ) {
-        long dedupCount = dedupSortedTimestampIndex(
+        long dedupRowCount = dedupSortedTimestampIndex(
                 inIndexAddr,
                 count,
                 outIndexAddr,
@@ -110,8 +110,8 @@ public final class Vect {
                 dedupColumnCount,
                 dedupColumnData
         );
-        assert dedupCount != -1 : "unsorted data passed to deduplication";
-        return dedupCount;
+        assert dedupRowCount != -1 : "unsorted data passed to deduplication";
+        return dedupRowCount;
     }
 
     public static native long dedupSortedTimestampIndexManyAddresses(

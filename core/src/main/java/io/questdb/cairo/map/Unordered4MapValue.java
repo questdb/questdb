@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,12 +35,14 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 final class Unordered4MapValue implements MapValue {
-    private final Decimal128 decimal128 = new Decimal128();
-    private final Decimal256 decimal256 = new Decimal256();
-    private final Long256Impl long256 = new Long256Impl();
     private final long[] valueOffsets;
     private final long valueSize;
+    // Flyweights are lazily-initialized to avoid allocations
+    // in case when decimal/long256 are not present in the query.
+    private Decimal128 decimal128;
+    private Decimal256 decimal256;
     private long limit;
+    private Long256Impl long256;
     private boolean newValue;
     private Unordered4MapRecord record; // double-linked
     private long startAddress; // key-value pair start address
@@ -216,6 +218,7 @@ final class Unordered4MapValue implements MapValue {
 
     @Override
     public Long256 getLong256A(int index) {
+        final Long256 long256 = getLong256();
         long256.fromAddress(getAddress(index));
         return long256;
     }
@@ -294,6 +297,7 @@ final class Unordered4MapValue implements MapValue {
 
     @Override
     public void putDecimal128(int index, Record record, int colIndex) {
+        final Decimal128 decimal128 = getDecimal128();
         record.getDecimal128(colIndex, decimal128);
         Decimal128.put(decimal128, getAddress(index));
     }
@@ -310,6 +314,7 @@ final class Unordered4MapValue implements MapValue {
 
     @Override
     public void putDecimal256(int index, Record record, int colIndex) {
+        final Decimal256 decimal256 = getDecimal256();
         record.getDecimal256(colIndex, decimal256);
         Decimal256.put(decimal256, getAddress(index));
     }
@@ -373,6 +378,27 @@ final class Unordered4MapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         record.of(startAddress);
+    }
+
+    private Decimal128 getDecimal128() {
+        if (decimal128 == null) {
+            decimal128 = new Decimal128();
+        }
+        return decimal128;
+    }
+
+    private Decimal256 getDecimal256() {
+        if (decimal256 == null) {
+            decimal256 = new Decimal256();
+        }
+        return decimal256;
+    }
+
+    private Long256 getLong256() {
+        if (long256 == null) {
+            long256 = new Long256Impl();
+        }
+        return long256;
     }
 
     void copyRawValue(long ptr) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.TelemetryConfigLogger;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
@@ -147,6 +148,12 @@ public class MetadataCache implements QuietCloseable {
         if (engine.isTableDropped(token)) {
             // Table writer can still process some transactions when DROP table has already
             // been executed, essentially updating dropped table. We should ignore such updates.
+            return;
+        }
+
+        if (token.isView()) {
+            // views do not have _meta file
+            // view metadata will be added to the cache when the view is compiled
             return;
         }
 
@@ -510,7 +517,7 @@ public class MetadataCache implements QuietCloseable {
          * @see MetadataCacheWriter#hydrateTable(TableToken)
          */
         @Override
-        public void hydrateTable(@NotNull TableWriterMetadata tableMetadata) {
+        public void hydrateTable(@NotNull TableMetadata tableMetadata) {
             if (engine.isTableDropped(tableMetadata.getTableToken())) {
                 // Table writer can still process some transactions when DROP table has already
                 // been executed, essentially updating dropped table. We should ignore such updates.
@@ -598,7 +605,12 @@ public class MetadataCache implements QuietCloseable {
 
             for (int i = 0, n = table.columns.size(); i < n; i++) {
                 // Update column positions after sort
-                table.columns.getQuick(i).setPosition(i);
+                final CairoColumn column = table.columns.getQuick(i);
+                column.setPosition(i);
+                // Update designated timestamp index
+                if (column.isDesignated()) {
+                    table.setTimestampIndex(i);
+                }
                 // Update column name index map
                 table.columnNameIndexMap.put(table.columns.getQuick(i).getName(), i);
             }

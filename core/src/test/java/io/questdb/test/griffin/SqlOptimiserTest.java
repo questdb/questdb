@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
@@ -33,6 +34,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Misc;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayDeque;
@@ -75,6 +77,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
               vendor_id SYMBOL capacity 8,
               pickup_datetime TIMESTAMP
             ) timestamp (pickup_datetime) PARTITION BY MONTH WAL;""";
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
+    }
 
     @Test
     public void testAliasAppearsInFuncArgs1() throws Exception {
@@ -227,7 +235,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -247,7 +255,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -267,7 +275,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -287,7 +295,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -409,7 +417,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Window
                           functions: [rank() over (partition by [hostname])]
                             VirtualRecord
-                              functions: [hostname,ts,usage_system,usage_system1+10]
+                              functions: [hostname,ts,memoize(usage_system),usage_system1+10]
                                 SelectedRecord
                                     Filter filter: t2.ts<t1.ts
                                         Cross Join
@@ -439,7 +447,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -465,6 +473,123 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFunctionMemoizationBasicColumnRefCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b double, c string)");
+            execute("insert into x values(3, 1.0, 'a'), (1, 2.0, 'b')");
+            final String query = "select a, b, a + b c1 from x order by  c1";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Sort light
+                              keys: [c1]
+                                VirtualRecord
+                                  functions: [a,b,memoize(a+b)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """
+            );
+            assertSql(
+                    """
+                            a\tb\tc1
+                            1\t2.0\t3.0
+                            3\t1.0\t4.0
+                            """,
+                    query
+            );
+
+            final String query2 = "select a_alias + 1, a_alias + 2 from (select a + 1 a_alias, b + 1 b1 from x) order by  b1";
+            assertPlanNoLeakCheck(
+                    query2,
+                    """
+                            SelectedRecord
+                                Sort light
+                                  keys: [b1]
+                                    VirtualRecord
+                                      functions: [a_alias+1,a_alias+2,b1]
+                                        VirtualRecord
+                                          functions: [memoize(a+1),b+1]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
+            assertSql(
+                    """
+                            column\tcolumn1
+                            5\t6
+                            3\t4
+                            """,
+                    query2
+            );
+
+            final String query3 = "select sum(a_alias + 1), sum(a_alias + 2) from (select a + 1 a_alias, b b1 from x)";
+            assertPlanNoLeakCheck(
+                    query3,
+                    """
+                            GroupBy vectorized: false
+                              values: [sum(a_alias+1),sum(a_alias+2)]
+                                VirtualRecord
+                                  functions: [memoize(a+1)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """
+            );
+            assertSql(
+                    """
+                            sum\tsum1
+                            8\t10
+                            """,
+                    query3
+            );
+
+            final String query4 = "select b1, a_alias from (select a + 1 a_alias, b b1 from x) where a_alias > 10";
+            assertPlanNoLeakCheck(
+                    query4,
+                    """
+                            Filter filter: 10<a_alias
+                                VirtualRecord
+                                  functions: [b1,memoize(a+1)]
+                                    SelectedRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFunctionMemoizationUnionModel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b double)");
+            execute("create table y (c int, d string)");
+            assertPlanNoLeakCheck(
+                    "select a1 + 1 , a1 + 2 from (select a + 1 a1 from x) union select a1 + 1 , a1 + 2 from (select c + 1 a1 from y) ",
+                    """
+                            Union
+                                VirtualRecord
+                                  functions: [a1+1,a1+2]
+                                    VirtualRecord
+                                      functions: [memoize(a+1)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                VirtualRecord
+                                  functions: [a1+1,a1+2]
+                                    VirtualRecord
+                                      functions: [memoize(c+1)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: y
                             """
             );
         });
@@ -646,7 +771,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -687,7 +812,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -727,7 +852,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -767,7 +892,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -791,7 +916,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -815,7 +940,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -835,7 +960,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -866,22 +991,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Union
                                 Union
                                     Union
-                                        Limit lo: 1 skip-over-rows: 0 limit: 0
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             SelectedRecord
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        Limit lo: 1 skip-over-rows: 0 limit: 0
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             SelectedRecord
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    Limit lo: 1 skip-over-rows: 0 limit: 0
+                                    Limit value: 1 skip-rows: 0 take-rows: 0
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                Limit lo: 1 skip-over-rows: 0 limit: 0
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     SelectedRecord
                                         PageFrame
                                             Row backward scan
@@ -1033,7 +1158,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             order by a desc \
                             limit 10""",
                     """
-                            Limit lo: 10 skip-over-rows: 0 limit: 0
+                            Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                 Sort
                                   keys: [a desc]
                                     SelectedRecord
@@ -1076,7 +1201,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             limit 10""",
                     """
                             SelectedRecord
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
+                                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                     Sort
                                       keys: [a desc, ts]
                                         SelectedRecord
@@ -1357,7 +1482,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 1
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [s, ts]
                                     SelectedRecord
@@ -1398,7 +1523,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by ts, s limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 1
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [ts, s]
                                     SelectedRecord
@@ -1439,7 +1564,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 1
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [s, ts1]
                                     SelectedRecord
@@ -1481,7 +1606,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 1
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [s1, ts1]
                                     SelectedRecord
@@ -1522,7 +1647,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 7
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [s, ts]
                                     SelectedRecord
@@ -1569,7 +1694,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 9
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 SelectedRecord
                                     Cross Join
                                         SortedSymbolIndex
@@ -1616,7 +1741,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 63
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 SelectedRecord
                                     Cross Join
                                         SortedSymbolIndex
@@ -1718,7 +1843,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts, ts1, s1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 63
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [s, ts, ts1, s1]
                                     SelectedRecord
@@ -1820,7 +1945,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 63
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 SelectedRecord
                                     Cross Join
                                         SortedSymbolIndex
@@ -1921,7 +2046,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by ts, s limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 63
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [ts, s]
                                     SelectedRecord
@@ -2023,7 +2148,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by ts, s1, s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 63
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [ts, s1, s, ts1]
                                     SelectedRecord
@@ -2126,7 +2251,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) lt join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 7
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [s, ts1]
                                     SelectedRecord
@@ -2173,7 +2298,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 21
+                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 Sort
                                   keys: [s, ts, ts1]
                                     SelectedRecord
@@ -2375,7 +2500,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             ") " +
                             "order by ts desc",
                     """
-                            Limit lo: 10 skip-over-rows: 0 limit: 10
+                            Limit value: 10 skip-rows: 0 take-rows: 10
                                 SelectedRecord
                                     Cross Join
                                         PageFrame
@@ -2458,7 +2583,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -2553,7 +2678,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -2593,7 +2718,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -2632,7 +2757,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -2671,7 +2796,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -2690,7 +2815,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -2709,7 +2834,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -2728,7 +2853,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -2755,22 +2880,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Union
                                 Union
                                     Union
-                                        Limit lo: 1 skip-over-rows: 0 limit: 0
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             SelectedRecord
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        Limit lo: 1 skip-over-rows: 0 limit: 0
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             SelectedRecord
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    Limit lo: 1 skip-over-rows: 0 limit: 0
+                                    Limit value: 1 skip-rows: 0 take-rows: 0
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                Limit lo: 1 skip-over-rows: 0 limit: 0
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     SelectedRecord
                                         PageFrame
                                             Row backward scan
@@ -2835,7 +2960,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [max(ts)]
+                              values: [max_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -2856,7 +2981,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [min(ts)]
+                              values: [min_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -2882,22 +3007,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Union
                                 Union
                                     Union
-                                        Limit lo: 1 skip-over-rows: 0 limit: 0
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             SelectedRecord
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        Limit lo: 1 skip-over-rows: 0 limit: 0
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             SelectedRecord
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    Limit lo: 1 skip-over-rows: 0 limit: 0
+                                    Limit value: 1 skip-rows: 0 take-rows: 0
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                Limit lo: 1 skip-over-rows: 0 limit: 0
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     SelectedRecord
                                         PageFrame
                                             Row backward scan
@@ -3099,7 +3224,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -3118,7 +3243,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -3137,7 +3262,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row backward scan
@@ -3156,7 +3281,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -3205,7 +3330,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             ASOF JOIN (SELECT * from trades) trades2
                              LIMIT -3, -10;""",
                     """
-                            Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0
+                            Limit left: -3 right: -10 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     AsOf Join Fast
                                         PageFrame
@@ -3229,7 +3354,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             ASOF JOIN (SELECT * from trades) trades2
                              LIMIT -3;""",
                     """
-                            Limit lo: -3 skip-over-rows: 0 limit: 0
+                            Limit value: -3 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     AsOf Join Fast
                                         PageFrame
@@ -3250,7 +3375,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     "select timestamp ts1, timestamp ts2 from trades limit -3",
                     """
-                            Limit lo: -3 skip-over-rows: 0 limit: 0
+                            Limit value: -3 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -3467,7 +3592,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck("select timestamp, * from trades limit -3",
                     """
-                            Limit lo: -3 skip-over-rows: 0 limit: 0
+                            Limit value: -3 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -3483,7 +3608,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3",
                     """
-                            Limit lo: -3 skip-over-rows: 0 limit: 0
+                            Limit value: -3 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -3499,7 +3624,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp from trades limit -3",
                     """
-                            Limit lo: -3 skip-over-rows: 0 limit: 0
+                            Limit value: -3 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -3515,7 +3640,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3, -10",
                     """
-                            Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0
+                            Limit left: -3 right: -10 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -3531,7 +3656,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3, -10;",
                     """
-                            Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0
+                            Limit left: -3 right: -10 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -3547,7 +3672,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp from trades limit -3, -10;",
                     """
-                            Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0
+                            Limit left: -3 right: -10 skip-rows: 0 take-rows: 0
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -5043,7 +5168,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [max(ts)]
+                              values: [max_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -5064,7 +5189,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [min(ts)]
+                              values: [min_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -5166,22 +5291,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Union
                                 Union
                                     Union
-                                        Limit lo: 1 skip-over-rows: 0 limit: 0
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             SelectedRecord
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        Limit lo: 1 skip-over-rows: 0 limit: 0
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             SelectedRecord
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    Limit lo: 1 skip-over-rows: 0 limit: 0
+                                    Limit value: 1 skip-rows: 0 take-rows: 0
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                Limit lo: 1 skip-over-rows: 0 limit: 0
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     SelectedRecord
                                         PageFrame
                                             Row backward scan
@@ -5485,7 +5610,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertPlanNoLeakCheck(
                 q1,
                 """
-                        Limit lo: 40 skip-over-rows: 0 limit: 10
+                        Limit value: 40 skip-rows-max: 0 take-rows-max: 40
                             Sort
                               keys: [hostname, ts2]
                                 Window
@@ -5555,7 +5680,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 """
                         Sort
                           keys: [ts1 desc]
-                            Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 10
+                            Limit value: 9223372036854775807L skip-rows: 0 take-rows: 10
                                 Window
                                   functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
                                     PageFrame
@@ -5588,7 +5713,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Radix sort light
                           keys: [ts1 desc]
                             SelectedRecord
-                                Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 10
+                                Limit value: 9223372036854775807L skip-rows: 0 take-rows: 10
                                     Sort
                                       keys: [ts2]
                                         Window
@@ -5623,7 +5748,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertPlanNoLeakCheck(
                 q5,
                 """
-                        Limit lo: 40 skip-over-rows: 0 limit: 10
+                        Limit value: 40 skip-rows-max: 0 take-rows-max: 40
                             Sort
                               keys: [ts2, hostname]
                                 Window
@@ -5738,7 +5863,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
+            ExecutionModel model = compiler.generateExecutionModel(query, sqlExecutionContext);
             assertEquals(ExecutionModel.QUERY, model.getModelType());
             return (QueryModel) model;
         }

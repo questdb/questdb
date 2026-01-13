@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
@@ -43,12 +44,14 @@ public interface MetadataCacheWriter extends QuietCloseable {
 
     /**
      * Updates the metadata cache with new entry, which content is provided by
-     * the given {@link TableWriterMetadata} instance. This metadata is typically sourced from
+     * the given {@link TableMetadata} instance. This metadata is typically sourced from
      * a TableWriter instance, which is the source of truth for table metadata.
+     * For views the metadata is sourced from the view state, which contains the most
+     * up-to-date table metadata for the view. This metadata is derived from the view definition.
      *
      * @param tableMetadata The metadata to update the cache with.
      */
-    void hydrateTable(@NotNull TableWriterMetadata tableMetadata);
+    void hydrateTable(@NotNull TableMetadata tableMetadata);
 
     void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken);
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,13 +25,18 @@
 package io.questdb.tasks;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryConfiguration;
 import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.std.Numbers.encodeLowHighShorts;
 
 public class TelemetryTask implements AbstractTelemetryTask {
     public static final String NAME = "TABLE TELEMETRY";
@@ -42,7 +47,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
         private final TelemetryTask systemStatusTask = new TelemetryTask();
 
         @Override
-        public QueryBuilder getCreateSql(QueryBuilder builder) {
+        public QueryBuilder getCreateSql(QueryBuilder builder, int ttlWeeks) {
             return builder
                     .$("CREATE TABLE IF NOT EXISTS \"")
                     .$(TABLE_NAME)
@@ -50,8 +55,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
                             "created TIMESTAMP, " +
                             "event SHORT, " +
                             "origin SHORT" +
-                            ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
-                    );
+                            ") TIMESTAMP(created) PARTITION BY DAY TTL ").$(ttlWeeks > 0 ? ttlWeeks : 4).$(" WEEKS BYPASS WAL");
         }
 
         @Override
@@ -67,6 +71,11 @@ public class TelemetryTask implements AbstractTelemetryTask {
         @Override
         public ObjectFactory<TelemetryTask> getTaskFactory() {
             return TelemetryTask::new;
+        }
+
+        @Override
+        public TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
+            return configuration.getTelemetryConfiguration();
         }
 
         @Override
@@ -96,6 +105,11 @@ public class TelemetryTask implements AbstractTelemetryTask {
             task.event = event;
             telemetry.store(task);
         }
+    }
+
+    @Override
+    public int getEventKey() {
+        return encodeLowHighShorts(event, origin);
     }
 
     public long getQueueCursor() {

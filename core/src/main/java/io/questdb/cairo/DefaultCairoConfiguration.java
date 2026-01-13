@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -237,6 +237,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCompileViewModelPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public @NotNull CharSequence getConfRoot() {
         return confRoot;
     }
@@ -392,6 +397,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByParallelTopKThreshold() {
+        return 5_000_000;
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return 1024;
     }
@@ -412,6 +422,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByTopKQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public int getIdGenerateBatchStep() {
         return 512;
     }
@@ -429,6 +444,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getInactiveReaderTTL() {
         return -10000;
+    }
+
+    @Override
+    public long getInactiveViewWalWriterTTL() {
+        return 30_000;
     }
 
     @Override
@@ -741,6 +761,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPivotColumnPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getPoolSegmentSize() {
+        return 32;
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return 64;
     }
@@ -758,6 +788,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getReaderPoolMaxSegments() {
         return 5;
+    }
+
+    @Override
+    public int getRecentWriteTrackerCapacity() {
+        return 1000;
     }
 
     @Override
@@ -958,11 +993,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlJitPageAddressCacheThreshold() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
     public int getSqlJoinContextPoolCapacity() {
         return 64;
     }
@@ -1033,6 +1063,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelWorkStealingSpinTimeout() {
+        return 50_000; // 50us
+    }
+
+    @Override
     public int getSqlParallelWorkStealingThreshold() {
         return 16;
     }
@@ -1040,6 +1075,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlParquetFrameCacheCapacity() {
         return 3;
+    }
+
+    @Override
+    public int getSqlPivotMaxProducedColumns() {
+        return 5_000;
     }
 
     @Override
@@ -1213,6 +1253,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getViewLexerPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return 3;
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
     }
@@ -1353,6 +1403,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isColumnAliasExpressionEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isCopierChunkedEnabled() {
         return true;
     }
 

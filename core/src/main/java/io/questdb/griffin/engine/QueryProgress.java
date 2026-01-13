@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -93,13 +93,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     public static void logEnd(
             long sqlId,
-            @NotNull CharSequence sqlText,
+            CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
             long beginNanos,
             @Nullable ObjList<TableReader> leakedReaders,
             @Nullable QueryTrace queryTrace
     ) {
-        if (!executionContext.shouldLogSql()) {
+        if (!executionContext.shouldLogSql() || sqlText == null) {
             return;
         }
 
@@ -162,7 +162,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     public static void logError(
             @Nullable Throwable e,
             long sqlId,
-            @NotNull CharSequence sqlText,
+            CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
             long beginNanos,
             @Nullable ObjList<TableReader> leakedReaders
@@ -189,7 +189,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 // We need guaranteed logging for errors, hence errorW() call.
 
                 log.$(" [id=").$(sqlId)
-                        .$(", sql=`").$safe(sqlText)
+                        .$(", sql=`").$safe(sqlText == null ? "**subquery**" : sqlText)
                         .$("`, ").$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
@@ -199,7 +199,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             } else {
                 // This is unknown exception, can be OOM that can cause exception in logging.
                 log.$(" [id=").$(sqlId)
-                        .$(", sql=`").$safe(sqlText)
+                        .$(", sql=`").$safe(sqlText == null ? "**subquery**" : sqlText)
                         .$("`, ").$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
@@ -220,11 +220,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     public static void logStart(
             long sqlId,
-            @NotNull CharSequence sqlText,
+            CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
             boolean jit
     ) {
-        if (executionContext.shouldLogSql() && executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe()) {
+        if (executionContext.shouldLogSql() && executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe() && sqlText != null) {
             LOG.info()
                     .$("exe")
                     .$(" [id=").$(sqlId)

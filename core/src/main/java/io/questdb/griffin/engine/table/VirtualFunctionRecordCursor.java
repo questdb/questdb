@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.VirtualFunctionRecord;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
@@ -45,7 +46,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualFunctionRecord recordA;
     private final ObjList<Function> functions;
     private final int memoizerCount;
-    private final ObjList<Function> memoizers;
+    private final ObjList<MemoizerFunction> memoizers;
     private final PriorityMetadata priorityMetadata;
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
@@ -54,7 +55,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     public VirtualFunctionRecordCursor(
             @NotNull PriorityMetadata priorityMetadata,
             @NotNull ObjList<Function> functions,
-            @NotNull ObjList<Function> memoizers,
+            @NotNull ObjList<MemoizerFunction> memoizers,
             boolean supportsRandomAccess,
             int virtualColumnReservedSlots
     ) {
