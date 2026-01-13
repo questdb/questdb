@@ -295,23 +295,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    // Helper method for Kahan addition: adds value to sum with compensation
-    // Returns new sum, updates compensation in-place via array
-    private static double kahanAdd(double sum, double value, double[] c) {
-        double y = value - c[0];
-        double t = sum + y;
-        c[0] = (t - sum) - y;
-        return t;
-    }
-
-    // Helper method for Kahan subtraction: subtracts value from sum with compensation
-    private static double kahanSub(double sum, double value, double[] c) {
-        double y = -value - c[0];
-        double t = sum + y;
-        c[0] = (t - sum) - y;
-        return t;
-    }
-
     // (rows between current row and current row) processes 1-element-big set, so simply returns expression value
     static class KSumOverCurrentRowFunction extends BaseWindowFunction implements WindowDoubleFunction {
         private double value;
@@ -495,8 +478,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             long timestamp = record.getTimestamp(timestampIndex);
             double d = arg.getDouble(record);
 
-            double[] cArr = new double[1]; // for passing compensation by reference
-
             if (mapValue.isNew()) {
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -539,7 +520,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 firstIdx = mapValue.getLong(6);
 
                 long newFirstIdx = firstIdx;
-                cArr[0] = c;
 
                 if (frameLoBounded) {
                     // find new bottom border of range frame and remove unneeded elements
@@ -549,7 +529,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                sum = kahanSub(sum, val, cArr);
+                                // Kahan subtraction
+                                double y = -val - c;
+                                double t = sum + y;
+                                c = (t - sum) - y;
+                                sum = t;
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -560,7 +544,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     }
                 }
                 firstIdx = newFirstIdx;
-                c = cArr[0];
 
                 // add new element if not null
                 if (Numbers.isFinite(d)) {
@@ -577,7 +560,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     size++;
                 }
 
-                cArr[0] = c;
                 // find new top border of range frame and add new elements
                 if (frameLoBounded) {
                     for (long i = frameSize; i < size; i++) {
@@ -586,8 +568,12 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                         long diff = Math.abs(ts - timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
-                            double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum = kahanAdd(sum, value, cArr);
+                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            // Kahan addition
+                            double y = val - c;
+                            double t = sum + y;
+                            c = (t - sum) - y;
+                            sum = t;
                             frameSize++;
                         } else {
                             break;
@@ -600,7 +586,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum = kahanAdd(sum, val, cArr);
+                            // Kahan addition
+                            double y = val - c;
+                            double t = sum + y;
+                            c = (t - sum) - y;
+                            sum = t;
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -610,7 +600,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     }
                     firstIdx = newFirstIdx;
                 }
-                c = cArr[0];
 
                 if (frameSize != 0) {
                     this.sum = sum;
@@ -757,7 +746,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             long loIdx;
             long startOffset;
             double d = arg.getDouble(record);
-            double[] cArr = new double[1];
 
             if (value.isNew()) {
                 loIdx = 0;
@@ -786,18 +774,20 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 loIdx = value.getLong(3);
                 startOffset = value.getLong(4);
 
-                cArr[0] = c;
-
                 // compute value using top frame element
                 double hiValue = frameIncludesCurrentValue ? d : memory.getDouble(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
                 if (Numbers.isFinite(hiValue)) {
                     count++;
-                    sum = kahanAdd(sum, hiValue, cArr);
+                    // Kahan addition
+                    double y = hiValue - c;
+                    double t = sum + y;
+                    c = (t - sum) - y;
+                    sum = t;
                 }
 
                 if (count != 0) {
                     this.sum = sum;
-                    this.c = cArr[0];
+                    this.c = c;
                 } else {
                     this.sum = Double.NaN;
                     this.c = 0.0;
@@ -807,11 +797,14 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     // remove the oldest element
                     double loValue = memory.getDouble(startOffset + loIdx * Double.BYTES);
                     if (Numbers.isFinite(loValue)) {
-                        sum = kahanSub(sum, loValue, cArr);
+                        // Kahan subtraction
+                        double y = -loValue - c;
+                        double t = sum + y;
+                        c = (t - sum) - y;
+                        sum = t;
                         count--;
                     }
                 }
-                c = cArr[0];
             }
 
             value.putDouble(0, sum);
@@ -940,7 +933,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             double d = arg.getDouble(record);
 
             long newFirstIdx = firstIdx;
-            double[] cArr = new double[]{c};
 
             if (frameLoBounded) {
                 // find new bottom border of range frame and remove unneeded elements
@@ -950,7 +942,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         if (frameSize > 0) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum = kahanSub(sum, val, cArr);
+                            // Kahan subtraction
+                            double y = -val - c;
+                            double t = sum + y;
+                            c = (t - sum) - y;
+                            sum = t;
                             frameSize--;
                         }
                         newFirstIdx = (idx + 1) % capacity;
@@ -961,7 +957,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             }
             firstIdx = newFirstIdx;
-            c = cArr[0];
 
             // add new element if not null
             if (Numbers.isFinite(d)) {
@@ -988,7 +983,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 size++;
             }
 
-            cArr[0] = c;
             // find new top border of range frame and add new elements
             if (frameLoBounded) {
                 for (long i = frameSize, n = size; i < n; i++) {
@@ -997,8 +991,12 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long diff = Math.abs(ts - timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
-                        double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum = kahanAdd(sum, value, cArr);
+                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        // Kahan addition
+                        double y = val - c;
+                        double t = sum + y;
+                        c = (t - sum) - y;
+                        sum = t;
                         frameSize++;
                     } else {
                         break;
@@ -1011,7 +1009,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum = kahanAdd(sum, val, cArr);
+                        // Kahan addition
+                        double y = val - c;
+                        double t = sum + y;
+                        c = (t - sum) - y;
+                        sum = t;
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
@@ -1021,7 +1023,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
                 firstIdx = newFirstIdx;
             }
-            c = cArr[0];
 
             if (frameSize != 0) {
                 externalSum = sum;
@@ -1150,7 +1151,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
-            double[] cArr = new double[]{c};
 
             // compute value using top frame element
             double hiValue = d;
@@ -1160,7 +1160,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 hiValue = buffer.getDouble((long) (loIdx % bufferSize) * Double.BYTES);
             }
             if (Numbers.isFinite(hiValue)) {
-                sum = kahanAdd(sum, hiValue, cArr);
+                // Kahan addition
+                double y = hiValue - c;
+                double t = sum + y;
+                c = (t - sum) - y;
+                sum = t;
                 count++;
             }
             if (count != 0) {
@@ -1173,11 +1177,14 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 // remove the oldest element
                 double loValue = buffer.getDouble((long) loIdx * Double.BYTES);
                 if (Numbers.isFinite(loValue)) {
-                    sum = kahanSub(sum, loValue, cArr);
+                    // Kahan subtraction
+                    double y = -loValue - c;
+                    double t = sum + y;
+                    c = (t - sum) - y;
+                    sum = t;
                     count--;
                 }
             }
-            c = cArr[0];
 
             // overwrite oldest element
             buffer.putDouble((long) loIdx * Double.BYTES, d);
