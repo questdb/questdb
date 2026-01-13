@@ -196,13 +196,12 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && Objects.equals(token, that.token)
                 && Objects.equals(queryModel, that.queryModel)
                 && Objects.equals(lhs, that.lhs)
-                && Objects.equals(rhs, that.rhs)
-                && Objects.equals(windowContext, that.windowContext);
+                && Objects.equals(rhs, that.rhs);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate, implemented, windowContext);
+        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate, implemented);
     }
 
     public boolean isWildcard() {

@@ -6691,6 +6691,7 @@ public class SqlOptimiser implements Mutable {
             rewriteStatus |= REWRITE_STATUS_USE_DISTINCT_MODEL;
         }
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        System.out.println(columns.toString());
         final QueryModel baseModel = model.getNestedModel();
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 

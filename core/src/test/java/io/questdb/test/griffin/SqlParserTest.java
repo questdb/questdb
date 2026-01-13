@@ -825,7 +825,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts rangez ) from xyz",
                 50,
-                "')' expected to close OVER clause"
+                "'rows', 'range', 'groups', 'cumulative' or ')' expected"
         );
     }
 
@@ -5247,15 +5247,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExtraCommaPartitionByInWindowFunction() throws Exception {
-        assertQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+        assertSyntaxError(
                 "select a,b, f(c) over (partition by b, order by ts) from xyz",
-                modelOf("xyz")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .timestamp("ts")
-
+                39,
+                "column name expected"
         );
     }
 
@@ -8115,6 +8110,39 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionSimple() throws Exception {
+        // Basic window function without cast - should work
+        assertQuery(
+                "select-window row_number() row_number over (order by ts) from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts) FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionCastNoParen() throws Exception {
+        // Window function with cast but NO outer parentheses
+        assertQuery(
+                "select-window row_number() row_number over (order by ts)::string column from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts)::string FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionCastToString() throws Exception {
+        // Window function with cast AND outer parentheses - this is the failing case
+        assertQuery(
+                "select-window row_number() row_number over (order by ts)::string column from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
+                "SELECT (row_number() OVER (ORDER BY ts))::string FROM x",
+                modelOf("x")
                         .timestamp("ts")
         );
     }

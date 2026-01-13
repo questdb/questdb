@@ -468,20 +468,28 @@ public class ExpressionParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "'by' expected after 'partition'");
             }
 
+            boolean expectingExpression = true;
             do {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "column name expected");
                 }
                 if (SqlKeywords.isOrderKeyword(tok) || tok.charAt(0) == ')') {
+                    if (expectingExpression) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "column name expected");
+                    }
                     break;
                 }
                 lexer.unparseLast();
                 ExpressionNode partitionExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
                 windowCol.getPartitionBy().add(partitionExpr);
+                expectingExpression = false;
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'order', ',' or ')' expected");
+                }
+                if (tok.charAt(0) == ',') {
+                    expectingExpression = true;
                 }
             } while (tok.charAt(0) == ',');
         }
@@ -538,27 +546,30 @@ public class ExpressionParser {
                     framingMode = WindowColumn.FRAMING_GROUPS;
                 }
 
-                if (framingMode != -1) {
-                    // GROUPS mode requires ORDER BY
-                    if (framingMode == WindowColumn.FRAMING_GROUPS && windowCol.getOrderBy().size() == 0) {
-                        throw SqlException.$(frameModePos, "GROUPS mode requires an ORDER BY clause");
-                    }
-                    windowCol.setFramingMode(framingMode);
-                    tok = parseWindowFrameClause(lexer, windowCol, sqlParserCallback, decls);
+                if (framingMode == -1) {
+                    // Unrecognized keyword after ORDER BY - provide helpful error message
+                    throw SqlException.$(frameModePos, "'rows', 'range', 'groups', 'cumulative' or ')' expected");
+                }
 
-                    // RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column
-                    if (framingMode == WindowColumn.FRAMING_RANGE && windowCol.getOrderBy().size() != 1) {
-                        int loKind = windowCol.getRowsLoKind();
-                        int hiKind = windowCol.getRowsHiKind();
-                        boolean hasOffset = (loKind == WindowColumn.PRECEDING || loKind == WindowColumn.FOLLOWING)
-                                && windowCol.getRowsLoExpr() != null;
-                        if (!hasOffset) {
-                            hasOffset = (hiKind == WindowColumn.PRECEDING || hiKind == WindowColumn.FOLLOWING)
-                                    && windowCol.getRowsHiExpr() != null;
-                        }
-                        if (hasOffset) {
-                            throw SqlException.$(frameModePos, "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
-                        }
+                // GROUPS mode requires ORDER BY
+                if (framingMode == WindowColumn.FRAMING_GROUPS && windowCol.getOrderBy().size() == 0) {
+                    throw SqlException.$(frameModePos, "GROUPS mode requires an ORDER BY clause");
+                }
+                windowCol.setFramingMode(framingMode);
+                tok = parseWindowFrameClause(lexer, windowCol, sqlParserCallback, decls);
+
+                // RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column
+                if (framingMode == WindowColumn.FRAMING_RANGE && windowCol.getOrderBy().size() != 1) {
+                    int loKind = windowCol.getRowsLoKind();
+                    int hiKind = windowCol.getRowsHiKind();
+                    boolean hasOffset = (loKind == WindowColumn.PRECEDING || loKind == WindowColumn.FOLLOWING)
+                            && windowCol.getRowsLoExpr() != null;
+                    if (!hasOffset) {
+                        hasOffset = (hiKind == WindowColumn.PRECEDING || hiKind == WindowColumn.FOLLOWING)
+                                && windowCol.getRowsHiExpr() != null;
+                    }
+                    if (hasOffset) {
+                        throw SqlException.$(frameModePos, "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
                     }
                 }
             }
@@ -2317,8 +2328,9 @@ public class ExpressionParser {
                     node.lhs = stack.pop();
                     break;
                 default:
-                    for (int i = 0; i < node.paramCount; i++) {
-                        node.args.add(stack.pop());
+                    // Pop returns args in reverse order (LIFO), so place them at correct indices
+                    for (int i = node.paramCount - 1; i >= 0; i--) {
+                        node.args.extendAndSet(i, stack.pop());
                     }
                     break;
             }
