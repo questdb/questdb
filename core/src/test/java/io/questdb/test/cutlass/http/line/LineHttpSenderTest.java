@@ -65,7 +65,9 @@ import org.junit.Test;
 import java.lang.reflect.Array;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
@@ -3037,6 +3039,141 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 // Verify the retry succeeded with all rows
                 serverMain.assertSql("SELECT count() FROM " + tableName, "count\n" + batchSize + "\n");
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentRenameWhileProcessingLargeBatch() throws Exception {
+        // This test verifies that when a table is renamed WHILE the server is processing
+        // a large batch (mid-request), the server correctly detects the rename and rejects
+        // the entire batch with a retryable 503 error. No partial data should be committed.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                String tableName = "concurrent_data";
+                String renamedTableName = "concurrent_data_old";
+                int batchSize = 500_000; // Large batch to ensure processing takes time
+
+                // Create the initial table
+                serverMain.execute("CREATE TABLE " + tableName + " (" +
+                        "sensor symbol, " +
+                        "temperature double, " +
+                        "ts timestamp" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+
+                // Use barriers to coordinate the rename with the batch processing
+                CyclicBarrier flushStartBarrier = new CyclicBarrier(2);
+                AtomicReference<Throwable> senderError = new AtomicReference<>();
+                AtomicBoolean flushCompleted = new AtomicBoolean(false);
+
+                // Sender thread: builds and sends a large batch with auto-flush disabled
+                Thread senderThread = new Thread(() -> {
+                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                            .address("localhost:" + port)
+                            .disableAutoFlush() // Disable auto-flush so entire batch is sent at once
+                            .retryTimeoutMillis(0) // Disable automatic retries
+                            .build()
+                    ) {
+                        // First flush to populate the cache
+                        sender.table(tableName)
+                                .symbol("sensor", "init")
+                                .doubleColumn("temperature", 0.0)
+                                .at(1L, ChronoUnit.NANOS);
+                        sender.flush();
+
+                        // Build a large batch entirely in memory (no auto-flush)
+                        for (int i = 0; i < batchSize; i++) {
+                            sender.table(tableName)
+                                    .symbol("sensor", "sensor_" + (i % 100))
+                                    .doubleColumn("temperature", 20.0 + (i % 30))
+                                    .at(1000000000L + i, ChronoUnit.NANOS);
+                        }
+
+                        // Signal that we're about to start the flush
+                        flushStartBarrier.await();
+
+                        // Send the entire batch - this will take time on the server
+                        sender.flush();
+
+                        // If we get here without error, the test should fail
+                        flushCompleted.set(true);
+                        senderError.set(new AssertionError("Expected LineSenderException due to table rename"));
+                    } catch (LineSenderException e) {
+                        flushCompleted.set(true);
+                        // Expected: server returns 503 when table rename is detected
+                        if (!e.getMessage().contains("retry") && !e.getMessage().contains("503")
+                                && !e.getMessage().contains("Service Unavailable")) {
+                            senderError.set(new AssertionError("Unexpected error: " + e.getMessage(), e));
+                        }
+                        // Success - we got the expected error
+                    } catch (Throwable e) {
+                        flushCompleted.set(true);
+                        senderError.set(e);
+                    }
+                });
+
+                senderThread.start();
+
+                // Wait for sender to signal it's about to flush
+                flushStartBarrier.await();
+
+                // Give a brief moment for the flush to start sending data
+                Thread.sleep(10);
+
+                // Rename the table while the server is processing the large batch
+                serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                // Create a new table with the original name
+                serverMain.execute("CREATE TABLE " + tableName + " (" +
+                        "sensor symbol, " +
+                        "temperature double, " +
+                        "ts timestamp" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Wait for sender thread to complete
+                senderThread.join(60_000);
+                Assert.assertFalse("Sender thread timed out", senderThread.isAlive());
+
+                // Check for errors
+                Throwable error = senderError.get();
+                if (error != null) {
+                    if (error instanceof Exception) {
+                        throw (Exception) error;
+                    }
+                    throw new RuntimeException(error);
+                }
+
+                // Wait for WAL to apply
+                serverMain.awaitTable(renamedTableName);
+
+                // The renamed table should only have the initial row (1 row)
+                // The large batch should have been rolled back entirely
+                serverMain.assertSql("SELECT count() FROM " + renamedTableName, "count\n1\n");
+
+                // The new table should be empty (large batch was rejected)
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n0\n");
+
+                // Now retry with a new sender - should succeed
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table(tableName)
+                                .symbol("sensor", "retry_sensor")
+                                .doubleColumn("temperature", 25.0)
+                                .at(2000000000L + i, ChronoUnit.NANOS);
+                    }
+                    sender.flush();
+                }
+
+                // Wait for WAL to apply
+                serverMain.awaitTable(tableName);
+
+                // Verify the retry succeeded
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n10\n");
             }
         });
     }
