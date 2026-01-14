@@ -30,10 +30,13 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -77,7 +80,12 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
         ObjList<Function> argsCopy = new ObjList<>(args);
         int outputColumnType = UDFType.toColumnType(outputType);
 
-        return switch (outputColumnType) {
+        // Handle decimal types (encoded with precision and scale)
+        if (ColumnType.isDecimal(outputColumnType)) {
+            return new UDFVarargsDecimalFunction(argsCopy, outputColumnType);
+        }
+
+        return switch (ColumnType.tagOf(outputColumnType)) {
             case ColumnType.DOUBLE -> new UDFVarargsDoubleFunction(argsCopy);
             case ColumnType.LONG -> new UDFVarargsLongFunction(argsCopy);
             case ColumnType.INT -> new UDFVarargsIntFunction(argsCopy);
@@ -88,8 +96,24 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
     @SuppressWarnings("unchecked")
     private I extractInput(Function arg, Record rec) {
+        // Handle BigDecimal input specially
+        if (inputType == BigDecimal.class) {
+            int argType = arg.getType();
+            if (ColumnType.isDecimal(argType)) {
+                int scale = ColumnType.getDecimalScale(argType);
+                long rawValue = arg.getDecimal64(rec);
+                if (rawValue == Decimals.DECIMAL64_NULL) {
+                    return null;
+                }
+                return (I) BigDecimal.valueOf(rawValue, scale);
+            }
+            // Fallback: try to get as double and convert
+            double v = arg.getDouble(rec);
+            return (I) (Double.isNaN(v) ? null : BigDecimal.valueOf(v));
+        }
+
         int inputColumnType = UDFType.toColumnType(inputType);
-        return (I) switch (inputColumnType) {
+        return (I) switch (ColumnType.tagOf(inputColumnType)) {
             case ColumnType.DOUBLE -> {
                 double v = arg.getDouble(rec);
                 yield Double.isNaN(v) ? null : v;
@@ -256,6 +280,46 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+    }
+
+    private class UDFVarargsDecimalFunction extends Decimal64Function implements MultiArgFunction {
+        private final ObjList<Function> args;
+        private final int scale;
+
+        UDFVarargsDecimalFunction(ObjList<Function> args, int decimalType) {
+            super(decimalType);
+            this.args = args;
+            this.scale = ColumnType.getDecimalScale(decimalType);
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            List<I> inputs = extractInputs(args, rec);
+            O result = safeCompute(inputs);
+            if (result == null) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (result instanceof BigDecimal bd) {
+                return bd.setScale(scale, java.math.RoundingMode.HALF_UP)
+                        .movePointRight(scale)
+                        .longValue();
+            }
+            // For other numeric types, convert via BigDecimal
+            BigDecimal bd = BigDecimal.valueOf(((Number) result).doubleValue());
+            return bd.setScale(scale, java.math.RoundingMode.HALF_UP)
+                    .movePointRight(scale)
+                    .longValue();
+        }
+
+        @Override
+        public String getName() {
+            return name;
         }
     }
 }

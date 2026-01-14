@@ -32,9 +32,12 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+import java.math.BigDecimal;
 import java.util.function.Supplier;
 
 /**
@@ -88,7 +91,12 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         Function arg = args.getQuick(0);
         int outputColumnType = UDFType.toColumnType(outputType);
 
-        return switch (outputColumnType) {
+        // Handle decimal types (encoded with precision and scale)
+        if (ColumnType.isDecimal(outputColumnType)) {
+            return new DecimalAggregateFunction(arg, supplier.get(), outputColumnType);
+        }
+
+        return switch (ColumnType.tagOf(outputColumnType)) {
             case ColumnType.DOUBLE -> new DoubleAggregateFunction(arg, supplier.get());
             case ColumnType.LONG -> new LongAggregateFunction(arg, supplier.get());
             case ColumnType.INT -> new IntAggregateFunction(arg, supplier.get());
@@ -98,8 +106,24 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
     @SuppressWarnings("unchecked")
     private I extractInput(Function arg, Record rec) {
+        // Handle BigDecimal input specially
+        if (inputType == BigDecimal.class) {
+            int argType = arg.getType();
+            if (ColumnType.isDecimal(argType)) {
+                int scale = ColumnType.getDecimalScale(argType);
+                long rawValue = arg.getDecimal64(rec);
+                if (rawValue == Decimals.DECIMAL64_NULL) {
+                    return null;
+                }
+                return (I) BigDecimal.valueOf(rawValue, scale);
+            }
+            // Fallback: try to get as double and convert
+            double v = arg.getDouble(rec);
+            return (I) (Double.isNaN(v) ? null : BigDecimal.valueOf(v));
+        }
+
         int inputColumnType = UDFType.toColumnType(inputType);
-        return (I) switch (inputColumnType) {
+        return (I) switch (ColumnType.tagOf(inputColumnType)) {
             case ColumnType.DOUBLE -> {
                 double v = arg.getDouble(rec);
                 yield Double.isNaN(v) ? null : v;
@@ -362,6 +386,93 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         @Override
         public void setNull(MapValue mapValue) {
             mapValue.putLong(valueIndex, Long.MIN_VALUE);
+        }
+
+        @Override
+        public boolean supportsParallelism() {
+            return udf.supportsParallelism();
+        }
+    }
+
+    private class DecimalAggregateFunction extends Decimal64Function implements GroupByFunction, UnaryFunction {
+        private final Function arg;
+        private final AggregateUDF<I, O> udf;
+        private final int scale;
+        private int valueIndex;
+
+        DecimalAggregateFunction(Function arg, AggregateUDF<I, O> udf, int decimalType) {
+            super(decimalType);
+            this.arg = arg;
+            this.udf = udf;
+            this.scale = ColumnType.getDecimalScale(decimalType);
+        }
+
+        @Override
+        public void computeFirst(MapValue mapValue, Record record, long rowId) {
+            udf.reset();
+            I input = extractInput(arg, record);
+            safeAccumulate(udf, input);
+            O result = safeResult(udf);
+            mapValue.putLong(valueIndex, convertToDecimal64(result));
+        }
+
+        @Override
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
+            I input = extractInput(arg, record);
+            safeAccumulate(udf, input);
+            O result = safeResult(udf);
+            mapValue.putLong(valueIndex, convertToDecimal64(result));
+        }
+
+        private long convertToDecimal64(O result) {
+            if (result == null) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (result instanceof BigDecimal bd) {
+                return bd.setScale(scale, java.math.RoundingMode.HALF_UP)
+                        .movePointRight(scale)
+                        .longValue();
+            }
+            BigDecimal bd = BigDecimal.valueOf(((Number) result).doubleValue());
+            return bd.setScale(scale, java.math.RoundingMode.HALF_UP)
+                    .movePointRight(scale)
+                    .longValue();
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return rec.getLong(valueIndex);
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public int getValueIndex() {
+            return valueIndex;
+        }
+
+        @Override
+        public void initValueIndex(int valueIndex) {
+            this.valueIndex = valueIndex;
+        }
+
+        @Override
+        public void initValueTypes(ArrayColumnTypes columnTypes) {
+            this.valueIndex = columnTypes.getColumnCount();
+            columnTypes.add(ColumnType.LONG); // DECIMAL64 is stored as LONG
+        }
+
+        @Override
+        public void setNull(MapValue mapValue) {
+            mapValue.putLong(valueIndex, Decimals.DECIMAL64_NULL);
         }
 
         @Override
