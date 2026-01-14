@@ -6606,8 +6606,60 @@ public class SqlOptimiser implements Mutable {
             emitLiterals(ast, translatingModel, innerVirtualModel, true, baseModel, true);
             return null;
         } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-            addMissingTablePrefixesForGroupByQueries(qc.getAst(), baseModel, innerVirtualModel);
-            CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, qc.getAst());
+            ExpressionNode ast = qc.getAst();
+
+            // Add missing table prefixes BEFORE extracting nested windows
+            // because addMissingTablePrefixesForGroupByQueries validates columns against baseModel
+            addMissingTablePrefixesForGroupByQueries(ast, baseModel, innerVirtualModel);
+
+            // Check if arguments of this aggregate function contain window functions
+            boolean hasNestedWindows = false;
+            if (ast.paramCount < 3) {
+                hasNestedWindows = checkForChildWindowFunctions(ast.lhs) || checkForChildWindowFunctions(ast.rhs);
+            } else {
+                for (int i = 0, k = ast.paramCount; i < k && !hasNestedWindows; i++) {
+                    hasNestedWindows = checkForChildWindowFunctions(ast.args.getQuick(i));
+                }
+            }
+
+            if (hasNestedWindows) {
+                // Create an inner window model for nested window functions
+                QueryModel innerWindowModel = queryModelPool.next();
+                innerWindowModel.setSelectModelType(SELECT_MODEL_WINDOW);
+
+                // Extract nested window functions from arguments (modifies AST in-place)
+                if (ast.paramCount < 3) {
+                    if (ast.lhs != null) {
+                        ast.lhs = extractNestedWindowFunctions(ast.lhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel);
+                    }
+                    if (ast.rhs != null) {
+                        ast.rhs = extractNestedWindowFunctions(ast.rhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel);
+                    }
+                } else {
+                    for (int i = 0, k = ast.paramCount; i < k; i++) {
+                        ExpressionNode arg = ast.args.getQuick(i);
+                        if (arg != null) {
+                            ast.args.setQuick(i, extractNestedWindowFunctions(arg, innerWindowModel, translatingModel, innerVirtualModel, baseModel));
+                        }
+                    }
+                }
+
+                // Store inner window model for later chaining (if it has columns)
+                if (innerWindowModel.getBottomUpColumns().size() > 0) {
+                    innerWindowModels.add(innerWindowModel);
+                    // Register inner window column aliases with the translating model's alias map
+                    ObjList<QueryColumn> innerCols = innerWindowModel.getBottomUpColumns();
+                    LowerCaseCharSequenceObjHashMap<CharSequence> aliasMap = translatingModel.getColumnNameToAliasMap();
+                    for (int i = 0, n = innerCols.size(); i < n; i++) {
+                        QueryColumn innerCol = innerCols.getQuick(i);
+                        CharSequence alias = innerCol.getAlias();
+                        if (alias != null && aliasMap.keyIndex(alias) > -1) {
+                            aliasMap.put(alias, alias);
+                        }
+                    }
+                }
+            }
+            CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, ast);
             if (useOuterModel && matchingCol != null) {
                 QueryColumn ref = nextColumn(qc.getAlias(), matchingCol);
                 ref = ensureAliasUniqueness(outerVirtualModel, ref);
@@ -6620,7 +6672,7 @@ public class SqlOptimiser implements Mutable {
             qc = ensureAliasUniqueness(aggModel, qc);
             aggModel.addBottomUpColumn(qc);
 
-            groupByNodes.add(deepClone(expressionNodePool, qc.getAst()));
+            groupByNodes.add(deepClone(expressionNodePool, ast));
             groupByAliases.add(qc.getAlias());
 
             // group-by column references might be needed when we have
@@ -6634,7 +6686,7 @@ public class SqlOptimiser implements Mutable {
             distinctModel.addBottomUpColumn(ref);
             if (!isWindowJoin) {
                 // sample-by implementation requires innerVirtualModel
-                emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, sampleBy != null, baseModel, false);
+                emitLiterals(ast, translatingModel, innerVirtualModel, sampleBy != null, baseModel, false);
             }
             return null;
         } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
@@ -7507,16 +7559,18 @@ public class SqlOptimiser implements Mutable {
             limitSource = innerVirtualModel;
         }
 
-        if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0) {
-            // First, chain any inner window models (for nested window functions)
-            // Process in reverse order so innermost window model is closest to base
+        // Chain any inner window models (for nested window functions in either window or group-by expressions)
+        // Process in reverse order so innermost window model is closest to base
+        if (innerWindowModels.size() > 0) {
             for (int i = innerWindowModels.size() - 1; i >= 0; i--) {
                 QueryModel innerWm = innerWindowModels.getQuick(i);
                 innerWm.setNestedModel(root);
                 innerWm.copyHints(model.getHints());
                 root = innerWm;
             }
+        }
 
+        if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0) {
             windowModel.setNestedModel(root);
             windowModel.moveLimitFrom(limitSource);
             windowModel.moveJoinAliasFrom(limitSource);

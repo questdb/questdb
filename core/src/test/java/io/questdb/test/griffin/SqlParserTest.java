@@ -8209,12 +8209,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testWindowFunctionWithOrderByAsArgument() throws Exception {
-        // Currently produces: select-group-by sum(row_number()) sum from (x timestamp (ts))
-        // The inner window function's OVER (order by x) is lost
-        // Expected: should extract inner window to subquery like:
-        // select-group-by sum(row_number) sum from (select-window row_number() row_number over (order by x) from (x timestamp (ts)))
+        // Window function as argument to regular aggregate
+        // The inner window function is extracted to a separate select-window layer
         assertQuery(
-                "select-group-by sum(row_number()) sum from (x timestamp (ts))",
+                "select-group-by sum(row_number) sum from (select-window [row_number() row_number over (order by x)] row_number() row_number over (order by x) from (select [x] from x timestamp (ts)))",
                 "SELECT sum(row_number() OVER (order by x)) FROM x",
                 modelOf("x")
                         .col("x", ColumnType.INT)
