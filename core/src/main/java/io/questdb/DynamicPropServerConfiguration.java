@@ -44,11 +44,9 @@ import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
@@ -105,7 +103,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     };
     private final BuildInformation buildInformation;
     private final CairoConfigurationWrapper cairoConfig;
-    private final ObjHashSet<String> changedKeys = new ObjHashSet<>();
     private final java.nio.file.Path confPath;
     private final boolean configReloadEnabled;
     private final @Nullable Map<String, String> env;
@@ -124,7 +121,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final Properties properties;
     private final Object reloadLock = new Object();
     private final AtomicReference<PropServerConfiguration> serverConfig;
-    private final @NotNull ConfigReloader.WatchRegistry watchRegistry = new WatchRegistry();
     private long version;
 
     public DynamicPropServerConfiguration(
@@ -222,14 +218,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             Properties newProperties,
             Set<? extends ConfigPropertyKey> reloadableProps,
             Function<String, ? extends ConfigPropertyKey> keyResolver,
-            ObjHashSet<String> changedKeys,
             Log log
     ) {
         if (newProperties.equals(oldProperties)) {
             return false;
         }
 
-        changedKeys.clear();
         boolean changed = false;
         // Compare the new and existing properties
         for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
@@ -253,7 +247,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
                     oldProperties.setProperty(key, (String) entry.getValue());
                     changed = true;
-                    changedKeys.add(propKey.getPropertyPath());
                 } else {
                     log.advisory().$("property ").$(key).$(" was modified in the config file but cannot be reloaded. Ignoring new value").$();
                 }
@@ -279,7 +272,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                     rec.I$();
 
                     oldPropsIter.remove();
-                    changedKeys.add(propKey.getPropertyPath());
                     changed = true;
                 } else {
                     log.advisory().$("property ").$(key).$(" was removed from the config file but cannot be reloaded. Ignoring").$();
@@ -417,27 +409,15 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                     return false;
                 }
 
-                if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, changedKeys, LOG)) {
+                if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, LOG)) {
                     reload0();
                     LOG.info().$("reloaded, [file=").$(confPath).I$();
-                    watchRegistry.notifyWatchers(changedKeys);
-                    LOG.info().$("notified config change listeners").$();
                     return true;
                 }
                 LOG.info().$("nothing to reload [file=").$(confPath).I$();
             }
         }
         return false;
-    }
-
-    @Override
-    public void unwatch(long watchId) {
-        watchRegistry.unwatch(watchId);
-    }
-
-    @Override
-    public long watch(Listener listener) {
-        return watchRegistry.watch(listener);
     }
 
     private void reload0() {
@@ -461,7 +441,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         }
 
         final PropServerConfiguration oldConfig = serverConfig.get();
-        // Move the factory provider to the new config instead of creating a new one.
+        // Move factory provider to the new config instead of creating a new one.
         newConfig.reinit(oldConfig.getFactoryProvider());
         serverConfig.set(newConfig);
         reloadNestedConfigurations(newConfig);
