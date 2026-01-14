@@ -72,8 +72,8 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntObjHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.IntSortedList;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -118,10 +118,10 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
-    // Maximum depth of nested window functions (e.g., sum(sum(row_number() OVER ()) OVER ()) OVER () is 3 levels)
-    private static final int MAX_WINDOW_FUNCTION_NESTING_DEPTH = 8;
     // Maximum size of windowColumnListPool to prevent unbounded growth across queries
     private static final int MAX_WINDOW_COLUMN_LIST_POOL_SIZE = 16;
+    // Maximum depth of nested window functions (e.g., sum(sum(row_number() OVER ()) OVER ()) OVER () is 3 levels)
+    private static final int MAX_WINDOW_FUNCTION_NESTING_DEPTH = 8;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_EQUAL = 8;
     private static final int NOT_OP_GREATER = 4;
@@ -160,6 +160,8 @@ public class SqlOptimiser implements Mutable {
     // we've to use it because group by is likely to contain rewritten/aliased expressions that make matching input expressions by pure AST unreliable
     private final ObjList<CharSequence> groupByAliases = new ObjList<>();
     private final ObjList<ExpressionNode> groupByNodes = new ObjList<>();
+    // Collects inner window models for nested window functions (e.g., sum(row_number() OVER ()) OVER ())
+    private final ObjList<QueryModel> innerWindowModels = new ObjList<>();
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
@@ -180,18 +182,6 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-    // Second stack for emitWindowFunctions, separate from sqlNodeStack because
-    // replaceIfWindowFunction calls emitLiterals which clears and reuses sqlNodeStack.
-    private final ArrayDeque<ExpressionNode> windowNodeStack = new ArrayDeque<>();
-    // Collects inner window models for nested window functions (e.g., sum(row_number() OVER ()) OVER ())
-    private final ObjList<QueryModel> innerWindowModels = new ObjList<>();
-    // Hash map for O(1) window function deduplication lookup: hash -> list of QueryColumns with that hash
-    private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
-    // Pool of ObjList<QueryColumn> for windowFunctionHashMap values (to avoid allocations)
-    private final ObjList<ObjList<QueryColumn>> windowColumnListPool = new ObjList<>();
-    private int windowColumnListPoolPos = 0;
-    // Cached hash from findDuplicateWindowFunction for reuse in registerWindowFunction
-    private int lastWindowFunctionHash;
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -209,13 +199,23 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
     private final TrivialExpressionVisitor trivialExpressionVisitor = new TrivialExpressionVisitor();
     private final LowerCaseCharSequenceIntHashMap trivialExpressions = new LowerCaseCharSequenceIntHashMap();
+    // Pool of ObjList<QueryColumn> for windowFunctionHashMap values (to avoid allocations)
+    private final ObjList<ObjList<QueryColumn>> windowColumnListPool = new ObjList<>();
+    // Hash map for O(1) window function deduplication lookup: hash -> list of QueryColumns with that hash
+    private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
+    // Second stack for emitWindowFunctions, separate from sqlNodeStack because
+    // replaceIfWindowFunction calls emitLiterals which clears and reuses sqlNodeStack.
+    private final ArrayDeque<ExpressionNode> windowNodeStack = new ArrayDeque<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
+    // Cached hash from findDuplicateWindowFunction for reuse in registerWindowFunction
+    private int lastWindowFunctionHash;
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
+    private int windowColumnListPoolPos = 0;
 
     public SqlOptimiser(
             CairoConfiguration configuration,
@@ -1745,6 +1745,66 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * Checks if the expression tree contains window functions (with OVER clause)
+     * or pure window function names (without OVER clause, e.g., row_number, rank).
+     * This is used for validation where the OVER clause might have been lost during parsing.
+     * Functions that can be both aggregates and window functions (like sum, count) are not
+     * flagged here unless they have an OVER clause.
+     */
+    private boolean checkForWindowFunctionsOrNames(ExpressionNode node) {
+        FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return true;
+            }
+            // Check for pure window function names (row_number, rank, etc.) - not aggregate functions
+            if (node.type == FUNCTION && cache.isPureWindowFunction(node.token)) {
+                return true;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    if (node.rhs.windowExpression != null ||
+                            (node.rhs.type == FUNCTION && cache.isPureWindowFunction(node.rhs.token))) {
+                        return true;
+                    }
+                    sqlNodeStack.push(node.rhs);
+                }
+
+                if (node.lhs != null) {
+                    if (node.lhs.windowExpression != null ||
+                            (node.lhs.type == FUNCTION && cache.isPureWindowFunction(node.lhs.token))) {
+                        return true;
+                    }
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        if (arg.windowExpression != null ||
+                                (arg.type == FUNCTION && cache.isPureWindowFunction(arg.token))) {
+                            return true;
+                        }
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean checkIfTranslatingModelIsRedundant(
             boolean useInnerModel,
             boolean useGroupByModel,
@@ -1786,6 +1846,23 @@ public class SqlOptimiser implements Mutable {
             return qc;
         }
         return null;
+    }
+
+    /**
+     * Clears the window function hash map and resets the column list pool.
+     * Trims the pool if it exceeds the maximum size to prevent unbounded growth.
+     */
+    private void clearWindowFunctionHashMap() {
+        windowFunctionHashMap.clear();
+        // Clear lists to release references to QueryColumn objects
+        for (int i = 0, n = windowColumnListPoolPos; i < n; i++) {
+            windowColumnListPool.getQuick(i).clear();
+        }
+        // Trim pool if it grew too large
+        if (windowColumnListPool.size() > MAX_WINDOW_COLUMN_LIST_POOL_SIZE) {
+            windowColumnListPool.setPos(MAX_WINDOW_COLUMN_LIST_POOL_SIZE);
+        }
+        windowColumnListPoolPos = 0;
     }
 
     /**
@@ -2513,317 +2590,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void emitWindowFunctions(
-            @Transient ExpressionNode node,
-            QueryModel windowModel,
-            QueryModel translatingModel,
-            QueryModel innerVirtualModel,
-            QueryModel baseModel
-    ) throws SqlException {
-        // Use windowNodeStack (not sqlNodeStack) because replaceIfWindowFunction
-        // calls emitLiterals which clears and reuses sqlNodeStack for its own traversal.
-        windowNodeStack.clear();
-        while (!windowNodeStack.isEmpty() || node != null) {
-            if (node != null) {
-                if (node.paramCount < 3) {
-                    if (node.rhs != null) {
-                        ExpressionNode n = replaceIfWindowFunction(
-                                node.rhs,
-                                windowModel,
-                                translatingModel,
-                                innerVirtualModel,
-                                baseModel
-                        );
-                        if (node.rhs == n) {
-                            windowNodeStack.push(node.rhs);
-                        } else {
-                            node.rhs = n;
-                        }
-                    }
-
-                    ExpressionNode n = replaceIfWindowFunction(
-                            node.lhs,
-                            windowModel,
-                            translatingModel,
-                            innerVirtualModel,
-                            baseModel
-                    );
-                    if (n == node.lhs) {
-                        node = node.lhs;
-                    } else {
-                        node.lhs = n;
-                        node = null;
-                    }
-                } else {
-                    for (int i = 0, k = node.paramCount; i < k; i++) {
-                        ExpressionNode e = node.args.getQuick(i);
-                        ExpressionNode n = replaceIfWindowFunction(
-                                e,
-                                windowModel,
-                                translatingModel,
-                                innerVirtualModel,
-                                baseModel
-                        );
-                        if (e == n) {
-                            windowNodeStack.push(e);
-                        } else {
-                            node.args.setQuick(i, n);
-                        }
-                    }
-                    node = windowNodeStack.poll();
-                }
-            } else {
-                node = windowNodeStack.poll();
-            }
-        }
-    }
-
-    /**
-     * Clears the window function hash map and resets the column list pool.
-     * Trims the pool if it exceeds the maximum size to prevent unbounded growth.
-     */
-    private void clearWindowFunctionHashMap() {
-        windowFunctionHashMap.clear();
-        // Clear lists to release references to QueryColumn objects
-        for (int i = 0, n = windowColumnListPoolPos; i < n; i++) {
-            windowColumnListPool.getQuick(i).clear();
-        }
-        // Trim pool if it grew too large
-        if (windowColumnListPool.size() > MAX_WINDOW_COLUMN_LIST_POOL_SIZE) {
-            windowColumnListPool.setPos(MAX_WINDOW_COLUMN_LIST_POOL_SIZE);
-        }
-        windowColumnListPoolPos = 0;
-    }
-
-    /**
-     * Gets or creates a list for storing QueryColumns with the given hash.
-     */
-    private ObjList<QueryColumn> getOrCreateColumnListForHash(int hash) {
-        ObjList<QueryColumn> list = windowFunctionHashMap.get(hash);
-        if (list == null) {
-            // Get from pool or create new
-            if (windowColumnListPoolPos < windowColumnListPool.size()) {
-                list = windowColumnListPool.getQuick(windowColumnListPoolPos);
-                list.clear();
-            } else {
-                list = new ObjList<>();
-                windowColumnListPool.add(list);
-            }
-            windowColumnListPoolPos++;
-            windowFunctionHashMap.put(hash, list);
-        }
-        return list;
-    }
-
-    /**
-     * Looks up a duplicate window function in the hash map.
-     * Returns the alias of an existing identical window function, or null if none found.
-     * The hash is stored in lastWindowFunctionHash for reuse by registerWindowFunction.
-     */
-    private CharSequence findDuplicateWindowFunction(ExpressionNode node) {
-        int hash = ExpressionNode.deepHashCode(node);
-        lastWindowFunctionHash = hash;
-        ObjList<QueryColumn> candidates = windowFunctionHashMap.get(hash);
-        if (candidates != null) {
-            for (int i = 0, n = candidates.size(); i < n; i++) {
-                QueryColumn existing = candidates.getQuick(i);
-                if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
-                    return existing.getAlias();
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Registers a window function in the hash map for future deduplication lookups.
-     * Must be called after findDuplicateWindowFunction() to reuse the computed hash.
-     */
-    private void registerWindowFunction(QueryColumn column) {
-        ObjList<QueryColumn> list = getOrCreateColumnListForHash(lastWindowFunctionHash);
-        list.add(column);
-    }
-
-    /**
-     * Extracts nested window functions from an expression tree and replaces them with literal references.
-     * Processes depth-first (innermost window functions first) by recursively processing children
-     * before checking if the current node is a window function.
-     *
-     * @param node              The expression node to process (modified in-place)
-     * @param innerWindowModel  Model to add extracted window functions to
-     * @param translatingModel  Model for literal propagation
-     * @param innerVirtualModel Virtual model for intermediate calculations
-     * @param baseModel         Original table model
-     * @param depth             Current nesting depth (for limiting recursion)
-     * @return The possibly modified node (same node with modified children, or a literal if node was a window function)
-     */
-    private ExpressionNode extractNestedWindowFunctions(
-            ExpressionNode node,
-            QueryModel innerWindowModel,
-            QueryModel translatingModel,
-            QueryModel innerVirtualModel,
-            QueryModel baseModel,
-            int depth
-    ) throws SqlException {
-        if (node == null) {
-            return null;
-        }
-
-        // If this node is a window function, first extract any nested windows from its arguments
-        // to a deeper inner model, then add this window function to the current inner model
-        if (node.windowExpression != null) {
-            // Extract any nested window functions from THIS window function's arguments
-            // This creates deeper inner models if needed (recursive structure)
-            extractAndRegisterNestedWindowFunctions(node, translatingModel, innerVirtualModel, baseModel, depth + 1);
-
-            // Validate that PARTITION BY and ORDER BY don't contain window functions
-            validateNoWindowFunctionsInWindowSpec(node.windowExpression);
-
-            // Check if an identical window function already exists (O(1) hash lookup + O(k) comparison where k is collision count)
-            CharSequence existingAlias = findDuplicateWindowFunction(node);
-            if (existingAlias != null) {
-                return nextLiteral(existingAlias);
-            }
-
-            // Now add this window function (with nested windows replaced by literals) to current inner model
-            WindowExpression wc = node.windowExpression;
-            CharSequence alias = wc.getAlias();
-            if (alias == null) {
-                alias = createColumnAlias(node, innerWindowModel);
-                wc.of(alias, node);
-            }
-            innerWindowModel.addBottomUpColumn(wc);
-            // Register in hash map for future deduplication
-            registerWindowFunction(wc);
-            // Emit literals referenced by the window column to inner models
-            emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
-            return nextLiteral(alias);
-        }
-
-        // For non-window nodes, recursively process children
-        if (node.paramCount < 3) {
-            if (node.lhs != null) {
-                node.lhs = extractNestedWindowFunctions(node.lhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth);
-            }
-            if (node.rhs != null) {
-                node.rhs = extractNestedWindowFunctions(node.rhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth);
-            }
-        } else {
-            for (int i = 0, k = node.paramCount; i < k; i++) {
-                ExpressionNode arg = node.args.getQuick(i);
-                if (arg != null) {
-                    node.args.setQuick(i, extractNestedWindowFunctions(arg, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth));
-                }
-            }
-        }
-
-        return node;
-    }
-
-    /**
-     * Checks if the given AST node contains nested window functions in its arguments,
-     * and if so, extracts them to a new inner window model. The AST is modified in-place
-     * to replace nested window functions with literal references.
-     *
-     * @param ast               The expression node to check and potentially modify
-     * @param translatingModel  Model for literal propagation
-     * @param innerVirtualModel Virtual model for intermediate calculations
-     * @param baseModel         Original table model
-     * @param depth             Current nesting depth (for limiting recursion)
-     */
-    private void extractAndRegisterNestedWindowFunctions(
-            ExpressionNode ast,
-            QueryModel translatingModel,
-            QueryModel innerVirtualModel,
-            QueryModel baseModel,
-            int depth
-    ) throws SqlException {
-        if (depth > MAX_WINDOW_FUNCTION_NESTING_DEPTH) {
-            throw SqlException.$(ast.position, "too many levels of nested window functions [max=")
-                    .put(MAX_WINDOW_FUNCTION_NESTING_DEPTH).put(']');
-        }
-
-        // Check if arguments contain nested window functions
-        boolean hasNestedWindows = false;
-        if (ast.paramCount < 3) {
-            hasNestedWindows = checkForChildWindowFunctions(ast.lhs) || checkForChildWindowFunctions(ast.rhs);
-        } else {
-            for (int i = 0, k = ast.paramCount; i < k && !hasNestedWindows; i++) {
-                hasNestedWindows = checkForChildWindowFunctions(ast.args.getQuick(i));
-            }
-        }
-
-        if (!hasNestedWindows) {
-            return;
-        }
-
-        // Create an inner window model for nested window functions
-        QueryModel innerWindowModel = queryModelPool.next();
-        innerWindowModel.setSelectModelType(SELECT_MODEL_WINDOW);
-
-        // Extract nested window functions from arguments (modifies AST in-place)
-        if (ast.paramCount < 3) {
-            if (ast.lhs != null) {
-                ast.lhs = extractNestedWindowFunctions(ast.lhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth);
-            }
-            if (ast.rhs != null) {
-                ast.rhs = extractNestedWindowFunctions(ast.rhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth);
-            }
-        } else {
-            for (int i = 0, k = ast.paramCount; i < k; i++) {
-                ExpressionNode arg = ast.args.getQuick(i);
-                if (arg != null) {
-                    ast.args.setQuick(i, extractNestedWindowFunctions(arg, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth));
-                }
-            }
-        }
-
-        // Store inner window model for later chaining (if it has columns)
-        if (innerWindowModel.getBottomUpColumns().size() > 0) {
-            innerWindowModels.add(innerWindowModel);
-            // Register inner window column aliases with the translating model's alias map
-            // so they can be resolved when emitLiterals is called on the outer function.
-            // This prevents the literal from being converted back to a function.
-            ObjList<QueryColumn> innerCols = innerWindowModel.getBottomUpColumns();
-            LowerCaseCharSequenceObjHashMap<CharSequence> aliasMap = translatingModel.getColumnNameToAliasMap();
-            for (int i = 0, n = innerCols.size(); i < n; i++) {
-                QueryColumn innerCol = innerCols.getQuick(i);
-                CharSequence alias = innerCol.getAlias();
-                if (alias != null && aliasMap.keyIndex(alias) > -1) {
-                    aliasMap.put(alias, alias);
-                }
-            }
-        }
-    }
-
-    /**
-     * Validates that a window expression does not contain window functions in its
-     * PARTITION BY or ORDER BY clauses. Window functions are not allowed in these
-     * clauses per SQL standard.
-     *
-     * @param windowExpr The window expression to validate
-     * @throws SqlException if a window function is found in PARTITION BY or ORDER BY
-     */
-    private void validateNoWindowFunctionsInWindowSpec(WindowExpression windowExpr) throws SqlException {
-        // Check PARTITION BY
-        ObjList<ExpressionNode> partitionBy = windowExpr.getPartitionBy();
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            ExpressionNode node = partitionBy.getQuick(i);
-            if (checkForChildWindowFunctions(node)) {
-                throw SqlException.$(node.position, "window function is not allowed in PARTITION BY clause");
-            }
-        }
-
-        // Check ORDER BY
-        ObjList<ExpressionNode> orderBy = windowExpr.getOrderBy();
-        for (int i = 0, n = orderBy.size(); i < n; i++) {
-            ExpressionNode node = orderBy.getQuick(i);
-            if (checkForChildWindowFunctions(node)) {
-                throw SqlException.$(node.position, "window function is not allowed in ORDER BY clause of window specification");
-            }
-        }
-    }
-
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
@@ -3022,6 +2788,71 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void emitWindowFunctions(
+            @Transient ExpressionNode node,
+            QueryModel windowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        // Use windowNodeStack (not sqlNodeStack) because replaceIfWindowFunction
+        // calls emitLiterals which clears and reuses sqlNodeStack for its own traversal.
+        windowNodeStack.clear();
+        while (!windowNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        ExpressionNode n = replaceIfWindowFunction(
+                                node.rhs,
+                                windowModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                baseModel
+                        );
+                        if (node.rhs == n) {
+                            windowNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = n;
+                        }
+                    }
+
+                    ExpressionNode n = replaceIfWindowFunction(
+                            node.lhs,
+                            windowModel,
+                            translatingModel,
+                            innerVirtualModel,
+                            baseModel
+                    );
+                    if (n == node.lhs) {
+                        node = node.lhs;
+                    } else {
+                        node.lhs = n;
+                        node = null;
+                    }
+                } else {
+                    for (int i = 0, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        ExpressionNode n = replaceIfWindowFunction(
+                                e,
+                                windowModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                baseModel
+                        );
+                        if (e == n) {
+                            windowNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, n);
+                        }
+                    }
+                    node = windowNodeStack.poll();
+                }
+            } else {
+                node = windowNodeStack.poll();
+            }
+        }
+    }
+
     private QueryColumn ensureAliasUniqueness(QueryModel model, QueryColumn qc) {
         CharSequence alias = createColumnAlias(qc.getAlias(), model);
         if (alias != qc.getAlias()) {
@@ -3101,6 +2932,158 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Checks if the given AST node contains nested window functions in its arguments,
+     * and if so, extracts them to a new inner window model. The AST is modified in-place
+     * to replace nested window functions with literal references.
+     *
+     * @param ast               The expression node to check and potentially modify
+     * @param translatingModel  Model for literal propagation
+     * @param innerVirtualModel Virtual model for intermediate calculations
+     * @param baseModel         Original table model
+     * @param depth             Current nesting depth (for limiting recursion)
+     */
+    private void extractAndRegisterNestedWindowFunctions(
+            ExpressionNode ast,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel,
+            int depth
+    ) throws SqlException {
+        if (depth > MAX_WINDOW_FUNCTION_NESTING_DEPTH) {
+            throw SqlException.$(ast.position, "too many levels of nested window functions [max=")
+                    .put(MAX_WINDOW_FUNCTION_NESTING_DEPTH).put(']');
+        }
+
+        // Check if arguments contain nested window functions
+        boolean hasNestedWindows = false;
+        if (ast.paramCount < 3) {
+            hasNestedWindows = checkForChildWindowFunctions(ast.lhs) || checkForChildWindowFunctions(ast.rhs);
+        } else {
+            for (int i = 0, k = ast.paramCount; i < k && !hasNestedWindows; i++) {
+                hasNestedWindows = checkForChildWindowFunctions(ast.args.getQuick(i));
+            }
+        }
+
+        if (!hasNestedWindows) {
+            return;
+        }
+
+        // Create an inner window model for nested window functions
+        QueryModel innerWindowModel = queryModelPool.next();
+        innerWindowModel.setSelectModelType(SELECT_MODEL_WINDOW);
+
+        // Extract nested window functions from arguments (modifies AST in-place)
+        if (ast.paramCount < 3) {
+            if (ast.lhs != null) {
+                ast.lhs = extractNestedWindowFunctions(ast.lhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth);
+            }
+            if (ast.rhs != null) {
+                ast.rhs = extractNestedWindowFunctions(ast.rhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth);
+            }
+        } else {
+            for (int i = 0, k = ast.paramCount; i < k; i++) {
+                ExpressionNode arg = ast.args.getQuick(i);
+                if (arg != null) {
+                    ast.args.setQuick(i, extractNestedWindowFunctions(arg, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth));
+                }
+            }
+        }
+
+        // Store inner window model for later chaining (if it has columns)
+        if (innerWindowModel.getBottomUpColumns().size() > 0) {
+            innerWindowModels.add(innerWindowModel);
+            // Register inner window column aliases with the translating model's alias map
+            // so they can be resolved when emitLiterals is called on the outer function.
+            // This prevents the literal from being converted back to a function.
+            ObjList<QueryColumn> innerCols = innerWindowModel.getBottomUpColumns();
+            LowerCaseCharSequenceObjHashMap<CharSequence> aliasMap = translatingModel.getColumnNameToAliasMap();
+            for (int i = 0, n = innerCols.size(); i < n; i++) {
+                QueryColumn innerCol = innerCols.getQuick(i);
+                CharSequence alias = innerCol.getAlias();
+                if (alias != null && aliasMap.keyIndex(alias) > -1) {
+                    aliasMap.put(alias, alias);
+                }
+            }
+        }
+    }
+
+    /**
+     * Extracts nested window functions from an expression tree and replaces them with literal references.
+     * Processes depth-first (innermost window functions first) by recursively processing children
+     * before checking if the current node is a window function.
+     *
+     * @param node              The expression node to process (modified in-place)
+     * @param innerWindowModel  Model to add extracted window functions to
+     * @param translatingModel  Model for literal propagation
+     * @param innerVirtualModel Virtual model for intermediate calculations
+     * @param baseModel         Original table model
+     * @param depth             Current nesting depth (for limiting recursion)
+     * @return The possibly modified node (same node with modified children, or a literal if node was a window function)
+     */
+    private ExpressionNode extractNestedWindowFunctions(
+            ExpressionNode node,
+            QueryModel innerWindowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel,
+            int depth
+    ) throws SqlException {
+        if (node == null) {
+            return null;
+        }
+
+        // If this node is a window function, first extract any nested windows from its arguments
+        // to a deeper inner model, then add this window function to the current inner model
+        if (node.windowExpression != null) {
+            // Extract any nested window functions from THIS window function's arguments
+            // This creates deeper inner models if needed (recursive structure)
+            extractAndRegisterNestedWindowFunctions(node, translatingModel, innerVirtualModel, baseModel, depth + 1);
+
+            // Validate that PARTITION BY and ORDER BY don't contain window functions
+            validateNoWindowFunctionsInWindowSpec(node.windowExpression);
+
+            // Check if an identical window function already exists (O(1) hash lookup + O(k) comparison where k is collision count)
+            CharSequence existingAlias = findDuplicateWindowFunction(node);
+            if (existingAlias != null) {
+                return nextLiteral(existingAlias);
+            }
+
+            // Now add this window function (with nested windows replaced by literals) to current inner model
+            WindowExpression wc = node.windowExpression;
+            CharSequence alias = wc.getAlias();
+            if (alias == null) {
+                alias = createColumnAlias(node, innerWindowModel);
+                wc.of(alias, node);
+            }
+            innerWindowModel.addBottomUpColumn(wc);
+            // Register in hash map for future deduplication
+            registerWindowFunction(wc);
+            // Emit literals referenced by the window column to inner models
+            emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
+            return nextLiteral(alias);
+        }
+
+        // For non-window nodes, recursively process children
+        if (node.paramCount < 3) {
+            if (node.lhs != null) {
+                node.lhs = extractNestedWindowFunctions(node.lhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth);
+            }
+            if (node.rhs != null) {
+                node.rhs = extractNestedWindowFunctions(node.rhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth);
+            }
+        } else {
+            for (int i = 0, k = node.paramCount; i < k; i++) {
+                ExpressionNode arg = node.args.getQuick(i);
+                if (arg != null) {
+                    node.args.setQuick(i, extractNestedWindowFunctions(arg, innerWindowModel, translatingModel, innerVirtualModel, baseModel, depth));
+                }
+            }
+        }
+
+        return node;
+    }
+
     private CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
         for (int i = 0, max = groupByNodes.size(); i < max; i++) {
             ExpressionNode n = groupByNodes.getQuick(i);
@@ -3119,6 +3102,26 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return -1;
+    }
+
+    /**
+     * Looks up a duplicate window function in the hash map.
+     * Returns the alias of an existing identical window function, or null if none found.
+     * The hash is stored in lastWindowFunctionHash for reuse by registerWindowFunction.
+     */
+    private CharSequence findDuplicateWindowFunction(ExpressionNode node) {
+        int hash = ExpressionNode.deepHashCode(node);
+        lastWindowFunctionHash = hash;
+        ObjList<QueryColumn> candidates = windowFunctionHashMap.get(hash);
+        if (candidates != null) {
+            for (int i = 0, n = candidates.size(); i < n; i++) {
+                QueryColumn existing = candidates.getQuick(i);
+                if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
+                    return existing.getAlias();
+                }
+            }
+        }
+        return null;
     }
 
     private QueryColumn findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
@@ -3145,6 +3148,35 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return null;
+    }
+
+    /**
+     * Finds the position of the first window function or pure window function name in an expression tree.
+     * Returns 0 if no window function is found.
+     */
+    private int findWindowFunctionOrNamePosition(ExpressionNode node) {
+        if (node == null) {
+            return 0;
+        }
+        FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+        if (node.windowExpression != null ||
+                (node.type == FUNCTION && cache.isPureWindowFunction(node.token))) {
+            return node.position;
+        }
+        // Check children
+        if (node.lhs != null) {
+            int pos = findWindowFunctionOrNamePosition(node.lhs);
+            if (pos > 0) return pos;
+        }
+        if (node.rhs != null) {
+            int pos = findWindowFunctionOrNamePosition(node.rhs);
+            if (pos > 0) return pos;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            int pos = findWindowFunctionOrNamePosition(node.args.getQuick(i));
+            if (pos > 0) return pos;
+        }
+        return 0;
     }
 
     private void fixTimestampAndCollectMissingTokens(
@@ -3196,6 +3228,26 @@ public class SqlOptimiser implements Mutable {
         }
         func.init(null, executionContext);
         return func;
+    }
+
+    /**
+     * Gets or creates a list for storing QueryColumns with the given hash.
+     */
+    private ObjList<QueryColumn> getOrCreateColumnListForHash(int hash) {
+        ObjList<QueryColumn> list = windowFunctionHashMap.get(hash);
+        if (list == null) {
+            // Get from pool or create new
+            if (windowColumnListPoolPos < windowColumnListPool.size()) {
+                list = windowColumnListPool.getQuick(windowColumnListPoolPos);
+                list.clear();
+            } else {
+                list = new ObjList<>();
+                windowColumnListPool.add(list);
+            }
+            windowColumnListPoolPos++;
+            windowFunctionHashMap.put(hash, list);
+        }
+        return list;
     }
 
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model, int orderByMnemonic) {
@@ -4911,6 +4963,15 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Registers a window function in the hash map for future deduplication lookups.
+     * Must be called after findDuplicateWindowFunction() to reuse the computed hash.
+     */
+    private void registerWindowFunction(QueryColumn column) {
+        ObjList<QueryColumn> list = getOrCreateColumnListForHash(lastWindowFunctionHash);
+        list.add(column);
+    }
+
+    /**
      * Identify joined tables without join clause and try to find other reversible join clauses
      * that may be applied to it. For example when these tables joined
      * <p>
@@ -5121,6 +5182,28 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
+    private ExpressionNode replaceIfGroupByExpressionOrAggregate(
+            ExpressionNode node,
+            QueryModel groupByModel,
+            ObjList<ExpressionNode> groupByNodes,
+            ObjList<CharSequence> groupByAliases
+    ) throws SqlException {
+        CharSequence alias = findColumnByAst(groupByNodes, groupByAliases, node);
+        if (alias != null) {
+            return nextLiteral(alias);
+        } else if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+            QueryColumn qc = queryColumnPool.next().of(createColumnAlias(node, groupByModel), node);
+            groupByModel.addBottomUpColumn(qc);
+            return nextLiteral(qc.getAlias());
+        }
+
+        if (node.type == LITERAL) {
+            throw SqlException.$(node.position, "column must appear in GROUP BY clause or aggregate function");
+        }
+
+        return node;
+    }
+
     private ExpressionNode replaceIfWindowFunction(
             @Transient ExpressionNode node,
             QueryModel windowModel,
@@ -5151,28 +5234,6 @@ public class SqlOptimiser implements Mutable {
             emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
             return nextLiteral(alias);
         }
-        return node;
-    }
-
-    private ExpressionNode replaceIfGroupByExpressionOrAggregate(
-            ExpressionNode node,
-            QueryModel groupByModel,
-            ObjList<ExpressionNode> groupByNodes,
-            ObjList<CharSequence> groupByAliases
-    ) throws SqlException {
-        CharSequence alias = findColumnByAst(groupByNodes, groupByAliases, node);
-        if (alias != null) {
-            return nextLiteral(alias);
-        } else if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
-            QueryColumn qc = queryColumnPool.next().of(createColumnAlias(node, groupByModel), node);
-            groupByModel.addBottomUpColumn(qc);
-            return nextLiteral(qc.getAlias());
-        }
-
-        if (node.type == LITERAL) {
-            throw SqlException.$(node.position, "column must appear in GROUP BY clause or aggregate function");
-        }
-
         return node;
     }
 
@@ -8344,6 +8405,85 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Validates that WHERE, ORDER BY, and JOIN ON clauses do not contain window functions.
+     * Window functions are not allowed in these clauses per SQL standard.
+     * This recursively checks all nested and joined models.
+     *
+     * @param model The query model to validate
+     * @throws SqlException if a window function is found in WHERE, ORDER BY, or JOIN ON clause
+     */
+    private void validateNoWindowFunctionsInWhereClauses(QueryModel model) throws SqlException {
+        if (model == null) {
+            return;
+        }
+
+        // Check WHERE clause of this model
+        ExpressionNode where = model.getWhereClause();
+        if (where != null && checkForWindowFunctionsOrNames(where)) {
+            // Find the position of the window function for the error message
+            int position = findWindowFunctionOrNamePosition(where);
+            throw SqlException.$(position, "window function is not allowed in WHERE clause");
+        }
+
+        // Check ORDER BY clause of this model
+        ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            ExpressionNode node = orderBy.getQuick(i);
+            if (checkForWindowFunctionsOrNames(node)) {
+                int position = findWindowFunctionOrNamePosition(node);
+                throw SqlException.$(position, "window function is not allowed in ORDER BY clause");
+            }
+        }
+
+        // Check JOIN criteria of this model
+        ExpressionNode joinCriteria = model.getJoinCriteria();
+        if (joinCriteria != null && checkForWindowFunctionsOrNames(joinCriteria)) {
+            int position = findWindowFunctionOrNamePosition(joinCriteria);
+            throw SqlException.$(position, "window function is not allowed in JOIN ON clause");
+        }
+
+        // Recursively check nested model
+        validateNoWindowFunctionsInWhereClauses(model.getNestedModel());
+
+        // Recursively check all join models (including their join criteria)
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            validateNoWindowFunctionsInWhereClauses(joinModels.getQuick(i));
+        }
+
+        // Recursively check union model
+        validateNoWindowFunctionsInWhereClauses(model.getUnionModel());
+    }
+
+    /**
+     * Validates that a window expression does not contain window functions in its
+     * PARTITION BY or ORDER BY clauses. Window functions are not allowed in these
+     * clauses per SQL standard.
+     *
+     * @param windowExpr The window expression to validate
+     * @throws SqlException if a window function is found in PARTITION BY or ORDER BY
+     */
+    private void validateNoWindowFunctionsInWindowSpec(WindowExpression windowExpr) throws SqlException {
+        // Check PARTITION BY
+        ObjList<ExpressionNode> partitionBy = windowExpr.getPartitionBy();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            ExpressionNode node = partitionBy.getQuick(i);
+            if (checkForChildWindowFunctions(node)) {
+                throw SqlException.$(node.position, "window function is not allowed in PARTITION BY clause");
+            }
+        }
+
+        // Check ORDER BY
+        ObjList<ExpressionNode> orderBy = windowExpr.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            ExpressionNode node = orderBy.getQuick(i);
+            if (checkForChildWindowFunctions(node)) {
+                throw SqlException.$(node.position, "window function is not allowed in ORDER BY clause of window specification");
+            }
+        }
+    }
+
     private void validateNotAggregateOrWindowFunction(ExpressionNode node) throws SqlException {
         if (node.type == FUNCTION) {
             if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
@@ -8757,6 +8897,7 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
+            validateNoWindowFunctionsInWhereClauses(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);

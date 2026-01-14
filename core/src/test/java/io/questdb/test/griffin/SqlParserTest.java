@@ -8115,296 +8115,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testWindowFunctionSimple() throws Exception {
-        // Basic window function without cast - should work
-        assertQuery(
-                "select-window row_number() row_number over (order by ts) from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
-                "SELECT row_number() OVER (ORDER BY ts) FROM x",
-                modelOf("x")
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionCastNoParen() throws Exception {
-        // Window function with cast - the window function is extracted to select-window,
-        // and the cast operation references it by alias in select-virtual
-        assertQuery(
-                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
-                "SELECT row_number() OVER (ORDER BY ts)::string FROM x",
-                modelOf("x")
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionCastToString() throws Exception {
-        // Window function with cast AND outer parentheses - same structure as without parentheses
-        assertQuery(
-                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
-                "SELECT (row_number() OVER (ORDER BY ts))::string FROM x",
-                modelOf("x")
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionArithmeticTwoWindows() throws Exception {
-        // Two window functions in arithmetic operation - sum() is both aggregate and window function name,
-        // but with OVER clause it should be treated as window function, not GROUP BY aggregate
-        assertQuery(
-                "select-virtual sum - lag id_diff from (select-window [lag(id) lag over (order by ts), sum(id) sum over (order by ts)] lag(id) lag over (order by ts), sum(id) sum over (order by ts) from (select [id, ts] from x timestamp (ts)))",
-                "SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x",
-                modelOf("x")
-                        .col("id", ColumnType.LONG)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionArithmeticInsideFunction() throws Exception {
-        // Two window functions in arithmetic expression inside abs() - should be allowed
-        // because the window functions are operands of an expression, not direct arguments
-        assertQuery(
-                "select-virtual symbol, amount, ts, abs(ksum - sum) abs from (select-window [symbol, amount, ts, sum(amount) sum over (), ksum(amount) ksum over ()] symbol, amount, ts, sum(amount) sum over (), ksum(amount) ksum over () from (select [symbol, amount, ts] from trades timestamp (ts) where symbol = 'sym1')) limit 100000",
-                "select *, abs(ksum(amount) over() - sum(amount) over()) from trades where symbol = 'sym1' limit 100000",
-                modelOf("trades")
-                        .col("symbol", ColumnType.SYMBOL)
-                        .col("amount", ColumnType.DOUBLE)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionInCaseExpression() throws Exception {
-        // Window function directly inside CASE WHEN condition (two WHEN clauses with same window function)
-        // Identical window functions are deduplicated - only one is extracted to select-window layer
-        assertQuery(
-                "select-virtual case when row_number = 1 then 'first' when row_number = 3 then 'last' else 'middle' end category from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
-                "SELECT CASE " +
-                        "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
-                        "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
-                        "  ELSE 'middle' " +
-                        "END AS category " +
-                        "FROM x",
-                modelOf("x")
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionDeduplicationWithDifferentSpecs() throws Exception {
-        // Window functions with different ORDER BY should NOT be deduplicated
-        assertQuery(
-                "select-virtual row_number1 + row_number column from (select-window [row_number() row_number over (order by id), row_number() row_number1 over (order by ts)] row_number() row_number over (order by id), row_number() row_number1 over (order by ts) from (select [id, ts] from x timestamp (ts)))",
-                "SELECT row_number() OVER (ORDER BY ts) + row_number() OVER (ORDER BY id) FROM x",
-                modelOf("x")
-                        .col("id", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionDeduplicationWithPartitionBy() throws Exception {
-        // Two identical window functions with same PARTITION BY and ORDER BY
-        // Should be deduplicated to one window function in select-window layer
-        assertQuery(
-                "select-choose row_number, row_number row_number1 from (" +
-                        "select-window [row_number() row_number over (partition by symbol order by ts)] " +
-                        "row_number() row_number over (partition by symbol order by ts) from (" +
-                        "select-choose [symbol, ts] symbol, ts from (" +
-                        "select [symbol, ts] from trades timestamp (ts))))",
-                "SELECT row_number() OVER (PARTITION BY symbol ORDER BY ts), " +
-                        "row_number() OVER (PARTITION BY symbol ORDER BY ts) FROM trades",
-                modelOf("trades")
-                        .col("symbol", ColumnType.SYMBOL)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionDeduplicationCaseInsensitive() throws Exception {
-        // Window functions with different case should be deduplicated
-        // ROW_NUMBER() and row_number() are the same function - first occurrence (uppercase) is kept
-        assertQuery(
-                "select-choose ROW_NUMBER, ROW_NUMBER row_number1 from (" +
-                        "select-window [ROW_NUMBER() ROW_NUMBER over ()] " +
-                        "ROW_NUMBER() ROW_NUMBER over () from (x timestamp (ts)))",
-                "SELECT ROW_NUMBER() OVER (), row_number() OVER () FROM x",
-                modelOf("x").timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionDeduplicationCaseInsensitiveWithPartitionBy() throws Exception {
-        // Case-insensitive deduplication with PARTITION BY and ORDER BY
-        // SUM() and sum() should be deduplicated - first occurrence (uppercase) is kept
-        assertQuery(
-                "select-choose SUM, SUM sum1 from (" +
-                        "select-window [SUM(X) SUM over (partition by Y order by TS)] " +
-                        "SUM(X) SUM over (partition by Y order by TS) from (" +
-                        "select-choose [X, Y, TS] X, Y, TS from (" +
-                        "select [X, Y, TS] from t timestamp (ts))))",
-                "SELECT SUM(X) OVER (PARTITION BY Y ORDER BY TS), sum(x) OVER (partition by y order by ts) FROM t",
-                modelOf("t")
-                        .col("x", ColumnType.INT)
-                        .col("y", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionAsArgumentToWindowFunction() throws Exception {
-        // Window function as argument to another window function
-        // sum(row_number() OVER ()) OVER ()
-        // The inner window function is extracted to a separate select-window layer
-        // The outer sum references the inner window column by alias (row_number)
-        // The inner window model has both topDownColumns and bottomUpColumns for column propagation
-        assertQuery(
-                "select-window sum(row_number) sum over () from (select-window [row_number() row_number over ()] row_number() row_number over () from (x timestamp (ts)))",
-                "SELECT sum(row_number() OVER ()) OVER () FROM x",
-                modelOf("x")
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionWithOrderByAsArgument() throws Exception {
-        // Window function as argument to regular aggregate
-        // The inner window function is extracted to a separate select-window layer
-        assertQuery(
-                "select-group-by sum(row_number) sum from (select-window [row_number() row_number over (order by x)] row_number() row_number over (order by x) from (select [x] from x timestamp (ts)))",
-                "SELECT sum(row_number() OVER (order by x)) FROM x",
-                modelOf("x")
-                        .col("x", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionThreeLevelsOfNesting() throws Exception {
-        // Three levels of nesting: sum(sum(row_number() OVER ()) OVER ()) OVER ()
-        // Each level is extracted to its own select-window layer:
-        // 1. Innermost: row_number() over () from base table
-        // 2. Middle: sum(row_number) over () referencing the literal from inner layer
-        // 3. Outer: sum(sum) over () referencing the literal from middle layer
-        assertQuery(
-                "select-window sum(sum) sum over () from (" +
-                        "select-window [sum(row_number) sum over ()] sum(row_number) sum over () from (" +
-                        "select-window [row_number() row_number over ()] row_number() row_number over () from (" +
-                        "x timestamp (ts))))",
-                "SELECT sum(sum(row_number() OVER ()) OVER ()) OVER () FROM x",
-                modelOf("x").timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionMultipleDifferentNestedWindows() throws Exception {
-        // Multiple different window functions nested in one expression
-        // sum(row_number() OVER () + rank() OVER ()) OVER ()
-        assertQuery(
-                "select-window sum(row_number + rank) sum over () from (" +
-                        "select-window [rank() rank over (), row_number() row_number over ()] " +
-                        "row_number() row_number over (), rank() rank over () from (" +
-                        "x timestamp (ts)))",
-                "SELECT sum(row_number() OVER () + rank() OVER ()) OVER () FROM x",
-                modelOf("x").timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionDuplicateNestedWindowsDeduplication() throws Exception {
-        // Two identical row_number() OVER () nested inside sum() OVER ()
-        // Should be deduplicated to only one row_number in the inner select-window layer
-        assertQuery(
-                "select-window sum(row_number + row_number) sum over () from (" +
-                        "select-window [row_number() row_number over ()] " +
-                        "row_number() row_number over () from (" +
-                        "x timestamp (ts)))",
-                "SELECT sum(row_number() OVER () + row_number() OVER ()) OVER () FROM x",
-                modelOf("x").timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionSharedNestedWindowAcrossOuterWindows() throws Exception {
-        // Two outer window functions sharing the same inner window function
-        // The inner row_number() OVER () is deduplicated - computed only once
-        assertQuery(
-                "select-window sum(row_number) sum over (), avg(row_number) avg over () from (" +
-                        "select-window [row_number() row_number over ()] row_number() row_number over () from (" +
-                        "x timestamp (ts)))",
-                "SELECT sum(row_number() OVER ()) OVER (), avg(row_number() OVER ()) OVER () FROM x",
-                modelOf("x").timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionNestingDepthLimit() throws Exception {
-        // 9 levels of nesting exceeds the limit of 8
-        assertSyntaxError(
-                "SELECT sum(sum(sum(sum(sum(sum(sum(sum(sum(row_number() OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER () FROM x",
-                43,
-                "too many levels of nested window functions [max=8]",
-                modelOf("x").timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionNotAllowedInPartitionBy() throws Exception {
-        assertSyntaxError(
-                "SELECT sum(x) OVER (PARTITION BY row_number() OVER ()) FROM x",
-                33,
-                "window function is not allowed in PARTITION BY clause",
-                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionNotAllowedInOrderBy() throws Exception {
-        assertSyntaxError(
-                "SELECT sum(x) OVER (ORDER BY row_number() OVER ()) FROM x",
-                29,
-                "window function is not allowed in ORDER BY clause of window specification",
-                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionNotAllowedInPartitionByNested() throws Exception {
-        // Window function nested inside expression in PARTITION BY
-        assertSyntaxError(
-                "SELECT sum(x) OVER (PARTITION BY y + row_number() OVER ()) FROM x",
-                35,
-                "window function is not allowed in PARTITION BY clause",
-                modelOf("x").col("x", ColumnType.INT).col("y", ColumnType.INT).timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionNotAllowedInNestedWindowPartitionBy() throws Exception {
-        // Nested window function (sum(row_number()...) OVER ()) with window function in its PARTITION BY
-        // The outer sum's window spec contains a window function - should be rejected
-        assertSyntaxError(
-                "SELECT sum(row_number() OVER ()) OVER (PARTITION BY rank() OVER ()) FROM x",
-                52,
-                "window function is not allowed in PARTITION BY clause",
-                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionNotAllowedInNestedWindowOrderBy() throws Exception {
-        // Nested window function with window function in its ORDER BY
-        assertSyntaxError(
-                "SELECT sum(row_number() OVER ()) OVER (ORDER BY rank() OVER ()) FROM x",
-                48,
-                "window function is not allowed in ORDER BY clause of window specification",
-                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
-        );
-    }
-
-    @Test
     public void testOptimiseNotAnd() throws SqlException {
         assertQuery(
                 "select-choose a, b from (select [a, b] from tab where a != b or b != a)",
@@ -12935,6 +12645,318 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    @Test
+    public void testWindowFunctionArithmeticInsideFunction() throws Exception {
+        // Two window functions in arithmetic expression inside abs() - should be allowed
+        // because the window functions are operands of an expression, not direct arguments
+        assertQuery(
+                "select-virtual symbol, amount, ts, abs(ksum - sum) abs from (select-window [symbol, amount, ts, sum(amount) sum over (), ksum(amount) ksum over ()] symbol, amount, ts, sum(amount) sum over (), ksum(amount) ksum over () from (select [symbol, amount, ts] from trades timestamp (ts) where symbol = 'sym1')) limit 100000",
+                "select *, abs(ksum(amount) over() - sum(amount) over()) from trades where symbol = 'sym1' limit 100000",
+                modelOf("trades")
+                        .col("symbol", ColumnType.SYMBOL)
+                        .col("amount", ColumnType.DOUBLE)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionArithmeticTwoWindows() throws Exception {
+        // Two window functions in arithmetic operation - sum() is both aggregate and window function name,
+        // but with OVER clause it should be treated as window function, not GROUP BY aggregate
+        assertQuery(
+                "select-virtual sum - lag id_diff from (select-window [lag(id) lag over (order by ts), sum(id) sum over (order by ts)] lag(id) lag over (order by ts), sum(id) sum over (order by ts) from (select [id, ts] from x timestamp (ts)))",
+                "SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x",
+                modelOf("x")
+                        .col("id", ColumnType.LONG)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToWindowFunction() throws Exception {
+        // Window function as argument to another window function
+        // sum(row_number() OVER ()) OVER ()
+        // The inner window function is extracted to a separate select-window layer
+        // The outer sum references the inner window column by alias (row_number)
+        // The inner window model has both topDownColumns and bottomUpColumns for column propagation
+        assertQuery(
+                "select-window sum(row_number) sum over () from (select-window [row_number() row_number over ()] row_number() row_number over () from (x timestamp (ts)))",
+                "SELECT sum(row_number() OVER ()) OVER () FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionCastNoParen() throws Exception {
+        // Window function with cast - the window function is extracted to select-window,
+        // and the cast operation references it by alias in select-virtual
+        assertQuery(
+                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts)::string FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionCastToString() throws Exception {
+        // Window function with cast AND outer parentheses - same structure as without parentheses
+        assertQuery(
+                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT (row_number() OVER (ORDER BY ts))::string FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionDeduplicationCaseInsensitive() throws Exception {
+        // Window functions with different case should be deduplicated
+        // ROW_NUMBER() and row_number() are the same function - first occurrence (uppercase) is kept
+        assertQuery(
+                "select-choose ROW_NUMBER, ROW_NUMBER row_number1 from (" +
+                        "select-window [ROW_NUMBER() ROW_NUMBER over ()] " +
+                        "ROW_NUMBER() ROW_NUMBER over () from (x timestamp (ts)))",
+                "SELECT ROW_NUMBER() OVER (), row_number() OVER () FROM x",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionDeduplicationCaseInsensitiveWithPartitionBy() throws Exception {
+        // Case-insensitive deduplication with PARTITION BY and ORDER BY
+        // SUM() and sum() should be deduplicated - first occurrence (uppercase) is kept
+        assertQuery(
+                "select-choose SUM, SUM sum1 from (" +
+                        "select-window [SUM(X) SUM over (partition by Y order by TS)] " +
+                        "SUM(X) SUM over (partition by Y order by TS) from (" +
+                        "select-choose [X, Y, TS] X, Y, TS from (" +
+                        "select [X, Y, TS] from t timestamp (ts))))",
+                "SELECT SUM(X) OVER (PARTITION BY Y ORDER BY TS), sum(x) OVER (partition by y order by ts) FROM t",
+                modelOf("t")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionDeduplicationWithDifferentSpecs() throws Exception {
+        // Window functions with different ORDER BY should NOT be deduplicated
+        assertQuery(
+                "select-virtual row_number1 + row_number column from (select-window [row_number() row_number over (order by id), row_number() row_number1 over (order by ts)] row_number() row_number over (order by id), row_number() row_number1 over (order by ts) from (select [id, ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts) + row_number() OVER (ORDER BY id) FROM x",
+                modelOf("x")
+                        .col("id", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionDeduplicationWithPartitionBy() throws Exception {
+        // Two identical window functions with same PARTITION BY and ORDER BY
+        // Should be deduplicated to one window function in select-window layer
+        assertQuery(
+                "select-choose row_number, row_number row_number1 from (" +
+                        "select-window [row_number() row_number over (partition by symbol order by ts)] " +
+                        "row_number() row_number over (partition by symbol order by ts) from (" +
+                        "select-choose [symbol, ts] symbol, ts from (" +
+                        "select [symbol, ts] from trades timestamp (ts))))",
+                "SELECT row_number() OVER (PARTITION BY symbol ORDER BY ts), " +
+                        "row_number() OVER (PARTITION BY symbol ORDER BY ts) FROM trades",
+                modelOf("trades")
+                        .col("symbol", ColumnType.SYMBOL)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionDuplicateNestedWindowsDeduplication() throws Exception {
+        // Two identical row_number() OVER () nested inside sum() OVER ()
+        // Should be deduplicated to only one row_number in the inner select-window layer
+        assertQuery(
+                "select-window sum(row_number + row_number) sum over () from (" +
+                        "select-window [row_number() row_number over ()] " +
+                        "row_number() row_number over () from (" +
+                        "x timestamp (ts)))",
+                "SELECT sum(row_number() OVER () + row_number() OVER ()) OVER () FROM x",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInCaseExpression() throws Exception {
+        // Window function directly inside CASE WHEN condition (two WHEN clauses with same window function)
+        // Identical window functions are deduplicated - only one is extracted to select-window layer
+        assertQuery(
+                "select-virtual case when row_number = 1 then 'first' when row_number = 3 then 'last' else 'middle' end category from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT CASE " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
+                        "  ELSE 'middle' " +
+                        "END AS category " +
+                        "FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInJoinOnClause() throws Exception {
+        // Window function in JOIN ON clause - should be rejected
+        assertSyntaxError(
+                "SELECT * FROM t a JOIN t b ON row_number() OVER () = b.x",
+                30,
+                "window function is not allowed in JOIN ON clause",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInOrderByClauseExplicit() throws Exception {
+        // Explicit window function in ORDER BY clause - should be rejected
+        // Note: This is caught by code generator validation with a different error message
+        assertSyntaxError(
+                "SELECT x FROM t ORDER BY row_number() OVER ()",
+                25,
+                "window function called in non-window context",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInOrderByClauseFromSubquery() throws Exception {
+        // Referencing window function result from subquery in ORDER BY - should be allowed
+        assertQuery(
+                "select-choose x, rn from (select-window [x, row_number() rn over ()] x, row_number() rn over () from (select [x] from t timestamp (ts))) order by rn",
+                "SELECT * FROM (SELECT x, row_number() OVER () as rn FROM t) ORDER BY rn",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInWhereClauseExplicit() throws Exception {
+        // Explicit window function in WHERE clause - should be rejected
+        // This is different from referencing a window column from a subquery
+        assertSyntaxError(
+                "SELECT x FROM t WHERE row_number() OVER () = 1",
+                22,
+                "window function is not allowed in WHERE clause",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInWhereClauseFromSubquery() throws Exception {
+        // Referencing window function result from subquery in WHERE - should be allowed
+        assertQuery(
+                "select-choose x, rn from (select-window [x, row_number() rn over ()] x, row_number() rn over () from (select [x] from t timestamp (ts)) where rn = 1)",
+                "SELECT * FROM (SELECT x, row_number() OVER () as rn FROM t) WHERE rn = 1",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInWhereClauseNested() throws Exception {
+        // Window function nested in expression in WHERE clause - should be rejected
+        assertSyntaxError(
+                "SELECT x FROM t WHERE x + row_number() OVER () > 5",
+                26,
+                "window function is not allowed in WHERE clause",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInWhereClauseSelectStar() throws Exception {
+        // Window function in WHERE clause with SELECT * - should be rejected
+        assertSyntaxError(
+                "SELECT * FROM t WHERE row_number() OVER () > 1",
+                22,
+                "window function is not allowed in WHERE clause",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionMultipleDifferentNestedWindows() throws Exception {
+        // Multiple different window functions nested in one expression
+        // sum(row_number() OVER () + rank() OVER ()) OVER ()
+        assertQuery(
+                "select-window sum(row_number + rank) sum over () from (" +
+                        "select-window [rank() rank over (), row_number() row_number over ()] " +
+                        "row_number() row_number over (), rank() rank over () from (" +
+                        "x timestamp (ts)))",
+                "SELECT sum(row_number() OVER () + rank() OVER ()) OVER () FROM x",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNestingDepthLimit() throws Exception {
+        // 9 levels of nesting exceeds the limit of 8
+        assertSyntaxError(
+                "SELECT sum(sum(sum(sum(sum(sum(sum(sum(sum(row_number() OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER () FROM x",
+                43,
+                "too many levels of nested window functions [max=8]",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNotAllowedInNestedWindowOrderBy() throws Exception {
+        // Nested window function with window function in its ORDER BY
+        assertSyntaxError(
+                "SELECT sum(row_number() OVER ()) OVER (ORDER BY rank() OVER ()) FROM x",
+                48,
+                "window function is not allowed in ORDER BY clause of window specification",
+                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNotAllowedInNestedWindowPartitionBy() throws Exception {
+        // Nested window function (sum(row_number()...) OVER ()) with window function in its PARTITION BY
+        // The outer sum's window spec contains a window function - should be rejected
+        assertSyntaxError(
+                "SELECT sum(row_number() OVER ()) OVER (PARTITION BY rank() OVER ()) FROM x",
+                52,
+                "window function is not allowed in PARTITION BY clause",
+                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNotAllowedInOrderBy() throws Exception {
+        assertSyntaxError(
+                "SELECT sum(x) OVER (ORDER BY row_number() OVER ()) FROM x",
+                29,
+                "window function is not allowed in ORDER BY clause of window specification",
+                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNotAllowedInPartitionBy() throws Exception {
+        assertSyntaxError(
+                "SELECT sum(x) OVER (PARTITION BY row_number() OVER ()) FROM x",
+                33,
+                "window function is not allowed in PARTITION BY clause",
+                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNotAllowedInPartitionByNested() throws Exception {
+        // Window function nested inside expression in PARTITION BY
+        assertSyntaxError(
+                "SELECT sum(x) OVER (PARTITION BY y + row_number() OVER ()) FROM x",
+                35,
+                "window function is not allowed in PARTITION BY clause",
+                modelOf("x").col("x", ColumnType.INT).col("y", ColumnType.INT).timestamp("ts")
+        );
+    }
 
     @Test
     public void testWindowFunctionReferencesSameColumnAsVirtual() throws Exception {
@@ -12945,6 +12967,60 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("c", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionSharedNestedWindowAcrossOuterWindows() throws Exception {
+        // Two outer window functions sharing the same inner window function
+        // The inner row_number() OVER () is deduplicated - computed only once
+        assertQuery(
+                "select-window sum(row_number) sum over (), avg(row_number) avg over () from (" +
+                        "select-window [row_number() row_number over ()] row_number() row_number over () from (" +
+                        "x timestamp (ts)))",
+                "SELECT sum(row_number() OVER ()) OVER (), avg(row_number() OVER ()) OVER () FROM x",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionSimple() throws Exception {
+        // Basic window function without cast - should work
+        assertQuery(
+                "select-window row_number() row_number over (order by ts) from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts) FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionThreeLevelsOfNesting() throws Exception {
+        // Three levels of nesting: sum(sum(row_number() OVER ()) OVER ()) OVER ()
+        // Each level is extracted to its own select-window layer:
+        // 1. Innermost: row_number() over () from base table
+        // 2. Middle: sum(row_number) over () referencing the literal from inner layer
+        // 3. Outer: sum(sum) over () referencing the literal from middle layer
+        assertQuery(
+                "select-window sum(sum) sum over () from (" +
+                        "select-window [sum(row_number) sum over ()] sum(row_number) sum over () from (" +
+                        "select-window [row_number() row_number over ()] row_number() row_number over () from (" +
+                        "x timestamp (ts))))",
+                "SELECT sum(sum(row_number() OVER ()) OVER ()) OVER () FROM x",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionWithOrderByAsArgument() throws Exception {
+        // Window function as argument to regular aggregate
+        // The inner window function is extracted to a separate select-window layer
+        assertQuery(
+                "select-group-by sum(row_number) sum from (select-window [row_number() row_number over (order by x)] row_number() row_number over (order by x) from (select [x] from x timestamp (ts)))",
+                "SELECT sum(row_number() OVER (order by x)) FROM x",
+                modelOf("x")
+                        .col("x", ColumnType.INT)
                         .timestamp("ts")
         );
     }
