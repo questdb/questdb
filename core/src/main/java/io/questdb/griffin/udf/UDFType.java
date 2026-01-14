@@ -39,7 +39,6 @@ import java.math.BigDecimal;
  *   <li>{@link Timestamp} - maps to TIMESTAMP (microseconds since epoch)</li>
  *   <li>{@link Date} - maps to DATE (milliseconds since epoch)</li>
  *   <li>{@link DoubleArray} - maps to ARRAY of DOUBLE (1D)</li>
- *   <li>{@link LongArray} - maps to ARRAY of LONG (1D)</li>
  *   <li>{@link java.math.BigDecimal} - maps to DECIMAL64 (18 precision, 6 scale)</li>
  * </ul>
  */
@@ -81,8 +80,6 @@ public final class UDFType {
             return ColumnType.DATE;
         } else if (clazz == DoubleArray.class) {
             return ColumnType.encodeArrayType(ColumnType.DOUBLE, 1, true);
-        } else if (clazz == LongArray.class) {
-            return ColumnType.encodeArrayType(ColumnType.LONG, 1, true);
         } else if (clazz == BigDecimal.class) {
             // Default to DECIMAL64 with 18 precision and 6 scale
             return ColumnType.getDecimalType(18, 6);
@@ -121,7 +118,7 @@ public final class UDFType {
             return 'N'; // Timestamp (N)
         } else if (clazz == Date.class) {
             return 'M'; // Date (M)
-        } else if (clazz == DoubleArray.class || clazz == LongArray.class) {
+        } else if (clazz == DoubleArray.class) {
             throw new IllegalArgumentException("Use toSignatureString for array types: " + clazz.getName());
         } else if (clazz == BigDecimal.class) {
             return 'Ξ'; // Decimal (uppercase Greek letter Xi - lowercase would mark as constant)
@@ -141,8 +138,6 @@ public final class UDFType {
     public static String toSignatureString(Class<?> clazz) {
         if (clazz == DoubleArray.class) {
             return "D[]"; // Double array
-        } else if (clazz == LongArray.class) {
-            return "L[]"; // Long array
         } else if (clazz == BigDecimal.class) {
             return "Ξ"; // Decimal (uppercase Greek letter Xi)
         }
@@ -157,7 +152,7 @@ public final class UDFType {
      * @return true if the class is an array wrapper type
      */
     public static boolean isArrayType(Class<?> clazz) {
-        return clazz == DoubleArray.class || clazz == LongArray.class;
+        return clazz == DoubleArray.class;
     }
 
     /**

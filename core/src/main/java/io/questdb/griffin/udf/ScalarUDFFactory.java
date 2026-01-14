@@ -117,9 +117,6 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         if (inputType == DoubleArray.class) {
             ArrayView arrayView = arg.getArray(rec);
             return (I) (arrayView == null || arrayView.isNull() ? null : new DoubleArray(arrayView));
-        } else if (inputType == LongArray.class) {
-            ArrayView arrayView = arg.getArray(rec);
-            return (I) (arrayView == null || arrayView.isNull() ? null : new LongArray(arrayView));
         } else if (inputType == BigDecimal.class) {
             // Handle decimal input - extract value and convert to BigDecimal
             int argType = arg.getType();

@@ -103,7 +103,39 @@ UDFRegistry.binary("my_array_contains", DoubleArray.class, Double.class, Boolean
     })
 ```
 
-Note: Currently only `DoubleArray` is supported (1D arrays of DOUBLE). The `LongArray` wrapper is available for future use when LONG arrays become supported in QuestDB.
+Note: Currently only `DoubleArray` is supported (1D arrays of DOUBLE).
+
+### Decimal Functions
+
+```java
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+// Round to 2 decimal places
+UDFRegistry.scalar("my_round2", BigDecimal.class, BigDecimal.class,
+    bd -> bd == null ? null : bd.setScale(2, RoundingMode.HALF_UP))
+
+// Absolute value of decimal
+UDFRegistry.scalar("my_decimal_abs", BigDecimal.class, BigDecimal.class,
+    bd -> bd == null ? null : bd.abs())
+
+// Add two decimals
+UDFRegistry.binary("my_decimal_add", BigDecimal.class, BigDecimal.class, BigDecimal.class,
+    (a, b) -> a == null || b == null ? null : a.add(b))
+
+// Multiply two decimals
+UDFRegistry.binary("my_decimal_mult", BigDecimal.class, BigDecimal.class, BigDecimal.class,
+    (a, b) -> a == null || b == null ? null : a.multiply(b))
+
+// Divide with precision
+UDFRegistry.binary("my_decimal_div", BigDecimal.class, BigDecimal.class, BigDecimal.class,
+    (a, b) -> {
+        if (a == null || b == null || b.compareTo(BigDecimal.ZERO) == 0) return null;
+        return a.divide(b, 6, RoundingMode.HALF_UP);
+    })
+```
+
+Note: `BigDecimal` maps to QuestDB's `DECIMAL(18,6)` type by default. Input values are automatically converted from any DECIMAL type, and output values use 6 decimal places of precision.
 
 ## Supported Types
 
@@ -121,6 +153,7 @@ Note: Currently only `DoubleArray` is supported (1D arrays of DOUBLE). The `Long
 | `Timestamp` | TIMESTAMP | N |
 | `Date` | DATE | M |
 | `DoubleArray` | DOUBLE[] | D[] |
+| `BigDecimal` | DECIMAL(18,6) | Ξ |
 
 ## Complete Plugin Example
 
@@ -295,6 +328,11 @@ Plugins should declare QuestDB as a `provided` dependency since it's supplied by
 | `simple_array_len` | `(D[])I` | Length of array |
 | `simple_array_get` | `(D[]I)D` | Get element at index |
 | `simple_array_contains` | `(D[]D)T` | Check if array contains value |
+| `simple_round2` | `(Ξ)Ξ` | Round decimal to 2 places |
+| `simple_decimal_abs` | `(Ξ)Ξ` | Absolute value of decimal |
+| `simple_decimal_add` | `(ΞΞ)Ξ` | Add two decimals |
+| `simple_decimal_mult` | `(ΞΞ)Ξ` | Multiply two decimals |
+| `simple_decimal_div` | `(ΞΞ)Ξ` | Divide two decimals |
 
 ### Traditional API Functions
 

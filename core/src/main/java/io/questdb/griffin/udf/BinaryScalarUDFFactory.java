@@ -157,9 +157,6 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         if (type == DoubleArray.class) {
             ArrayView arrayView = arg.getArray(rec);
             return (T) (arrayView == null || arrayView.isNull() ? null : new DoubleArray(arrayView));
-        } else if (type == LongArray.class) {
-            ArrayView arrayView = arg.getArray(rec);
-            return (T) (arrayView == null || arrayView.isNull() ? null : new LongArray(arrayView));
         } else if (type == BigDecimal.class) {
             // Handle decimal input - extract value and convert to BigDecimal
             int argType = arg.getType();
