@@ -186,7 +186,6 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
             } else {
                 match self.decode() {
                     Ok(()) => {
-                        // After decode, there must be a value
                         if let Some(idx) = self.inner.data.next() {
                             if idx < self.dict.len() {
                                 dest.extend_from_slice(self.dict.get_dict_value(idx))?;

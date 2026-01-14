@@ -299,6 +299,8 @@ pub struct Column {
     pub secondary_data: &'static [u8],
     pub symbol_offsets: &'static [u64],
     pub designated_timestamp: bool,
+    /// Passed by QuestDB during writes to indicate that the column contains no null values.
+    /// Currently only Symbol dataType columns support this flag.
     pub required: bool,
 }
 
