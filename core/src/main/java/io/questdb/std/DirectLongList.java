@@ -43,6 +43,18 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     private long limit;
     private long pos;
 
+
+    /**
+     * Creates a DirectLongList with optional deferred memory allocation.
+     * <p>
+     * When alloc=false, this constructor uses deferred allocation pattern:
+     * - No memory is allocated immediately (address remains 0)
+     * - Memory will be allocated later when reopen() is called
+     * <p>
+     *
+     * @param capacity  the initial capacity in number of long elements (not bytes)
+     * @param memoryTag memory tag for tracking allocations
+     */
     public DirectLongList(long capacity, int memoryTag) {
         this(capacity, memoryTag, false);
     }
