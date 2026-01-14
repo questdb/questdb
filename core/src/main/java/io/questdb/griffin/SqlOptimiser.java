@@ -5013,6 +5013,16 @@ public class SqlOptimiser implements Mutable {
             QueryModel baseModel
     ) throws SqlException {
         if (node != null && node.windowExpression != null) {
+            // Check if an identical window function already exists in the model
+            ObjList<QueryColumn> existingColumns = windowModel.getBottomUpColumns();
+            for (int i = 0, n = existingColumns.size(); i < n; i++) {
+                QueryColumn existing = existingColumns.getQuick(i);
+                if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
+                    // Found duplicate - reuse the existing alias
+                    return nextLiteral(existing.getAlias());
+                }
+            }
+
             WindowExpression wc = node.windowExpression;
             // Create alias for the window column if not already set
             CharSequence alias = wc.getAlias();

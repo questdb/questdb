@@ -28,6 +28,7 @@ import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -79,7 +80,60 @@ public class ExpressionNode implements Mutable, Sinkable {
             return false;
         }
         return (a.type == FUNCTION || a.type == LITERAL ? Chars.equalsIgnoreCase(a.token, b.token) : Chars.equals(a.token, b.token))
-                && compareArgsExact(a, b);
+                && compareArgsExact(a, b)
+                && compareWindowExpressions(a.windowExpression, b.windowExpression);
+    }
+
+    public static boolean compareWindowExpressions(WindowExpression a, WindowExpression b) {
+        if (a == null && b == null) {
+            return true;
+        }
+        if (a == null || b == null) {
+            return false;
+        }
+        // Compare frame specification
+        if (a.getFramingMode() != b.getFramingMode()
+                || a.getRowsLo() != b.getRowsLo()
+                || a.getRowsHi() != b.getRowsHi()
+                || a.getRowsLoKind() != b.getRowsLoKind()
+                || a.getRowsHiKind() != b.getRowsHiKind()
+                || a.getRowsLoExprTimeUnit() != b.getRowsLoExprTimeUnit()
+                || a.getRowsHiExprTimeUnit() != b.getRowsHiExprTimeUnit()
+                || a.getExclusionKind() != b.getExclusionKind()
+                || a.isIgnoreNulls() != b.isIgnoreNulls()) {
+            return false;
+        }
+        // Compare frame boundary expressions
+        if (!compareNodesExact(a.getRowsLoExpr(), b.getRowsLoExpr())
+                || !compareNodesExact(a.getRowsHiExpr(), b.getRowsHiExpr())) {
+            return false;
+        }
+        // Compare PARTITION BY
+        ObjList<ExpressionNode> aPartitionBy = a.getPartitionBy();
+        ObjList<ExpressionNode> bPartitionBy = b.getPartitionBy();
+        if (aPartitionBy.size() != bPartitionBy.size()) {
+            return false;
+        }
+        for (int i = 0, n = aPartitionBy.size(); i < n; i++) {
+            if (!compareNodesExact(aPartitionBy.getQuick(i), bPartitionBy.getQuick(i))) {
+                return false;
+            }
+        }
+        // Compare ORDER BY
+        ObjList<ExpressionNode> aOrderBy = a.getOrderBy();
+        ObjList<ExpressionNode> bOrderBy = b.getOrderBy();
+        IntList aOrderByDir = a.getOrderByDirection();
+        IntList bOrderByDir = b.getOrderByDirection();
+        if (aOrderBy.size() != bOrderBy.size()) {
+            return false;
+        }
+        for (int i = 0, n = aOrderBy.size(); i < n; i++) {
+            if (!compareNodesExact(aOrderBy.getQuick(i), bOrderBy.getQuick(i))
+                    || aOrderByDir.getQuick(i) != bOrderByDir.getQuick(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static boolean compareNodesGroupBy(

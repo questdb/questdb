@@ -8178,9 +8178,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWindowFunctionInCaseExpression() throws Exception {
         // Window function directly inside CASE WHEN condition (two WHEN clauses with same window function)
-        // Both window functions are extracted to select-window layer with different aliases
+        // Identical window functions are deduplicated - only one is extracted to select-window layer
         assertQuery(
-                "select-virtual case when row_number = 1 then 'first' when row_number1 = 3 then 'last' else 'middle' end category from (select-window [row_number() row_number over (order by ts), row_number() row_number1 over (order by ts)] row_number() row_number over (order by ts), row_number() row_number1 over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "select-virtual case when row_number = 1 then 'first' when row_number = 3 then 'last' else 'middle' end category from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
                 "SELECT CASE " +
                         "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
                         "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
@@ -8188,6 +8188,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "END AS category " +
                         "FROM x",
                 modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionDeduplicationWithDifferentSpecs() throws Exception {
+        // Window functions with different ORDER BY should NOT be deduplicated
+        assertQuery(
+                "select-virtual row_number1 + row_number column from (select-window [row_number() row_number over (order by id), row_number() row_number1 over (order by ts)] row_number() row_number over (order by id), row_number() row_number1 over (order by ts) from (select [id, ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts) + row_number() OVER (ORDER BY id) FROM x",
+                modelOf("x")
+                        .col("id", ColumnType.INT)
                         .timestamp("ts")
         );
     }
