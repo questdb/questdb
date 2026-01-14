@@ -63,22 +63,6 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
         }
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        LowerCaseCharSequenceHashSet that = (LowerCaseCharSequenceHashSet) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (CharSequence key : keys) {
-            if (key != null && that.excludes(key)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     // returns the first non-null key, in arbitrary order
     public CharSequence getAny() {
         for (int i = 0, n = keys.length; i < n; i++) {
@@ -87,17 +71,6 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
             }
         }
         return null;
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
-                hashCode += Chars.hashCode(keys[i]);
-            }
-        }
-        return hashCode;
     }
 
     public CharSequence keyAt(int index) {
