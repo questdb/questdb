@@ -476,7 +476,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         logic.trackDiscoveredSegment(1, true);   // purgeable
         logic.trackDiscoveredSegment(2, false);  // writer active here
         logic.trackDiscoveredSegment(3, false);  // writer active here
-        logic.endWalTracking(idx1, 1, true);    // isLocked=false: writer is active
+        logic.endWalTracking(idx1, 1, false);   // isLocked=false: writer is active
 
         // WAL 2: segment 0, writer active at segment 0, maxSegmentLocked = -1
         int idx2 = logic.trackDiscoveredWal(2);
