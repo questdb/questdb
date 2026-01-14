@@ -144,7 +144,8 @@ public class ViewWalWriter extends WalWriterBase {
             }
 
             if (segmentLocked > -1) {
-                releaseSegmentLock(segmentLocked, lastSegmentTxn);
+                releaseSegmentLock(segmentLocked, lastSegmentTxn, -1);
+                segmentLocked = -1;
             }
 
             try {
@@ -195,7 +196,7 @@ public class ViewWalWriter extends WalWriterBase {
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
             if (oldSegmentLocked > -1) {
-                releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn);
+                releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn, newSegmentId);
             }
             path.trimTo(pathSize);
         }

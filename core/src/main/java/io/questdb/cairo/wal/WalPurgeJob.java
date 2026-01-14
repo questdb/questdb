@@ -43,7 +43,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
-import io.questdb.std.LongList;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
@@ -228,6 +228,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         // wait for them to be closed before fully removing the token from name registry
                         // and marking table as fully deleted.
                         if (fullyDeleted) {
+                            walLockManager.dropTable(tableToken.getDirName());
                             engine.removeTableToken(tableToken);
                             LOG.info().$("table is fully dropped [tableDir=").$(pathToDelete).I$();
                             TableUtils.lockName(pathToDelete);
@@ -296,11 +297,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         try {
                             final int walId = Numbers.parseInt(walName, 3, walName.size());
                             onDiskWalIDSet.add(walId);
-                            boolean walLocked = walLockManager.tryLockWal(tableToken.getDirName(), walId);
-                            if (walLocked) {
-                                LOG.debug().$("locked WAL [walId=").$(walId).I$();
-                            }
-                            boolean walHasPendingTasks = false;
+                            int maxSegmentLocked = walLockManager.lockPurge(tableToken.getDirName(), walId);
+
+                            int trackerIdx = logic.trackDiscoveredWal(walId);
+                            boolean walLocked = maxSegmentLocked == WalUtils.SEG_NONE_ID;
 
                             // Search for segments.
                             path.trimTo(rootPathLen).concat(pUtf8NameZ);
@@ -325,26 +325,25 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                                             ;
                                                 }
                                                 path.trimTo(walPathLen);
-                                                boolean segmentLocked = walLockManager.tryLockSegment(tableToken.getDirName(), walId, segmentId);
+                                                boolean segmentLocked = segmentId <= maxSegmentLocked;
                                                 if (segmentLocked) {
                                                     LOG.debug().$("locked segment [table=").$(tableToken)
                                                             .$(", walId=").$(walId)
                                                             .$(", segmentId=").$(segmentId)
                                                             .I$();
-                                                }
 
-                                                final boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
-                                                if (pendingTasks) {
-                                                    // Treat is as being locked.
-                                                    walLockManager.unlockSegment(tableToken.getDirName(), walId, segmentId);
-                                                    LOG.debug().$("unlocked segment [table=").$(tableToken)
-                                                            .$(", walId=").$(walId)
-                                                            .$(", segmentId=").$(segmentId)
-                                                            .I$();
-                                                    segmentLocked = false;
+                                                    final boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
+                                                    if (pendingTasks) {
+                                                        // Treat is as being locked.
+                                                        LOG.debug().$("unlocked segment [table=").$(tableToken)
+                                                                .$(", walId=").$(walId)
+                                                                .$(", segmentId=").$(segmentId)
+                                                                .I$();
+                                                        segmentLocked = false;
+                                                    }
                                                 }
-                                                walHasPendingTasks |= !segmentLocked;
-                                                logic.trackDiscoveredSegment(walId, segmentId, segmentLocked);
+                                                walLocked &= segmentLocked;
+                                                logic.trackDiscoveredSegment(segmentId, segmentLocked);
                                             } catch (NumericException ne) {
                                                 // Non-Segment directory, ignore.
                                             }
@@ -354,16 +353,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                     ff.findClose(sp);
                                 }
                             }
-                            if (walLocked && walHasPendingTasks) {
-                                // WAL dir cannot be deleted, there are busy segments.
-                                // Unlock it.
-                                walLockManager.unlockWal(tableToken.getDirName(), walId);
-                                LOG.debug().$("unlocked WAL [table=").$(tableToken)
-                                        .$(", walId=").$(walId)
-                                        .I$();
-                                walLocked = false;
-                            }
-                            logic.trackDiscoveredWal(walId, walLocked);
+
+                            logic.endWalTracking(trackerIdx, maxSegmentLocked, walLocked);
                         } catch (NumericException ne) {
                             // Non-WAL directory, ignore.
                         }
@@ -542,12 +533,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         void deleteWalDirectory(int walId);
 
-        void unlock(int walId, int segmentId);
+        void unlock(int walId);
     }
 
     public static class Logic {
         private final Deleter deleter;
-        private final LongList discovered = new LongList();
+        // [ { walId, maxSegmentLocked, n segments, segmentId... | WalUtils.METADATA_WALID, seqPartNo } [, ...] ]
+        private final IntList discovered = new IntList();
         private final IntIntHashMap nextToApply = new IntIntHashMap();
         private final int waitBeforeDelete;
         private long currentSeqPart;
@@ -555,10 +547,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         private boolean sequencerPending;
         private TableToken tableToken;
 
-
         public Logic(Deleter deleter, int waitBeforeDelete) {
             this.deleter = deleter;
             this.waitBeforeDelete = waitBeforeDelete;
+        }
+
+        public void endWalTracking(int idx, int maxSegmentLocked, boolean isLocked) {
+            final int nSegments = (discovered.size() - idx - 2);
+            discovered.setQuick(idx, isLocked ? maxSegmentLocked : -maxSegmentLocked - 1);
+            discovered.setQuick(idx + 1, nSegments);
         }
 
         public boolean hasOnDiskSegments() {
@@ -569,18 +566,30 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (sequencerPending) {
                 return true;
             }
-            for (int i = 0; i < getStateSize(); ++i) {
-                if (!getLocked(i)) {
-                    return true;
+            for (int i = 0, n = discovered.size(); i < n; ) {
+                final int walId = discovered.get(i);
+                if (walId == WalUtils.METADATA_WALID) {
+                    i += 2; // skip seq part
+                } else {
+                    final int maxSegmentLocked = discovered.get(i + 1);
+                    if (maxSegmentLocked != WalUtils.SEG_NONE_ID) {
+                        return true;
+                    }
+                    final int nSegments = discovered.get(i + 2);
+                    i += 3 + nSegments;
                 }
             }
             return false;
         }
 
         public void releaseLocks() {
-            for (int i = 0, n = getStateSize(); i < n; ++i) {
-                if (getLocked(i)) {
-                    deleter.unlock(getWalId(i), getSegmentId(i));
+            for (int i = 0, n = discovered.size(); i < n; ) {
+                final int walId = discovered.get(i);
+                if (walId != WalUtils.METADATA_WALID) {
+                    deleter.unlock(walId);
+                    i += 3 + discovered.get(i + 2);
+                } else {
+                    i += 2; // skip seq part
                 }
             }
         }
@@ -595,54 +604,57 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         public void run() {
-            int i = 0, n = getStateSize();
+            int i = 0, n = discovered.size();
             if (n > 0 && waitBeforeDelete > 0) {
                 Os.sleep(waitBeforeDelete);
             }
 
             try {
-                for (; i < n; i++) {
-                    final boolean locked = getLocked(i);
-                    final int walId = getWalId(i);
-                    final int segmentId = getSegmentId(i);
-                    final int nextToApplySegmentId = nextToApply.get(walId);  // -1 if not found
-                    if (locked) {
-                        // Delete a wal or segment directory only if:
-                        //   * It has been fully applied to the table.
-                        //   * Is not locked.
-                        //   * None of its segments have pending tasks.
+                while (i < n) {
+                    final int walId = discovered.get(i);
+                    final int maxSegmentLocked = discovered.get(i + 1);
 
-                        if (isWalDir(segmentId, walId)) {
-                            final boolean walAlreadyApplied = nextToApplySegmentId == -1;
-                            if (walAlreadyApplied) {
-                                logDebugInfo();
-                                deleter.deleteWalDirectory(walId);
-                                continue;
-                            }
-                        } else {
-                            final boolean segmentAlreadyApplied = (nextToApplySegmentId == -1) || (nextToApplySegmentId > segmentId);
-                            if (segmentAlreadyApplied) {
-                                logDebugInfo();
-                                deleter.deleteSegmentDirectory(walId, segmentId);
-                                continue;
-                            }
-                        }
-                        deleter.unlock(walId, segmentId);
-                        if (isWalDir(segmentId, walId)) {
-                            LOG.debug().$("Java unlocked WAL [table=").$(tableToken).$(", walId=").$(walId).I$();
-                        }
-                    } else {
-                        final int seqPart = getSeqPart(walId, segmentId); // -1 if not a seq part
-                        if (seqPart > -1 && seqPart < currentSeqPart) {
+                    final int seqPart = getSeqPart(walId, maxSegmentLocked); // -1 if not a seq part
+                    if (seqPart > -1) {
+                        if (seqPart < currentSeqPart) {
                             logDebugInfo();
                             deleter.deleteSequencerPart(seqPart);
                         }
+                        i += 2;
+                        continue;
                     }
+
+                    final int nSegments = discovered.get(i + 2);
+                    final int nextToApplySegmentId = nextToApply.get(walId);  // -1 if not found
+
+                    if (maxSegmentLocked == WalUtils.SEG_NONE_ID && nextToApplySegmentId == -1) {
+                        // No locked segments and no pending segments to apply, delete whole wal directory
+                        logDebugInfo();
+                        deleter.deleteWalDirectory(walId);
+                    } else {
+                        // Check segments individually
+                        for (int s = 0; s < nSegments; s++) {
+                            final int segmentId = discovered.get(i + 3 + s);
+                            if (segmentId > -1) {
+                                final boolean segmentAlreadyApplied = (nextToApplySegmentId == -1) || (nextToApplySegmentId > segmentId);
+                                if (segmentAlreadyApplied) {
+                                    logDebugInfo();
+                                    deleter.deleteSegmentDirectory(walId, segmentId);
+                                }
+                            }
+                        }
+                    }
+                    deleter.unlock(walId);
+                    i += 3 + nSegments;
                 }
             } finally {
-                for (; i < n; i++) {
-                    if (getLocked(i)) {
-                        deleter.unlock(getWalId(i), getSegmentId(i));
+                while (i < n) {
+                    final int walId = discovered.get(i);
+                    if (walId != WalUtils.METADATA_WALID) {
+                        deleter.unlock(walId);
+                        i += 3 + discovered.get(i + 2);
+                    } else {
+                        i += 2; // skip seq part
                     }
                 }
             }
@@ -656,14 +668,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             currentSeqPart = partNo;
         }
 
-        public void trackDiscoveredSegment(int walId, int segmentId, boolean locked) {
-            discovered.add(walId);
-            discovered.add(segmentId);
-            discovered.add(locked ? 1 : 0);
+        public void trackDiscoveredSegment(int segmentId, boolean locked) {
+            discovered.add(locked ? segmentId : -segmentId - 1);
         }
 
-        public void trackDiscoveredWal(int walId, boolean locked) {
-            trackDiscoveredSegment(walId, WalUtils.SEG_NONE_ID, locked);
+        public int trackDiscoveredWal(int walId) {
+            discovered.add(walId);
+            discovered.add(0); // placeholder for max segment locked
+            discovered.add(0); // placeholder for number of segments discovered
+            return discovered.size() - 2;
         }
 
         public void trackNextToApplySegment(int walId, int segmentId) {
@@ -676,31 +689,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         public void trackSeqPart(int part) {
             discovered.add(WalUtils.METADATA_WALID);
             discovered.add(part);
-            discovered.add(-1);
-        }
-
-        private static boolean isWalDir(int segmentId, int walId) {
-            return segmentId == WalUtils.SEG_NONE_ID && walId != WalUtils.METADATA_WALID;
-        }
-
-        private boolean getLocked(int index) {
-            return discovered.get(index * 3 + 2) == 1;
-        }
-
-        private int getSegmentId(int index) {
-            return (int) discovered.get(index * 3 + 1);
         }
 
         private int getSeqPart(int walId, int segmentId) {
             return walId == WalUtils.METADATA_WALID ? segmentId : -1;
-        }
-
-        private int getStateSize() {
-            return discovered.size() / 3;
-        }
-
-        private int getWalId(int index) {
-            return (int) discovered.get(index * 3);
         }
 
         private void logDebugInfo() {
@@ -716,37 +708,45 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             try {
                 log.$("table=").$(tableToken).$(", discovered=[");
 
-                for (int i = 0, n = getStateSize(); i < n; i++) {
-                    final int walId = getWalId(i);
-                    final int segmentId = getSegmentId(i);
-                    final boolean locked = getLocked(i);
-                    final int partNo = getSeqPart(walId, segmentId);
+                for (int i = 0, n = discovered.size(); i < n; ) {
+                    final int walId = discovered.get(i);
+                    final int maxSegmentLocked = discovered.get(i + 1);
 
+                    final int partNo = getSeqPart(walId, maxSegmentLocked);
                     if (partNo > -1) {
                         log.$("seqPart=").$(partNo);
                         if (partNo == currentSeqPart) {
                             log.$(":current");
                         }
-                    } else {
-                        if (isWalDir(segmentId, walId)) {
-                            log.$("(wal").$(walId);
-                        } else {
-                            final int nextToApplyId = nextToApply.get(walId);
-                            log.$('(').$(walId).$(',').$(segmentId);
-                            if (segmentId == nextToApplyId) {
-                                log.$(":next");
-                            }
-                        }
+                        i += 2;
+                        continue;
+                    }
 
+                    final int nSegments = discovered.get(i + 2);
+
+                    log.$("(wal").$(walId);
+                    if (maxSegmentLocked != WalUtils.SEG_NONE_ID) {
+                        log.$(":busy");
+                    }
+                    log.$(')');
+
+                    final int nextToApplyId = nextToApply.get(walId);
+                    for (int s = 0; s < nSegments; s++) {
+                        log.$(',');
+                        final int segment = discovered.get(i + 3 + s);
+                        final int segmentId = segment >= 0 ? segment : -segment - 1;
+                        final boolean locked = segment >= 0;
+                        log.$('(').$(walId).$(',').$(segmentId);
+                        if (segmentId == nextToApplyId) {
+                            log.$(":next");
+                        }
                         if (!locked) {
                             log.$(":busy");
                         }
                         log.$(')');
                     }
 
-                    if (i < n - 1) {
-                        log.$(',');
-                    }
+                    i += 3 + nSegments;
                 }
             } finally {
                 log.I$();
@@ -763,11 +763,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", segmentId=").$(segmentId)
                     .I$();
             recursiveDelete(setSegmentPath(tableToken, walId, segmentId));
-            walLockManager.unlockSegment(tableToken.getDirName(), walId, segmentId);
-            LOG.debug().$("unlocked segment [table=").$(tableToken)
-                    .$(", walId=").$(walId)
-                    .$(", segmentId=").$(segmentId)
-                    .I$();
         }
 
         @Override
@@ -786,25 +781,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", walId=").$(walId)
                     .I$();
             recursiveDelete(setWalPath(tableToken, walId));
-            walLockManager.unlockWal(tableToken.getDirName(), walId);
-            LOG.debug().$("unlocked WAL [table=").$(tableToken)
-                    .$(", walId=").$(walId)
-                    .I$();
         }
 
         @Override
-        public void unlock(int walId, int segmentId) {
-            if (walId != WalUtils.METADATA_WALID) {
-                // Determine if this is a WAL lock or segment lock
-                if (segmentId == WalUtils.SEG_NONE_ID) {
-                    // WAL directory lock
-                    walLockManager.unlockWal(tableToken.getDirName(), walId);
-                } else {
-                    // Segment lock
-                    walLockManager.unlockSegment(tableToken.getDirName(), walId, segmentId);
-                }
-            }
-            // For METADATA_WALID (sequencer parts), no lock to release
+        public void unlock(int walId) {
+            walLockManager.unlockPurge(tableToken.getDirName(), walId);
+            LOG.debug().$("unlocked WAL [table=").$(tableToken)
+                    .$(", walId=").$(walId)
+                    .I$();
         }
     }
 }

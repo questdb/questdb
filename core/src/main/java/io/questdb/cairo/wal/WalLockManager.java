@@ -25,40 +25,51 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.ConcurrentLongHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.WeakClosableObjectPool;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Manages in-memory locks for WAL directories and segments.
  * <p>
- * This provides proper synchronization between Java and Rust code
- * for WAL operations, replacing file-based locking which has
- * platform-specific issues on Windows.
+ * WAL directories are created per wal writer and contain multiple segments with each segment
+ * representing a batch of writes.
+ * Regularly, the Wal purge job will try to delete older segments to free disk space. To avoid
+ * conflicts between writers and the purge job, this lock manager provides a way to coordinate
+ * access to WAL directories and segments.
+ * It is assumed that no 2 writers will write to the same WAL directory and no 2 purge jobs
+ * will purge the same WAL directory concurrently.
  * <p>
- * The manager maintains two types of locks:
- * <ul>
- *   <li><b>WAL locks</b> - Protect an entire WAL directory (e.g., wal1, wal2)</li>
- *   <li><b>Segment locks</b> - Protect individual segments within a WAL (e.g., wal1/0, wal1/1)</li>
- * </ul>
- * <p>
- * Locks are implemented using {@link Semaphore} with a single permit, providing
- * mutual exclusion. The blocking methods ({@link #lockWal}, {@link #lockSegment})
- * will wait indefinitely until the lock becomes available, while the try methods
- * ({@link #tryLockWal}, {@link #tryLockSegment}) return immediately.
+ * Implementation details:
+ * We're relying on {@link ConcurrentLongHashMap} to access and mutates WAL entries.
+ * Each WAL entry contains a {@link Semaphore} to provide mutual exclusion, note that this is only
+ * used on writer as they cannot proceed if the purge job is already active on the same WAL.
  * <p>
  * Thread safety: All methods are thread-safe and can be called concurrently.
+ * It is the caller's responsibility to ensure that the same WAL directory is not
+ * locked by multiple writers or purge jobs concurrently.
  */
 public class WalLockManager {
-    private static final Log LOG = LogFactory.getLog(WalLockManager.class);
-    private static final ThreadLocal<StringSink> sinks = new ThreadLocal<>(StringSink::new);
-    private final ConcurrentHashMap<Semaphore> locks = new ConcurrentHashMap<>();
+    private final ConcurrentLongHashMap<WalEntry> entries = new ConcurrentLongHashMap<>();
+    private final WeakClosableObjectPool<WalEntry> pool = new WeakClosableObjectPool<>(WalEntry::new, 8);
+    private final AtomicInteger tableIdSeq = new AtomicInteger(0);
+    private final ConcurrentHashMap<Integer> tableIds = new ConcurrentHashMap<>();
+
+    /**
+     * Drop a table ID mapping. Should be called when a table is dropped and no more writers/purge jobs
+     * will access its WAL directories.
+     *
+     * @param tableDirName the table directory name identifying the table
+     */
+    public void dropTable(@NotNull CharSequence tableDirName) {
+        tableIds.remove(tableDirName);
+    }
 
     /**
      * Checks if a specific WAL segment is currently locked.
@@ -70,12 +81,16 @@ public class WalLockManager {
      */
     @TestOnly
     public boolean isSegmentLocked(@NotNull CharSequence tableDirName, int walId, int segmentId) {
-        final CharSequence key = makeKey(tableDirName, walId, segmentId);
-        Semaphore lock = locks.get(key);
-        if (lock == null) {
-            return false;
-        }
-        return lock.availablePermits() == 0;
+        final int tableId = getTableId(tableDirName);
+        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
+        final boolean[] found = {false};
+        this.entries.compute(walKey, (k, existingEntry) -> {
+            if (existingEntry != null) {
+                found[0] = existingEntry.hasSegment(segmentId);
+            }
+            return existingEntry;
+        });
+        return found[0];
     }
 
     /**
@@ -87,74 +102,95 @@ public class WalLockManager {
      */
     @TestOnly
     public boolean isWalLocked(@NotNull CharSequence tableDirName, int walId) {
-        final CharSequence key = makeKey(tableDirName, walId);
-        Semaphore lock = locks.get(key);
-        if (lock == null) {
-            return false;
-        }
-        return lock.availablePermits() == 0;
+        final int tableId = getTableId(tableDirName);
+        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
+        return this.entries.containsKey(walKey);
     }
 
     /**
-     * Acquires a lock on a specific WAL segment, blocking until available.
-     * <p>
-     * This method blocks indefinitely until the lock can be acquired.
-     * Use {@link #tryLockSegment} for non-blocking acquisition.
+     * Locks the purge lock on the specified WAL directory.
+     * This will try to take an exclusive lock on the WAL, blocking any writers and returning {@link WalUtils#SEG_NONE_ID}.
+     * If an active writer is present, this method will take a shared lock with the writer and return the maximum segment ID
+     * that can be safely purged.
      *
      * @param tableDirName the table directory name identifying the table
      * @param walId        the WAL identifier (e.g., 1 for wal1)
-     * @param segmentId    the segment identifier within the WAL
-     * @throws CairoException if the thread is interrupted while waiting
+     * @return the maximum segment ID that can be safely purged, or {@link WalUtils#SEG_NONE_ID} if exclusive lock is held
+     * and the whole WAL can be purged.
      */
-    public void lockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
-        final CharSequence key = makeKey(tableDirName, walId, segmentId);
-        Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
-        LOG.debug().$("locking WAL segment [table=").$safe(tableDirName)
-                .$(", wal=").$(walId)
-                .$(", segment=").$(segmentId)
-                .$(", semaphore=").$(lock)
-                .I$();
-        try {
-            lock.acquire();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw CairoException.critical(0)
-                    .put("Interrupted while acquiring WAL segment lock [table=").put(tableDirName)
-                    .put(", wal=").put(walId)
-                    .put(", segment=").put(segmentId).put(']');
+    public int lockPurge(@NotNull CharSequence tableDirName, int walId) {
+        final int tableId = getTableId(tableDirName);
+        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
+        final WalEntry entry = this.entries.compute(walKey, (k, existingEntry) -> {
+            if (existingEntry == null) {
+                final WalEntry newEntry;
+                synchronized (pool) {
+                    newEntry = pool.pop();
+                }
+                newEntry.of(walKey, WalEntry.STATUS_PURGE_EXCLUSIVE, WalUtils.SEG_NONE_ID);
+                // We can hold the lock safely here as there are no other holders.
+                newEntry.lock.acquireUninterruptibly();
+                return newEntry;
+            }
+            if (existingEntry.status != WalEntry.STATUS_ACTIVE_WRITER) {
+                throw CairoException.critical(0).put("cannot attach purge, WAL is not writer locked [status=").put(existingEntry.status).put(']');
+            }
+            // The semaphore is already held by the writer, we don't need to wait for it.
+            existingEntry.status = WalEntry.STATUS_WRITER_PURGE;
+            return existingEntry;
+        });
+
+        // Race safety: minSegmentId is only mutated in 2 cases:
+        //  - when the purge lock is released: as we assume that no 2 purge jobs will run concurrently
+        //  on the same WAL, this read is safe.
+        //  - when {@link #setWalSegmentMinId(CharSequence, int, int)} is called: this is safe as the caller
+        //  must ensure that the new minSegmentId is greater than or equal to the current minSegmentId.
+        //  A stale read returns a conservative (lower) max-purgeable ID, which is safe - we may under-purge
+        //  but never over-purge.
+        if (entry.minSegmentId == WalUtils.SEG_NONE_ID) {
+            return WalUtils.SEG_NONE_ID;
+        } else {
+            return entry.minSegmentId - 1;
         }
-        LOG.debug().$("locked WAL segment [table=").$safe(tableDirName)
-                .$(", wal=").$(walId)
-                .$(", segment=").$(segmentId)
-                .$(", semaphore=").$(lock)
-                .I$();
     }
 
     /**
-     * Acquires a lock on an entire WAL directory, blocking until available.
-     * <p>
-     * This method blocks indefinitely until the lock can be acquired.
-     * Use {@link #tryLockWal} for non-blocking acquisition.
+     * Locks the writer lock on the specified WAL directory.
+     * This will block if a purge job is currently holding an exclusive lock on the WAL.
+     * The caller must ensure to call {@link #unlockWriter(CharSequence, int)} to release the lock.
      *
      * @param tableDirName the table directory name identifying the table
      * @param walId        the WAL identifier (e.g., 1 for wal1)
-     * @throws CairoException if the thread is interrupted while waiting
+     * @param minSegmentId the minimum segment ID that the writer will be working with
      */
-    public void lockWal(@NotNull CharSequence tableDirName, int walId) {
-        final CharSequence key = makeKey(tableDirName, walId);
-        Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
-        LOG.debug().$("locking WAL [table=").$safe(tableDirName).$(", wal=").$(walId)
-                .$(", semaphore=").$(lock).I$();
+    public void lockWriter(@NotNull CharSequence tableDirName, int walId, int minSegmentId) {
+        final int tableId = getTableId(tableDirName);
+        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
+        final WalEntry entry = this.entries.compute(walKey, (k, existingEntry) -> {
+            if (existingEntry == null) {
+                final WalEntry newEntry;
+                synchronized (pool) {
+                    newEntry = pool.pop();
+                }
+                newEntry.of(walKey, WalEntry.STATUS_ACTIVE_WRITER, minSegmentId);
+                return newEntry;
+            }
+            if (existingEntry.status != WalEntry.STATUS_PURGE_EXCLUSIVE) {
+                throw CairoException.critical(0).put("cannot attach writer, WAL is already writer locked [status=").put(existingEntry.status).put(']');
+            }
+            existingEntry.status = WalEntry.STATUS_WRITER_ACQUIRING;
+            existingEntry.nextMinSegmentId = minSegmentId;
+            return existingEntry;
+        });
+
         try {
-            lock.acquire();
+            entry.lock.acquire();
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            unlockWriter(walKey);
             throw CairoException.critical(0)
                     .put("Interrupted while acquiring WAL lock [table=").put(tableDirName)
                     .put(", wal=").put(walId).put(']');
         }
-        LOG.debug().$("locked WAL [table=").$safe(tableDirName).$(", wal=").$(walId)
-                .$(", semaphore=").$(lock).I$();
     }
 
     /**
@@ -164,119 +200,142 @@ public class WalLockManager {
      * Calling this while locks are held may lead to inconsistent state.
      */
     public void reset() {
-        locks.clear();
+        entries.clear();
+        pool.close();
+        tableIds.clear();
+        tableIdSeq.set(0);
     }
 
     /**
-     * Attempts to acquire a lock on a specific WAL segment without blocking.
+     * Sets the minimum segment ID for the specified WAL directory.
+     * As the purge job may also hold the lock, the new minimum segment ID must be
+     * greater than or equal to the current minimum segment ID.
      *
-     * @param tableDirName the table directory name identifying the table
-     * @param walId        the WAL identifier (e.g., 1 for wal1)
-     * @param segmentId    the segment identifier within the WAL
-     * @return {@code true} if the lock was acquired, {@code false} if already held
+     * @param tableDirName    the table directory name identifying the table
+     * @param walId           the WAL identifier (e.g., 1 for wal1)
+     * @param newMinSegmentId the new minimum segment ID to set
      */
-    public boolean tryLockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
-        final CharSequence key = makeKey(tableDirName, walId, segmentId);
-        Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
-        boolean locked = lock.tryAcquire();
-        if (locked) {
-            LOG.debug().$("lock WAL segment [table=").$safe(tableDirName)
-                    .$(", wal=").$(walId)
-                    .$(", segment=").$(segmentId)
-                    .$(", semaphore=").$(lock)
-                    .I$();
-        } else {
-            LOG.debug().$("fail to lock WAL segment [table=").$safe(tableDirName)
-                    .$(", wal=").$(walId)
-                    .$(", segment=").$(segmentId)
-                    .$(", semaphore=").$(lock)
-                    .I$();
-        }
-        return locked;
+    public void setWalSegmentMinId(@NotNull CharSequence tableDirName, int walId, int newMinSegmentId) {
+        final int tableId = getTableId(tableDirName);
+        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
+        this.entries.computeIfPresent(walKey, (k, existingEntry) -> {
+            if (existingEntry.minSegmentId > newMinSegmentId) {
+                throw CairoException.critical(0).put("new minSegmentId must be >= current [current=").put(existingEntry.minSegmentId).put(", new=").put(newMinSegmentId).put(']');
+            }
+            existingEntry.minSegmentId = newMinSegmentId;
+            return existingEntry;
+        });
     }
 
     /**
-     * Attempts to acquire a lock on a WAL directory without blocking.
-     *
-     * @param tableDirName the table directory name identifying the table
-     * @param walId        the WAL identifier (e.g., 1 for wal1)
-     * @return {@code true} if the lock was acquired, {@code false} if already held
-     */
-    public boolean tryLockWal(@NotNull CharSequence tableDirName, int walId) {
-        final CharSequence key = makeKey(tableDirName, walId);
-        Semaphore lock = locks.computeIfAbsent(key, k -> new Semaphore(1));
-        boolean locked = lock.tryAcquire();
-        if (locked) {
-            LOG.debug().$("lock WAL [table=").$safe(tableDirName).$(", wal=").$(walId)
-                    .$(", semaphore=").$(lock).I$();
-        } else {
-            LOG.debug().$("fail to lock WAL [table=").$safe(tableDirName).$(", wal=").$(walId)
-                    .$(", semaphore=").$(lock).I$();
-        }
-        return locked;
-    }
-
-    /**
-     * Releases a lock on a specific WAL segment.
-     * <p>
-     * If the segment was not previously locked, this method logs a debug message
-     * but does not throw an exception.
-     *
-     * @param tableDirName the table directory name identifying the table
-     * @param walId        the WAL identifier (e.g., 1 for wal1)
-     * @param segmentId    the segment identifier within the WAL
-     */
-    public void unlockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
-        final CharSequence key = makeKey(tableDirName, walId, segmentId);
-        Semaphore lock = locks.get(key);
-        if (lock != null) {
-            LOG.debug().$("unlock WAL segment [table=").$safe(tableDirName)
-                    .$(", wal=").$(walId)
-                    .$(", segment=").$(segmentId)
-                    .$(", semaphore=").$(lock)
-                    .I$();
-            lock.release();
-        } else {
-            LOG.debug()
-                    .$("fail to unlock WAL segment: no lock [table=").$safe(tableDirName)
-                    .$(", wal=").$(walId)
-                    .$(", segment=").$(segmentId)
-                    .I$();
-        }
-    }
-
-    /**
-     * Releases a lock on a WAL directory.
-     * <p>
-     * If the WAL was not previously locked, this method logs a debug message
-     * but does not throw an exception.
+     * Unlock the purge lock on the specified WAL directory.
+     * This will either release the lock if no writers are active,
+     * or downgrade the lock to active writer if a writer is active/waiting.
      *
      * @param tableDirName the table directory name identifying the table
      * @param walId        the WAL identifier (e.g., 1 for wal1)
      */
-    public void unlockWal(@NotNull CharSequence tableDirName, int walId) {
-        final CharSequence key = makeKey(tableDirName, walId);
-        Semaphore lock = locks.get(key);
-        if (lock != null) {
-            LOG.debug().$("unlock WAL [table=").$safe(tableDirName).$(", wal=").$(walId)
-                    .$(", semaphore=").$(lock).I$();
-            lock.release();
-        } else {
-            LOG.debug().$("fail to unlock WAL: no lock [table=").$safe(tableDirName).$(", wal=").$(walId).I$();
+    public void unlockPurge(@NotNull CharSequence tableDirName, int walId) {
+        final int tableId = getTableId(tableDirName);
+        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
+        this.entries.compute(walKey, (k, existingEntry) -> {
+            if (existingEntry.status == WalEntry.STATUS_PURGE_EXCLUSIVE) {
+                // We can safely release the lock and give back the entry to the pool.
+                existingEntry.lock.release();
+                existingEntry.walKey = -1;
+                synchronized (pool) {
+                    pool.push(existingEntry);
+                }
+                return null;
+            }
+
+            if (existingEntry.status == WalEntry.STATUS_WRITER_PURGE) {
+                // Downgrade to active writer, let the writer release the lock.
+                existingEntry.status = WalEntry.STATUS_ACTIVE_WRITER;
+                return existingEntry;
+            }
+
+            if (existingEntry.status != WalEntry.STATUS_WRITER_ACQUIRING) {
+                throw CairoException.critical(0).put("unexpected WAL status on purge unlock [status=").put(existingEntry.status).put(']');
+            }
+            existingEntry.status = WalEntry.STATUS_ACTIVE_WRITER;
+            existingEntry.minSegmentId = existingEntry.nextMinSegmentId;
+            existingEntry.lock.release();
+            return existingEntry;
+        });
+    }
+
+    /**
+     * Unlock the writer lock on the specified WAL directory.
+     * This will either release the lock if no purge is active,
+     * or downgrade the lock to purge exclusive if a purge is also active.
+     *
+     * @param tableDirName the table directory name identifying the table
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     */
+    public void unlockWriter(@NotNull CharSequence tableDirName, int walId) {
+        final int tableId = getTableId(tableDirName);
+        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
+        unlockWriter(walKey);
+    }
+
+    private int getTableId(@NotNull CharSequence tableDirName) {
+        return tableIds.computeIfAbsent(tableDirName, k -> tableIdSeq.getAndIncrement());
+    }
+
+    private void unlockWriter(long walKey) {
+        this.entries.compute(walKey, (k, existingEntry) -> {
+            if (existingEntry.status == WalEntry.STATUS_ACTIVE_WRITER) {
+                // We can safely release the lock and give back the entry to the pool.
+                existingEntry.lock.release();
+                existingEntry.walKey = -1;
+                synchronized (pool) {
+                    pool.push(existingEntry);
+                }
+                return null;
+            }
+
+            if (existingEntry.status == WalEntry.STATUS_WRITER_ACQUIRING) {
+                // Downgrade to purge exclusive, let the purge release the lock.
+                existingEntry.status = WalEntry.STATUS_PURGE_EXCLUSIVE;
+                return existingEntry;
+            }
+
+            if (existingEntry.status != WalEntry.STATUS_WRITER_PURGE) {
+                throw CairoException.critical(0).put("unexpected WAL status on writer unlock [status=").put(existingEntry.status).put(']');
+            }
+            existingEntry.status = WalEntry.STATUS_PURGE_EXCLUSIVE;
+
+            return existingEntry;
+        });
+    }
+
+    // A WalEntry stores the lock and state for a specific WAL directory.
+    private static class WalEntry {
+        // There is an active writer, purge cannot take exclusive lock.
+        private static final int STATUS_ACTIVE_WRITER = 2;
+        // The purge job has an exclusive lock on the WAL, no writers are allowed.
+        private static final int STATUS_PURGE_EXCLUSIVE = 1;
+        // A writer is acquiring the lock but purge already holds exclusive access over it.
+        private static final int STATUS_WRITER_ACQUIRING = 0;
+        // Both purge and writer are active.
+        private static final int STATUS_WRITER_PURGE = 3;
+        private final Semaphore lock = new Semaphore(1);
+        int minSegmentId = Integer.MAX_VALUE;
+        // Solely used when a writer is acquiring the lock while purge is active.
+        int nextMinSegmentId = Integer.MAX_VALUE;
+        long walKey = -1;
+        private int status = STATUS_WRITER_ACQUIRING;
+
+        public boolean hasSegment(int segmentId) {
+            return segmentId >= minSegmentId;
         }
-    }
 
-    private static CharSequence makeKey(@NotNull CharSequence tableDirName, int walId, int segmentId) {
-        final StringSink sink = sinks.get();
-        sink.clear();
-        sink.put(tableDirName).put('/').put(walId).put('/').put(segmentId);
-        return sink;
-    }
-
-    private static CharSequence makeKey(@NotNull CharSequence tableDirName, int walId) {
-        final StringSink sink = sinks.get();
-        sink.clear();
-        sink.put(tableDirName).put('/').put(walId);
-        return sink;
+        public void of(long walKey, int status, int minSegmentId) {
+            this.walKey = walKey;
+            this.status = status;
+            this.minSegmentId = minSegmentId;
+            this.nextMinSegmentId = -1;
+        }
     }
 }

@@ -107,18 +107,10 @@ abstract class WalWriterBase implements AutoCloseable {
         return open;
     }
 
-    void acquireSegmentLock(int segmentId) {
-        walLockManager.lockSegment(tableToken.getDirName(), walId, segmentId);
-        LOG.debug().$("locked segment [walId=").$(walId)
-                .$(", segmentId=").$(segmentId)
-                .I$();
-    }
-
     int createSegmentDir(int segmentId) {
         path.trimTo(pathSize);
         path.slash().put(segmentId);
         final int segmentPathLen = path.size();
-        acquireSegmentLock(segmentId);
         segmentLocked = segmentId;
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
@@ -129,7 +121,7 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     void lockWal() {
-        walLockManager.lockWal(tableToken.getDirName(), walId);
+        walLockManager.lockWriter(tableToken.getDirName(), walId, 0);
         LOG.debug().$("locked WAL [walId=").$(walId).I$();
     }
 
@@ -141,8 +133,10 @@ abstract class WalWriterBase implements AutoCloseable {
         path.trimTo(walDirLength);
     }
 
-    void releaseSegmentLock(int segmentId, long segmentTxn) {
-        walLockManager.unlockSegment(tableToken.getDirName(), walId, segmentId);
+    void releaseSegmentLock(int segmentId, long segmentTxn, int newSegmentId) {
+        if (newSegmentId > -1) {
+            walLockManager.setWalSegmentMinId(tableToken.getDirName(), walId, newSegmentId);
+        }
         // if events file has some transactions
         if (segmentTxn >= 0) {
             sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
@@ -157,7 +151,7 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     void releaseWalLock() {
-        walLockManager.unlockWal(tableToken.getDirName(), walId);
+        walLockManager.unlockWriter(tableToken.getDirName(), walId);
         LOG.debug().$("released WAL lock [walId=").$(walId).I$();
     }
 }

@@ -477,7 +477,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public void lockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
+            public void setWalSegmentMinId(@NotNull CharSequence tableDirName, int walId, int segmentId) {
                 if (
                         Chars.contains(tableDirName, weather)
                                 && walId == 1
@@ -486,7 +486,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 ) {
                     dropWeatherTable();
                 }
-                super.lockSegment(tableDirName, walId, segmentId);
+                super.setWalSegmentMinId(tableDirName, walId, segmentId);
             }
         };
 
@@ -857,12 +857,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public void lockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
+            public void setWalSegmentMinId(@NotNull CharSequence tableDirName, int walId, int segmentId) {
                 if (walId == 1 && segmentId == 1 && count.decrementAndGet() == 0) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
-                super.lockSegment(tableDirName, walId, segmentId);
+                super.setWalSegmentMinId(tableDirName, walId, segmentId);
             }
         };
 
@@ -915,11 +915,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public void lockSegment(@NotNull CharSequence tableDirName, int walId, int segmentId) {
+            public void setWalSegmentMinId(@NotNull CharSequence tableDirName, int walId, int segmentId) {
                 if (Chars.contains(tableDirName, weather) && walId == 1 && segmentId == 1 && --count == 0) {
                     renameTable(weather, meteorology);
                 }
-                super.lockSegment(tableDirName, walId, segmentId);
+                super.setWalSegmentMinId(tableDirName, walId, segmentId);
             }
         };
 

@@ -2109,24 +2109,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertSegmentLockEngagement(boolean expectLocked, String tableName, int walId, int segmentId) {
-        TableToken tableToken = engine.verifyTableName(tableName);
-        assertSegmentLockEngagement(expectLocked, tableToken, walId, segmentId);
+    protected void assertSegmentLocked(TableToken tableToken, int walId, int segmentId) {
+        final WalLockManager lockManager = engine.getWalLockManager();
+        Assert.assertTrue(lockManager.isSegmentLocked(tableToken.getDirName(), walId, segmentId));
     }
 
-    protected void assertSegmentLockEngagement(boolean expectLocked, TableToken tableToken, int walId, int segmentId) {
-        final WalLockManager lockManager = engine.getWalLockManager();
-        boolean locked = lockManager.tryLockSegment(tableToken.getDirName(), walId, segmentId);
-        if (locked) {
-            lockManager.unlockSegment(tableToken.getDirName(), walId, segmentId);
-        }
-        Assert.assertEquals(expectLocked, !locked);
-    }
-
-    protected void assertSegmentLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
+    protected void assertSegmentLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        final WalLockManager lockManager = engine.getWalLockManager();
-        Assert.assertEquals(expectExists, lockManager.isSegmentLocked(tableToken.getDirName(), walId, segmentId));
+        assertSegmentLocked(tableToken, walId, segmentId);
     }
 
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
@@ -2211,24 +2201,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertWalLockEngagement(boolean expectLocked, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
+    protected void assertWalLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        assertWalLockEngagement(expectLocked, tableToken, walId);
+        assertWalLocked(tableToken, walId);
     }
 
-    protected void assertWalLockEngagement(boolean expectLocked, TableToken tableToken, int walId) {
+    protected void assertWalLocked(TableToken tableToken, int walId) {
         final WalLockManager lockManager = engine.getWalLockManager();
-        boolean locked = lockManager.tryLockWal(tableToken.getDirName(), walId);
-        if (locked) {
-            lockManager.unlockWal(tableToken.getDirName(), walId);
-        }
-        Assert.assertEquals(expectLocked, !locked);
+        Assert.assertTrue(lockManager.isWalLocked(tableToken.getDirName(), walId));
     }
 
-    protected void assertWalLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
+    protected void assertWalNotLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId) {
         TableToken tableToken = engine.verifyTableName(tableName);
+        assertWalNotLocked(tableToken, walId);
+    }
+
+    protected void assertWalNotLocked(TableToken tableToken, int walId) {
         final WalLockManager lockManager = engine.getWalLockManager();
-        Assert.assertEquals(expectExists, lockManager.isWalLocked(tableToken.getDirName(), walId));
+        Assert.assertFalse(lockManager.isWalLocked(tableToken.getDirName(), walId));
     }
 
     protected void configureForBackups() throws IOException {

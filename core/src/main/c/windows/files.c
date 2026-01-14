@@ -161,6 +161,7 @@ HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD 
                 FILE_ATTRIBUTE_NORMAL,
                 NULL
         );
+
         if (handle == INVALID_HANDLE_VALUE) {
             SaveLastError();
         }

@@ -1125,7 +1125,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             freeColumns(truncate);
 
             if (segmentLocked > -1) {
-                releaseSegmentLock(segmentLocked, lastSegmentTxn);
+                releaseSegmentLock(segmentLocked, lastSegmentTxn, -1);
                 segmentLocked = -1;
             }
 
@@ -1337,7 +1337,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
             if (oldSegmentLocked > -1) {
-                releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn);
+                releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn, newSegmentId);
             }
             path.trimTo(pathSize);
         }
@@ -1572,7 +1572,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 currentTxnStartRowNum = 0;
             } finally {
                 if (oldSegmentLocked > -1) {
-                    releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn);
+                    releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn, newSegmentId);
                 }
             }
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {
