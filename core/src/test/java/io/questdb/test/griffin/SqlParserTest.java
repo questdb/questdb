@@ -8193,6 +8193,36 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionAsArgumentToWindowFunction() throws Exception {
+        // Window function as argument to another window function
+        // sum(row_number() OVER ()) OVER ()
+        // The inner window function is extracted to a separate select-window layer
+        // The outer sum references the inner window column by alias (row_number)
+        // The inner window model has both topDownColumns and bottomUpColumns for column propagation
+        assertQuery(
+                "select-window sum(row_number) sum over () from (select-window [row_number() row_number over ()] row_number() row_number over () from (x timestamp (ts)))",
+                "SELECT sum(row_number() OVER ()) OVER () FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionWithOrderByAsArgument() throws Exception {
+        // Currently produces: select-group-by sum(row_number()) sum from (x timestamp (ts))
+        // The inner window function's OVER (order by x) is lost
+        // Expected: should extract inner window to subquery like:
+        // select-group-by sum(row_number) sum from (select-window row_number() row_number over (order by x) from (x timestamp (ts)))
+        assertQuery(
+                "select-group-by sum(row_number()) sum from (x timestamp (ts))",
+                "SELECT sum(row_number() OVER (order by x)) FROM x",
+                modelOf("x")
+                        .col("x", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testOptimiseNotAnd() throws SqlException {
         assertQuery(
                 "select-choose a, b from (select [a, b] from tab where a != b or b != a)",

@@ -178,6 +178,8 @@ public class SqlOptimiser implements Mutable {
     // Second stack for emitWindowFunctions, separate from sqlNodeStack because
     // replaceIfWindowFunction calls emitLiterals which clears and reuses sqlNodeStack.
     private final ArrayDeque<ExpressionNode> windowNodeStack = new ArrayDeque<>();
+    // Collects inner window models for nested window functions (e.g., sum(row_number() OVER ()) OVER ())
+    private final ObjList<QueryModel> innerWindowModels = new ObjList<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -2561,6 +2563,63 @@ public class SqlOptimiser implements Mutable {
                 node = windowNodeStack.poll();
             }
         }
+    }
+
+    /**
+     * Extracts nested window functions from an expression tree and replaces them with literal references.
+     * Processes depth-first (innermost window functions first) by recursively processing children
+     * before checking if the current node is a window function.
+     *
+     * @param node              The expression node to process (modified in-place)
+     * @param innerWindowModel  Model to add extracted window functions to
+     * @param translatingModel  Model for literal propagation
+     * @param innerVirtualModel Virtual model for intermediate calculations
+     * @param baseModel         Original table model
+     * @return The possibly modified node (same node with modified children, or a literal if node was a window function)
+     */
+    private ExpressionNode extractNestedWindowFunctions(
+            ExpressionNode node,
+            QueryModel innerWindowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        if (node == null) {
+            return null;
+        }
+
+        // First, recursively process children to extract deepest-level window functions
+        if (node.paramCount < 3) {
+            if (node.lhs != null) {
+                node.lhs = extractNestedWindowFunctions(node.lhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel);
+            }
+            if (node.rhs != null) {
+                node.rhs = extractNestedWindowFunctions(node.rhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel);
+            }
+        } else {
+            for (int i = 0, k = node.paramCount; i < k; i++) {
+                ExpressionNode arg = node.args.getQuick(i);
+                if (arg != null) {
+                    node.args.setQuick(i, extractNestedWindowFunctions(arg, innerWindowModel, translatingModel, innerVirtualModel, baseModel));
+                }
+            }
+        }
+
+        // After children are processed, if THIS node is a window function, extract it
+        if (node.windowExpression != null) {
+            WindowExpression wc = node.windowExpression;
+            CharSequence alias = wc.getAlias();
+            if (alias == null) {
+                alias = createColumnAlias(node, innerWindowModel);
+                wc.of(alias, node);
+            }
+            innerWindowModel.addBottomUpColumn(wc);
+            // Emit literals referenced by the window column to inner models
+            emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
+            return nextLiteral(alias);
+        }
+
+        return node;
     }
 
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
@@ -6485,12 +6544,66 @@ public class SqlOptimiser implements Mutable {
         // select sum(x) ...
         // we can add it to group-by model right away
         if (qc.isWindowColumn()) {
+            ExpressionNode ast = qc.getAst();
+
+            // Check if arguments of this window function contain nested window functions
+            // We check children (lhs, rhs, args) but not the node itself (which is already a window function)
+            boolean hasNestedWindows = false;
+            if (ast.paramCount < 3) {
+                hasNestedWindows = checkForChildWindowFunctions(ast.lhs) || checkForChildWindowFunctions(ast.rhs);
+            } else {
+                for (int i = 0, k = ast.paramCount; i < k && !hasNestedWindows; i++) {
+                    hasNestedWindows = checkForChildWindowFunctions(ast.args.getQuick(i));
+                }
+            }
+
+            if (hasNestedWindows) {
+                // Create an inner window model for nested window functions
+                QueryModel innerWindowModel = queryModelPool.next();
+                innerWindowModel.setSelectModelType(SELECT_MODEL_WINDOW);
+
+                // Extract nested window functions from arguments (modifies AST in-place)
+                if (ast.paramCount < 3) {
+                    if (ast.lhs != null) {
+                        ast.lhs = extractNestedWindowFunctions(ast.lhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel);
+                    }
+                    if (ast.rhs != null) {
+                        ast.rhs = extractNestedWindowFunctions(ast.rhs, innerWindowModel, translatingModel, innerVirtualModel, baseModel);
+                    }
+                } else {
+                    for (int i = 0, k = ast.paramCount; i < k; i++) {
+                        ExpressionNode arg = ast.args.getQuick(i);
+                        if (arg != null) {
+                            ast.args.setQuick(i, extractNestedWindowFunctions(arg, innerWindowModel, translatingModel, innerVirtualModel, baseModel));
+                        }
+                    }
+                }
+
+                // Store inner window model for later chaining (if it has columns)
+                if (innerWindowModel.getBottomUpColumns().size() > 0) {
+                    innerWindowModels.add(innerWindowModel);
+                    // Register inner window column aliases with the translating model's alias map
+                    // so they can be resolved when emitLiterals is called on the outer window function.
+                    // This prevents the literal from being converted back to a function.
+                    ObjList<QueryColumn> innerCols = innerWindowModel.getBottomUpColumns();
+                    LowerCaseCharSequenceObjHashMap<CharSequence> aliasMap = translatingModel.getColumnNameToAliasMap();
+                    for (int i = 0, n = innerCols.size(); i < n; i++) {
+                        QueryColumn innerCol = innerCols.getQuick(i);
+                        CharSequence alias = innerCol.getAlias();
+                        if (alias != null && aliasMap.keyIndex(alias) > -1) {
+                            // Add the alias to the map so it can be resolved
+                            aliasMap.put(alias, alias);
+                        }
+                    }
+                }
+            }
+
             windowModel.addBottomUpColumn(qc);
             QueryColumn ref = nextColumn(qc.getAlias());
             outerVirtualModel.addBottomUpColumn(ref);
             distinctModel.addBottomUpColumn(ref);
             // ensure literals referenced by window column are present in nested models
-            emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, true, baseModel, true);
+            emitLiterals(ast, translatingModel, innerVirtualModel, true, baseModel, true);
             return null;
         } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
             addMissingTablePrefixesForGroupByQueries(qc.getAst(), baseModel, innerVirtualModel);
@@ -6831,6 +6944,7 @@ public class SqlOptimiser implements Mutable {
 
         groupByAliases.clear();
         groupByNodes.clear();
+        innerWindowModels.clear();
 
         final QueryModel groupByModel = queryModelPool.next();
         groupByModel.setSelectModelType(SELECT_MODEL_GROUP_BY);
@@ -7394,6 +7508,15 @@ public class SqlOptimiser implements Mutable {
         }
 
         if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0) {
+            // First, chain any inner window models (for nested window functions)
+            // Process in reverse order so innermost window model is closest to base
+            for (int i = innerWindowModels.size() - 1; i >= 0; i--) {
+                QueryModel innerWm = innerWindowModels.getQuick(i);
+                innerWm.setNestedModel(root);
+                innerWm.copyHints(model.getHints());
+                root = innerWm;
+            }
+
             windowModel.setNestedModel(root);
             windowModel.moveLimitFrom(limitSource);
             windowModel.moveJoinAliasFrom(limitSource);

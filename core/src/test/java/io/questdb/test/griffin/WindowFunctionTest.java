@@ -159,6 +159,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionAsArgumentToWindowFunction() throws Exception {
+        // Test window function as argument to another window function
+        // sum(row_number() OVER ()) OVER () should:
+        // 1. Compute row_number() for each row: 1, 2, 3
+        // 2. Sum all those values: 1+2+3 = 6
+        // 3. Return 6 for each row
+        assertQuery(
+                """
+                        result
+                        6.0
+                        6.0
+                        6.0
+                        """,
+                "SELECT sum(row_number() OVER ()) OVER () AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testWindowFunctionWithPartitionBy() throws Exception {
         // Test window function with PARTITION BY and cast
         assertQuery(
