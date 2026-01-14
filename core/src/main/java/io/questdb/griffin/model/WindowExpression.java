@@ -36,7 +36,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 public final class WindowExpression extends QueryColumn {
-
     public static final int CURRENT = 3;
     public static final int EXCLUDE_CURRENT_ROW = 1;
     public static final int EXCLUDE_GROUP = 2;
@@ -44,9 +43,9 @@ public final class WindowExpression extends QueryColumn {
     public static final int EXCLUDE_TIES = 3;
     public final static ObjectFactory<WindowExpression> FACTORY = WindowExpression::new;
     public static final int FOLLOWING = 2;
-    public static final int FRAMING_RANGE = 1;//1
-    public static final int FRAMING_ROWS = FRAMING_RANGE + 1;//2
-    public static final int FRAMING_GROUPS = FRAMING_ROWS + 1;//3
+    public static final int FRAMING_RANGE = 1; // 1
+    public static final int FRAMING_ROWS = FRAMING_RANGE + 1; // 2
+    public static final int FRAMING_GROUPS = FRAMING_ROWS + 1; // 3
     public static final int PRECEDING = 1;
     public static final char TIME_UNIT_DAY = 'd';
     public static final char TIME_UNIT_HOUR = 'h';
@@ -60,7 +59,7 @@ public final class WindowExpression extends QueryColumn {
     private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
     private int exclusionKind = EXCLUDE_NO_OTHERS;
     private int exclusionKindPos;
-    private int framingMode = FRAMING_RANGE;//default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
+    private int framingMode = FRAMING_RANGE; // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
     private boolean ignoreNulls = false;
     private int nullsDescPos = 0;
     private long rowsHi = Long.MAX_VALUE;

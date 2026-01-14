@@ -26,8 +26,6 @@ package io.questdb.griffin.model;
 
 import io.questdb.std.Mutable;
 
-import java.util.Objects;
-
 public class WindowJoinContext implements Mutable {
     public static final int CURRENT = 3;
     public static final int FOLLOWING = 2;
@@ -65,27 +63,6 @@ public class WindowJoinContext implements Mutable {
         includePrevailing = true;
         prevailingPos = 0;
         parentModel = null;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        WindowJoinContext that = (WindowJoinContext) o;
-        return hi == that.hi &&
-                hiExprPos == that.hiExprPos &&
-                hiExprTimeUnit == that.hiExprTimeUnit &&
-                hiKind == that.hiKind &&
-                hiKindPos == that.hiKindPos &&
-                includePrevailing == that.includePrevailing &&
-                prevailingPos == that.prevailingPos &&
-                lo == that.lo &&
-                loExprPos == that.loExprPos &&
-                loExprTimeUnit == that.loExprTimeUnit &&
-                loKind == that.loKind &&
-                loKindPos == that.loKindPos &&
-                Objects.equals(hiExpr, that.hiExpr) &&
-                Objects.equals(loExpr, that.loExpr);
     }
 
     public long getHi() {
@@ -142,12 +119,6 @@ public class WindowJoinContext implements Mutable {
 
     public int getPrevailingPos() {
         return prevailingPos;
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(hi, hiExpr, hiExprPos, hiExprTimeUnit, hiKind, hiKindPos,
-                includePrevailing, prevailingPos, lo, loExpr, loExprPos, loExprTimeUnit, loKind, loKindPos);
     }
 
     public boolean isIncludePrevailing() {
