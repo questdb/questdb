@@ -162,7 +162,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             }
         } while (index != index0);
 
-        throw CairoException.critical(0).put("corrupt int hash set");
+        throw CairoException.critical(0).put("corrupt int-int hash table");
     }
 
     private void putAt0(long index, int key, int value) {

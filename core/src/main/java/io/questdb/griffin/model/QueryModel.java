@@ -45,11 +45,8 @@ import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
-import java.util.Iterator;
-import java.util.Objects;
 
 import static io.questdb.griffin.SqlKeywords.isAndKeyword;
 import static io.questdb.griffin.SqlParser.ZERO_OFFSET;
@@ -121,8 +118,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap columnAliasRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final LowerCaseCharSequenceHashSet overridableDecls = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
@@ -139,6 +136,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
+    private final LowerCaseCharSequenceHashSet overridableDecls = new LowerCaseCharSequenceHashSet();
     // collect frequency of column names from each join model
     // and check if any of columns with frequency > 0 are selected
     // column name frequency of 1 corresponds to map value 0
@@ -146,9 +144,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // list of "and" concatenated expressions
     private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConstants = new IntHashSet();
-    private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final ObjList<PivotForColumn> pivotForColumns = new ObjList<>();
     private final ObjList<QueryColumn> pivotGroupByColumns = new ObjList<>();
+    private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
@@ -529,6 +527,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         cacheable = true;
         pivotGroupByColumnHasNoAlias = false;
         referencedViews.clear();
+        columnAliasRefCounts.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -659,123 +658,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.metadataVersion = updateTableModel.metadataVersion;
     }
 
-    @Override
-    @TestOnly
-    // Used to test if clear implemented correctly. New fields should be added here and to clear()
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        QueryModel that = (QueryModel) o;
-        // joinModels always contain this as the first element, so we need to compare them manually.
-        if (joinModels.size() != that.joinModels.size()) {
-            return false;
-        }
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            if (!joinModels.getQuick(i).equals(that.joinModels.getQuick(i))) {
-                return false;
-            }
-        }
-        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
-        if (sqlNodeStack.size() != that.sqlNodeStack.size()) {
-            return false;
-        }
-        Iterator<ExpressionNode> i1 = sqlNodeStack.iterator();
-        Iterator<ExpressionNode> i2 = that.sqlNodeStack.iterator();
-        while (i1.hasNext() && i2.hasNext()) {
-            ExpressionNode n1 = i1.next();
-            ExpressionNode n2 = i2.next();
-            if (!Objects.equals(n1, n2)) {
-                return false;
-            }
-        }
-        return orderByPosition == that.orderByPosition
-                && latestByType == that.latestByType
-                && metadataVersion == that.metadataVersion
-                && joinType == that.joinType
-                && joinKeywordPosition == that.joinKeywordPosition
-                && limitPosition == that.limitPosition
-                && isSelectTranslation == that.isSelectTranslation
-                && selectModelType == that.selectModelType
-                && nestedModelIsSubQuery == that.nestedModelIsSubQuery
-                && distinct == that.distinct
-                && setOperationType == that.setOperationType
-                && modelPosition == that.modelPosition
-                && orderByAdviceMnemonic == that.orderByAdviceMnemonic
-                && tableId == that.tableId
-                && isUpdateModel == that.isUpdateModel
-                && isCteModel == that.isCteModel
-                && modelType == that.modelType
-                && artificialStar == that.artificialStar
-                && skipped == that.skipped
-                && cacheable == that.cacheable
-                && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice
-                && Objects.equals(bottomUpColumns, that.bottomUpColumns)
-                && Objects.equals(topDownNameSet, that.topDownNameSet)
-                && Objects.equals(topDownColumns, that.topDownColumns)
-                && Objects.equals(aliasToColumnNameMap, that.aliasToColumnNameMap)
-                && Objects.equals(columnNameToAliasMap, that.columnNameToAliasMap)
-                && Objects.equals(aliasToColumnMap, that.aliasToColumnMap)
-                && Objects.equals(wildcardColumnNames, that.wildcardColumnNames)
-                && Objects.equals(orderBy, that.orderBy)
-                && Objects.equals(groupBy, that.groupBy)
-                && Objects.equals(orderByDirection, that.orderByDirection)
-                && Objects.equals(dependencies, that.dependencies)
-                && Objects.equals(orderedJoinModels1, that.orderedJoinModels1)
-                && Objects.equals(orderedJoinModels2, that.orderedJoinModels2)
-                && Objects.equals(columnAliasIndexes, that.columnAliasIndexes)
-                && Objects.equals(modelAliasIndexes, that.modelAliasIndexes)
-                && Objects.equals(expressionModels, that.expressionModels)
-                && Objects.equals(parsedWhere, that.parsedWhere)
-                && Objects.equals(parsedWhereConstants, that.parsedWhereConstants)
-                && Objects.equals(orderHash, that.orderHash)
-                && Objects.equals(joinColumns, that.joinColumns)
-                && Objects.equals(sampleByFill, that.sampleByFill)
-                && Objects.equals(latestBy, that.latestBy)
-                && Objects.equals(orderByAdvice, that.orderByAdvice)
-                && Objects.equals(orderByDirectionAdvice, that.orderByDirectionAdvice)
-                && Objects.equals(withClauseModel, that.withClauseModel)
-                && Objects.equals(updateSetColumns, that.updateSetColumns)
-                && Objects.equals(updateTableColumnTypes, that.updateTableColumnTypes)
-                && Objects.equals(updateTableColumnNames, that.updateTableColumnNames)
-                && Objects.equals(sampleByTimezoneName, that.sampleByTimezoneName)
-                && Objects.equals(sampleByOffset, that.sampleByOffset)
-                && Objects.equals(whereClause, that.whereClause)
-                && Objects.equals(backupWhereClause, that.backupWhereClause)
-                && Objects.equals(postJoinWhereClause, that.postJoinWhereClause)
-                && Objects.equals(outerJoinExpressionClause, that.outerJoinExpressionClause)
-                && Objects.equals(constWhereClause, that.constWhereClause)
-                && Objects.equals(nestedModel, that.nestedModel)
-                && Objects.equals(tableNameExpr, that.tableNameExpr)
-                && Objects.equals(viewNameExpr, that.viewNameExpr)
-                && Objects.equals(originatingViewNameExpr, that.originatingViewNameExpr)
-                && Objects.equals(tableNameFunction, that.tableNameFunction)
-                && Objects.equals(alias, that.alias)
-                && Objects.equals(timestamp, that.timestamp)
-                && Objects.equals(sampleBy, that.sampleBy)
-                && Objects.equals(sampleByUnit, that.sampleByUnit)
-                && Objects.equals(sampleByTo, that.sampleByTo)
-                && Objects.equals(sampleByFrom, that.sampleByFrom)
-                && Objects.equals(fillFrom, that.fillFrom)
-                && Objects.equals(fillTo, that.fillTo)
-                && Objects.equals(fillStride, that.fillStride)
-                && Objects.equals(context, that.context)
-                && Objects.equals(joinCriteria, that.joinCriteria)
-                && Objects.equals(orderedJoinModels, that.orderedJoinModels)
-                && Objects.equals(limitLo, that.limitLo)
-                && Objects.equals(limitHi, that.limitHi)
-                && Objects.equals(limitAdviceLo, that.limitAdviceLo)
-                && Objects.equals(limitAdviceHi, that.limitAdviceHi)
-                && Objects.equals(unionModel, that.unionModel)
-                && Objects.equals(updateTableModel, that.updateTableModel)
-                && Objects.equals(updateTableToken, that.updateTableToken)
-                && Objects.equals(decls, that.decls)
-                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance)
-                && Objects.equals(windowJoinContext, that.windowJoinContext)
-                && Objects.equals(pivotGroupByColumns, that.pivotGroupByColumns)
-                && Objects.equals(pivotForColumns, that.pivotForColumns)
-                && Objects.equals(referencedViews, that.referencedViews);
-    }
-
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -821,10 +703,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<QueryColumn> getColumns() {
         return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
-    }
-
-    public LowerCaseCharSequenceHashSet getOverridableDecls() {
-        return overridableDecls;
     }
 
     public ExpressionNode getConstWhereClause() {
@@ -1005,6 +883,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return outerJoinExpressionClause;
     }
 
+    public LowerCaseCharSequenceHashSet getOverridableDecls() {
+        return overridableDecls;
+    }
+
     public ObjList<ExpressionNode> getParsedWhere() {
         return parsedWhere;
     }
@@ -1024,6 +906,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public QueryModel getQueryModel() {
         return this;
+    }
+
+    public int getRefCount(CharSequence alias) {
+        return columnAliasRefCounts.get(alias);
     }
 
     public ObjList<ViewDefinition> getReferencedViews() {
@@ -1140,44 +1026,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return timestamp != null && explicitTimestamp;
     }
 
-    @Override
-    public int hashCode() {
-        int hash = super.hashCode();
-        // joinModels always contain this as the first element, so we need to hash them manually.
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            hash = 31 * hash + Objects.hash(joinModels.getQuick(i));
+    public void incrementColumnRefCount(CharSequence alias, int refCount) {
+        if (columnAliasIndexes.get(alias) > -1) {
+            int keyIndex = columnAliasRefCounts.keyIndex(alias);
+            if (keyIndex < 0) {
+                int old = columnAliasRefCounts.valueAt(keyIndex);
+                columnAliasRefCounts.putAt(keyIndex, alias, old + refCount);
+            } else {
+                columnAliasRefCounts.putAt(keyIndex, alias, refCount);
+            }
         }
-        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
-        for (ExpressionNode node : sqlNodeStack) {
-            hash = 31 * hash + Objects.hash(node);
-        }
-        return 31 * hash + Objects.hash(
-                bottomUpColumns, topDownNameSet, topDownColumns,
-                aliasToColumnNameMap, columnNameToAliasMap, aliasToColumnMap,
-                wildcardColumnNames, orderBy,
-                orderByPosition, groupBy, orderByDirection,
-                dependencies, orderedJoinModels1, orderedJoinModels2,
-                columnAliasIndexes, modelAliasIndexes, expressionModels,
-                parsedWhere, parsedWhereConstants,
-                orderHash, joinColumns, sampleByFill,
-                latestBy, orderByAdvice, orderByDirectionAdvice,
-                withClauseModel, updateSetColumns, updateTableColumnTypes,
-                updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
-                latestByType, whereClause, backupWhereClause,
-                postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
-                tableNameExpr, viewNameExpr, metadataVersion, tableNameFunction,
-                alias, timestamp, sampleBy,
-                sampleByUnit, sampleByTo, sampleByFrom, context, joinCriteria,
-                joinType, joinKeywordPosition, orderedJoinModels,
-                limitLo, limitHi, limitPosition,
-                limitAdviceLo, limitAdviceHi,
-                isSelectTranslation, selectModelType, nestedModelIsSubQuery,
-                distinct, unionModel, setOperationType,
-                modelPosition, orderByAdviceMnemonic, tableId,
-                isUpdateModel, isCteModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues,
-                decls, windowJoinContext, referencedViews, originatingViewNameExpr
-        );
     }
 
     public boolean isArtificialStar() {
@@ -1708,7 +1566,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         for (int i = 0, size = getColumns().size(); i < size; i++) {
             QueryColumn column = getColumns().getQuick(i);
-            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
+            if (column.isWindowColumn() && ((WindowExpression) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
                 return true;
             }
         }
@@ -1729,25 +1587,25 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         switch (timeUnit) {
             case 0:
                 break;
-            case WindowColumn.TIME_UNIT_NANOSECOND:
+            case WindowExpression.TIME_UNIT_NANOSECOND:
                 sink.putAscii(" nanosecond");
                 break;
-            case WindowColumn.TIME_UNIT_MICROSECOND:
+            case WindowExpression.TIME_UNIT_MICROSECOND:
                 sink.putAscii(" microsecond");
                 break;
-            case WindowColumn.TIME_UNIT_MILLISECOND:
+            case WindowExpression.TIME_UNIT_MILLISECOND:
                 sink.putAscii(" millisecond");
                 break;
-            case WindowColumn.TIME_UNIT_SECOND:
+            case WindowExpression.TIME_UNIT_SECOND:
                 sink.putAscii(" second");
                 break;
-            case WindowColumn.TIME_UNIT_MINUTE:
+            case WindowExpression.TIME_UNIT_MINUTE:
                 sink.putAscii(" minute");
                 break;
-            case WindowColumn.TIME_UNIT_HOUR:
+            case WindowExpression.TIME_UNIT_HOUR:
                 sink.putAscii(" hour");
                 break;
-            case WindowColumn.TIME_UNIT_DAY:
+            case WindowExpression.TIME_UNIT_DAY:
                 sink.putAscii(" day");
                 break;
             default:
@@ -1778,7 +1636,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
                 // this can only be window column
                 if (name != null) {
-                    WindowColumn ac = (WindowColumn) column;
+                    WindowExpression ac = (WindowExpression) column;
                     sink.putAscii(" over (");
                     final ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
                     if (partitionBy.size() > 0) {
@@ -1810,13 +1668,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
                     if (ac.isNonDefaultFrame()) {
                         switch (ac.getFramingMode()) {
-                            case WindowColumn.FRAMING_ROWS:
+                            case WindowExpression.FRAMING_ROWS:
                                 sink.putAscii(" rows");
                                 break;
-                            case WindowColumn.FRAMING_RANGE:
+                            case WindowExpression.FRAMING_RANGE:
                                 sink.putAscii(" range");
                                 break;
-                            case WindowColumn.FRAMING_GROUPS:
+                            case WindowExpression.FRAMING_GROUPS:
                                 sink.putAscii(" groups");
                                 break;
                             default:
@@ -1825,15 +1683,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         sink.put(" between ");
                         if (ac.getRowsLoExpr() != null) {
                             ac.getRowsLoExpr().toSink(sink);
-                            if (ac.getFramingMode() == WindowColumn.FRAMING_RANGE) {
+                            if (ac.getFramingMode() == WindowExpression.FRAMING_RANGE) {
                                 unitToSink(sink, ac.getRowsLoExprTimeUnit());
                             }
 
                             switch (ac.getRowsLoKind()) {
-                                case WindowColumn.PRECEDING:
+                                case WindowExpression.PRECEDING:
                                     sink.putAscii(" preceding");
                                     break;
-                                case WindowColumn.FOLLOWING:
+                                case WindowExpression.FOLLOWING:
                                     sink.putAscii(" following");
                                     break;
                                 default:
@@ -1841,10 +1699,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             }
                         } else {
                             switch (ac.getRowsLoKind()) {
-                                case WindowColumn.PRECEDING:
+                                case WindowExpression.PRECEDING:
                                     sink.putAscii("unbounded preceding");
                                     break;
-                                case WindowColumn.FOLLOWING:
+                                case WindowExpression.FOLLOWING:
                                     sink.putAscii("unbounded following");
                                     break;
                                 default:
@@ -1857,15 +1715,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
                         if (ac.getRowsHiExpr() != null) {
                             ac.getRowsHiExpr().toSink(sink);
-                            if (ac.getFramingMode() == WindowColumn.FRAMING_RANGE) {
+                            if (ac.getFramingMode() == WindowExpression.FRAMING_RANGE) {
                                 unitToSink(sink, ac.getRowsHiExprTimeUnit());
                             }
 
                             switch (ac.getRowsHiKind()) {
-                                case WindowColumn.PRECEDING:
+                                case WindowExpression.PRECEDING:
                                     sink.putAscii(" preceding");
                                     break;
-                                case WindowColumn.FOLLOWING:
+                                case WindowExpression.FOLLOWING:
                                     sink.putAscii(" following");
                                     break;
                                 default:
@@ -1874,10 +1732,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             }
                         } else {
                             switch (ac.getRowsHiKind()) {
-                                case WindowColumn.PRECEDING:
+                                case WindowExpression.PRECEDING:
                                     sink.putAscii("unbounded preceding");
                                     break;
-                                case WindowColumn.FOLLOWING:
+                                case WindowExpression.FOLLOWING:
                                     sink.putAscii("unbounded following");
                                     break;
                                 default:
@@ -1888,16 +1746,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         }
 
                         switch (ac.getExclusionKind()) {
-                            case WindowColumn.EXCLUDE_CURRENT_ROW:
+                            case WindowExpression.EXCLUDE_CURRENT_ROW:
                                 sink.putAscii(" exclude current row");
                                 break;
-                            case WindowColumn.EXCLUDE_GROUP:
+                            case WindowExpression.EXCLUDE_GROUP:
                                 sink.putAscii(" exclude group");
                                 break;
-                            case WindowColumn.EXCLUDE_TIES:
+                            case WindowExpression.EXCLUDE_TIES:
                                 sink.putAscii(" exclude ties");
                                 break;
-                            case WindowColumn.EXCLUDE_NO_OTHERS:
+                            case WindowExpression.EXCLUDE_NO_OTHERS:
                                 sink.putAscii(" exclude no others");
                                 break;
                             default:

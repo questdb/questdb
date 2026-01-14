@@ -159,7 +159,7 @@ import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -695,6 +695,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCastFloatToDouble() throws Exception {
+        allowFunctionMemoization();
         assertMemoryLeak(() -> assertPlanNoLeakCheck("select rnd_float()::double ", """
                 VirtualRecord
                   functions: [memoize(rnd_float()::double)]
@@ -1549,6 +1550,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainUpdateWithFilter() throws Exception {
+        allowFunctionMemoization();
         assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)", "update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );", """
                 Update table: a
                     VirtualRecord
@@ -2543,7 +2545,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowExpression.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20, WindowExpression.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
                             }
                             Function function = null;
                             try {
@@ -8429,6 +8431,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectRandomBoolean() throws Exception {
+        allowFunctionMemoization();
         assertMemoryLeak(() -> assertPlanNoLeakCheck("select rnd_boolean()", """
                 VirtualRecord
                   functions: [memoize(rnd_boolean())]
@@ -9164,9 +9167,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit is not because rnd_long() value is not stable
     public void testSelectWithNonJittedFilter4() throws Exception {
+        // Async filter function doesn't support memoization.
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = rnd_long() ", """
                 Async Filter workers: 1
-                  filter: memoize(l=rnd_long())
+                  filter: l=rnd_long()
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab

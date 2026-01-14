@@ -956,7 +956,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 }
                 frameSequence.await();
                 Misc.freeIfCloseable(frameSequence.getSymbolTableSource());
-                frameSequence.clear();
+                frameSequence.reset();
             }
         });
     }

@@ -63,7 +63,7 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceHashSet;
@@ -95,6 +95,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION;
 import static io.questdb.griffin.SqlCodeGenerator.joinsRequiringTimestamp;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
@@ -174,6 +175,9 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
+    // Second stack for emitWindowFunctions, separate from sqlNodeStack because
+    // replaceIfWindowFunction calls emitLiterals which clears and reuses sqlNodeStack.
+    private final ArrayDeque<ExpressionNode> windowNodeStack = new ArrayDeque<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -184,6 +188,7 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tempCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
+    private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
     private final IntList tempIntList = new IntList();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
@@ -1600,14 +1605,18 @@ public class SqlOptimiser implements Mutable {
         while (node != null) {
             if (node.paramCount < 3) {
                 if (node.rhs != null) {
-                    if (node.rhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
+                    // Skip window functions - they have windowContext set even if function name is also aggregate
+                    if (node.rhs.type == FUNCTION && node.rhs.windowExpression == null
+                            && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
                         return true;
                     }
                     sqlNodeStack.push(node.rhs);
                 }
 
                 if (node.lhs != null) {
-                    if (node.lhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
+                    // Skip window functions - they have windowContext set even if function name is also aggregate
+                    if (node.lhs.type == FUNCTION && node.lhs.windowExpression == null
+                            && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
                         return true;
                     }
                     node = node.lhs;
@@ -1621,7 +1630,54 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, k = node.paramCount; i < k; i++) {
                     ExpressionNode arg = node.args.getQuick(i);
                     if (arg != null) {
-                        if (arg.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(arg.token)) {
+                        // Skip window functions - they have windowContext set even if function name is also aggregate
+                        if (arg.type == FUNCTION && arg.windowExpression == null
+                                && functionParser.getFunctionFactoryCache().isGroupBy(arg.token)) {
+                            return true;
+                        }
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean checkForChildWindowFunctions(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return true;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    if (node.rhs.windowExpression != null) {
+                        return true;
+                    }
+                    sqlNodeStack.push(node.rhs);
+                }
+
+                if (node.lhs != null) {
+                    if (node.lhs.windowExpression != null) {
+                        return true;
+                    }
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        if (arg.windowExpression != null) {
                             return true;
                         }
                         sqlNodeStack.push(arg);
@@ -2442,12 +2498,77 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void emitWindowFunctions(
+            @Transient ExpressionNode node,
+            QueryModel windowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        // Use windowNodeStack (not sqlNodeStack) because replaceIfWindowFunction
+        // calls emitLiterals which clears and reuses sqlNodeStack for its own traversal.
+        windowNodeStack.clear();
+        while (!windowNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        ExpressionNode n = replaceIfWindowFunction(
+                                node.rhs,
+                                windowModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                baseModel
+                        );
+                        if (node.rhs == n) {
+                            windowNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = n;
+                        }
+                    }
+
+                    ExpressionNode n = replaceIfWindowFunction(
+                            node.lhs,
+                            windowModel,
+                            translatingModel,
+                            innerVirtualModel,
+                            baseModel
+                    );
+                    if (n == node.lhs) {
+                        node = node.lhs;
+                    } else {
+                        node.lhs = n;
+                        node = null;
+                    }
+                } else {
+                    for (int i = 0, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        ExpressionNode n = replaceIfWindowFunction(
+                                e,
+                                windowModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                baseModel
+                        );
+                        if (e == n) {
+                            windowNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, n);
+                        }
+                    }
+                    node = windowNodeStack.poll();
+                }
+            } else {
+                node = windowNodeStack.poll();
+            }
+        }
+    }
+
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
             if (qc.isWindowColumn()) {
-                final WindowColumn ac = (WindowColumn) qc;
+                final WindowExpression ac = (WindowExpression) qc;
                 emitLiteralsTopDown(ac.getPartitionBy(), target);
                 emitLiteralsTopDown(ac.getOrderBy(), target);
             }
@@ -4322,6 +4443,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getGroupBy().size() != 0
                 || model.getSampleBy() != null
                 || model.getSelectModelType() == SELECT_MODEL_DISTINCT
+                || model.getSelectModelType() == SELECT_MODEL_WINDOW_JOIN
                 || model.windowStopPropagate()) {
             jm1.setAllowPropagationOfOrderByAdvice(false);
             if (jm2 != null) {
@@ -4734,6 +4856,29 @@ public class SqlOptimiser implements Mutable {
                             sqlParserCallback
                     ).getAlias()
             );
+        }
+        return node;
+    }
+
+    private ExpressionNode replaceIfWindowFunction(
+            @Transient ExpressionNode node,
+            QueryModel windowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        if (node != null && node.windowExpression != null) {
+            WindowExpression wc = node.windowExpression;
+            // Create alias for the window column if not already set
+            CharSequence alias = wc.getAlias();
+            if (alias == null) {
+                alias = createColumnAlias(node, windowModel);
+                wc.of(alias, node);
+            }
+            windowModel.addBottomUpColumn(wc);
+            // Emit literals referenced by the window column to inner models
+            emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
+            return nextLiteral(alias);
         }
         return node;
     }
@@ -6492,6 +6637,27 @@ public class SqlOptimiser implements Mutable {
         // more specifically we are dealing with something like
         // select sum(f(x)) - sum(f(y)) from tab
         // we don't know if "f(x)" is a function call or a literal, e.g. sum(x)
+
+        // Check for window functions nested inside operations (e.g., row_number() OVER (...)::string)
+        // Window functions need to be extracted to windowModel before processing aggregates.
+        // However, if the expression ALSO contains aggregate functions (like sum() OVER (...)),
+        // let the aggregate handling take precedence - it may optimize to GROUP BY.
+        if (checkForChildWindowFunctions(qc.getAst()) && !checkForChildAggregates(qc.getAst())) {
+            emitWindowFunctions(
+                    qc.getAst(),
+                    windowModel,
+                    translatingModel,
+                    innerVirtualModel,
+                    baseModel
+            );
+            qc = ensureAliasUniqueness(outerVirtualModel, qc);
+            outerVirtualModel.addBottomUpColumn(qc);
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+            rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
+            return rewriteStatus;
+        }
+
         QueryModel aggModel = isWindowJoin ? windowJoinModel : groupByModel;
         final int beforeSplit = aggModel.getBottomUpColumns().size();
         if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
@@ -7072,7 +7238,7 @@ public class SqlOptimiser implements Mutable {
                     // window model, we can copy columns from window_translation model to
                     // either only to translation model or both translation model and the
                     // inner virtual models.
-                    final WindowColumn ac = (WindowColumn) qc;
+                    final WindowExpression ac = (WindowExpression) qc;
                     int innerColumnsPre = innerVirtualModel.getBottomUpColumns().size();
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
@@ -7893,16 +8059,16 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 QueryColumn qc = queryColumns.getQuick(i);
                 if (qc.isWindowColumn()) {
-                    final WindowColumn ac = (WindowColumn) qc;
+                    final WindowExpression ac = (WindowExpression) qc;
                     // preceding and following accept non-negative values only
                     long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
                     long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
 
                     switch (ac.getRowsLoKind()) {
-                        case WindowColumn.PRECEDING:
+                        case WindowExpression.PRECEDING:
                             rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
                             break;
-                        case WindowColumn.FOLLOWING:
+                        case WindowExpression.FOLLOWING:
                             //rowsLo = rowsLo;
                             break;
                         default:
@@ -7912,10 +8078,10 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     switch (ac.getRowsHiKind()) {
-                        case WindowColumn.PRECEDING:
+                        case WindowExpression.PRECEDING:
                             rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
                             break;
-                        case WindowColumn.FOLLOWING:
+                        case WindowExpression.FOLLOWING:
                             //rowsHi = rowsHi;
                             break;
                         default:
@@ -8074,12 +8240,188 @@ public class SqlOptimiser implements Mutable {
         return Long.MAX_VALUE;
     }
 
-    @SuppressWarnings("unused")
+    @SuppressWarnings({"unused", "RedundantThrows"})
+    // this method is used by Enterprise version
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
     }
 
     @SuppressWarnings("unused")
     protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
+    }
+
+    void collectColumnRefCount(QueryModel parent, QueryModel queryModel) {
+        if (queryModel == null) {
+            return;
+        }
+        if (queryModel.getSelectModelType() != SELECT_MODEL_CHOOSE && queryModel.getSelectModelType() != SELECT_MODEL_VIRTUAL) {
+            collectColumnRefCountRecursive(parent, queryModel);
+            return;
+        }
+        ObjList<QueryColumn> columns = queryModel.getColumns();
+        if (parent == null) {
+            // init ref count to 1 for top queryModel
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                queryModel.incrementColumnRefCount(columns.getQuick(i).getAlias(), 1);
+            }
+        }
+
+        tempExprs.clear();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            tempExprs.add(columns.getQuick(i).getAst());
+        }
+        if (queryModel.getOrderBy() != null) {
+            tempExprs.addAll(queryModel.getOrderBy());
+        }
+        if (queryModel.getWhereClause() != null) {
+            tempExprs.add(queryModel.getWhereClause());
+        }
+        if (queryModel.getLatestBy() != null) {
+            tempExprs.addAll(queryModel.getLatestBy());
+        }
+        QueryModel child = queryModel.getNestedModel();
+
+        for (int i = 0, n = tempExprs.size(); i < n; i++) {
+            final ExpressionNode ast = tempExprs.getQuick(i);
+            if (ast != null) {
+                sqlNodeStack.clear();
+                sqlNodeStack.push(ast);
+                while (!sqlNodeStack.isEmpty()) {
+                    final ExpressionNode node = sqlNodeStack.pop();
+                    if (node.type == LITERAL) {
+                        final CharSequence columnRef = node.token;
+                        final int dot = Chars.indexOfLastUnquoted(columnRef, '.');
+                        if (dot == -1) {
+                            if (child == null || !child.getAliasToColumnMap().contains(columnRef)) {
+                                queryModel.incrementColumnRefCount(columnRef, 1);
+                            }
+                        } else {
+                            final CharSequence tableName = columnRef.subSequence(0, dot);
+                            final CharSequence columnName = columnRef.subSequence(dot + 1, columnRef.length());
+                            if (queryModel.getAlias() != null && Chars.equalsIgnoreCase(tableName, queryModel.getAlias().token)) {
+                                if (child == null || !child.getAliasToColumnMap().contains(columnName)) {
+                                    queryModel.incrementColumnRefCount(columnRef, 1);
+                                }
+                            }
+                        }
+                    } else if (node.type == FUNCTION) {
+                        if (node.paramCount < 3) {
+                            if (node.rhs != null) {
+                                sqlNodeStack.push(node.rhs);
+                            }
+                            if (node.lhs != null) {
+                                sqlNodeStack.push(node.lhs);
+                            }
+                        } else {
+                            for (int k = 0, m = node.paramCount; k < m; k++) {
+                                sqlNodeStack.push(node.args.getQuick(k));
+                            }
+                        }
+                    } else {
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        if (node.lhs != null) {
+                            sqlNodeStack.push(node.lhs);
+                        }
+                    }
+                }
+            }
+        }
+
+        tempExprs.clear();
+        if (parent != null) {
+            columns = parent.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                tempExprs.add(columns.getQuick(i).getAst());
+            }
+            int columnsSize = columns.size();
+            // isRecordNotMaterialized flag indicates whether the generated RecordFactory will materialize records.
+            // For materialized records, operations like ORDER BY/WHERE won't call the child queryModel's calculations.
+            // For GroupBy, window functions, and joins, materialization depends on specific scenarios.
+            boolean isRecordNotMaterialized = parent.getSelectModelType() == SELECT_MODEL_VIRTUAL || parent.getSelectModelType() == SELECT_MODEL_CHOOSE;
+            if (isRecordNotMaterialized) {
+                if (parent.getOrderBy() != null) {
+                    tempExprs.addAll(parent.getOrderBy());
+                }
+                if (parent.getWhereClause() != null) {
+                    tempExprs.add(parent.getWhereClause());
+                }
+                if (parent.getLatestBy() != null) {
+                    tempExprs.addAll(parent.getLatestBy());
+                }
+            }
+
+            for (int i = 0, n = tempExprs.size(); i < n; i++) {
+                final ExpressionNode ast = tempExprs.getQuick(i);
+                int refCount = 1;
+                if (i < columnsSize && (parent.getSelectModelType() == SELECT_MODEL_CHOOSE || parent.getSelectModelType() == SELECT_MODEL_VIRTUAL)) {
+                    refCount = parent.getRefCount(columns.getQuick(i).getAlias());
+                }
+
+                if (ast != null) {
+                    sqlNodeStack.clear();
+                    sqlNodeStack.push(ast);
+                    while (!sqlNodeStack.isEmpty()) {
+                        final ExpressionNode node = sqlNodeStack.pop();
+                        if (node.type == LITERAL) {
+                            final CharSequence columnRef = node.token;
+                            final int dot = Chars.indexOfLastUnquoted(columnRef, '.');
+                            if (dot == -1) {
+                                queryModel.incrementColumnRefCount(columnRef, refCount);
+                            } else {
+                                final CharSequence tableName = columnRef.subSequence(0, dot);
+                                final CharSequence columnName = columnRef.subSequence(dot + 1, columnRef.length());
+                                if (queryModel.getAlias() != null && Chars.equalsIgnoreCase(tableName, queryModel.getAlias().token)) {
+                                    queryModel.incrementColumnRefCount(columnName, refCount);
+                                }
+                            }
+                        } else if (node.type == FUNCTION) {
+                            if (node.paramCount < 3) {
+                                if (node.rhs != null) {
+                                    sqlNodeStack.push(node.rhs);
+                                }
+                                if (node.lhs != null) {
+                                    sqlNodeStack.push(node.lhs);
+                                }
+                            } else {
+                                for (int k = 0, m = node.paramCount; k < m; k++) {
+                                    sqlNodeStack.push(node.args.getQuick(k));
+                                }
+                            }
+                        } else {
+                            if (node.rhs != null) {
+                                sqlNodeStack.push(node.rhs);
+                            }
+                            if (node.lhs != null) {
+                                sqlNodeStack.push(node.lhs);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        collectColumnRefCountRecursive(parent, queryModel);
+    }
+
+    void collectColumnRefCountRecursive(QueryModel parent, QueryModel queryModel) {
+        ObjList<QueryModel> joinModels = queryModel.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            collectColumnRefCount(parent, joinModels.getQuick(i));
+        }
+        collectColumnRefCount(parent, queryModel.getUnionModel());
+
+        QueryModel parentModel = queryModel;
+        if (queryModel.getSelectModelType() == SELECT_MODEL_NONE) {
+            if (queryModel.getJoinModels().size() < 2) {
+                if (queryModel.getTableNameExpr() != null) {
+                    parentModel = null;
+                } else {
+                    parentModel = parent;
+                }
+            }
+        }
+        collectColumnRefCount(parentModel, queryModel.getNestedModel());
     }
 
     QueryModel optimise(
@@ -8125,6 +8467,9 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel.recordViews(model.getReferencedViews());
             if (!sqlExecutionContext.isValidationOnly()) {
                 authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            }
+            if (ALLOW_FUNCTION_MEMOIZATION) {
+                collectColumnRefCount(null, rewrittenModel);
             }
             return rewrittenModel;
         } catch (Throwable th) {

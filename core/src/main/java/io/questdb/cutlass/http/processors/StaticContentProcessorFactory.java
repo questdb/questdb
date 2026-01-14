@@ -24,15 +24,18 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.std.ObjHashSet;
 
 public class StaticContentProcessorFactory implements HttpRequestHandlerFactory {
+    private final CairoEngine engine;
     private final HttpFullFatServerConfiguration httpConfiguration;
 
-    public StaticContentProcessorFactory(HttpFullFatServerConfiguration httpConfiguration) {
+    public StaticContentProcessorFactory(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
+        this.engine = engine;
         this.httpConfiguration = httpConfiguration;
     }
 
@@ -43,6 +46,6 @@ public class StaticContentProcessorFactory implements HttpRequestHandlerFactory 
 
     @Override
     public HttpRequestHandler newInstance() {
-        return new StaticContentProcessor(httpConfiguration);
+        return new StaticContentProcessor(engine, httpConfiguration);
     }
 }

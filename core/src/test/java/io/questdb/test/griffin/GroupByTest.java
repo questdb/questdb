@@ -229,7 +229,7 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             String query = "select x, avg(y), case when x > 0 then 1 else row_number() over (partition by x) end as z from t group by x, z";
-            assertError(query, "[59] Nested window functions are not currently supported.");
+            assertError(query, "[109] window functions are not allowed in GROUP BY");
         });
     }
 
@@ -1845,7 +1845,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByWithNonConstantSelectClauseExpression() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
-
+        allowFunctionMemoization();
         assertMemoryLeak(() -> {
             execute("create table t as (" +
                     "    select 1 as l, 'a' as s " +
