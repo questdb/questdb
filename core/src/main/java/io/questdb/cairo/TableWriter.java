@@ -2289,10 +2289,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getMaxTimestamp();
     }
 
-    public long getMinTimestamp() {
-        return txWriter.getMinTimestamp();
-    }
-
     @Override
     public int getMetaMaxUncommittedRows() {
         return metadata.getMaxUncommittedRows();
@@ -2306,6 +2302,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public long getMetadataVersion() {
         return txWriter.getMetadataVersion();
+    }
+
+    public long getMinTimestamp() {
+        return txWriter.getMinTimestamp();
     }
 
     public long getO3RowCount() {
@@ -3162,7 +3162,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int columnType, MemoryA dataMem, MemoryA auxMem) {
+    private static void configureNullSetters(ObjList<Runnable> nullers, int columnType, MemoryA dataMem, MemoryA auxMem, int columnIndex, ObjList<MapWriter> symbolWriters) {
         short columnTag = ColumnType.tagOf(columnType);
         if (ColumnType.isVarSize(columnTag)) {
             final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
@@ -3205,7 +3205,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     nullers.add(() -> dataMem.putChar((char) 0));
                     break;
                 case ColumnType.SYMBOL:
-                    nullers.add(() -> dataMem.putInt(SymbolTable.VALUE_IS_NULL));
+                    nullers.add(() -> {
+                        symbolWriters.getQuick(columnIndex).updateNullFlag(true);
+                        dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                    });
                     break;
                 case ColumnType.GEOBYTE:
                     nullers.add(() -> dataMem.putByte(GeoHashes.BYTE_NULL));
@@ -4171,9 +4174,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3MemColumns1.extendAndSet(baseIndex + 1, o3AuxMem1);
         o3MemColumns2.extendAndSet(baseIndex, o3DataMem2);
         o3MemColumns2.extendAndSet(baseIndex + 1, o3AuxMem2);
-        configureNullSetters(nullSetters, type, dataMem, auxMem);
-        configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1);
-        configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2);
+        configureNullSetters(nullSetters, type, dataMem, auxMem, index, symbolMapWriters);
+        configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
+        configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
 
         if (indexFlag && type > 0) {
             indexers.extendAndSet(index, new SymbolColumnIndexer(configuration));

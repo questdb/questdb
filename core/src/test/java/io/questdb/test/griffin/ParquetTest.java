@@ -1025,6 +1025,55 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolColumnNullFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x(ts) values('2024-06-10T01:00:00.000000Z');");
+            execute("insert into x(id, ts) values('k1', '2024-06-11T01:00:00.000000Z');");
+            execute("alter table x convert partition to parquet where ts >= 0");
+
+            // O3
+            execute("insert into x(id, ts) values('k2', '2024-06-10T02:00:00.000000Z');");
+
+            final String expected = """
+                    id	ts
+                    	2024-06-10T01:00:00.000000Z
+                    k2	2024-06-10T02:00:00.000000Z
+                    k1	2024-06-11T01:00:00.000000Z
+                    """;
+            final String query = "x";
+
+            assertSql(expected, query);
+        });
+    }
+
+    @Test
+    public void testSymbolColumnNullFlagOnWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day wal;");
+            execute("insert into x(ts) values('2024-06-10T01:00:00.000000Z');");
+            execute("insert into x(id, ts) values('k1', '2024-06-11T01:00:00.000000Z');");
+            drainWalQueue();
+            execute("alter table x convert partition to parquet where ts >= 0");
+            drainWalQueue();
+
+            // O3
+            execute("insert into x(id, ts) values('k2', '2024-06-10T02:00:00.000000Z');");
+            drainWalQueue();
+
+            final String expected = """
+                    id	ts
+                    	2024-06-10T01:00:00.000000Z
+                    k2	2024-06-10T02:00:00.000000Z
+                    k1	2024-06-11T01:00:00.000000Z
+                    """;
+            final String query = "x";
+
+            assertSql(expected, query);
+        });
+    }
+
+    @Test
     public void testSymbols() throws Exception {
         assertMemoryLeak(() -> {
             execute(
