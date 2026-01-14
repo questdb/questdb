@@ -503,6 +503,7 @@ struct MultiPartitionColumnIterator {
     column_type: ParquetType,
     options: WriteOptions,
     encoding: Encoding,
+    pending_error: Option<ParquetError>,
 }
 
 impl MultiPartitionColumnIterator {
@@ -519,6 +520,7 @@ impl MultiPartitionColumnIterator {
             column_type,
             options,
             encoding,
+            pending_error: None,
         };
         iter.advance_to_next_partition();
         iter
@@ -544,7 +546,10 @@ impl MultiPartitionColumnIterator {
                 self.current_partition_idx += 1;
                 true
             }
-            Err(_) => false,
+            Err(e) => {
+                self.pending_error = Some(e);
+                false
+            }
         }
     }
 }
@@ -553,6 +558,10 @@ impl Iterator for MultiPartitionColumnIterator {
     type Item = ParquetResult<Page>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Some(err) = self.pending_error.take() {
+            return Some(Err(err));
+        }
+
         loop {
             if let Some(ref mut iter) = self.current_inner_iter {
                 if let Some(page) = iter.next() {
@@ -561,6 +570,9 @@ impl Iterator for MultiPartitionColumnIterator {
             }
 
             if !self.advance_to_next_partition() {
+                if let Some(err) = self.pending_error.take() {
+                    return Some(Err(err));
+                }
                 return None;
             }
         }

@@ -231,11 +231,11 @@ fn tag_of(col_type: i32) -> u8 {
 
 const TYPE_FLAG_DESIGNATED_TIMESTAMP: i32 = 1i32 << 17;
 
-/// Bit 19 represents the designated timestamp column order.
+/// Bit 20 represents the designated timestamp column order.
 /// For historical compatibility:
 /// - 0 = ascending order (default)
 /// - 1 = descending order
-const TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING: i32 = 1i32 << 19;
+const TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING: i32 = 1i32 << 20;
 const ARRAY_ELEMTYPE_FIELD_MASK: i32 = 0x3F;
 const ARRAY_ELEMTYPE_FIELD_POS: i32 = 8;
 const ARRAY_NDIMS_LIMIT: i32 = 32; // inclusive
@@ -274,7 +274,7 @@ impl ColumnType {
         self.into_designated_with_order(true)
     }
 
-    pub fn into_designated_with_order(self, ascending : bool) -> CoreResult<ColumnType> {
+    pub fn into_designated_with_order(self, ascending: bool) -> CoreResult<ColumnType> {
         if self.tag() != ColumnTypeTag::Timestamp {
             return Err(fmt_err!(
                 InvalidType,

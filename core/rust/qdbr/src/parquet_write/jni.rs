@@ -883,7 +883,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             let decoder =
                 ParquetDecoder::read(allocator.clone(), &mut reader, source_parquet_size as u64)?;
             let mut row_group_bufs = RowGroupBuffers::new(allocator);
-            let mut ctx = DecodeContext::new(source_parquet_addr as *const u8, source_parquet_size as u64);
+            let mut ctx =
+                DecodeContext::new(source_parquet_addr as *const u8, source_parquet_size as u64);
             let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = encoder
                 .partition
                 .columns
@@ -904,7 +905,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             let partition = convert_row_group_buffers_to_partition(
                 &encoder.partition,
                 &row_group_bufs,
-                &columns,
                 row_count,
                 symbol_data_ptr,
             )?;
@@ -929,7 +929,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 fn convert_row_group_buffers_to_partition(
     partition_template: &Partition,
     row_group_bufs: &crate::parquet_read::RowGroupBuffers,
-    _columns: &[(i32, qdb_core::col_type::ColumnType)],
     row_count: usize,
     symbol_data_ptr: jlong,
 ) -> ParquetResult<Partition> {
