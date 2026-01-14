@@ -9018,15 +9018,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
+            // lead(j) over() and lead(j) respect nulls over() are identical (respect nulls is default)
+            // so they are deduplicated, resulting in 4 functions instead of 6
             assertQueryAndPlan(
                     "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym = 'X'",
                     """
-                            CachedWindow
-                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]
-                                DeferredSingleSymbolFilterPageFrame
-                                    Index forward scan on: sym deferred: true
-                                      filter: sym='X'
-                                    Frame forward scan on: tab
+                            SelectedRecord
+                                CachedWindow
+                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='X'
+                                        Frame forward scan on: tab
                             """,
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     "ts",
@@ -9034,15 +9037,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
+            // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
             assertQueryAndPlan(
                     "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym = 'X' order by ts desc",
                     """
-                            CachedWindow
-                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]
-                                DeferredSingleSymbolFilterPageFrame
-                                    Index backward scan on: sym deferred: true
-                                      filter: sym='X'
-                                    Frame backward scan on: tab
+                            SelectedRecord
+                                CachedWindow
+                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index backward scan on: sym deferred: true
+                                          filter: sym='X'
+                                        Frame backward scan on: tab
                             """,
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     "ts###desc",
@@ -9050,19 +9055,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
+            // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
+            // Double SelectedRecord: one from ORDER BY sym, one from window function deduplication
             assertQueryAndPlan(
                     "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym IN ('X', 'Y') order by sym",
                     """
                             SelectedRecord
-                                CachedWindow
-                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]
-                                    FilterOnValues symbolOrder: asc
-                                        Cursor-order scan
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='X'
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='Y'
-                                        Frame forward scan on: tab
+                                SelectedRecord
+                                    CachedWindow
+                                      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                        FilterOnValues symbolOrder: asc
+                                            Cursor-order scan
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='Y'
+                                            Frame forward scan on: tab
                             """,
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     null,

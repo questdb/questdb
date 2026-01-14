@@ -6698,8 +6698,26 @@ public class SqlOptimiser implements Mutable {
             // Extract any nested window functions from arguments to inner window model
             extractAndRegisterNestedWindowFunctions(ast, translatingModel, innerVirtualModel, baseModel, 0);
 
-            windowModel.addBottomUpColumn(qc);
-            QueryColumn ref = nextColumn(qc.getAlias());
+            // Check for duplicate window column - if an identical one already exists, reuse it
+            CharSequence existingAlias = null;
+            ObjList<QueryColumn> existingWindowCols = windowModel.getBottomUpColumns();
+            for (int i = 0, n = existingWindowCols.size(); i < n; i++) {
+                QueryColumn existing = existingWindowCols.getQuick(i);
+                if (ExpressionNode.compareNodesExact(ast, existing.getAst())) {
+                    existingAlias = existing.getAlias();
+                    break;
+                }
+            }
+
+            QueryColumn ref;
+            if (existingAlias != null) {
+                // Duplicate found - create reference to existing window column
+                ref = nextColumn(qc.getAlias(), existingAlias);
+            } else {
+                // Not a duplicate - add to window model
+                windowModel.addBottomUpColumn(qc);
+                ref = nextColumn(qc.getAlias());
+            }
             outerVirtualModel.addBottomUpColumn(ref);
             distinctModel.addBottomUpColumn(ref);
             // ensure literals referenced by window column are present in nested models
