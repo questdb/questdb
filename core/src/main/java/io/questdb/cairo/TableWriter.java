@@ -1471,7 +1471,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (!symbolMapWriter.getNullFlag()) {
                                 encodeColumnType |= 1 << 31;
                             }
-                            
+
                             partitionDescriptor.addColumn(
                                     columnName,
                                     encodeColumnType,

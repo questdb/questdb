@@ -1374,7 +1374,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 2075, tableName);
+                    testHttpClient.assertGetParquet("/exp", 2069, tableName);
                 });
     }
 
