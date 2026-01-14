@@ -858,18 +858,25 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         if (lastDotIndex > 0 && lastDotIndex < node.token.length() - 1) {
             // Qualified name: plugin_name.function_name
-            final String tokenStr = node.token.toString();
-            String pluginName = tokenStr.substring(0, lastDotIndex);
-            if (pluginName.contains("\"")) {
-                pluginName = pluginName.substring(1, pluginName.length() - 1);
+            // Use zero-allocation index-based lookup
+            int pluginLo = 0;
+            int pluginHi = lastDotIndex;
+
+            // Strip surrounding quotes if present (e.g., "my-plugin".function)
+            if (pluginHi > 2 && node.token.charAt(0) == '"' && node.token.charAt(pluginHi - 1) == '"') {
+                pluginLo = 1;
+                pluginHi = pluginHi - 1;
             }
-            final String functionName = tokenStr.substring(lastDotIndex + 1);
-            overload = functionFactoryCache.getPluginFunction(pluginName, functionName);
+
+            final int funcLo = lastDotIndex + 1;
+            final int funcHi = node.token.length();
+
+            overload = functionFactoryCache.getPluginFunction(node.token, pluginLo, pluginHi, funcLo, funcHi);
 
             if (overload == null) {
                 throw SqlException.$(node.position, "plugin function not found")
-                        .put(" [plugin=").put(pluginName)
-                        .put(", function=").put(functionName).put(']');
+                        .put(" [plugin=").put(node.token, pluginLo, pluginHi)
+                        .put(", function=").put(node.token, funcLo, funcHi).put(']');
             }
         } else {
             // Regular core function name

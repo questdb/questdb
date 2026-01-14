@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PluginInfo;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
@@ -218,12 +219,91 @@ public class PluginFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Load the plugin
             execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
-            assert engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME);
+            Assert.assertTrue("Plugin should be loaded",
+                    engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME));
+
+            // Verify function works before unload
+            assertSql(
+                    "simple_square\n4.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_square(2.0)"
+            );
 
             // Unload the plugin
             execute("UNLOAD PLUGIN '" + PLUGIN_NAME + "'");
-            assert !engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME);
+            Assert.assertFalse("Plugin should not be loaded after unload",
+                    engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME));
+
+            // Verify function is no longer available after unload
+            try {
+                assertSql("", "SELECT \"" + PLUGIN_NAME + "\".simple_square(2.0)");
+                Assert.fail("Should have thrown exception for unloaded plugin function");
+            } catch (Exception e) {
+                Assert.assertTrue("Error should mention plugin not found",
+                        e.getMessage().contains("plugin function not found") ||
+                                e.getMessage().contains("Plugin not loaded"));
+            }
         });
+    }
+
+    @Test
+    public void testPluginUnloadAndReload() throws Exception {
+        // Test that plugins can be unloaded and reloaded
+        assertMemoryLeak(() -> {
+            // Load
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+            assertSql("simple_square\n9.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_square(3.0)");
+
+            // Unload
+            execute("UNLOAD PLUGIN '" + PLUGIN_NAME + "'");
+            Assert.assertFalse(engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME));
+
+            // Reload
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+            Assert.assertTrue(engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME));
+
+            // Verify function works again
+            assertSql("simple_square\n16.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_square(4.0)");
+        });
+    }
+
+    @Test
+    public void testPluginVersionInfo() throws Exception {
+        // Test that plugin version info is collected from @PluginFunctions annotation
+        assertMemoryLeak(() -> {
+            // Before loading, no plugin info available
+            PluginInfo infoBeforeLoad = engine.getPluginManager().getPluginInfo(PLUGIN_NAME);
+            Assert.assertNull("Plugin info should be null before loading", infoBeforeLoad);
+
+            // Load the plugin
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // After loading, plugin info should be available
+            PluginInfo info = engine.getPluginManager().getPluginInfo(PLUGIN_NAME);
+            Assert.assertNotNull("Plugin info should be available after loading", info);
+            Assert.assertEquals("Plugin name should match", PLUGIN_NAME, info.getPluginName());
+            Assert.assertTrue("Plugin should have functions", info.getFunctionCount() > 0);
+
+            // Unload the plugin
+            execute("UNLOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // After unloading, no plugin info available
+            PluginInfo infoAfterUnload = engine.getPluginManager().getPluginInfo(PLUGIN_NAME);
+            Assert.assertNull("Plugin info should be null after unloading", infoAfterUnload);
+        });
+    }
+
+    @Test
+    public void testPluginInfoVersionComparison() {
+        // Test PluginInfo.compareVersions()
+        Assert.assertEquals(0, PluginInfo.compareVersions("1.0.0", "1.0.0"));
+        Assert.assertTrue(PluginInfo.compareVersions("1.0.1", "1.0.0") > 0);
+        Assert.assertTrue(PluginInfo.compareVersions("1.0.0", "1.0.1") < 0);
+        Assert.assertTrue(PluginInfo.compareVersions("2.0.0", "1.9.9") > 0);
+        Assert.assertTrue(PluginInfo.compareVersions("1.10.0", "1.9.0") > 0);
+        Assert.assertEquals(0, PluginInfo.compareVersions("1.0", "1.0.0"));
+        Assert.assertEquals(0, PluginInfo.compareVersions("1.0.0-SNAPSHOT", "1.0.0")); // SNAPSHOT suffix is stripped, so equal versions
     }
 
     @Test
@@ -580,6 +660,93 @@ public class PluginFunctionTest extends AbstractCairoTest {
                     "simple_max\n" +
                             "5.0\n",
                     "SELECT \"" + PLUGIN_NAME + "\".simple_max(value) FROM test_data"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFAggregateFunctionWithGroupBy() throws Exception {
+        // Test simplified UDF aggregate functions with GROUP BY
+        // This verifies that per-group state is correctly maintained
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Create table with multiple categories
+            execute("CREATE TABLE test_groups (category SYMBOL, value DOUBLE)");
+            execute("INSERT INTO test_groups VALUES ('A', 1.0)");
+            execute("INSERT INTO test_groups VALUES ('A', 2.0)");
+            execute("INSERT INTO test_groups VALUES ('A', 3.0)");
+            execute("INSERT INTO test_groups VALUES ('B', 10.0)");
+            execute("INSERT INTO test_groups VALUES ('B', 20.0)");
+            execute("INSERT INTO test_groups VALUES ('C', 100.0)");
+
+            // Test simple_sum with GROUP BY
+            // A: 1+2+3=6, B: 10+20=30, C: 100
+            assertSql(
+                    "category\tsum\n" +
+                            "A\t6.0\n" +
+                            "B\t30.0\n" +
+                            "C\t100.0\n",
+                    "SELECT category, \"" + PLUGIN_NAME + "\".simple_sum(value) as sum " +
+                            "FROM test_groups GROUP BY category ORDER BY category"
+            );
+
+            // Test simple_avg with GROUP BY
+            // A: (1+2+3)/3=2, B: (10+20)/2=15, C: 100/1=100
+            assertSql(
+                    "category\tavg\n" +
+                            "A\t2.0\n" +
+                            "B\t15.0\n" +
+                            "C\t100.0\n",
+                    "SELECT category, \"" + PLUGIN_NAME + "\".simple_avg(value) as avg " +
+                            "FROM test_groups GROUP BY category ORDER BY category"
+            );
+
+            // Test simple_min with GROUP BY
+            assertSql(
+                    "category\tmin\n" +
+                            "A\t1.0\n" +
+                            "B\t10.0\n" +
+                            "C\t100.0\n",
+                    "SELECT category, \"" + PLUGIN_NAME + "\".simple_min(value) as min " +
+                            "FROM test_groups GROUP BY category ORDER BY category"
+            );
+
+            // Test simple_max with GROUP BY
+            assertSql(
+                    "category\tmax\n" +
+                            "A\t3.0\n" +
+                            "B\t20.0\n" +
+                            "C\t100.0\n",
+                    "SELECT category, \"" + PLUGIN_NAME + "\".simple_max(value) as max " +
+                            "FROM test_groups GROUP BY category ORDER BY category"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFAggregateFunctionWithMultipleGroupByColumns() throws Exception {
+        // Test with multiple GROUP BY columns to exercise interleaved group processing
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            execute("CREATE TABLE multi_group (region SYMBOL, product SYMBOL, sales DOUBLE)");
+            execute("INSERT INTO multi_group VALUES ('North', 'A', 100.0)");
+            execute("INSERT INTO multi_group VALUES ('North', 'A', 150.0)");
+            execute("INSERT INTO multi_group VALUES ('North', 'B', 200.0)");
+            execute("INSERT INTO multi_group VALUES ('South', 'A', 50.0)");
+            execute("INSERT INTO multi_group VALUES ('South', 'B', 75.0)");
+            execute("INSERT INTO multi_group VALUES ('South', 'B', 125.0)");
+
+            // Test simple_sum with two GROUP BY columns
+            assertSql(
+                    "region\tproduct\ttotal\n" +
+                            "North\tA\t250.0\n" +
+                            "North\tB\t200.0\n" +
+                            "South\tA\t50.0\n" +
+                            "South\tB\t200.0\n",
+                    "SELECT region, product, \"" + PLUGIN_NAME + "\".simple_sum(sales) as total " +
+                            "FROM multi_group GROUP BY region, product ORDER BY region, product"
             );
         });
     }

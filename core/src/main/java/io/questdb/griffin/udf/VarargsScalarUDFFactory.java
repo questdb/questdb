@@ -139,12 +139,11 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
         };
     }
 
-    private List<I> extractInputs(ObjList<Function> args, Record rec) {
-        List<I> inputs = new ArrayList<>(args.size());
+    private void extractInputsInto(ObjList<Function> args, Record rec, List<I> inputs) {
+        inputs.clear();
         for (int i = 0, n = args.size(); i < n; i++) {
             inputs.add(extractInput(args.getQuick(i), rec));
         }
-        return inputs;
     }
 
     private O safeCompute(List<I> inputs) {
@@ -161,9 +160,11 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
     private class UDFVarargsDoubleFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final List<I> reusableInputs;
 
         UDFVarargsDoubleFunction(ObjList<Function> args) {
             this.args = args;
+            this.reusableInputs = new ArrayList<>(args.size());
         }
 
         @Override
@@ -173,8 +174,8 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            List<I> inputs = extractInputs(args, rec);
-            O result = safeCompute(inputs);
+            extractInputsInto(args, rec, reusableInputs);
+            O result = safeCompute(reusableInputs);
             return result == null ? Double.NaN : ((Number) result).doubleValue();
         }
 
@@ -186,9 +187,11 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
     private class UDFVarargsLongFunction extends LongFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final List<I> reusableInputs;
 
         UDFVarargsLongFunction(ObjList<Function> args) {
             this.args = args;
+            this.reusableInputs = new ArrayList<>(args.size());
         }
 
         @Override
@@ -198,8 +201,8 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            List<I> inputs = extractInputs(args, rec);
-            O result = safeCompute(inputs);
+            extractInputsInto(args, rec, reusableInputs);
+            O result = safeCompute(reusableInputs);
             return result == null ? Long.MIN_VALUE : ((Number) result).longValue();
         }
 
@@ -211,9 +214,11 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
     private class UDFVarargsIntFunction extends IntFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final List<I> reusableInputs;
 
         UDFVarargsIntFunction(ObjList<Function> args) {
             this.args = args;
+            this.reusableInputs = new ArrayList<>(args.size());
         }
 
         @Override
@@ -223,8 +228,8 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            List<I> inputs = extractInputs(args, rec);
-            O result = safeCompute(inputs);
+            extractInputsInto(args, rec, reusableInputs);
+            O result = safeCompute(reusableInputs);
             return result == null ? Integer.MIN_VALUE : ((Number) result).intValue();
         }
 
@@ -236,11 +241,13 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
     private class UDFVarargsStrFunction extends StrFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final List<I> reusableInputs;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         UDFVarargsStrFunction(ObjList<Function> args) {
             this.args = args;
+            this.reusableInputs = new ArrayList<>(args.size());
         }
 
         @Override
@@ -250,8 +257,8 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            List<I> inputs = extractInputs(args, rec);
-            O result = safeCompute(inputs);
+            extractInputsInto(args, rec, reusableInputs);
+            O result = safeCompute(reusableInputs);
             if (result == null) {
                 return null;
             }
@@ -262,8 +269,8 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(Record rec) {
-            List<I> inputs = extractInputs(args, rec);
-            O result = safeCompute(inputs);
+            extractInputsInto(args, rec, reusableInputs);
+            O result = safeCompute(reusableInputs);
             if (result == null) {
                 return null;
             }
@@ -285,11 +292,13 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
     private class UDFVarargsDecimalFunction extends Decimal64Function implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final List<I> reusableInputs;
         private final int scale;
 
         UDFVarargsDecimalFunction(ObjList<Function> args, int decimalType) {
             super(decimalType);
             this.args = args;
+            this.reusableInputs = new ArrayList<>(args.size());
             this.scale = ColumnType.getDecimalScale(decimalType);
         }
 
@@ -300,8 +309,8 @@ public class VarargsScalarUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public long getDecimal64(Record rec) {
-            List<I> inputs = extractInputs(args, rec);
-            O result = safeCompute(inputs);
+            extractInputsInto(args, rec, reusableInputs);
+            O result = safeCompute(reusableInputs);
             if (result == null) {
                 return Decimals.DECIMAL64_NULL;
             }

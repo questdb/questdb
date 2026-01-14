@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjList;
 
 import java.math.BigDecimal;
@@ -171,28 +172,47 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
     private class DoubleAggregateFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
         private final Function arg;
-        private final AggregateUDF<I, O> udf;
+        // Map to store per-group UDF instances, keyed by group ID
+        private final LongObjHashMap<AggregateUDF<I, O>> groupUdfs = new LongObjHashMap<>();
         private int valueIndex;
+        private int groupIdIndex;
+        private long nextGroupId = 0;
 
-        DoubleAggregateFunction(Function arg, AggregateUDF<I, O> udf) {
+        DoubleAggregateFunction(Function arg, AggregateUDF<I, O> ignoredTemplateUdf) {
             this.arg = arg;
-            this.udf = udf;
+            // Template UDF is not used - we create fresh instances per group
         }
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
+            // Create a new UDF instance for this group
+            long groupId = nextGroupId++;
+            mapValue.putLong(groupIdIndex, groupId);
+
+            AggregateUDF<I, O> udf = supplier.get();
             udf.reset();
+            groupUdfs.put(groupId, udf);
+
             I input = extractInput(arg, record);
             safeAccumulate(udf, input);
-            // Store current result
             O result = safeResult(udf);
             mapValue.putDouble(valueIndex, result == null ? Double.NaN : ((Number) result).doubleValue());
         }
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            // Restore state from map (for simplicity, we re-accumulate)
-            // Note: For production, we'd store intermediate state
+            // Look up the UDF instance for this group
+            long groupId = mapValue.getLong(groupIdIndex);
+            AggregateUDF<I, O> udf = groupUdfs.get(groupId);
+
+            if (udf == null) {
+                // Should not happen, but handle gracefully
+                throw CairoException.nonCritical()
+                        .put("UDF '")
+                        .put(name)
+                        .put("' state not found for group");
+            }
+
             I input = extractInput(arg, record);
             safeAccumulate(udf, input);
             O result = safeResult(udf);
@@ -222,12 +242,15 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         @Override
         public void initValueIndex(int valueIndex) {
             this.valueIndex = valueIndex;
+            this.groupIdIndex = valueIndex + 1;
         }
 
         @Override
         public void initValueTypes(ArrayColumnTypes columnTypes) {
             this.valueIndex = columnTypes.getColumnCount();
             columnTypes.add(ColumnType.DOUBLE);
+            this.groupIdIndex = columnTypes.getColumnCount();
+            columnTypes.add(ColumnType.LONG); // For group ID
         }
 
         @Override
@@ -242,23 +265,44 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public boolean supportsParallelism() {
-            return udf.supportsParallelism();
+            // Disable parallelism for now - would require more complex state management
+            return false;
+        }
+
+        @Override
+        public void toTop() {
+            // Reset state between query executions
+            groupUdfs.clear();
+            nextGroupId = 0;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            groupUdfs.clear();
         }
     }
 
     private class IntAggregateFunction extends IntFunction implements GroupByFunction, UnaryFunction {
         private final Function arg;
-        private final AggregateUDF<I, O> udf;
+        private final LongObjHashMap<AggregateUDF<I, O>> groupUdfs = new LongObjHashMap<>();
         private int valueIndex;
+        private int groupIdIndex;
+        private long nextGroupId = 0;
 
-        IntAggregateFunction(Function arg, AggregateUDF<I, O> udf) {
+        IntAggregateFunction(Function arg, AggregateUDF<I, O> ignoredTemplateUdf) {
             this.arg = arg;
-            this.udf = udf;
         }
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
+            long groupId = nextGroupId++;
+            mapValue.putLong(groupIdIndex, groupId);
+
+            AggregateUDF<I, O> udf = supplier.get();
             udf.reset();
+            groupUdfs.put(groupId, udf);
+
             I input = extractInput(arg, record);
             safeAccumulate(udf, input);
             O result = safeResult(udf);
@@ -267,6 +311,16 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
+            long groupId = mapValue.getLong(groupIdIndex);
+            AggregateUDF<I, O> udf = groupUdfs.get(groupId);
+
+            if (udf == null) {
+                throw CairoException.nonCritical()
+                        .put("UDF '")
+                        .put(name)
+                        .put("' state not found for group");
+            }
+
             I input = extractInput(arg, record);
             safeAccumulate(udf, input);
             O result = safeResult(udf);
@@ -296,12 +350,15 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         @Override
         public void initValueIndex(int valueIndex) {
             this.valueIndex = valueIndex;
+            this.groupIdIndex = valueIndex + 1;
         }
 
         @Override
         public void initValueTypes(ArrayColumnTypes columnTypes) {
             this.valueIndex = columnTypes.getColumnCount();
             columnTypes.add(ColumnType.INT);
+            this.groupIdIndex = columnTypes.getColumnCount();
+            columnTypes.add(ColumnType.LONG);
         }
 
         @Override
@@ -316,23 +373,42 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public boolean supportsParallelism() {
-            return udf.supportsParallelism();
+            return false;
+        }
+
+        @Override
+        public void toTop() {
+            groupUdfs.clear();
+            nextGroupId = 0;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            groupUdfs.clear();
         }
     }
 
     private class LongAggregateFunction extends LongFunction implements GroupByFunction, UnaryFunction {
         private final Function arg;
-        private final AggregateUDF<I, O> udf;
+        private final LongObjHashMap<AggregateUDF<I, O>> groupUdfs = new LongObjHashMap<>();
         private int valueIndex;
+        private int groupIdIndex;
+        private long nextGroupId = 0;
 
-        LongAggregateFunction(Function arg, AggregateUDF<I, O> udf) {
+        LongAggregateFunction(Function arg, AggregateUDF<I, O> ignoredTemplateUdf) {
             this.arg = arg;
-            this.udf = udf;
         }
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
+            long groupId = nextGroupId++;
+            mapValue.putLong(groupIdIndex, groupId);
+
+            AggregateUDF<I, O> udf = supplier.get();
             udf.reset();
+            groupUdfs.put(groupId, udf);
+
             I input = extractInput(arg, record);
             safeAccumulate(udf, input);
             O result = safeResult(udf);
@@ -341,6 +417,16 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
+            long groupId = mapValue.getLong(groupIdIndex);
+            AggregateUDF<I, O> udf = groupUdfs.get(groupId);
+
+            if (udf == null) {
+                throw CairoException.nonCritical()
+                        .put("UDF '")
+                        .put(name)
+                        .put("' state not found for group");
+            }
+
             I input = extractInput(arg, record);
             safeAccumulate(udf, input);
             O result = safeResult(udf);
@@ -370,11 +456,14 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         @Override
         public void initValueIndex(int valueIndex) {
             this.valueIndex = valueIndex;
+            this.groupIdIndex = valueIndex + 1;
         }
 
         @Override
         public void initValueTypes(ArrayColumnTypes columnTypes) {
             this.valueIndex = columnTypes.getColumnCount();
+            columnTypes.add(ColumnType.LONG);
+            this.groupIdIndex = columnTypes.getColumnCount();
             columnTypes.add(ColumnType.LONG);
         }
 
@@ -390,26 +479,45 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public boolean supportsParallelism() {
-            return udf.supportsParallelism();
+            return false;
+        }
+
+        @Override
+        public void toTop() {
+            groupUdfs.clear();
+            nextGroupId = 0;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            groupUdfs.clear();
         }
     }
 
     private class DecimalAggregateFunction extends Decimal64Function implements GroupByFunction, UnaryFunction {
         private final Function arg;
-        private final AggregateUDF<I, O> udf;
+        private final LongObjHashMap<AggregateUDF<I, O>> groupUdfs = new LongObjHashMap<>();
         private final int scale;
         private int valueIndex;
+        private int groupIdIndex;
+        private long nextGroupId = 0;
 
-        DecimalAggregateFunction(Function arg, AggregateUDF<I, O> udf, int decimalType) {
+        DecimalAggregateFunction(Function arg, AggregateUDF<I, O> ignoredTemplateUdf, int decimalType) {
             super(decimalType);
             this.arg = arg;
-            this.udf = udf;
             this.scale = ColumnType.getDecimalScale(decimalType);
         }
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
+            long groupId = nextGroupId++;
+            mapValue.putLong(groupIdIndex, groupId);
+
+            AggregateUDF<I, O> udf = supplier.get();
             udf.reset();
+            groupUdfs.put(groupId, udf);
+
             I input = extractInput(arg, record);
             safeAccumulate(udf, input);
             O result = safeResult(udf);
@@ -418,6 +526,16 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
+            long groupId = mapValue.getLong(groupIdIndex);
+            AggregateUDF<I, O> udf = groupUdfs.get(groupId);
+
+            if (udf == null) {
+                throw CairoException.nonCritical()
+                        .put("UDF '")
+                        .put(name)
+                        .put("' state not found for group");
+            }
+
             I input = extractInput(arg, record);
             safeAccumulate(udf, input);
             O result = safeResult(udf);
@@ -462,12 +580,15 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         @Override
         public void initValueIndex(int valueIndex) {
             this.valueIndex = valueIndex;
+            this.groupIdIndex = valueIndex + 1;
         }
 
         @Override
         public void initValueTypes(ArrayColumnTypes columnTypes) {
             this.valueIndex = columnTypes.getColumnCount();
             columnTypes.add(ColumnType.LONG); // DECIMAL64 is stored as LONG
+            this.groupIdIndex = columnTypes.getColumnCount();
+            columnTypes.add(ColumnType.LONG); // For group ID
         }
 
         @Override
@@ -477,7 +598,19 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
         @Override
         public boolean supportsParallelism() {
-            return udf.supportsParallelism();
+            return false;
+        }
+
+        @Override
+        public void toTop() {
+            groupUdfs.clear();
+            nextGroupId = 0;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            groupUdfs.clear();
         }
     }
 }

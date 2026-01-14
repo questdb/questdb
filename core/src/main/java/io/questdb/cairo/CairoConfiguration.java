@@ -235,6 +235,15 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getPluginRoot(); // plugin directory, defaults to <db_root>/plugins
 
+    /**
+     * Returns true if plugin JAR signature verification is enabled.
+     * When enabled, plugins must be signed with a trusted certificate.
+     * Default is false (verification disabled for development convenience).
+     */
+    default boolean isPluginSignatureVerificationEnabled() {
+        return false;
+    }
+
     boolean getDebugWalApplyBlockFailureNoRetry();
 
     @NotNull

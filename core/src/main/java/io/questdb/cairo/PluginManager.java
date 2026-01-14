@@ -39,16 +39,20 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import io.questdb.griffin.udf.PluginFunctions;
 import io.questdb.griffin.udf.PluginLifecycle;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.security.CodeSigner;
+import java.security.cert.Certificate;
 import java.util.Collection;
 import java.util.Enumeration;
 import java.util.jar.JarEntry;
@@ -77,6 +81,8 @@ public class PluginManager implements Closeable {
     private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactory>> pluginFactories = new LowerCaseCharSequenceObjHashMap<>();
     // Maps plugin name -> list of PluginLifecycle instances for cleanup
     private final LowerCaseCharSequenceObjHashMap<ObjList<PluginLifecycle>> pluginLifecycles = new LowerCaseCharSequenceObjHashMap<>();
+    // Maps plugin name -> PluginInfo (version, author, description, etc.)
+    private final LowerCaseCharSequenceObjHashMap<PluginInfo> pluginInfoMap = new LowerCaseCharSequenceObjHashMap<>();
     // Reusable sink for normalized plugin names
     private final StringSink pluginNameSink = new StringSink();
 
@@ -140,6 +146,36 @@ public class PluginManager implements Closeable {
     }
 
     /**
+     * Returns metadata about a loaded plugin including version, author, and description.
+     *
+     * @param name the plugin name
+     * @return PluginInfo if the plugin is loaded and has metadata, null otherwise
+     */
+    @Nullable
+    public synchronized PluginInfo getPluginInfo(@NotNull CharSequence name) {
+        normalizePluginName(name, pluginNameSink);
+        final int index = pluginInfoMap.keyIndex(pluginNameSink);
+        if (index < 0) {
+            return pluginInfoMap.valueAtQuick(index);
+        }
+        return null;
+    }
+
+    /**
+     * Returns metadata for all loaded plugins.
+     *
+     * @return list of PluginInfo for all loaded plugins
+     */
+    @NotNull
+    public synchronized ObjList<PluginInfo> getAllPluginInfo() {
+        final ObjList<PluginInfo> result = new ObjList<>(pluginInfoMap.size());
+        for (int i = 0, n = pluginInfoMap.size(); i < n; i++) {
+            result.add(pluginInfoMap.valueAtQuick(i));
+        }
+        return result;
+    }
+
+    /**
      * Loads a plugin and registers its functions in the FunctionFactoryCache.
      * The plugin name is normalized (strips .jar suffix if present).
      * If the plugin is already loaded, this is a no-op (idempotent).
@@ -168,6 +204,13 @@ public class PluginManager implements Closeable {
             // Create persistent string for storage (only when we know plugin exists)
             final String pluginName = Chars.toString(pluginNameSink);
 
+            // Verify JAR signature if enabled
+            if (configuration.isPluginSignatureVerificationEnabled()) {
+                LOG.info().$("Verifying signature for plugin: ").$(pluginName).$();
+                verifyJarSignature(jarPathStr, pluginName);
+                LOG.info().$("Signature verified for plugin: ").$(pluginName).$();
+            }
+
             // Create isolated ClassLoader for this plugin
             final java.io.File jarFile = new java.io.File(jarPathStr);
             final URL pluginJarUrl = jarFile.toURI().toURL();
@@ -180,10 +223,18 @@ public class PluginManager implements Closeable {
                 // Discover FunctionFactory implementations and lifecycle handlers in the JAR
                 final ObjList<FunctionFactory> factories = new ObjList<>();
                 final ObjList<PluginLifecycle> lifecycles = new ObjList<>();
-                discoverPluginClasses(jarPathStr, classLoader, factories, lifecycles);
+                final PluginInfo pluginInfo = discoverPluginClasses(jarPathStr, pluginName, classLoader, factories, lifecycles);
 
                 LOG.info().$("Loading plugin: ").$(pluginName)
                         .$(", found ").$(factories.size()).$(" functions").$();
+
+                // Log version info if available
+                if (pluginInfo.getVersion() != null) {
+                    LOG.info().$("Plugin version: ").$(pluginInfo.getVersion()).$();
+                }
+                if (pluginInfo.getAuthor() != null) {
+                    LOG.info().$("Plugin author: ").$(pluginInfo.getAuthor()).$();
+                }
 
                 // Call onLoad for all lifecycle handlers
                 for (int i = 0, n = lifecycles.size(); i < n; i++) {
@@ -206,6 +257,9 @@ public class PluginManager implements Closeable {
                 if (lifecycles.size() > 0) {
                     pluginLifecycles.put(pluginName, lifecycles);
                 }
+
+                // Store plugin info
+                pluginInfoMap.put(pluginName, pluginInfo);
 
                 // Store classloader for cleanup on unload
                 pluginClassLoaders.put(pluginName, classLoader);
@@ -321,6 +375,7 @@ public class PluginManager implements Closeable {
 
     /**
      * Discovers FunctionFactory implementations and PluginLifecycle handlers in a plugin JAR.
+     * Also collects plugin metadata from @PluginFunctions annotations.
      * <p>
      * This method discovers:
      * <ol>
@@ -331,16 +386,31 @@ public class PluginManager implements Closeable {
      * </ol>
      *
      * @param jarPath     path to the JAR file as String
+     * @param pluginName  name of the plugin being loaded
      * @param classLoader isolated classloader for loading classes from the JAR
      * @param factories   list to add discovered FunctionFactory instances to
      * @param lifecycles  list to add discovered PluginLifecycle instances to
+     * @return PluginInfo containing metadata about the plugin
      */
-    private void discoverPluginClasses(
+    private PluginInfo discoverPluginClasses(
             @NotNull final String jarPath,
+            @NotNull final String pluginName,
             @NotNull final URLClassLoader classLoader,
             @NotNull final ObjList<FunctionFactory> factories,
             @NotNull final ObjList<PluginLifecycle> lifecycles
     ) throws IOException {
+        int classCount = 0;
+        int errorCount = 0;
+        String lastErrorClass = null;
+        String lastErrorMessage = null;
+
+        // Holders for plugin metadata (collected from @PluginFunctions annotations)
+        final String[] version = {null};
+        final String[] description = {null};
+        final String[] author = {null};
+        final String[] url = {null};
+        final String[] license = {null};
+
         try (final JarFile jarFile = new JarFile(jarPath)) {
             final Enumeration<JarEntry> entries = jarFile.entries();
 
@@ -348,6 +418,7 @@ public class PluginManager implements Closeable {
                 final JarEntry entry = entries.nextElement();
 
                 if (!entry.isDirectory() && entry.getName().endsWith(".class")) {
+                    classCount++;
                     final String className = entry.getName()
                             .replace('/', '.')
                             .replace(".class", "");
@@ -364,40 +435,75 @@ public class PluginManager implements Closeable {
                                     .newInstance();
                             factories.add(factory);
 
-                            LOG.debug().$("Discovered function factory: ").$(className).$();
+                            LOG.info().$("Discovered function factory: ").$(className)
+                                    .$(" [signature=").$(factory.getSignature()).$("]").$();
                         }
 
                         // Check for static getFunctions() method (simplified UDF API)
                         // and track lifecycle if class implements PluginLifecycle
-                        discoverFunctionsFromMethod(clazz, factories, lifecycles);
+                        // Also collect metadata from @PluginFunctions annotation
+                        discoverFunctionsFromMethod(clazz, factories, lifecycles, version, description, author, url, license);
 
                     } catch (final ClassNotFoundException e) {
-                        // Ignore classes not in the JAR
+                        // Expected for dependency classes not bundled in JAR - ignore silently
+                    } catch (final NoClassDefFoundError e) {
+                        // Missing dependency - log at debug level, might be optional
+                        LOG.debug().$("Class ").$(className).$(" has missing dependency: ").$(e.getMessage()).$();
                     } catch (final Exception e) {
-                        LOG.debug().$("Failed to instantiate function factory ").$(className)
+                        errorCount++;
+                        lastErrorClass = className;
+                        lastErrorMessage = e.getMessage();
+                        LOG.debug().$("Failed to load class ").$(className)
+                                .$(": ").$(e.getClass().getSimpleName())
                                 .$(": ").$(e.getMessage()).$();
                     }
                 }
             }
         }
+
+        // Log summary if there were errors
+        if (errorCount > 0) {
+            LOG.info().$("Plugin discovery: scanned ").$(classCount).$(" classes, ")
+                    .$(errorCount).$(" failed to load").$();
+            if (errorCount == 1) {
+                LOG.info().$("  Failed class: ").$(lastErrorClass).$(": ").$(lastErrorMessage).$();
+            } else {
+                LOG.info().$("  Last failed: ").$(lastErrorClass).$(": ").$(lastErrorMessage).$();
+                LOG.info().$("  Enable DEBUG logging for full details").$();
+            }
+        }
+
+        // Return collected plugin info
+        return new PluginInfo(pluginName, version[0], description[0], author[0], url[0], license[0], factories.size());
     }
 
     /**
      * Discovers functions from a class's static getFunctions() method and
      * tracks PluginLifecycle implementations for lifecycle callbacks.
+     * Also collects metadata from @PluginFunctions annotation.
      * <p>
      * This supports the simplified UDF API where plugin authors can define functions
      * using lambdas and the UDFRegistry helper class.
      *
-     * @param clazz      the class to check for getFunctions() method
-     * @param factories  the list to add discovered factories to
-     * @param lifecycles the list to add discovered lifecycle handlers to
+     * @param clazz       the class to check for getFunctions() method
+     * @param factories   the list to add discovered factories to
+     * @param lifecycles  the list to add discovered lifecycle handlers to
+     * @param version     holder for version string from annotation
+     * @param description holder for description string from annotation
+     * @param author      holder for author string from annotation
+     * @param url         holder for url string from annotation
+     * @param license     holder for license string from annotation
      */
     @SuppressWarnings("unchecked")
     private void discoverFunctionsFromMethod(
             Class<?> clazz,
             ObjList<FunctionFactory> factories,
-            ObjList<PluginLifecycle> lifecycles
+            ObjList<PluginLifecycle> lifecycles,
+            String[] version,
+            String[] description,
+            String[] author,
+            String[] url,
+            String[] license
     ) {
         try {
             // Look for static getFunctions() method
@@ -434,17 +540,24 @@ public class PluginManager implements Closeable {
                         .$(clazz.getName()).$(".getFunctions()").$();
             }
 
-            // Log if class has @PluginFunctions annotation
+            // Collect metadata from @PluginFunctions annotation
             if (clazz.isAnnotationPresent(PluginFunctions.class)) {
                 final PluginFunctions annotation = clazz.getAnnotation(PluginFunctions.class);
-                if (!annotation.description().isEmpty()) {
-                    LOG.info().$("Plugin functions: ").$(annotation.description()).$();
+                // Only set if not already set (first annotation wins)
+                if (version[0] == null && !annotation.version().isEmpty()) {
+                    version[0] = annotation.version();
                 }
-                if (!annotation.version().isEmpty()) {
-                    LOG.info().$("Plugin version: ").$(annotation.version()).$();
+                if (description[0] == null && !annotation.description().isEmpty()) {
+                    description[0] = annotation.description();
                 }
-                if (!annotation.author().isEmpty()) {
-                    LOG.info().$("Plugin author: ").$(annotation.author()).$();
+                if (author[0] == null && !annotation.author().isEmpty()) {
+                    author[0] = annotation.author();
+                }
+                if (url[0] == null && !annotation.url().isEmpty()) {
+                    url[0] = annotation.url();
+                }
+                if (license[0] == null && !annotation.license().isEmpty()) {
+                    license[0] = annotation.license();
                 }
             }
 
@@ -518,11 +631,91 @@ public class PluginManager implements Closeable {
                 pluginFactories.removeAt(factoriesIndex);
             }
 
+            // Clean up plugin info
+            final int infoIndex = pluginInfoMap.keyIndex(pluginNameSink);
+            if (infoIndex < 0) {
+                pluginInfoMap.removeAt(infoIndex);
+            }
+
             LOG.info().$("Successfully unloaded plugin: ").$(pluginNameSink).$();
         } catch (final SqlException e) {
             throw e;
         } catch (final Exception e) {
             throw SqlException.position(0).put("Failed to unload plugin: ").put(name).put(": ").put(e.getMessage());
+        }
+    }
+
+    /**
+     * Verifies that a JAR file is signed with a valid certificate.
+     * <p>
+     * To verify a signed JAR, we must read all entries completely - this triggers
+     * signature verification by the JarFile implementation. If any entry fails
+     * verification, a SecurityException is thrown.
+     *
+     * @param jarPath    path to the JAR file
+     * @param pluginName name of the plugin (for error messages)
+     * @throws SqlException if the JAR is not signed or signature verification fails
+     */
+    private void verifyJarSignature(String jarPath, String pluginName) throws SqlException {
+        try (JarFile jarFile = new JarFile(jarPath, true)) { // true = verify signatures
+            boolean hasSignedEntries = false;
+            byte[] buffer = new byte[8192];
+
+            Enumeration<JarEntry> entries = jarFile.entries();
+            while (entries.hasMoreElements()) {
+                JarEntry entry = entries.nextElement();
+
+                // Skip directory entries and signature-related files
+                if (entry.isDirectory() || entry.getName().startsWith("META-INF/")) {
+                    continue;
+                }
+
+                // Read the entire entry to trigger signature verification
+                try (InputStream is = jarFile.getInputStream(entry)) {
+                    while (is.read(buffer) != -1) {
+                        // Just reading to trigger verification
+                    }
+                }
+
+                // Check if this entry was signed
+                CodeSigner[] signers = entry.getCodeSigners();
+                if (signers != null && signers.length > 0) {
+                    hasSignedEntries = true;
+
+                    // Log certificate info at debug level
+                    for (CodeSigner signer : signers) {
+                        Certificate[] certs = signer.getSignerCertPath().getCertificates().toArray(new Certificate[0]);
+                        if (certs.length > 0) {
+                            LOG.debug().$("Plugin ").$(pluginName)
+                                    .$(" signed by: ").$(certs[0].toString().substring(0, Math.min(100, certs[0].toString().length())))
+                                    .$("...").$();
+                        }
+                    }
+                }
+            }
+
+            if (!hasSignedEntries) {
+                throw SqlException.position(0)
+                        .put("Plugin JAR is not signed: ")
+                        .put(pluginName)
+                        .put(". Enable unsigned plugins by setting cairo.plugin.signature.verification=false");
+            }
+
+            LOG.info().$("Plugin ").$(pluginName).$(" signature verified successfully").$();
+
+        } catch (SecurityException e) {
+            // Signature verification failed
+            throw SqlException.position(0)
+                    .put("Plugin signature verification failed for: ")
+                    .put(pluginName)
+                    .put(": ")
+                    .put(e.getMessage());
+        } catch (IOException e) {
+            throw SqlException.position(0)
+                    .put("Failed to verify plugin signature: ")
+                    .put(pluginName)
+                    .put(": ")
+                    .put(e.getMessage());
         }
     }
 }

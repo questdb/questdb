@@ -38,6 +38,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
 public class FunctionFactoryCache {
@@ -58,6 +59,8 @@ public class FunctionFactoryCache {
     private final SimpleReadWriteLock pluginLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceHashSet windowFunctionNames = new LowerCaseCharSequenceHashSet();
+    // Reusable sink for building qualified names without allocation (thread-safe under pluginLock)
+    private final StringSink qualifiedNameSink = new StringSink();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         boolean enableTestFactories = configuration.enableTestFactories();
@@ -210,11 +213,17 @@ public class FunctionFactoryCache {
     /**
      * Returns the map of plugin functions for iteration.
      * Structure: pluginName -> functionName -> List<FunctionFactoryDescriptor>
-     * Thread-safe with read lock held during iteration.
+     * <p>
+     * WARNING: This returns a reference to the internal map. The caller should
+     * complete iteration quickly and not hold references across plugin load/unload
+     * operations. Used primarily by the functions() catalog query.
      *
-     * @return the plugin functions map
+     * @return the plugin functions map (internal reference, may be modified concurrently)
      */
     public LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>>> getPluginFunctions() {
+        // Note: We return the internal map reference. For the functions() catalog query,
+        // brief inconsistency during concurrent plugin operations is acceptable.
+        // A full copy would be expensive and this is not on a hot data path.
         pluginLock.readLock().lock();
         try {
             return pluginFunctions;
@@ -235,11 +244,11 @@ public class FunctionFactoryCache {
      * Gets the function overload list for a qualified plugin function name.
      * Thread-safe with read lock.
      *
-     * @param pluginName   the plugin name
-     * @param functionName the function name
+     * @param pluginName   the plugin name (CharSequence to avoid allocation)
+     * @param functionName the function name (CharSequence to avoid allocation)
      * @return the overload list, or null if plugin/function not found
      */
-    public ObjList<FunctionFactoryDescriptor> getPluginFunction(String pluginName, CharSequence functionName) {
+    public ObjList<FunctionFactoryDescriptor> getPluginFunction(CharSequence pluginName, CharSequence functionName) {
         pluginLock.readLock().lock();
         try {
             final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> pluginFactoryMap =
@@ -250,6 +259,37 @@ public class FunctionFactoryCache {
             }
 
             return pluginFactoryMap.get(functionName);
+        } finally {
+            pluginLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Gets the function overload list for a qualified plugin function name using index ranges.
+     * Thread-safe with read lock. Zero-allocation lookup.
+     *
+     * @param token      the full qualified name (e.g., "plugin.function")
+     * @param pluginLo   start index of plugin name in token
+     * @param pluginHi   end index of plugin name in token (exclusive)
+     * @param funcLo     start index of function name in token
+     * @param funcHi     end index of function name in token (exclusive)
+     * @return the overload list, or null if plugin/function not found
+     */
+    public ObjList<FunctionFactoryDescriptor> getPluginFunction(
+            CharSequence token,
+            int pluginLo, int pluginHi,
+            int funcLo, int funcHi
+    ) {
+        pluginLock.readLock().lock();
+        try {
+            final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> pluginFactoryMap =
+                    pluginFunctions.get(token, pluginLo, pluginHi);
+
+            if (pluginFactoryMap == null) {
+                return null;
+            }
+
+            return pluginFactoryMap.get(token, funcLo, funcHi);
         } finally {
             pluginLock.readLock().unlock();
         }
@@ -279,13 +319,21 @@ public class FunctionFactoryCache {
             // For qualified plugin function names, try unquoting the plugin name part
             final int lastDot = Chars.lastIndexOf(name, 0, name.length(), '.');
             if (lastDot > 0 && lastDot < name.length() - 1) {
-                String pluginName = name.subSequence(0, lastDot).toString();
-                if (pluginName.startsWith("\"") && pluginName.endsWith("\"")) {
-                    pluginName = pluginName.substring(1, pluginName.length() - 1);
+                // Compute indices for plugin name (handle quotes)
+                int pluginLo = 0;
+                int pluginHi = lastDot;
+                if (pluginHi > 2 && name.charAt(0) == '"' && name.charAt(pluginHi - 1) == '"') {
+                    pluginLo = 1;
+                    pluginHi = pluginHi - 1;
                 }
-                final String functionName = name.subSequence(lastDot + 1, name.length()).toString();
-                final String qualifiedName = pluginName + "." + functionName;
-                return groupByFunctionNames.contains(qualifiedName);
+
+                // Build qualified name using reusable sink (zero-allocation)
+                qualifiedNameSink.clear();
+                qualifiedNameSink.put(name, pluginLo, pluginHi);
+                qualifiedNameSink.put('.');
+                qualifiedNameSink.put(name, lastDot + 1, name.length());
+
+                return groupByFunctionNames.contains(qualifiedNameSink);
             }
             return false;
         } finally {
