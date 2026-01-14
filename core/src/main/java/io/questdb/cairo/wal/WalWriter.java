@@ -587,8 +587,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                 if (!symbolMapNullFlags.get(columnIndex)) {
                                     symbolMapNullFlags.setQuick(columnIndex, true);
                                     symbolMapNullFlagsChanged.setQuick(columnIndex, true);
-                                } else {
-                                    symbolMapNullFlagsChanged.setQuick(columnIndex, false);
                                 }
                             }
                     );
@@ -2624,8 +2622,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 if (!symbolMapNullFlags.get(columnIndex)) {
                     symbolMapNullFlags.set(columnIndex, true);
                     symbolMapNullFlagsChanged.set(columnIndex, true);
-                } else {
-                    symbolMapNullFlagsChanged.set(columnIndex, false);
                 }
             }
 
