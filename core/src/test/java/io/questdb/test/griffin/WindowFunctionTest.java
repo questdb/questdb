@@ -98,6 +98,67 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionArithmeticInsideFunction() throws Exception {
+        // Test two window functions in arithmetic expression inside abs()
+        // This is the original bug case
+        assertQuery(
+                """
+                        result
+                        0.0
+                        0.0
+                        0.0
+                        """,
+                "SELECT abs(sum(x) OVER () - sum(x) OVER ()) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToCast() throws Exception {
+        // Test window function as direct argument to cast() function
+        assertQuery(
+                """
+                        result
+                        1
+                        2
+                        3
+                        """,
+                "SELECT cast(row_number() OVER (ORDER BY ts) AS int) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToFunction() throws Exception {
+        // Test window function as direct argument to abs() function
+        assertQuery(
+                """
+                        result
+                        1
+                        2
+                        3
+                        """,
+                "SELECT abs(row_number() OVER (ORDER BY ts)) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testWindowFunctionWithPartitionBy() throws Exception {
         // Test window function with PARTITION BY and cast
         assertQuery(

@@ -8162,6 +8162,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionArithmeticInsideFunction() throws Exception {
+        // Two window functions in arithmetic expression inside abs() - should be allowed
+        // because the window functions are operands of an expression, not direct arguments
+        assertQuery(
+                "select-virtual symbol, amount, ts, abs(ksum - sum) abs from (select-window [symbol, amount, ts, sum(amount) sum over (), ksum(amount) ksum over ()] symbol, amount, ts, sum(amount) sum over (), ksum(amount) ksum over () from (select [symbol, amount, ts] from trades timestamp (ts) where symbol = 'sym1')) limit 100000",
+                "select *, abs(ksum(amount) over() - sum(amount) over()) from trades where symbol = 'sym1' limit 100000",
+                modelOf("trades")
+                        .col("symbol", ColumnType.SYMBOL)
+                        .col("amount", ColumnType.DOUBLE)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWindowFunctionInCaseExpression() throws Exception {
         // Window function directly inside CASE WHEN condition (two WHEN clauses with same window function)
         // Both window functions are extracted to select-window layer with different aliases
@@ -12709,24 +12723,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
-    @Test
-    public void testWindowFunctionAsArgumentToFunctionNotSupported() throws Exception {
-        assertMemoryLeak(() -> {
-            // Window function as argument to cast() - not allowed
-            assertSyntaxError(
-                    "select a,b,cast(f(c) over (order by a) as int) from xyz",
-                    21,
-                    "window function is not allowed as an argument to another function"
-            );
-
-            // Window function as argument to abs() - not allowed
-            assertSyntaxError(
-                    "select a,b, abs(f(c) over (order by a)) from xyz",
-                    21,
-                    "window function is not allowed as an argument to another function"
-            );
-        });
-    }
 
     @Test
     public void testWindowFunctionReferencesSameColumnAsVirtual() throws Exception {
