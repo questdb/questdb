@@ -8221,6 +8221,48 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionThreeLevelsOfNesting() throws Exception {
+        // Three levels of nesting: sum(sum(row_number() OVER ()) OVER ()) OVER ()
+        // Each level is extracted to its own select-window layer:
+        // 1. Innermost: row_number() over () from base table
+        // 2. Middle: sum(row_number) over () referencing the literal from inner layer
+        // 3. Outer: sum(sum) over () referencing the literal from middle layer
+        assertQuery(
+                "select-window sum(sum) sum over () from (" +
+                        "select-window [sum(row_number) sum over ()] sum(row_number) sum over () from (" +
+                        "select-window [row_number() row_number over ()] row_number() row_number over () from (" +
+                        "x timestamp (ts))))",
+                "SELECT sum(sum(row_number() OVER ()) OVER ()) OVER () FROM x",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionMultipleDifferentNestedWindows() throws Exception {
+        // Multiple different window functions nested in one expression
+        // sum(row_number() OVER () + rank() OVER ()) OVER ()
+        assertQuery(
+                "select-window sum(row_number + rank) sum over () from (" +
+                        "select-window [rank() rank over (), row_number() row_number over ()] " +
+                        "row_number() row_number over (), rank() rank over () from (" +
+                        "x timestamp (ts)))",
+                "SELECT sum(row_number() OVER () + rank() OVER ()) OVER () FROM x",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNestingDepthLimit() throws Exception {
+        // 9 levels of nesting exceeds the limit of 8
+        assertSyntaxError(
+                "SELECT sum(sum(sum(sum(sum(sum(sum(sum(sum(row_number() OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER ()) OVER () FROM x",
+                43,
+                "too many levels of nested window functions [max=8]",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
     public void testOptimiseNotAnd() throws SqlException {
         assertQuery(
                 "select-choose a, b from (select [a, b] from tab where a != b or b != a)",
