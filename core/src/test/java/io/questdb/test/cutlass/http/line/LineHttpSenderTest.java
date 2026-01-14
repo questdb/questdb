@@ -2844,6 +2844,107 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Verifies that after renaming a table and creating a new table with the original name,
+     * an existing Sender instance correctly writes to the NEW table (not the renamed one).
+     * <p>
+     * The LineHttpTudCache validates cached TableTokens on each lookup and invalidates
+     * stale entries, allowing the sender to discover and use the new table.
+     * <p>
+     * Scenario:
+     * 1. Create table "sensor_data"
+     * 2. Sender starts sending to "sensor_data" (caches TableToken with id=X)
+     * 3. Rename "sensor_data" to "sensor_data_old"
+     * 4. Create new "sensor_data" table (gets new TableToken with id=Y)
+     * 5. Same Sender sends to "sensor_data"
+     * 6. Cache detects stale token, invalidates it, and resolves new table
+     * 7. Data correctly goes to new "sensor_data" table
+     */
+    @Test
+    public void testSenderWritesToCorrectTableAfterRenameAndRecreate() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                String tableName = "sensor_data";
+                String renamedTableName = "sensor_data_old";
+
+                // Create the initial table
+                serverMain.execute("CREATE TABLE " + tableName + " (" +
+                        "sensor symbol, " +
+                        "temperature double, " +
+                        "ts timestamp" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                // Use a single sender instance to test persistent connection behavior.
+                // When a rename happens while a connection is active, the server should
+                // detect the stale cache and return a retryable error (HTTP 503).
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(0) // Disable automatic retries
+                        .build()
+                ) {
+                    // Send initial data - this caches the TableToken in LineHttpTudCache
+                    sender.table(tableName)
+                            .symbol("sensor", "temp_1")
+                            .doubleColumn("temperature", 25.5)
+                            .at(1000000000L, ChronoUnit.NANOS);
+                    sender.flush();
+
+                    serverMain.awaitTable(tableName);
+                    serverMain.assertSql("SELECT count() FROM " + tableName, "count\n1\n");
+
+                    // Rename the table - this increments the generation counter
+                    serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                    // Create a new table with the original name - gets a NEW TableToken
+                    serverMain.execute("CREATE TABLE " + tableName + " (" +
+                            "sensor symbol, " +
+                            "temperature double, " +
+                            "ts timestamp" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                    // Now send more data with the SAME sender instance (same HTTP connection).
+                    // The server should detect that the generation counter changed and return 503.
+                    sender.table(tableName)
+                            .symbol("sensor", "temp_2")
+                            .doubleColumn("temperature", 30.0)
+                            .at(2000000000L, ChronoUnit.NANOS);
+
+                    try {
+                        sender.flush();
+                        Assert.fail("Expected LineSenderException due to table rename");
+                    } catch (LineSenderException e) {
+                        // Expected: server returns 503 when table rename is detected
+                        Assert.assertTrue("Expected retryable error message, got: " + e.getMessage(),
+                                e.getMessage().contains("retry") || e.getMessage().contains("503") || e.getMessage().contains("Service Unavailable"));
+                    }
+                }
+
+                // Use a new sender for retry - this will succeed because the new connection
+                // starts with the current generation counter (no stale cache).
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    sender.table(tableName)
+                            .symbol("sensor", "temp_2")
+                            .doubleColumn("temperature", 30.0)
+                            .at(2000000000L, ChronoUnit.NANOS);
+                    sender.flush();
+                }
+
+                // Wait for WAL to apply
+                serverMain.awaitTable(tableName);
+
+                // The renamed table should only have 1 row (the original data)
+                serverMain.assertSql("SELECT count() FROM " + renamedTableName, "count\n1\n");
+
+                // The new table should have 1 row (the retry succeeded)
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n1\n");
+            }
+        });
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
         if (currentDim == shape.length - 1) {

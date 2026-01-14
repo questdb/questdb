@@ -306,7 +306,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return UUID.randomUUID().toString().substring(24, 36);
     }
 
-    private Status appendMeasurement() throws LineHttpTudCache.TableCreateException {
+    private Status appendMeasurement() throws LineHttpTudCache.TableCreateException, LineHttpTudCache.TableRenameException {
         WalTableUpdateDetails tud = this.ilpTudCache.getTableUpdateDetails(securityContext, parser, symbolCachePool);
         try {
             appender.appendToWal(securityContext, parser, tud);
@@ -370,6 +370,15 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .$(", ex=").$safe(ex.getMessage())
                 .I$();
         return status;
+    }
+
+    private Status handleTableRenameError() {
+        errorId = ERROR_COUNT.incrementAndGet();
+        errorLine = -1;
+        error.put("table renamed during request, retry the operation");
+        LOG.info().$('[').$(fd).$("] table renamed during request, rejecting with retryable error [errorId=")
+                .$(ERROR_ID).$('-').$(errorId).I$();
+        return Status.TABLE_SCHEMA_CHANGED;
     }
 
     private Status handleLineError(LineTcpParser parser) {
@@ -517,6 +526,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                         return Status.NEEDS_READ;
                     }
                 }
+            } catch (LineHttpTudCache.TableRenameException e) {
+                return handleTableRenameError();
             } catch (LineHttpTudCache.TableCreateException parseException) {
                 return handleLineError(parser, parseException);
             } catch (CairoException parseException) {
@@ -545,7 +556,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         MESSAGE_TOO_LARGE("request too large", 413),
         COLUMN_ADD_ERROR("invalid", 400),
         COMMITTED(null, 204),
-        NOT_ACCEPTING_WRITES("not accepting writes", 421);
+        NOT_ACCEPTING_WRITES("not accepting writes", 421),
+        TABLE_SCHEMA_CHANGED("retry operation", 503);
 
         private final String codeStr;
         private final int responseCode;

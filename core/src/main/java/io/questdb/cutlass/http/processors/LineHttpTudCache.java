@@ -66,6 +66,8 @@ public class LineHttpTudCache implements QuietCloseable {
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
     private boolean distressed = false;
+    // Tracks the rename generation when cache was last validated
+    private long lastKnownRenameGeneration;
 
     public LineHttpTudCache(
             CairoEngine engine,
@@ -80,9 +82,21 @@ public class LineHttpTudCache implements QuietCloseable {
         this.autoCreateNewTables = autoCreateNewTables;
         this.defaultColumnTypes = defaultColumnTypes;
         this.tableStructureAdapter = new TableStructureAdapter(engine.getConfiguration(), this.defaultColumnTypes, defaultPartitionBy, true);
+        this.lastKnownRenameGeneration = engine.getTableRenameGeneration();
     }
 
     public void clear() {
+        // If a table was renamed since we last checked, the cached TUDs have stale
+        // WAL writers that may fail on rollback. In this case, just close them.
+        // Note: we don't update lastKnownRenameGeneration here - the generation
+        // check in getTableUpdateDetails() will throw an exception to inform the
+        // client that a retry is needed.
+        long currentGeneration = engine.getTableRenameGeneration();
+        if (currentGeneration != lastKnownRenameGeneration) {
+            reset();
+            return;
+        }
+
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
@@ -90,7 +104,14 @@ public class LineHttpTudCache implements QuietCloseable {
             if (distressed) {
                 Misc.free(tud);
             } else {
-                tud.rollback();
+                try {
+                    tud.rollback();
+                } catch (Throwable t) {
+                    // Rollback may fail if underlying resources are stale.
+                    // Mark as distressed to ensure cleanup.
+                    distressed = true;
+                    Misc.free(tud);
+                }
             }
         }
         if (distressed) {
@@ -150,9 +171,30 @@ public class LineHttpTudCache implements QuietCloseable {
             SecurityContext securityContext,
             @NotNull LineTcpParser parser,
             Pool<SymbolCache> symbolCachePool
-    ) throws TableCreateException {
+    ) throws TableCreateException, TableRenameException {
+        // Check if any table renames happened since we last validated the cache.
+        // If so, rollback uncommitted data and reject the request as retryable.
+        // This ensures the entire batch goes to one table, not split across two.
+        long currentGeneration = engine.getTableRenameGeneration();
+        if (currentGeneration != lastKnownRenameGeneration) {
+            // A table rename happened. Rollback uncommitted data, clear the cache,
+            // and reject the request so the client can retry with fresh state.
+            //
+            // We update lastKnownRenameGeneration AFTER clearing so that clear()
+            // knows it needs to reset the cache.
+            try {
+                clear();  // This will detect generation change and call reset()
+            } catch (Throwable t) {
+                // Ensure cache is cleared even if clear() failed
+                tableUpdateDetails.clear();
+            }
+            lastKnownRenameGeneration = currentGeneration;
+            throw TableRenameException.INSTANCE;
+        }
+
         int key = tableUpdateDetails.keyIndex(parser.getMeasurementName());
         if (key < 0) {
+            // Fast path - cache hit, no per-lookup validation needed
             return tableUpdateDetails.valueAt(key);
         }
 
@@ -188,7 +230,12 @@ public class LineHttpTudCache implements QuietCloseable {
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            Misc.free(tud);
+            try {
+                Misc.free(tud);
+            } catch (Throwable t) {
+                // Close may fail if underlying resources are stale (e.g., after table rename).
+                // Continue cleaning up remaining TUDs.
+            }
         }
         tableUpdateDetails.clear();
     }
@@ -253,6 +300,17 @@ public class LineHttpTudCache implements QuietCloseable {
             this.msg = message;
             this.token = token;
             return this;
+        }
+    }
+
+    /**
+     * Thrown when a table rename is detected mid-batch. The client should retry
+     * the entire request to ensure all rows go to the correct table.
+     */
+    public static class TableRenameException extends Exception {
+        public static final TableRenameException INSTANCE = new TableRenameException();
+
+        private TableRenameException() {
         }
     }
 }

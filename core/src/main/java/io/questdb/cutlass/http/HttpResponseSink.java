@@ -62,6 +62,7 @@ import static java.net.HttpURLConnection.*;
 
 public class HttpResponseSink implements Closeable, Mutable {
     public static final int HTTP_MISDIRECTED_REQUEST = 421;
+    public static final int HTTP_SERVICE_UNAVAILABLE = 503;
     public static final int HTTP_TOO_MANY_REQUESTS = 429;
     private static final Utf8String EMPTY_JSON = new Utf8String("{}");
     private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
@@ -886,6 +887,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, new Utf8String("Headers too large"));
         httpStatusMap.put(HTTP_INTERNAL_ERROR, new Utf8String("Internal server error"));
         httpStatusMap.put(HTTP_MISDIRECTED_REQUEST, new Utf8String("Misdirected Request"));
+        httpStatusMap.put(HTTP_SERVICE_UNAVAILABLE, new Utf8String("Service Unavailable"));
         httpStatusMap.put(HTTP_TOO_MANY_REQUESTS, new Utf8String("Too Many Requests"));
     }
 
