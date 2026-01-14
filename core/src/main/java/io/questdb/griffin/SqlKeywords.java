@@ -37,6 +37,15 @@ public class SqlKeywords {
     protected static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
     private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
 
+    public static boolean isAbortKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'b'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 't';
+    }
+
     public static boolean isAddKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'a'
@@ -337,16 +346,6 @@ public class SqlKeywords {
                 && (tok.charAt(0) | 32) == 'c'
                 && (tok.charAt(1) | 32) == 's'
                 && (tok.charAt(2) | 32) == 'v';
-    }
-
-    public static boolean isAbortKeyword(CharSequence tok) {
-        return tok.length() == 5
-                && (tok.charAt(0) | 32) == 'a'
-                && (tok.charAt(1) | 32) == 'b'
-                && (tok.charAt(2) | 32) == 'o'
-                && (tok.charAt(3) | 32) == 'r'
-                && (tok.charAt(4) | 32) == 't'
-                ;
     }
 
     public static boolean isCurrentKeyword(CharSequence tok) {
