@@ -206,8 +206,6 @@ public class FuzzTransactionGenerator {
                 transaction.operationList.add(new FuzzValidateSymbolFilterOperation(symbols));
                 transaction.structureVersion = metaVersion;
                 transaction.waitBarrierVersion = waitBarrierVersion;
-                // Indicate that this operation will not add a seqTxn
-                transaction.rollback = true;
                 transactionList.add(transaction);
             } else if (wantToQuery) {
                 FuzzTransaction transaction = new FuzzTransaction();

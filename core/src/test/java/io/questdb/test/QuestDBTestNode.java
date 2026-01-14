@@ -24,7 +24,6 @@
 
 package io.questdb.test;
 
-import io.questdb.ConfigPropertyKey;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
@@ -115,15 +114,15 @@ public class QuestDBTestNode {
         griffin = new Griffin(cairo, circuitBreaker);
     }
 
-    public void setProperty(ConfigPropertyKey propertyKey, long value) {
+    public void setProperty(PropertyKey propertyKey, long value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
-    public void setProperty(ConfigPropertyKey propertyKey, String value) {
+    public void setProperty(PropertyKey propertyKey, String value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
-    public void setProperty(ConfigPropertyKey propertyKey, boolean value) {
+    public void setProperty(PropertyKey propertyKey, boolean value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 

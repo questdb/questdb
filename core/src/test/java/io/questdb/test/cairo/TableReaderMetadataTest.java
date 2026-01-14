@@ -229,10 +229,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "date:DATE\n" +
                 "varchar:" + varcharColumnType + "\n" +
                 "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
-
-        int initialColumnCount = expected.split("\n").length;
         assertThat(expected,
-                initialColumnCount + 2,
                 w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
                 w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null)
         );
@@ -471,7 +468,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
 
         List<String> lines = new ArrayList<>(Arrays.asList(allColumns.split("\n")));
-        int columnCount = lines.size();
 
         while (!lines.isEmpty()) {
             int removeIndex = rnd.nextInt() % lines.size();
@@ -488,7 +484,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     expected += "\n";
                 }
 
-                runWithManipulators(expected, columnCount, w -> w.removeColumn(name));
+                runWithManipulators(expected, w -> w.removeColumn(name));
             }
         }
     }
@@ -550,26 +546,22 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     private void assertThat(String expected, ColumnManipulator... manipulators) throws Exception {
-        runWithManipulators(expected, -1, manipulators);
-    }
-
-    private void assertThat(String expected, int writerColumnCount, ColumnManipulator... manipulators) throws Exception {
         // Test one by one
-        runWithManipulators(expected, writerColumnCount, manipulators);
+        runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
             engine.dropTableOrViewOrMatView(path, engine.verifyTableName("all"));
         }
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY, timestampType);
 
         // Test in one go
-        runWithManipulators(expected, writerColumnCount, w -> {
+        runWithManipulators(expected, w -> {
             for (ColumnManipulator manipulator : manipulators) {
                 manipulator.restructure(w);
             }
         });
     }
 
-    private void runWithManipulators(String expected, int writerColumnCount, ColumnManipulator... manipulators) throws Exception {
+    private void runWithManipulators(String expected, ColumnManipulator... manipulators) throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "all";
             int tableId;
@@ -607,10 +599,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
                 metadata.loadMetadata();
                 Assert.assertEquals(tableId, metadata.getTableId());
-
-                if (writerColumnCount >= 0) {
-                    Assert.assertEquals(writerColumnCount, metadata.getWriterColumnCount());
-                }
             }
         });
     }

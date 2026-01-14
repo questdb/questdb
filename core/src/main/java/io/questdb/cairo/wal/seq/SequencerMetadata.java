@@ -160,15 +160,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         switchTo(path, pathLen);
     }
 
-    /**
-     * Creates sequencer metadata files from Table Structure object
-     */
-    public void createMetaFile(TableStructure tableStruct, Path path, int pathLen, int tableId, int structureVersion) {
-        copyFrom(tableStruct, tableId);
-        this.structureVersion.set(structureVersion);
-        switchTo(path, pathLen);
-    }
-
     public void disableDeduplication() {
         structureVersion.incrementAndGet();
     }
@@ -301,12 +292,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     private void copyFrom(TableStructure tableStruct, TableToken tableToken, int tableId) {
-        copyFrom(tableStruct, tableId);
-        this.tableToken = tableToken;
-    }
-
-    private void copyFrom(TableStructure tableStruct, int tableId) {
         reset();
+        this.tableToken = tableToken;
         this.timestampIndex = tableStruct.getTimestampIndex();
         this.tableId = tableId;
 
