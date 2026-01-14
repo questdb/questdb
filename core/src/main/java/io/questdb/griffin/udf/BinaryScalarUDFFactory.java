@@ -21,11 +21,13 @@ package io.questdb.griffin.udf;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -89,6 +91,7 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
             case ColumnType.LONG -> createLongFunction(left, right);
             case ColumnType.INT -> createIntFunction(left, right);
             case ColumnType.STRING -> createStrFunction(left, right);
+            case ColumnType.BOOLEAN -> createBooleanFunction(left, right);
             case ColumnType.TIMESTAMP -> createTimestampFunction(left, right);
             case ColumnType.DATE -> createDateFunction(left, right);
             default -> throw new IllegalArgumentException("Unsupported output type: " + outputType);
@@ -109,6 +112,10 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
 
     private Function createStrFunction(Function left, Function right) {
         return new UDFBinaryStrFunction(left, right);
+    }
+
+    private Function createBooleanFunction(Function left, Function right) {
+        return new UDFBinaryBooleanFunction(left, right);
     }
 
     private Function createTimestampFunction(Function left, Function right) {
@@ -133,6 +140,16 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
 
     @SuppressWarnings("unchecked")
     private <T> T extractInput(Function arg, Record rec, Class<T> type) {
+        // Handle array types first (special case - encoded column type)
+        if (type == DoubleArray.class) {
+            ArrayView arrayView = arg.getArray(rec);
+            return (T) (arrayView == null || arrayView.isNull() ? null : new DoubleArray(arrayView));
+        } else if (type == LongArray.class) {
+            ArrayView arrayView = arg.getArray(rec);
+            return (T) (arrayView == null || arrayView.isNull() ? null : new LongArray(arrayView));
+        }
+
+        // Handle scalar types via column type switch
         int columnType = UDFType.toColumnType(type);
         return (T) switch (columnType) {
             case ColumnType.DOUBLE -> {
@@ -322,6 +339,39 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+    }
+
+    private class UDFBinaryBooleanFunction extends BooleanFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
+
+        UDFBinaryBooleanFunction(Function left, Function right) {
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            I1 input1 = extractInput(left, rec, inputType1);
+            I2 input2 = extractInput(right, rec, inputType2);
+            O result = safeCompute(input1, input2);
+            return result != null && (Boolean) result;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 

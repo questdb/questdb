@@ -73,6 +73,38 @@ UDFRegistry.scalar("my_year", Date.class, Integer.class,
     d -> d == null ? null : d.toLocalDate().getYear())
 ```
 
+### Array Functions
+
+```java
+// Sum all elements in an array
+UDFRegistry.scalar("my_array_sum", DoubleArray.class, Double.class,
+    arr -> arr == null || arr.isEmpty() ? Double.NaN : arr.sum())
+
+// Get array average
+UDFRegistry.scalar("my_array_avg", DoubleArray.class, Double.class,
+    arr -> arr == null || arr.isEmpty() ? Double.NaN : arr.avg())
+
+// Get array length
+UDFRegistry.scalar("my_array_len", DoubleArray.class, Integer.class,
+    arr -> arr == null ? 0 : arr.length())
+
+// Get element at index
+UDFRegistry.binary("my_array_get", DoubleArray.class, Integer.class, Double.class,
+    (arr, idx) -> arr == null || idx < 0 || idx >= arr.length() ? Double.NaN : arr.get(idx))
+
+// Check if array contains a value
+UDFRegistry.binary("my_array_contains", DoubleArray.class, Double.class, Boolean.class,
+    (arr, val) -> {
+        if (arr == null || val == null) return false;
+        for (double v : arr) {
+            if (v == val) return true;
+        }
+        return false;
+    })
+```
+
+Note: Currently only `DoubleArray` is supported (1D arrays of DOUBLE). The `LongArray` wrapper is available for future use when LONG arrays become supported in QuestDB.
+
 ## Supported Types
 
 | Java Type | QuestDB Type | Signature Char |
@@ -88,6 +120,7 @@ UDFRegistry.scalar("my_year", Date.class, Integer.class,
 | `Character` / `char` | CHAR | A |
 | `Timestamp` | TIMESTAMP | N |
 | `Date` | DATE | M |
+| `DoubleArray` | DOUBLE[] | D[] |
 
 ## Complete Plugin Example
 
@@ -255,6 +288,13 @@ Plugins should declare QuestDB as a `provided` dependency since it's supplied by
 | `simple_min_of` | `(V)D` | Minimum of N values |
 | `simple_concat_all` | `(V)S` | Concatenate N strings |
 | `simple_coalesce` | `(V)D` | First non-null value |
+| `simple_array_sum` | `(D[])D` | Sum of array elements |
+| `simple_array_avg` | `(D[])D` | Average of array elements |
+| `simple_array_min` | `(D[])D` | Minimum of array elements |
+| `simple_array_max` | `(D[])D` | Maximum of array elements |
+| `simple_array_len` | `(D[])I` | Length of array |
+| `simple_array_get` | `(D[]I)D` | Get element at index |
+| `simple_array_contains` | `(D[]D)T` | Check if array contains value |
 
 ### Traditional API Functions
 

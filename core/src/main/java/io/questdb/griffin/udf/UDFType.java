@@ -36,6 +36,8 @@ import io.questdb.cairo.ColumnType;
  *   <li>{@link Character} / char - maps to CHAR</li>
  *   <li>{@link Timestamp} - maps to TIMESTAMP (microseconds since epoch)</li>
  *   <li>{@link Date} - maps to DATE (milliseconds since epoch)</li>
+ *   <li>{@link DoubleArray} - maps to ARRAY of DOUBLE (1D)</li>
+ *   <li>{@link LongArray} - maps to ARRAY of LONG (1D)</li>
  * </ul>
  */
 public final class UDFType {
@@ -74,6 +76,10 @@ public final class UDFType {
             return ColumnType.TIMESTAMP;
         } else if (clazz == Date.class) {
             return ColumnType.DATE;
+        } else if (clazz == DoubleArray.class) {
+            return ColumnType.encodeArrayType(ColumnType.DOUBLE, 1, true);
+        } else if (clazz == LongArray.class) {
+            return ColumnType.encodeArrayType(ColumnType.LONG, 1, true);
         }
         throw new IllegalArgumentException("Unsupported UDF type: " + clazz.getName());
     }
@@ -109,8 +115,39 @@ public final class UDFType {
             return 'N'; // Timestamp (N)
         } else if (clazz == Date.class) {
             return 'M'; // Date (M)
+        } else if (clazz == DoubleArray.class || clazz == LongArray.class) {
+            throw new IllegalArgumentException("Use toSignatureString for array types: " + clazz.getName());
         }
         throw new IllegalArgumentException("Unsupported UDF type: " + clazz.getName());
+    }
+
+    /**
+     * Get the signature string for a Java class.
+     * For scalar types, returns a single character string.
+     * For array types, returns the element type followed by "[]" (e.g., "D[]").
+     *
+     * @param clazz the Java class
+     * @return the signature string
+     * @throws IllegalArgumentException if the type is not supported
+     */
+    public static String toSignatureString(Class<?> clazz) {
+        if (clazz == DoubleArray.class) {
+            return "D[]"; // Double array
+        } else if (clazz == LongArray.class) {
+            return "L[]"; // Long array
+        }
+        // For non-array types, return single character as string
+        return String.valueOf(toSignatureChar(clazz));
+    }
+
+    /**
+     * Check if a class represents an array type.
+     *
+     * @param clazz the Java class
+     * @return true if the class is an array wrapper type
+     */
+    public static boolean isArrayType(Class<?> clazz) {
+        return clazz == DoubleArray.class || clazz == LongArray.class;
     }
 
     /**
@@ -118,13 +155,13 @@ public final class UDFType {
      *
      * @param name       function name
      * @param inputTypes input parameter types
-     * @return the signature string (e.g., "my_func(DD)")
+     * @return the signature string (e.g., "my_func(DD)" or "my_func(D[])")
      */
     public static String buildSignature(String name, Class<?>... inputTypes) {
         StringBuilder sb = new StringBuilder(name);
         sb.append('(');
         for (Class<?> inputType : inputTypes) {
-            sb.append(toSignatureChar(inputType));
+            sb.append(toSignatureString(inputType));
         }
         sb.append(')');
         return sb.toString();

@@ -396,6 +396,13 @@ public class PluginFunctionTest extends AbstractCairoTest {
                             PLUGIN_NAME + ".example_weighted_avg\n" +
                             PLUGIN_NAME + ".simple_abs\n" +
                             PLUGIN_NAME + ".simple_add_days\n" +
+                            PLUGIN_NAME + ".simple_array_avg\n" +
+                            PLUGIN_NAME + ".simple_array_contains\n" +
+                            PLUGIN_NAME + ".simple_array_get\n" +
+                            PLUGIN_NAME + ".simple_array_len\n" +
+                            PLUGIN_NAME + ".simple_array_max\n" +
+                            PLUGIN_NAME + ".simple_array_min\n" +
+                            PLUGIN_NAME + ".simple_array_sum\n" +
                             PLUGIN_NAME + ".simple_avg\n" +
                             PLUGIN_NAME + ".simple_ceil\n" +
                             PLUGIN_NAME + ".simple_coalesce\n" +
@@ -741,6 +748,95 @@ public class PluginFunctionTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testSimplifiedUDFArrayFunction() throws Exception {
+        // Test simplified UDF array functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Create a table with array column (using square bracket syntax)
+            execute("CREATE TABLE arrays_test (arr DOUBLE[], name STRING)");
+            execute("INSERT INTO arrays_test VALUES (array[1.0, 2.0, 3.0, 4.0, 5.0], 'test1')");
+            execute("INSERT INTO arrays_test VALUES (array[10.0, 20.0, 30.0], 'test2')");
+
+            // Test simple_array_sum - sum of array elements
+            assertSql(
+                    "name\tarray_sum\n" +
+                            "test1\t15.0\n" +
+                            "test2\t60.0\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_array_sum(arr) as array_sum FROM arrays_test ORDER BY name"
+            );
+
+            // Test simple_array_avg - average of array elements
+            assertSql(
+                    "name\tarray_avg\n" +
+                            "test1\t3.0\n" +
+                            "test2\t20.0\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_array_avg(arr) as array_avg FROM arrays_test ORDER BY name"
+            );
+
+            // Test simple_array_min - minimum of array elements
+            assertSql(
+                    "name\tarray_min\n" +
+                            "test1\t1.0\n" +
+                            "test2\t10.0\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_array_min(arr) as array_min FROM arrays_test ORDER BY name"
+            );
+
+            // Test simple_array_max - maximum of array elements
+            assertSql(
+                    "name\tarray_max\n" +
+                            "test1\t5.0\n" +
+                            "test2\t30.0\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_array_max(arr) as array_max FROM arrays_test ORDER BY name"
+            );
+
+            // Test simple_array_len - length of array
+            assertSql(
+                    "name\tarray_len\n" +
+                            "test1\t5\n" +
+                            "test2\t3\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_array_len(arr) as array_len FROM arrays_test ORDER BY name"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFArrayBinaryFunction() throws Exception {
+        // Test simplified UDF array binary functions (two arguments)
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Create a table with array column (using square bracket syntax)
+            execute("CREATE TABLE arrays_test2 (arr DOUBLE[], name STRING)");
+            execute("INSERT INTO arrays_test2 VALUES (array[1.0, 2.0, 3.0, 4.0, 5.0], 'test1')");
+
+            // Test simple_array_get - get element at index
+            assertSql(
+                    "name\telement0\telement2\telement4\n" +
+                            "test1\t1.0\t3.0\t5.0\n",
+                    "SELECT name, " +
+                            "\"" + PLUGIN_NAME + "\".simple_array_get(arr, 0) as element0, " +
+                            "\"" + PLUGIN_NAME + "\".simple_array_get(arr, 2) as element2, " +
+                            "\"" + PLUGIN_NAME + "\".simple_array_get(arr, 4) as element4 " +
+                            "FROM arrays_test2"
+            );
+
+            // Test simple_array_contains - check if array contains value
+            assertSql(
+                    "name\tcontains3\tcontains99\n" +
+                            "test1\ttrue\tfalse\n",
+                    "SELECT name, " +
+                            "\"" + PLUGIN_NAME + "\".simple_array_contains(arr, 3.0) as contains3, " +
+                            "\"" + PLUGIN_NAME + "\".simple_array_contains(arr, 99.0) as contains99 " +
+                            "FROM arrays_test2"
+            );
+        });
+    }
+
+    // Note: Long arrays are currently not supported in QuestDB (only DOUBLE arrays are enabled)
+    // The LongArray wrapper class is available for future use when LONG arrays become supported
 
     private static boolean containsIgnoreCase(io.questdb.std.ObjList<CharSequence> list, String value) {
         for (int i = 0, n = list.size(); i < n; i++) {

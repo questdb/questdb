@@ -21,6 +21,7 @@ package io.questdb.griffin.udf;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -103,6 +104,16 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
 
     @SuppressWarnings("unchecked")
     private I extractInput(Function arg, Record rec) {
+        // Handle array types first (special case - encoded column type)
+        if (inputType == DoubleArray.class) {
+            ArrayView arrayView = arg.getArray(rec);
+            return (I) (arrayView == null || arrayView.isNull() ? null : new DoubleArray(arrayView));
+        } else if (inputType == LongArray.class) {
+            ArrayView arrayView = arg.getArray(rec);
+            return (I) (arrayView == null || arrayView.isNull() ? null : new LongArray(arrayView));
+        }
+
+        // Handle scalar types via column type switch
         int inputColumnType = UDFType.toColumnType(inputType);
         return (I) switch (inputColumnType) {
             case ColumnType.DOUBLE -> {

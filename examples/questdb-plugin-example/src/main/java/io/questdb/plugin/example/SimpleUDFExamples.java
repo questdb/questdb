@@ -21,6 +21,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.udf.AggregateUDF;
 import io.questdb.griffin.udf.Date;
+import io.questdb.griffin.udf.DoubleArray;
 import io.questdb.griffin.udf.PluginFunctions;
 import io.questdb.griffin.udf.PluginLifecycle;
 import io.questdb.griffin.udf.Timestamp;
@@ -304,6 +305,52 @@ public class SimpleUDFExamples implements PluginLifecycle {
                                 throw new NullPointerException("Value must not be null");
                             }
                             return s.toUpperCase();
+                        }),
+
+                // ============================================
+                // ARRAY FUNCTIONS
+                // ============================================
+
+                // Sum all elements in a double array
+                UDFRegistry.scalar("simple_array_sum", DoubleArray.class, Double.class,
+                        arr -> arr == null || arr.isEmpty() ? Double.NaN : arr.sum()),
+
+                // Average of double array elements
+                UDFRegistry.scalar("simple_array_avg", DoubleArray.class, Double.class,
+                        arr -> arr == null || arr.isEmpty() ? Double.NaN : arr.avg()),
+
+                // Minimum of double array elements
+                UDFRegistry.scalar("simple_array_min", DoubleArray.class, Double.class,
+                        arr -> arr == null || arr.isEmpty() ? Double.NaN : arr.min()),
+
+                // Maximum of double array elements
+                UDFRegistry.scalar("simple_array_max", DoubleArray.class, Double.class,
+                        arr -> arr == null || arr.isEmpty() ? Double.NaN : arr.max()),
+
+                // Length of double array
+                UDFRegistry.scalar("simple_array_len", DoubleArray.class, Integer.class,
+                        arr -> arr == null ? 0 : arr.length()),
+
+                // Note: Long arrays are not yet supported in QuestDB (only DOUBLE arrays).
+                // The LongArray wrapper class is ready for when LONG arrays become supported.
+
+                // Get element at index from double array
+                UDFRegistry.binary("simple_array_get", DoubleArray.class, Integer.class, Double.class,
+                        (arr, idx) -> {
+                            if (arr == null || idx == null || idx < 0 || idx >= arr.length()) {
+                                return Double.NaN;
+                            }
+                            return arr.get(idx);
+                        }),
+
+                // Check if array contains a value
+                UDFRegistry.binary("simple_array_contains", DoubleArray.class, Double.class, Boolean.class,
+                        (arr, val) -> {
+                            if (arr == null || val == null) return false;
+                            for (double v : arr) {
+                                if (v == val) return true;
+                            }
+                            return false;
                         })
         );
     }
