@@ -36,12 +36,14 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
     CAIRO_CHECKPOINT_RECOVERY_ENABLED("cairo.checkpoint.recovery.enabled"),
+    CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES("cairo.checkpoint.recovery.rebuild.column.indexes"),
+    CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN("cairo.checkpoint.recovery.threadpool.min"),
+    CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX("cairo.checkpoint.recovery.threadpool.max"),
     CAIRO_MKDIR_MODE("cairo.mkdir.mode"),
     CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT("cairo.writer.alter.busy.wait.timeout"),
     CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT("cairo.writer.alter.max.wait.timeout"),
     CAIRO_WRITER_TICK_ROWS_COUNT("cairo.writer.tick.rows.count"),
     CAIRO_WRITER_COMMAND_QUEUE_CAPACITY("cairo.writer.command.queue.capacity"),
-    CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT("cairo.sql.backup.dir.datetime.format"),
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
     CAIRO_CREATE_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
@@ -187,7 +189,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY("cairo.sql.view.lexer.pool.capacity"),
     CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY("cairo.sql.explain.model.pool.capacity"),
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
-    CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
     CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
     CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL("cairo.mat.view.min.refresh.interval"),
@@ -205,8 +206,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_AUTO_SCALE_SYMBOL_CAPACITY("cairo.auto.scale.symbol.capacity"),
     CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD("cairo.auto.scale.symbol.capacity.threshold"),
     CAIRO_DETACHED_MKDIR_MODE("cairo.detached.mkdir.mode"),
-    CAIRO_SQL_BACKUP_DIR_TMP_NAME("cairo.sql.backup.dir.tmp.name"),
-    CAIRO_SQL_BACKUP_MKDIR_MODE("cairo.sql.backup.mkdir.mode"),
     CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY("cairo.column.indexer.queue.capacity"),
     CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY("cairo.vector.aggregate.queue.capacity"),
     CAIRO_O3_CALLBACK_QUEUE_CAPACITY("cairo.o3.callback.queue.capacity"),
@@ -634,7 +633,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_RMDIR_MAX_DEPTH("cairo.rmdir.max.depth"),
     CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled"),
     CAIRO_TTL_USE_WALL_CLOCK("cairo.ttl.use.wall.clock"),
-    DEBUG_CAIRO_POOL_SEGMENT_SIZE("debug.cairo.pool.segment.size", false, true);
+    DEBUG_CAIRO_POOL_SEGMENT_SIZE("debug.cairo.pool.segment.size", false, true),
+    DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true);
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
