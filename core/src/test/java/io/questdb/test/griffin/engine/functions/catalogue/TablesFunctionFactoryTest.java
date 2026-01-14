@@ -235,13 +235,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
 
-            // Before any writes, table_row_count and table_max_timestamp should be null
+            // Before any writes, table_row_count and table_last_write_timestamp should be null
             assertSql(
                     """
-                            table_name\ttable_row_count\ttable_max_timestamp
+                            table_name\ttable_row_count\ttable_last_write_timestamp
                             test_writes\tnull\t
                             """,
-                    "select table_name, table_row_count, table_max_timestamp from tables() where table_name = 'test_writes'"
+                    "select table_name, table_row_count, table_last_write_timestamp from tables() where table_name = 'test_writes'"
             );
 
             // Insert rows and drain WAL
@@ -265,7 +265,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                     "select table_name, table_row_count from tables() where table_name = 'test_writes'"
             );
 
-            // Verify table_max_timestamp is within expected range
+            // Verify table_last_write_timestamp is within expected range
             long lastWriteTimestamp = tracker.getWriteTimestamp(tableToken);
             Assert.assertTrue("Timestamp should be >= beforeWrite", lastWriteTimestamp >= beforeWrite);
             Assert.assertTrue("Timestamp should be <= afterWrite", lastWriteTimestamp <= afterWrite);

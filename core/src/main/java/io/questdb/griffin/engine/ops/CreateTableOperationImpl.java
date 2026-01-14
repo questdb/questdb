@@ -87,6 +87,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int partitionBy;
     private int partitionByPosition;
     private CopyDataProgressReporter reporter = CopyDataProgressReporter.NOOP;
+    private int selectSqlScanDirection;
     private int selectTextPosition;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private String tableName;
@@ -376,6 +377,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public int getSelectSqlScanDirection() {
+        return selectSqlScanDirection;
+    }
+
+    @Override
     public String getSelectText() {
         return selectText;
     }
@@ -593,6 +599,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             if (timestampIndex > -1 && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
                 this.timestampIndex = timestampIndex;
                 timestampType = metadata.getTimestampType();
+                this.selectSqlScanDirection = scanDirection;
             }
         } else {
             this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);
