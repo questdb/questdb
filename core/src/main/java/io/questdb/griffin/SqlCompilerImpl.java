@@ -2302,6 +2302,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (isTtlKeyword(tok)) {
                     final int ttlValuePos = lexer.getPosition();
                     final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                    // todo: is it ok to use metadata cache here?
+                    //  breaks the idea that metadata cache is for display only
+                    //  could be just:
+                    //  try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                    //      PartitionBy.validateTtlGranularity(metadata.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
+                    //  }
                     try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                         CairoTable table = metadataRO.getTable(tableToken);
                         assert table != null : "CairoTable == null after we already checked it exists";
@@ -4786,6 +4792,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
     }
 
+    protected void compileAlterMatViewSetExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'ttl' or 'refresh' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
+    }
+
+    protected void compileAlterTableSetExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'param', 'ttl' or 'type' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl' or 'type' expected");
+    }
+
     protected void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         int rollbackPosition = lexer.lastTokenPosition();
         CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
@@ -4833,20 +4853,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final String viewSql = parser.parseViewSql(lexer, this);
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
-    }
-
-    protected void compileAlterMatViewSetExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
-        if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'ttl' or 'refresh' expected");
-        }
-        throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
-    }
-
-    protected void compileAlterTableSetExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
-        if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'param', 'ttl' or 'type' expected");
-        }
-        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl' or 'type' expected");
     }
 
     protected void compileDropExt(
