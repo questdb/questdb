@@ -2945,6 +2945,102 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testLargeBatchRejectedAfterRename() throws Exception {
+        // This test verifies that when a table is renamed after the ILP cache
+        // is populated (via an initial flush), subsequent large batch flushes
+        // on the same connection are rejected with a retryable 503 error.
+        // The large batch should NOT be partially committed to either table.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                String tableName = "batch_data";
+                String renamedTableName = "batch_data_old";
+                int batchSize = 100_000;
+
+                // Create the initial table
+                serverMain.execute("CREATE TABLE " + tableName + " (" +
+                        "sensor symbol, " +
+                        "temperature double, " +
+                        "ts timestamp" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(0) // Disable automatic retries
+                        .build()
+                ) {
+                    // First flush to populate the cache
+                    sender.table(tableName)
+                            .symbol("sensor", "init")
+                            .doubleColumn("temperature", 0.0)
+                            .at(1L, ChronoUnit.NANOS);
+                    sender.flush();
+
+                    // Wait for initial data to be committed
+                    serverMain.awaitTable(tableName);
+                    serverMain.assertSql("SELECT count() FROM " + tableName, "count\n1\n");
+
+                    // Now rename the table - this increments the generation counter
+                    serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                    // Create a new table with the original name
+                    serverMain.execute("CREATE TABLE " + tableName + " (" +
+                            "sensor symbol, " +
+                            "temperature double, " +
+                            "ts timestamp" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                    // Build a large batch and flush. The error can occur either during
+                    // batch building (auto-flush when buffer fills) or during explicit flush.
+                    try {
+                        for (int i = 0; i < batchSize; i++) {
+                            sender.table(tableName)
+                                    .symbol("sensor", "sensor_" + (i % 100))
+                                    .doubleColumn("temperature", 20.0 + (i % 30))
+                                    .at(1000000000L + i, ChronoUnit.NANOS);
+                        }
+                        sender.flush();
+                        Assert.fail("Expected LineSenderException due to table rename");
+                    } catch (LineSenderException e) {
+                        // Expected: server returns 503 when table rename is detected
+                        Assert.assertTrue("Expected retryable error message, got: " + e.getMessage(),
+                                e.getMessage().contains("retry") || e.getMessage().contains("503")
+                                        || e.getMessage().contains("Service Unavailable"));
+                    }
+                }
+
+                // The renamed table should only have the initial row (1 row)
+                // The large batch should have been rejected entirely
+                serverMain.assertSql("SELECT count() FROM " + renamedTableName, "count\n1\n");
+
+                // The new table should be empty (large batch was rejected)
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n0\n");
+
+                // Now retry with a new sender - large batch should succeed
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    for (int i = 0; i < batchSize; i++) {
+                        sender.table(tableName)
+                                .symbol("sensor", "sensor_" + (i % 100))
+                                .doubleColumn("temperature", 20.0 + (i % 30))
+                                .at(1000000000L + i, ChronoUnit.NANOS);
+                    }
+                    sender.flush();
+                }
+
+                // Wait for WAL to apply
+                serverMain.awaitTable(tableName);
+
+                // Verify the retry succeeded with all rows
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n" + batchSize + "\n");
+            }
+        });
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
         if (currentDim == shape.length - 1) {
