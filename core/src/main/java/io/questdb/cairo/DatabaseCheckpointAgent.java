@@ -882,8 +882,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                 restorePreferencesStore(ff, dstPath, rootLen, srcPath, snapshotDbLen);
                 removeNonCheckpointedTableDirs(ff, dstPath, rootLen, srcPath, snapshotDbLen);
-            } catch (Throwable e){
-                LOG.error().$("error during checkpoint recovery, aborting parallel tasks [error=").$(e).I$();
+            } catch (Throwable e) {
+                LOG.error().$("error during checkpoint recovery, aborting async tasks [error=").$(e).I$();
                 recoveryAgent.abortParallelTasks();
                 recoveryAgent.finalizeParallelTasks();
                 throw e;
