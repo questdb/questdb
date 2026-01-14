@@ -19,16 +19,19 @@
 package io.questdb.griffin.udf;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -86,6 +89,8 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
             case ColumnType.LONG -> createLongFunction(left, right);
             case ColumnType.INT -> createIntFunction(left, right);
             case ColumnType.STRING -> createStrFunction(left, right);
+            case ColumnType.TIMESTAMP -> createTimestampFunction(left, right);
+            case ColumnType.DATE -> createDateFunction(left, right);
             default -> throw new IllegalArgumentException("Unsupported output type: " + outputType);
         };
     }
@@ -104,6 +109,26 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
 
     private Function createStrFunction(Function left, Function right) {
         return new UDFBinaryStrFunction(left, right);
+    }
+
+    private Function createTimestampFunction(Function left, Function right) {
+        return new UDFBinaryTimestampFunction(left, right);
+    }
+
+    private Function createDateFunction(Function left, Function right) {
+        return new UDFBinaryDateFunction(left, right);
+    }
+
+    private O safeCompute(I1 input1, I2 input2) {
+        try {
+            return udf.compute(input1, input2);
+        } catch (Exception e) {
+            throw CairoException.nonCritical()
+                    .put("UDF '")
+                    .put(name)
+                    .put("' threw exception: ")
+                    .put(e.getMessage() != null ? e.getMessage() : e.getClass().getName());
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -131,6 +156,14 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
                 float v = arg.getFloat(rec);
                 yield Float.isNaN(v) ? null : v;
             }
+            case ColumnType.TIMESTAMP -> {
+                long v = arg.getTimestamp(rec);
+                yield v == Long.MIN_VALUE ? null : new Timestamp(v);
+            }
+            case ColumnType.DATE -> {
+                long v = arg.getDate(rec);
+                yield v == Long.MIN_VALUE ? null : new Date(v);
+            }
             default -> throw new IllegalArgumentException("Unsupported input type: " + type);
         };
     }
@@ -148,7 +181,7 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         public double getDouble(Record rec) {
             I1 input1 = extractInput(left, rec, inputType1);
             I2 input2 = extractInput(right, rec, inputType2);
-            O result = udf.compute(input1, input2);
+            O result = safeCompute(input1, input2);
             return result == null ? Double.NaN : ((Number) result).doubleValue();
         }
 
@@ -181,7 +214,7 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         public int getInt(Record rec) {
             I1 input1 = extractInput(left, rec, inputType1);
             I2 input2 = extractInput(right, rec, inputType2);
-            O result = udf.compute(input1, input2);
+            O result = safeCompute(input1, input2);
             return result == null ? Integer.MIN_VALUE : ((Number) result).intValue();
         }
 
@@ -219,7 +252,7 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         public long getLong(Record rec) {
             I1 input1 = extractInput(left, rec, inputType1);
             I2 input2 = extractInput(right, rec, inputType2);
-            O result = udf.compute(input1, input2);
+            O result = safeCompute(input1, input2);
             return result == null ? Long.MIN_VALUE : ((Number) result).longValue();
         }
 
@@ -264,7 +297,7 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         public CharSequence getStrA(Record rec) {
             I1 input1 = extractInput(left, rec, inputType1);
             I2 input2 = extractInput(right, rec, inputType2);
-            O result = udf.compute(input1, input2);
+            O result = safeCompute(input1, input2);
             if (result == null) {
                 return null;
             }
@@ -277,7 +310,7 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         public CharSequence getStrB(Record rec) {
             I1 input1 = extractInput(left, rec, inputType1);
             I2 input2 = extractInput(right, rec, inputType2);
-            O result = udf.compute(input1, input2);
+            O result = safeCompute(input1, input2);
             if (result == null) {
                 return null;
             }
@@ -289,6 +322,85 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+    }
+
+    private class UDFBinaryTimestampFunction extends TimestampFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
+
+        UDFBinaryTimestampFunction(Function left, Function right) {
+            super(ColumnType.TIMESTAMP);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            I1 input1 = extractInput(left, rec, inputType1);
+            I2 input2 = extractInput(right, rec, inputType2);
+            O result = safeCompute(input1, input2);
+            if (result == null) {
+                return Long.MIN_VALUE;
+            }
+            if (result instanceof Timestamp) {
+                return ((Timestamp) result).getMicros();
+            }
+            return ((Number) result).longValue();
+        }
+    }
+
+    private class UDFBinaryDateFunction extends DateFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
+
+        UDFBinaryDateFunction(Function left, Function right) {
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            I1 input1 = extractInput(left, rec, inputType1);
+            I2 input2 = extractInput(right, rec, inputType2);
+            O result = safeCompute(input1, input2);
+            if (result == null) {
+                return Long.MIN_VALUE;
+            }
+            if (result instanceof Date) {
+                return ((Date) result).getMillis();
+            }
+            return ((Number) result).longValue();
         }
     }
 }

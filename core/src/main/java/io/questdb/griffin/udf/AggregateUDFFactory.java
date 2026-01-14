@@ -20,6 +20,7 @@ package io.questdb.griffin.udf;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -120,6 +121,30 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         };
     }
 
+    private void safeAccumulate(AggregateUDF<I, O> udf, I input) {
+        try {
+            udf.accumulate(input);
+        } catch (Exception e) {
+            throw CairoException.nonCritical()
+                    .put("UDF '")
+                    .put(name)
+                    .put("' accumulate() threw exception: ")
+                    .put(e.getMessage() != null ? e.getMessage() : e.getClass().getName());
+        }
+    }
+
+    private O safeResult(AggregateUDF<I, O> udf) {
+        try {
+            return udf.result();
+        } catch (Exception e) {
+            throw CairoException.nonCritical()
+                    .put("UDF '")
+                    .put(name)
+                    .put("' result() threw exception: ")
+                    .put(e.getMessage() != null ? e.getMessage() : e.getClass().getName());
+        }
+    }
+
     private class DoubleAggregateFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
         private final Function arg;
         private final AggregateUDF<I, O> udf;
@@ -139,9 +164,9 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             udf.reset();
             I input = extractInput(arg, record);
-            udf.accumulate(input);
+            safeAccumulate(udf, input);
             // Store current result
-            O result = udf.result();
+            O result = safeResult(udf);
             mapValue.putDouble(valueIndex, result == null ? Double.NaN : ((Number) result).doubleValue());
         }
 
@@ -150,8 +175,8 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
             // Restore state from map (for simplicity, we re-accumulate)
             // Note: For production, we'd store intermediate state
             I input = extractInput(arg, record);
-            udf.accumulate(input);
-            O result = udf.result();
+            safeAccumulate(udf, input);
+            O result = safeResult(udf);
             mapValue.putDouble(valueIndex, result == null ? Double.NaN : ((Number) result).doubleValue());
         }
 
@@ -216,16 +241,16 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             udf.reset();
             I input = extractInput(arg, record);
-            udf.accumulate(input);
-            O result = udf.result();
+            safeAccumulate(udf, input);
+            O result = safeResult(udf);
             mapValue.putLong(valueIndex, result == null ? Long.MIN_VALUE : ((Number) result).longValue());
         }
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             I input = extractInput(arg, record);
-            udf.accumulate(input);
-            O result = udf.result();
+            safeAccumulate(udf, input);
+            O result = safeResult(udf);
             mapValue.putLong(valueIndex, result == null ? Long.MIN_VALUE : ((Number) result).longValue());
         }
 
@@ -290,16 +315,16 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             udf.reset();
             I input = extractInput(arg, record);
-            udf.accumulate(input);
-            O result = udf.result();
+            safeAccumulate(udf, input);
+            O result = safeResult(udf);
             mapValue.putInt(valueIndex, result == null ? Integer.MIN_VALUE : ((Number) result).intValue());
         }
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             I input = extractInput(arg, record);
-            udf.accumulate(input);
-            O result = udf.result();
+            safeAccumulate(udf, input);
+            O result = safeResult(udf);
             mapValue.putInt(valueIndex, result == null ? Integer.MIN_VALUE : ((Number) result).intValue());
         }
 

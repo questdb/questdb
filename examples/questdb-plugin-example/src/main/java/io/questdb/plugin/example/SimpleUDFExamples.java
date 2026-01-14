@@ -17,10 +17,17 @@
 
 package io.questdb.plugin.example;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.udf.AggregateUDF;
+import io.questdb.griffin.udf.Date;
+import io.questdb.griffin.udf.PluginFunctions;
+import io.questdb.griffin.udf.PluginLifecycle;
+import io.questdb.griffin.udf.Timestamp;
 import io.questdb.griffin.udf.UDFRegistry;
 import io.questdb.std.ObjList;
+
+import java.time.ZoneOffset;
 
 /**
  * Examples of using the simplified UDF API.
@@ -58,7 +65,30 @@ import io.questdb.std.ObjList;
  * FunctionFactory abs = UDFRegistry.scalar("abs", Integer.class, Integer.class, Math::abs);
  * }</pre>
  */
-public class SimpleUDFExamples {
+@PluginFunctions(
+        description = "Simplified UDF examples: math, string, and aggregate functions",
+        version = "1.0.0",
+        author = "QuestDB",
+        license = "Apache-2.0"
+)
+public class SimpleUDFExamples implements PluginLifecycle {
+
+    // Track whether onLoad was called (for demonstration)
+    private static boolean initialized = false;
+
+    @Override
+    public void onLoad(CairoConfiguration configuration) {
+        initialized = true;
+        // Example: could initialize external resources, connections, etc.
+        System.out.println("SimpleUDFExamples plugin loaded");
+    }
+
+    @Override
+    public void onUnload() {
+        initialized = false;
+        // Example: could clean up resources, close connections, etc.
+        System.out.println("SimpleUDFExamples plugin unloaded");
+    }
 
     /**
      * Get all example functions using the simplified API.
@@ -124,6 +154,52 @@ public class SimpleUDFExamples {
                         b -> b == null ? null : !b),
 
                 // ============================================
+                // TIMESTAMP FUNCTIONS
+                // ============================================
+
+                // Extract hour from timestamp (0-23)
+                UDFRegistry.scalar("simple_hour", Timestamp.class, Integer.class,
+                        ts -> ts == null ? null : ts.toInstant().atZone(ZoneOffset.UTC).getHour()),
+
+                // Extract day of month from timestamp (1-31)
+                UDFRegistry.scalar("simple_day", Timestamp.class, Integer.class,
+                        ts -> ts == null ? null : ts.toInstant().atZone(ZoneOffset.UTC).getDayOfMonth()),
+
+                // Extract year from timestamp
+                UDFRegistry.scalar("simple_year", Timestamp.class, Integer.class,
+                        ts -> ts == null ? null : ts.toInstant().atZone(ZoneOffset.UTC).getYear()),
+
+                // Add days to timestamp
+                UDFRegistry.binary("simple_add_days", Timestamp.class, Integer.class, Timestamp.class,
+                        (ts, days) -> {
+                            if (ts == null || days == null) return null;
+                            return new Timestamp(ts.getMicros() + days * 24L * 60L * 60L * 1_000_000L);
+                        }),
+
+                // ============================================
+                // DATE FUNCTIONS
+                // ============================================
+
+                // Extract year from date
+                UDFRegistry.scalar("simple_date_year", Date.class, Integer.class,
+                        d -> d == null ? null : d.toLocalDate().getYear()),
+
+                // Extract month from date (1-12)
+                UDFRegistry.scalar("simple_date_month", Date.class, Integer.class,
+                        d -> d == null ? null : d.toLocalDate().getMonthValue()),
+
+                // Extract day of month from date (1-31)
+                UDFRegistry.scalar("simple_date_day", Date.class, Integer.class,
+                        d -> d == null ? null : d.toLocalDate().getDayOfMonth()),
+
+                // Add months to date
+                UDFRegistry.binary("simple_date_add_months", Date.class, Integer.class, Date.class,
+                        (d, months) -> {
+                            if (d == null || months == null) return null;
+                            return Date.fromLocalDate(d.toLocalDate().plusMonths(months));
+                        }),
+
+                // ============================================
                 // BINARY FUNCTIONS (two arguments)
                 // ============================================
 
@@ -169,7 +245,66 @@ public class SimpleUDFExamples {
 
                 // Max - simple aggregate
                 UDFRegistry.aggregate("simple_max", Double.class, Double.class,
-                        MaxAggregate::new)
+                        MaxAggregate::new),
+
+                // ============================================
+                // VARIADIC FUNCTIONS (N arguments)
+                // ============================================
+
+                // Return maximum of N values
+                UDFRegistry.varargs("simple_max_of", Double.class, Double.class,
+                        args -> args.stream()
+                                .filter(d -> d != null)
+                                .max(Double::compare)
+                                .orElse(null)),
+
+                // Return minimum of N values
+                UDFRegistry.varargs("simple_min_of", Double.class, Double.class,
+                        args -> args.stream()
+                                .filter(d -> d != null)
+                                .min(Double::compare)
+                                .orElse(null)),
+
+                // Concatenate N strings
+                UDFRegistry.varargs("simple_concat_all", String.class, String.class,
+                        args -> {
+                            StringBuilder sb = new StringBuilder();
+                            for (String s : args) {
+                                if (s != null) {
+                                    sb.append(s);
+                                }
+                            }
+                            return sb.length() > 0 ? sb.toString() : null;
+                        }),
+
+                // Return first non-null value (like coalesce)
+                UDFRegistry.varargs("simple_coalesce", Double.class, Double.class,
+                        args -> args.stream()
+                                .filter(d -> d != null)
+                                .findFirst()
+                                .orElse(null)),
+
+                // ============================================
+                // ERROR HANDLING TEST FUNCTIONS
+                // ============================================
+
+                // Function that throws on negative input (for testing error handling)
+                UDFRegistry.scalar("simple_throw_on_negative", Double.class, Double.class,
+                        x -> {
+                            if (x != null && x < 0) {
+                                throw new IllegalArgumentException("Negative value not allowed: " + x);
+                            }
+                            return x;
+                        }),
+
+                // Function that throws on null (for testing error handling)
+                UDFRegistry.scalar("simple_require_nonnull", String.class, String.class,
+                        s -> {
+                            if (s == null) {
+                                throw new NullPointerException("Value must not be null");
+                            }
+                            return s.toUpperCase();
+                        })
         );
     }
 

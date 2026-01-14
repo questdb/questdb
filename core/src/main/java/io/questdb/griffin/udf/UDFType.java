@@ -34,6 +34,8 @@ import io.questdb.cairo.ColumnType;
  *   <li>{@link Short} / short - maps to SHORT</li>
  *   <li>{@link Byte} / byte - maps to BYTE</li>
  *   <li>{@link Character} / char - maps to CHAR</li>
+ *   <li>{@link Timestamp} - maps to TIMESTAMP (microseconds since epoch)</li>
+ *   <li>{@link Date} - maps to DATE (milliseconds since epoch)</li>
  * </ul>
  */
 public final class UDFType {
@@ -68,6 +70,10 @@ public final class UDFType {
             return ColumnType.BYTE;
         } else if (clazz == Character.class || clazz == char.class) {
             return ColumnType.CHAR;
+        } else if (clazz == Timestamp.class) {
+            return ColumnType.TIMESTAMP;
+        } else if (clazz == Date.class) {
+            return ColumnType.DATE;
         }
         throw new IllegalArgumentException("Unsupported UDF type: " + clazz.getName());
     }
@@ -99,6 +105,10 @@ public final class UDFType {
             return 'B'; // Byte
         } else if (clazz == Character.class || clazz == char.class) {
             return 'A'; // Char (A)
+        } else if (clazz == Timestamp.class) {
+            return 'N'; // Timestamp (N)
+        } else if (clazz == Date.class) {
+            return 'M'; // Date (M)
         }
         throw new IllegalArgumentException("Unsupported UDF type: " + clazz.getName());
     }

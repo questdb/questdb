@@ -1,32 +1,173 @@
 # QuestDB Plugin Example
 
-This is an example plugin demonstrating how to create custom functions for QuestDB. It includes examples of different function types:
+This is an example plugin demonstrating how to create custom functions for QuestDB using both the traditional FunctionFactory interface and the new simplified UDF API.
 
-## Function Types Included
+## Simplified UDF API (Recommended)
 
-### 1. Scalar Function: `example_square(D)`
-A simple row-by-row transformation that squares a double value.
+The simplified UDF API allows you to create functions with minimal boilerplate using Java lambdas:
 
-```sql
-SELECT "questdb-plugin-example-1.0.0".example_square(4.0);
--- Returns: 16.0
+### Scalar Functions (One-Liners!)
+
+```java
+// Square a number - just one line!
+UDFRegistry.scalar("my_square", Double.class, Double.class, x -> x * x)
+
+// String to uppercase
+UDFRegistry.scalar("my_upper", String.class, String.class,
+    s -> s == null ? null : s.toUpperCase())
+
+// Absolute value using method reference
+UDFRegistry.scalar("my_abs", Double.class, Double.class, Math::abs)
 ```
 
-### 2. String Function: `example_reverse(S)`
-A string transformation function that reverses a string.
+### Binary Functions (Two Arguments)
 
-```sql
-SELECT "questdb-plugin-example-1.0.0".example_reverse('hello');
--- Returns: 'olleh'
+```java
+// Power function
+UDFRegistry.binary("my_power", Double.class, Double.class, Double.class,
+    (base, exp) -> Math.pow(base, exp))
+
+// String concatenation
+UDFRegistry.binary("my_concat", String.class, String.class, String.class,
+    (a, b) -> (a == null ? "" : a) + (b == null ? "" : b))
 ```
 
-### 3. Aggregate Function: `example_weighted_avg(DD)`
-A GROUP BY function that computes weighted averages.
+### Variadic Functions (N Arguments)
 
-```sql
-SELECT category, "questdb-plugin-example-1.0.0".example_weighted_avg(value, weight)
-FROM data
-GROUP BY category;
+```java
+// Maximum of any number of values
+UDFRegistry.varargs("my_max", Double.class, Double.class,
+    args -> args.stream().filter(Objects::nonNull).max(Double::compare).orElse(null))
+
+// Concatenate any number of strings
+UDFRegistry.varargs("my_concat_all", String.class, String.class,
+    args -> args.stream().filter(Objects::nonNull).collect(Collectors.joining()))
+```
+
+### Aggregate Functions (GROUP BY)
+
+```java
+// Sum aggregate
+UDFRegistry.aggregate("my_sum", Double.class, Double.class,
+    () -> new AggregateUDF<Double, Double>() {
+        private double sum = 0;
+        public void accumulate(Double v) { if (v != null) sum += v; }
+        public Double result() { return sum; }
+        public void reset() { sum = 0; }
+    })
+```
+
+### Timestamp and Date Functions
+
+```java
+// Extract hour from timestamp
+UDFRegistry.scalar("my_hour", Timestamp.class, Integer.class,
+    ts -> ts == null ? null : ts.toInstant().atZone(ZoneOffset.UTC).getHour())
+
+// Add days to timestamp
+UDFRegistry.binary("my_add_days", Timestamp.class, Integer.class, Timestamp.class,
+    (ts, days) -> new Timestamp(ts.getMicros() + days * 24L * 60L * 60L * 1_000_000L))
+
+// Extract year from date
+UDFRegistry.scalar("my_year", Date.class, Integer.class,
+    d -> d == null ? null : d.toLocalDate().getYear())
+```
+
+## Supported Types
+
+| Java Type | QuestDB Type | Signature Char |
+|-----------|--------------|----------------|
+| `Double` / `double` | DOUBLE | D |
+| `Long` / `long` | LONG | L |
+| `Integer` / `int` | INT | I |
+| `String` | STRING | S |
+| `Boolean` / `boolean` | BOOLEAN | T |
+| `Float` / `float` | FLOAT | F |
+| `Short` / `short` | SHORT | E |
+| `Byte` / `byte` | BYTE | B |
+| `Character` / `char` | CHAR | A |
+| `Timestamp` | TIMESTAMP | N |
+| `Date` | DATE | M |
+
+## Complete Plugin Example
+
+```java
+@PluginFunctions(
+    description = "My custom functions",
+    version = "1.0.0",
+    author = "My Company",
+    license = "Apache-2.0"
+)
+public class MyPlugin implements PluginLifecycle {
+
+    // Optional: Initialize resources when plugin loads
+    @Override
+    public void onLoad(CairoConfiguration configuration) {
+        // Initialize connections, caches, etc.
+    }
+
+    // Optional: Clean up when plugin unloads
+    @Override
+    public void onUnload() {
+        // Close connections, clean up resources
+    }
+
+    // Required: Return list of function factories
+    public static ObjList<FunctionFactory> getFunctions() {
+        return UDFRegistry.functions(
+            UDFRegistry.scalar("my_square", Double.class, Double.class, x -> x * x),
+            UDFRegistry.scalar("my_upper", String.class, String.class, String::toUpperCase),
+            UDFRegistry.binary("my_power", Double.class, Double.class, Double.class, Math::pow)
+        );
+    }
+}
+```
+
+## Error Handling
+
+UDF exceptions are automatically caught and wrapped in meaningful error messages:
+
+```java
+UDFRegistry.scalar("my_safe_divide", Double.class, Double.class,
+    x -> {
+        if (x == 0) {
+            throw new IllegalArgumentException("Cannot divide by zero");
+        }
+        return 1.0 / x;
+    })
+```
+
+When called with `my_safe_divide(0)`, the error message will be:
+`UDF 'my_safe_divide' threw exception: Cannot divide by zero`
+
+## Traditional FunctionFactory API
+
+For more control, you can still use the traditional FunctionFactory interface:
+
+### Scalar Function Example
+
+```java
+public class MySquareFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() { return "my_square(D)"; }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args,
+            IntList argPositions, CairoConfiguration config,
+            SqlExecutionContext ctx) {
+        return new MySquareFunction(args.getQuick(0));
+    }
+
+    private static class MySquareFunction extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        public MySquareFunction(Function arg) { this.arg = arg; }
+        @Override public Function getArg() { return arg; }
+        @Override public double getDouble(Record rec) {
+            double v = arg.getDouble(rec);
+            return Double.isNaN(v) ? Double.NaN : v * v;
+        }
+    }
+}
 ```
 
 ## Building
@@ -62,7 +203,7 @@ SHOW PLUGINS;
 ### Use plugin functions
 Plugin functions use qualified names: `"plugin-name".function_name`
 ```sql
-SELECT "questdb-plugin-example-1.0.0".example_square(price) FROM trades;
+SELECT "questdb-plugin-example-1.0.0".simple_square(price) FROM trades;
 ```
 
 ### List plugin functions
@@ -73,76 +214,6 @@ SELECT * FROM functions() WHERE name LIKE 'questdb-plugin%';
 ### Unload the plugin
 ```sql
 UNLOAD PLUGIN 'questdb-plugin-example-1.0.0';
-```
-
-## Creating Your Own Plugin
-
-### FunctionFactory Interface
-
-All custom functions implement `FunctionFactory`:
-
-```java
-public interface FunctionFactory {
-    // Function signature: name(types)
-    // Types: D=double, I=int, L=long, S=string, T=boolean, etc.
-    String getSignature();
-
-    // Mark as GROUP BY function
-    default boolean isGroupBy() { return false; }
-
-    // Mark as window function
-    default boolean isWindow() { return false; }
-
-    // Mark as cursor (table) function
-    default boolean isCursor() { return false; }
-
-    // Create function instance
-    Function newInstance(int position, ObjList<Function> args,
-                        IntList argPositions, CairoConfiguration config,
-                        SqlExecutionContext ctx) throws SqlException;
-}
-```
-
-### Scalar Functions
-
-Extend the appropriate base class (`DoubleFunction`, `IntFunction`, `StrFunction`, etc.) and implement `UnaryFunction` or `BinaryFunction`:
-
-```java
-private static class MyFunction extends DoubleFunction implements UnaryFunction {
-    private final Function arg;
-
-    @Override
-    public double getDouble(Record rec) {
-        return transform(arg.getDouble(rec));
-    }
-}
-```
-
-### GROUP BY Functions
-
-Implement `GroupByFunction` and its required methods:
-
-- `initValueTypes()` - Register columns for storing state
-- `computeFirst()` - Handle first row in a group
-- `computeNext()` - Handle subsequent rows
-- `merge()` - Merge partial results (for parallel execution)
-- `setNull()` - Handle null values
-
-### String Functions (Zero-GC Pattern)
-
-Use `StringSink` buffers for efficient, allocation-free operation:
-
-```java
-private final StringSink sinkA = new StringSink();
-private final StringSink sinkB = new StringSink();
-
-@Override
-public CharSequence getStrA(Record rec) {
-    // Process into sinkA
-    sinkA.clear();
-    // ... process string ...
-    return sinkA;
-}
 ```
 
 ## Dependencies
@@ -157,6 +228,41 @@ Plugins should declare QuestDB as a `provided` dependency since it's supplied by
     <scope>provided</scope>
 </dependency>
 ```
+
+## Functions Included in This Example
+
+### Simplified UDF API Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `simple_square` | `(D)D` | Square a number |
+| `simple_cube` | `(D)D` | Cube a number |
+| `simple_abs` | `(D)D` | Absolute value |
+| `simple_sqrt` | `(D)D` | Square root |
+| `simple_reverse` | `(S)S` | Reverse a string |
+| `simple_upper` | `(S)S` | Uppercase |
+| `simple_lower` | `(S)S` | Lowercase |
+| `simple_power` | `(DD)D` | Power (base^exp) |
+| `simple_mod` | `(LL)L` | Modulo |
+| `simple_sum` | `(D)D` | Sum aggregate |
+| `simple_avg` | `(D)D` | Average aggregate |
+| `simple_min` | `(D)D` | Minimum aggregate |
+| `simple_max` | `(D)D` | Maximum aggregate |
+| `simple_hour` | `(N)I` | Extract hour from timestamp |
+| `simple_day` | `(N)I` | Extract day from timestamp |
+| `simple_year` | `(N)I` | Extract year from timestamp |
+| `simple_max_of` | `(V)D` | Maximum of N values |
+| `simple_min_of` | `(V)D` | Minimum of N values |
+| `simple_concat_all` | `(V)S` | Concatenate N strings |
+| `simple_coalesce` | `(V)D` | First non-null value |
+
+### Traditional API Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `example_square` | `(D)D` | Square a number |
+| `example_reverse` | `(S)S` | Reverse a string |
+| `example_weighted_avg` | `(DD)D` | Weighted average aggregate |
 
 ## License
 

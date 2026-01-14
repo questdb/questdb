@@ -21,7 +21,7 @@
         <maven.compiler.target>11</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- Use the current QuestDB version - update this when building -->
-        <questdb.version>9.3.0</questdb.version>
+        <questdb.version>9.3.1-SNAPSHOT</questdb.version>
         <jetbrains.annotations.version>23.0.0</jetbrains.annotations.version>
     </properties>
 

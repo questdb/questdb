@@ -173,6 +173,39 @@ public final class UDFRegistry {
     }
 
     /**
+     * Create a variadic (N-ary) scalar function factory that accepts any number of arguments.
+     * <p>
+     * All arguments must be of the same type. The function receives a list of all values.
+     * <p>
+     * Example:
+     * <pre>{@code
+     * // Return the maximum of any number of values
+     * FunctionFactory maxOf = UDFRegistry.varargs("my_max", Double.class, Double.class,
+     *     args -> args.stream().filter(Objects::nonNull).max(Double::compare).orElse(null));
+     *
+     * // Concatenate any number of strings
+     * FunctionFactory concatAll = UDFRegistry.varargs("concat_all", String.class, String.class,
+     *     args -> args.stream().filter(Objects::nonNull).collect(Collectors.joining()));
+     * }</pre>
+     *
+     * @param name       function name (used in SQL)
+     * @param inputType  input Java type for all arguments
+     * @param outputType output Java type
+     * @param udf        the function implementation
+     * @param <I>        input element type
+     * @param <O>        output type
+     * @return a FunctionFactory that can be registered with QuestDB
+     */
+    public static <I, O> FunctionFactory varargs(
+            String name,
+            Class<I> inputType,
+            Class<O> outputType,
+            VarargsScalarUDF<I, O> udf
+    ) {
+        return new VarargsScalarUDFFactory<>(name, inputType, outputType, udf);
+    }
+
+    /**
      * Collect multiple function factories into a list.
      * <p>
      * Useful for plugin implementations:

@@ -382,17 +382,363 @@ public class PluginFunctionTest extends AbstractCairoTest {
     @Test
     public void testPluginFunctionsInFunctionsList() throws Exception {
         // Test that plugin functions appear in the functions() output
+        // This includes both direct FunctionFactory implementations AND
+        // functions discovered via getFunctions() method (simplified UDF API)
         assertMemoryLeak(() -> {
             execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
 
             // Query functions() and filter for plugin functions
+            // Should include both traditional and simplified UDF functions
             assertSql(
                     "name\n" +
                             PLUGIN_NAME + ".example_reverse\n" +
                             PLUGIN_NAME + ".example_square\n" +
-                            PLUGIN_NAME + ".example_weighted_avg\n",
+                            PLUGIN_NAME + ".example_weighted_avg\n" +
+                            PLUGIN_NAME + ".simple_abs\n" +
+                            PLUGIN_NAME + ".simple_add_days\n" +
+                            PLUGIN_NAME + ".simple_avg\n" +
+                            PLUGIN_NAME + ".simple_ceil\n" +
+                            PLUGIN_NAME + ".simple_coalesce\n" +
+                            PLUGIN_NAME + ".simple_concat\n" +
+                            PLUGIN_NAME + ".simple_concat_all\n" +
+                            PLUGIN_NAME + ".simple_count_notnull\n" +
+                            PLUGIN_NAME + ".simple_cube\n" +
+                            PLUGIN_NAME + ".simple_date_add_months\n" +
+                            PLUGIN_NAME + ".simple_date_day\n" +
+                            PLUGIN_NAME + ".simple_date_month\n" +
+                            PLUGIN_NAME + ".simple_date_year\n" +
+                            PLUGIN_NAME + ".simple_day\n" +
+                            PLUGIN_NAME + ".simple_floor\n" +
+                            PLUGIN_NAME + ".simple_hour\n" +
+                            PLUGIN_NAME + ".simple_len\n" +
+                            PLUGIN_NAME + ".simple_ln\n" +
+                            PLUGIN_NAME + ".simple_lower\n" +
+                            PLUGIN_NAME + ".simple_lpad\n" +
+                            PLUGIN_NAME + ".simple_max\n" +
+                            PLUGIN_NAME + ".simple_max_of\n" +
+                            PLUGIN_NAME + ".simple_min\n" +
+                            PLUGIN_NAME + ".simple_min_of\n" +
+                            PLUGIN_NAME + ".simple_mod\n" +
+                            PLUGIN_NAME + ".simple_not\n" +
+                            PLUGIN_NAME + ".simple_power\n" +
+                            PLUGIN_NAME + ".simple_require_nonnull\n" +
+                            PLUGIN_NAME + ".simple_reverse\n" +
+                            PLUGIN_NAME + ".simple_sqrt\n" +
+                            PLUGIN_NAME + ".simple_square\n" +
+                            PLUGIN_NAME + ".simple_sum\n" +
+                            PLUGIN_NAME + ".simple_throw_on_negative\n" +
+                            PLUGIN_NAME + ".simple_trim\n" +
+                            PLUGIN_NAME + ".simple_upper\n" +
+                            PLUGIN_NAME + ".simple_year\n",
                     "SELECT name FROM functions() WHERE name LIKE '" + PLUGIN_NAME + "%' ORDER BY name"
             );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFScalarFunction() throws Exception {
+        // Test a simplified UDF scalar function (discovered via getFunctions())
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test simple_square (from SimpleUDFExamples)
+            assertSql(
+                    "simple_square\n" +
+                            "25.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_square(5.0)"
+            );
+
+            // Test simple_cube
+            assertSql(
+                    "simple_cube\n" +
+                            "27.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_cube(3.0)"
+            );
+
+            // Test simple_sqrt
+            assertSql(
+                    "simple_sqrt\n" +
+                            "4.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_sqrt(16.0)"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFStringFunction() throws Exception {
+        // Test simplified UDF string functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test simple_upper
+            assertSql(
+                    "simple_upper\n" +
+                            "HELLO\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_upper('hello')"
+            );
+
+            // Test simple_lower
+            assertSql(
+                    "simple_lower\n" +
+                            "world\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_lower('WORLD')"
+            );
+
+            // Test simple_reverse
+            assertSql(
+                    "simple_reverse\n" +
+                            "cba\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_reverse('abc')"
+            );
+
+            // Test simple_len
+            assertSql(
+                    "simple_len\n" +
+                            "5\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_len('hello')"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFBinaryFunction() throws Exception {
+        // Test simplified UDF binary (two-argument) functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test simple_power
+            assertSql(
+                    "simple_power\n" +
+                            "8.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_power(2.0, 3.0)"
+            );
+
+            // Test simple_concat
+            assertSql(
+                    "simple_concat\n" +
+                            "helloworld\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_concat('hello', 'world')"
+            );
+
+            // Test simple_mod
+            assertSql(
+                    "simple_mod\n" +
+                            "1\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_mod(10, 3)"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFAggregateFunction() throws Exception {
+        // Test simplified UDF aggregate functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+            execute("CREATE TABLE test_data (value DOUBLE)");
+            execute("INSERT INTO test_data VALUES (1.0), (2.0), (3.0), (4.0), (5.0)");
+
+            // Test simple_sum
+            assertSql(
+                    "simple_sum\n" +
+                            "15.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_sum(value) FROM test_data"
+            );
+
+            // Test simple_avg
+            assertSql(
+                    "simple_avg\n" +
+                            "3.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_avg(value) FROM test_data"
+            );
+
+            // Test simple_min
+            assertSql(
+                    "simple_min\n" +
+                            "1.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_min(value) FROM test_data"
+            );
+
+            // Test simple_max
+            assertSql(
+                    "simple_max\n" +
+                            "5.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_max(value) FROM test_data"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFTimestampFunction() throws Exception {
+        // Test simplified UDF timestamp functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test simple_hour - timestamp '2023-06-15T14:30:00.000000Z' should return hour 14
+            assertSql(
+                    "simple_hour\n" +
+                            "14\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_hour('2023-06-15T14:30:00.000000Z'::timestamp)"
+            );
+
+            // Test simple_day - should return day 15
+            assertSql(
+                    "simple_day\n" +
+                            "15\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_day('2023-06-15T14:30:00.000000Z'::timestamp)"
+            );
+
+            // Test simple_year - should return year 2023
+            assertSql(
+                    "simple_year\n" +
+                            "2023\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_year('2023-06-15T14:30:00.000000Z'::timestamp)"
+            );
+
+            // Test simple_add_days - add 10 days to a timestamp
+            // 2023-06-15 + 10 days = 2023-06-25
+            assertSql(
+                    "simple_day\n" +
+                            "25\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_day(\"" + PLUGIN_NAME + "\".simple_add_days('2023-06-15T00:00:00.000000Z'::timestamp, 10))"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFTimestampFunctionWithTable() throws Exception {
+        // Test timestamp functions with table data
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+            execute("CREATE TABLE events (ts TIMESTAMP, name STRING)");
+            execute("INSERT INTO events VALUES ('2023-01-01T08:00:00.000000Z'::timestamp, 'morning')");
+            execute("INSERT INTO events VALUES ('2023-06-15T14:30:00.000000Z'::timestamp, 'afternoon')");
+            execute("INSERT INTO events VALUES ('2023-12-31T23:59:00.000000Z'::timestamp, 'night')");
+
+            // Test extracting year, day, and hour from timestamp column
+            assertSql(
+                    "name\tyear\tday\thour\n" +
+                            "morning\t2023\t1\t8\n" +
+                            "afternoon\t2023\t15\t14\n" +
+                            "night\t2023\t31\t23\n",
+                    "SELECT name, " +
+                            "\"" + PLUGIN_NAME + "\".simple_year(ts) as year, " +
+                            "\"" + PLUGIN_NAME + "\".simple_day(ts) as day, " +
+                            "\"" + PLUGIN_NAME + "\".simple_hour(ts) as hour " +
+                            "FROM events ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFDateFunction() throws Exception {
+        // Test simplified UDF date functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test simple_date_year - date '2023-06-15' should return year 2023
+            assertSql(
+                    "simple_date_year\n" +
+                            "2023\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_date_year(to_date('2023-06-15', 'yyyy-MM-dd'))"
+            );
+
+            // Test simple_date_month - should return month 6
+            assertSql(
+                    "simple_date_month\n" +
+                            "6\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_date_month(to_date('2023-06-15', 'yyyy-MM-dd'))"
+            );
+
+            // Test simple_date_day - should return day 15
+            assertSql(
+                    "simple_date_day\n" +
+                            "15\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_date_day(to_date('2023-06-15', 'yyyy-MM-dd'))"
+            );
+
+            // Test simple_date_add_months - add 3 months to a date
+            // 2023-06-15 + 3 months = 2023-09-15
+            assertSql(
+                    "simple_date_month\n" +
+                            "9\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_date_month(" +
+                            "\"" + PLUGIN_NAME + "\".simple_date_add_months(to_date('2023-06-15', 'yyyy-MM-dd'), 3))"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFVarargsFunction() throws Exception {
+        // Test simplified UDF variadic (N-ary) functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test simple_max_of - maximum of multiple values
+            assertSql(
+                    "simple_max_of\n" +
+                            "7.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_max_of(1.0, 5.0, 3.0, 7.0, 2.0)"
+            );
+
+            // Test simple_min_of - minimum of multiple values
+            assertSql(
+                    "simple_min_of\n" +
+                            "1.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_min_of(1.0, 5.0, 3.0, 7.0, 2.0)"
+            );
+
+            // Test simple_concat_all - concatenate multiple strings
+            assertSql(
+                    "simple_concat_all\n" +
+                            "HelloWorld!\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_concat_all('Hello', 'World', '!')"
+            );
+
+            // Test simple_coalesce - return first non-null
+            assertSql(
+                    "simple_coalesce\n" +
+                            "3.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_coalesce(null, null, 3.0, 5.0)"
+            );
+
+            // Test with two arguments (edge case)
+            assertSql(
+                    "simple_max_of\n" +
+                            "10.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_max_of(5.0, 10.0)"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFErrorHandling() throws Exception {
+        // Test that UDF exceptions are properly caught and reported
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test that positive values work normally
+            assertSql(
+                    "simple_throw_on_negative\n" +
+                            "5.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_throw_on_negative(5.0)"
+            );
+
+            // Test that negative values throw a meaningful error
+            try {
+                assertSql(
+                        "simple_throw_on_negative\n" +
+                                "-1.0\n",
+                        "SELECT \"" + PLUGIN_NAME + "\".simple_throw_on_negative(-1.0)"
+                );
+                org.junit.Assert.fail("Expected exception for negative value");
+            } catch (io.questdb.cairo.CairoException e) {
+                // Verify the error message contains useful information
+                String message = e.getMessage();
+                org.junit.Assert.assertTrue("Error should mention UDF name",
+                        message.contains("simple_throw_on_negative"));
+                org.junit.Assert.assertTrue("Error should mention the exception",
+                        message.contains("Negative value not allowed"));
+            }
         });
     }
 

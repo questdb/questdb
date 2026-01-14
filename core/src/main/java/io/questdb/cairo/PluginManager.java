@@ -40,10 +40,16 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
+import io.questdb.griffin.udf.PluginFunctions;
+import io.questdb.griffin.udf.PluginLifecycle;
+
 import java.io.Closeable;
 import java.io.IOException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.Collection;
 import java.util.Enumeration;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -69,6 +75,8 @@ public class PluginManager implements Closeable {
     private final LowerCaseCharSequenceObjHashMap<URLClassLoader> pluginClassLoaders = new LowerCaseCharSequenceObjHashMap<>();
     // Maps plugin name -> list of FunctionFactory instances
     private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactory>> pluginFactories = new LowerCaseCharSequenceObjHashMap<>();
+    // Maps plugin name -> list of PluginLifecycle instances for cleanup
+    private final LowerCaseCharSequenceObjHashMap<ObjList<PluginLifecycle>> pluginLifecycles = new LowerCaseCharSequenceObjHashMap<>();
     // Reusable sink for normalized plugin names
     private final StringSink pluginNameSink = new StringSink();
 
@@ -169,11 +177,22 @@ public class PluginManager implements Closeable {
             );
 
             try {
-                // Discover FunctionFactory implementations in the JAR
-                final ObjList<FunctionFactory> factories = discoverFunctionFactories(jarPathStr, classLoader);
+                // Discover FunctionFactory implementations and lifecycle handlers in the JAR
+                final ObjList<FunctionFactory> factories = new ObjList<>();
+                final ObjList<PluginLifecycle> lifecycles = new ObjList<>();
+                discoverPluginClasses(jarPathStr, classLoader, factories, lifecycles);
 
                 LOG.info().$("Loading plugin: ").$(pluginName)
                         .$(", found ").$(factories.size()).$(" functions").$();
+
+                // Call onLoad for all lifecycle handlers
+                for (int i = 0, n = lifecycles.size(); i < n; i++) {
+                    try {
+                        lifecycles.getQuick(i).onLoad(configuration);
+                    } catch (Exception e) {
+                        LOG.error().$("Plugin ").$(pluginName).$(" onLoad failed: ").$(e.getMessage()).$();
+                    }
+                }
 
                 // Register functions in cache (namespaced by plugin name)
                 if (factories.size() > 0) {
@@ -181,6 +200,11 @@ public class PluginManager implements Closeable {
                     pluginFactories.put(pluginName, factories);
                 } else {
                     LOG.info().$("Plugin ").$(pluginName).$(" has no FunctionFactory implementations").$();
+                }
+
+                // Store lifecycle handlers for cleanup on unload
+                if (lifecycles.size() > 0) {
+                    pluginLifecycles.put(pluginName, lifecycles);
                 }
 
                 // Store classloader for cleanup on unload
@@ -296,19 +320,27 @@ public class PluginManager implements Closeable {
     }
 
     /**
-     * Discovers FunctionFactory implementations in a plugin JAR.
-     * Returns an empty list if the JAR contains no FunctionFactory implementations.
+     * Discovers FunctionFactory implementations and PluginLifecycle handlers in a plugin JAR.
+     * <p>
+     * This method discovers:
+     * <ol>
+     *   <li>Classes that directly implement {@link FunctionFactory}</li>
+     *   <li>Classes with a static {@code getFunctions()} method that returns a collection
+     *       of FunctionFactory instances (for use with the simplified UDF API)</li>
+     *   <li>Classes that implement {@link PluginLifecycle} for lifecycle callbacks</li>
+     * </ol>
      *
      * @param jarPath     path to the JAR file as String
      * @param classLoader isolated classloader for loading classes from the JAR
-     * @return list of discovered FunctionFactory instances
+     * @param factories   list to add discovered FunctionFactory instances to
+     * @param lifecycles  list to add discovered PluginLifecycle instances to
      */
-    private ObjList<FunctionFactory> discoverFunctionFactories(
+    private void discoverPluginClasses(
             @NotNull final String jarPath,
-            @NotNull final URLClassLoader classLoader
+            @NotNull final URLClassLoader classLoader,
+            @NotNull final ObjList<FunctionFactory> factories,
+            @NotNull final ObjList<PluginLifecycle> lifecycles
     ) throws IOException {
-        final ObjList<FunctionFactory> factories = new ObjList<>();
-
         try (final JarFile jarFile = new JarFile(jarPath)) {
             final Enumeration<JarEntry> entries = jarFile.entries();
 
@@ -323,7 +355,7 @@ public class PluginManager implements Closeable {
                     try {
                         final Class<?> clazz = classLoader.loadClass(className);
 
-                        // Check if this class implements FunctionFactory
+                        // Check if this class implements FunctionFactory directly
                         if (FunctionFactory.class.isAssignableFrom(clazz) &&
                                 !clazz.isInterface()) {
 
@@ -334,6 +366,11 @@ public class PluginManager implements Closeable {
 
                             LOG.debug().$("Discovered function factory: ").$(className).$();
                         }
+
+                        // Check for static getFunctions() method (simplified UDF API)
+                        // and track lifecycle if class implements PluginLifecycle
+                        discoverFunctionsFromMethod(clazz, factories, lifecycles);
+
                     } catch (final ClassNotFoundException e) {
                         // Ignore classes not in the JAR
                     } catch (final Exception e) {
@@ -343,8 +380,92 @@ public class PluginManager implements Closeable {
                 }
             }
         }
+    }
 
-        return factories;
+    /**
+     * Discovers functions from a class's static getFunctions() method and
+     * tracks PluginLifecycle implementations for lifecycle callbacks.
+     * <p>
+     * This supports the simplified UDF API where plugin authors can define functions
+     * using lambdas and the UDFRegistry helper class.
+     *
+     * @param clazz      the class to check for getFunctions() method
+     * @param factories  the list to add discovered factories to
+     * @param lifecycles the list to add discovered lifecycle handlers to
+     */
+    @SuppressWarnings("unchecked")
+    private void discoverFunctionsFromMethod(
+            Class<?> clazz,
+            ObjList<FunctionFactory> factories,
+            ObjList<PluginLifecycle> lifecycles
+    ) {
+        try {
+            // Look for static getFunctions() method
+            final Method method = clazz.getMethod("getFunctions");
+
+            // Must be static
+            if (!Modifier.isStatic(method.getModifiers())) {
+                return;
+            }
+
+            // Check return type is compatible (Collection or ObjList of FunctionFactory)
+            final Class<?> returnType = method.getReturnType();
+            if (!Collection.class.isAssignableFrom(returnType) &&
+                    !ObjList.class.isAssignableFrom(returnType)) {
+                return;
+            }
+
+            // Invoke the method
+            final Object result = method.invoke(null);
+
+            if (result instanceof ObjList) {
+                final ObjList<FunctionFactory> list = (ObjList<FunctionFactory>) result;
+                for (int i = 0, n = list.size(); i < n; i++) {
+                    factories.add(list.getQuick(i));
+                }
+                LOG.debug().$("Discovered ").$(list.size()).$(" functions from ")
+                        .$(clazz.getName()).$(".getFunctions()").$();
+            } else if (result instanceof Collection) {
+                final Collection<FunctionFactory> collection = (Collection<FunctionFactory>) result;
+                for (FunctionFactory factory : collection) {
+                    factories.add(factory);
+                }
+                LOG.debug().$("Discovered ").$(collection.size()).$(" functions from ")
+                        .$(clazz.getName()).$(".getFunctions()").$();
+            }
+
+            // Log if class has @PluginFunctions annotation
+            if (clazz.isAnnotationPresent(PluginFunctions.class)) {
+                final PluginFunctions annotation = clazz.getAnnotation(PluginFunctions.class);
+                if (!annotation.description().isEmpty()) {
+                    LOG.info().$("Plugin functions: ").$(annotation.description()).$();
+                }
+                if (!annotation.version().isEmpty()) {
+                    LOG.info().$("Plugin version: ").$(annotation.version()).$();
+                }
+                if (!annotation.author().isEmpty()) {
+                    LOG.info().$("Plugin author: ").$(annotation.author()).$();
+                }
+            }
+
+            // Check if class implements PluginLifecycle for lifecycle callbacks
+            if (PluginLifecycle.class.isAssignableFrom(clazz) && !clazz.isInterface()) {
+                try {
+                    final PluginLifecycle lifecycle = (PluginLifecycle) clazz.getDeclaredConstructor().newInstance();
+                    lifecycles.add(lifecycle);
+                    LOG.debug().$("Discovered lifecycle handler: ").$(clazz.getName()).$();
+                } catch (Exception e) {
+                    LOG.debug().$("Failed to instantiate lifecycle handler ").$(clazz.getName())
+                            .$(": ").$(e.getMessage()).$();
+                }
+            }
+
+        } catch (NoSuchMethodException e) {
+            // Class doesn't have getFunctions() method - that's fine
+        } catch (Exception e) {
+            LOG.debug().$("Failed to invoke getFunctions() on ").$(clazz.getName())
+                    .$(": ").$(e.getMessage()).$();
+        }
     }
 
     /**
@@ -358,6 +479,20 @@ public class PluginManager implements Closeable {
 
             if (!functionFactoryCache.isPluginLoaded(pluginNameSink)) {
                 throw SqlException.position(0).put("Plugin not loaded: ").put(pluginNameSink);
+            }
+
+            // Call onUnload for all lifecycle handlers
+            final int lifecycleIndex = pluginLifecycles.keyIndex(pluginNameSink);
+            if (lifecycleIndex < 0) {
+                final ObjList<PluginLifecycle> lifecycles = pluginLifecycles.valueAtQuick(lifecycleIndex);
+                for (int i = 0, n = lifecycles.size(); i < n; i++) {
+                    try {
+                        lifecycles.getQuick(i).onUnload();
+                    } catch (Exception e) {
+                        LOG.error().$("Plugin ").$(pluginNameSink).$(" onUnload failed: ").$(e.getMessage()).$();
+                    }
+                }
+                pluginLifecycles.removeAt(lifecycleIndex);
             }
 
             // Remove functions from cache

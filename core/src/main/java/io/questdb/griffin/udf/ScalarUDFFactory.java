@@ -19,17 +19,20 @@
 package io.questdb.griffin.udf;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -80,8 +83,22 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
             case ColumnType.STRING -> new UDFStrFunction(arg);
             case ColumnType.BOOLEAN -> new UDFBooleanFunction(arg);
             case ColumnType.FLOAT -> new UDFFloatFunction(arg);
+            case ColumnType.TIMESTAMP -> new UDFTimestampFunction(arg);
+            case ColumnType.DATE -> new UDFDateFunction(arg);
             default -> throw new IllegalArgumentException("Unsupported output type: " + outputType);
         };
+    }
+
+    private O safeCompute(I input) {
+        try {
+            return udf.compute(input);
+        } catch (Exception e) {
+            throw CairoException.nonCritical()
+                    .put("UDF '")
+                    .put(name)
+                    .put("' threw exception: ")
+                    .put(e.getMessage() != null ? e.getMessage() : e.getClass().getName());
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -109,6 +126,14 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
                 float v = arg.getFloat(rec);
                 yield Float.isNaN(v) ? null : v;
             }
+            case ColumnType.TIMESTAMP -> {
+                long v = arg.getTimestamp(rec);
+                yield v == Long.MIN_VALUE ? null : new Timestamp(v);
+            }
+            case ColumnType.DATE -> {
+                long v = arg.getDate(rec);
+                yield v == Long.MIN_VALUE ? null : new Date(v);
+            }
             default -> throw new IllegalArgumentException("Unsupported input type: " + inputType);
         };
     }
@@ -128,7 +153,7 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             I input = extractInput(arg, rec);
-            O result = udf.compute(input);
+            O result = safeCompute(input);
             return result == null ? Double.NaN : ((Number) result).doubleValue();
         }
 
@@ -153,7 +178,7 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             I input = extractInput(arg, rec);
-            O result = udf.compute(input);
+            O result = safeCompute(input);
             return result == null ? Long.MIN_VALUE : ((Number) result).longValue();
         }
 
@@ -178,7 +203,7 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             I input = extractInput(arg, rec);
-            O result = udf.compute(input);
+            O result = safeCompute(input);
             return result == null ? Integer.MIN_VALUE : ((Number) result).intValue();
         }
 
@@ -205,7 +230,7 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         @Override
         public CharSequence getStrA(Record rec) {
             I input = extractInput(arg, rec);
-            O result = udf.compute(input);
+            O result = safeCompute(input);
             if (result == null) {
                 return null;
             }
@@ -217,7 +242,7 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             I input = extractInput(arg, rec);
-            O result = udf.compute(input);
+            O result = safeCompute(input);
             if (result == null) {
                 return null;
             }
@@ -252,7 +277,7 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             I input = extractInput(arg, rec);
-            O result = udf.compute(input);
+            O result = safeCompute(input);
             return result != null && (Boolean) result;
         }
 
@@ -277,8 +302,71 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         @Override
         public float getFloat(Record rec) {
             I input = extractInput(arg, rec);
-            O result = udf.compute(input);
+            O result = safeCompute(input);
             return result == null ? Float.NaN : ((Number) result).floatValue();
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+    }
+
+    private class UDFTimestampFunction extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+
+        UDFTimestampFunction(Function arg) {
+            super(ColumnType.TIMESTAMP);
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            I input = extractInput(arg, rec);
+            O result = safeCompute(input);
+            if (result == null) {
+                return Long.MIN_VALUE;
+            }
+            if (result instanceof Timestamp) {
+                return ((Timestamp) result).getMicros();
+            }
+            return ((Number) result).longValue();
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+    }
+
+    private class UDFDateFunction extends DateFunction implements UnaryFunction {
+        private final Function arg;
+
+        UDFDateFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            I input = extractInput(arg, rec);
+            O result = safeCompute(input);
+            if (result == null) {
+                return Long.MIN_VALUE;
+            }
+            if (result instanceof Date) {
+                return ((Date) result).getMillis();
+            }
+            return ((Number) result).longValue();
         }
 
         @Override
