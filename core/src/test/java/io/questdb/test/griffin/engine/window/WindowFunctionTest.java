@@ -2241,7 +2241,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     .replace("#FUNCT_NAME", function)
                                     .replace("#COLUMN", "c")
                                     .replace("#mode", exclusionMode),
-                            109,
+                            101,
                             "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported"
                     );
 
@@ -2250,7 +2250,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     .replace("#FUNCT_NAME", function)
                                     .replace("#COLUMN", "c")
                                     .replace("#mode", exclusionMode),
-                            133,
+                            125,
                             "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported"
                     );
                 }
@@ -2258,7 +2258,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 assertWindowException(
                         "select a,b, #FUNCT_NAME over (partition by b order by ts #FRAME BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW) from xyz"
                                 .replace("#FUNCT_NAME", function).replace("#COLUMN", "c"),
-                        141,
+                        133,
                         "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary"
                 );
             }
@@ -3498,20 +3498,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
         assertExceptionNoLeakCheck(
                 "select lag(d, 1) ignore over () from tab",
-                17,
-                "'nulls' or 'from' expected"
+                24,
+                "'nulls' expected after 'ignore'"
         );
 
         assertExceptionNoLeakCheck(
                 "select lag(d, 1) respect over () from tab",
-                17,
-                "'nulls' or 'from' expected"
+                25,
+                "'nulls' expected after 'respect'"
         );
 
         assertExceptionNoLeakCheck(
                 "select lag(d, 1) ignore null over () from tab",
-                17,
-                "'nulls' or 'from' expected"
+                24,
+                "'nulls' expected, not 'null'"
         );
     }
 
@@ -4271,20 +4271,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
         assertExceptionNoLeakCheck(
                 "select lead(d, 1) ignore over () from tab",
-                18,
-                "'nulls' or 'from' expected"
+                25,
+                "'nulls' expected after 'ignore'"
         );
 
         assertExceptionNoLeakCheck(
                 "select lead(d, 1) respect over () from tab",
-                18,
-                "'nulls' or 'from' expected"
+                26,
+                "'nulls' expected after 'respect'"
         );
 
         assertExceptionNoLeakCheck(
                 "select lead(d, 1) ignore null over () from tab",
-                18,
-                "'nulls' or 'from' expected"
+                25,
+                "'nulls' expected, not 'null'"
         );
     }
 
@@ -8180,7 +8180,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(38, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "'over' expected");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "'over' expected after 'nulls'");
                     }
                 } else {
                     try {
