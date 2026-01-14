@@ -20,6 +20,8 @@ package io.questdb.griffin.udf;
 
 import io.questdb.cairo.ColumnType;
 
+import java.math.BigDecimal;
+
 /**
  * Type mapping between Java types and QuestDB column types for UDFs.
  * <p>
@@ -38,6 +40,7 @@ import io.questdb.cairo.ColumnType;
  *   <li>{@link Date} - maps to DATE (milliseconds since epoch)</li>
  *   <li>{@link DoubleArray} - maps to ARRAY of DOUBLE (1D)</li>
  *   <li>{@link LongArray} - maps to ARRAY of LONG (1D)</li>
+ *   <li>{@link java.math.BigDecimal} - maps to DECIMAL64 (18 precision, 6 scale)</li>
  * </ul>
  */
 public final class UDFType {
@@ -80,6 +83,9 @@ public final class UDFType {
             return ColumnType.encodeArrayType(ColumnType.DOUBLE, 1, true);
         } else if (clazz == LongArray.class) {
             return ColumnType.encodeArrayType(ColumnType.LONG, 1, true);
+        } else if (clazz == BigDecimal.class) {
+            // Default to DECIMAL64 with 18 precision and 6 scale
+            return ColumnType.getDecimalType(18, 6);
         }
         throw new IllegalArgumentException("Unsupported UDF type: " + clazz.getName());
     }
@@ -117,6 +123,8 @@ public final class UDFType {
             return 'M'; // Date (M)
         } else if (clazz == DoubleArray.class || clazz == LongArray.class) {
             throw new IllegalArgumentException("Use toSignatureString for array types: " + clazz.getName());
+        } else if (clazz == BigDecimal.class) {
+            return 'Ξ'; // Decimal (uppercase Greek letter Xi - lowercase would mark as constant)
         }
         throw new IllegalArgumentException("Unsupported UDF type: " + clazz.getName());
     }
@@ -135,6 +143,8 @@ public final class UDFType {
             return "D[]"; // Double array
         } else if (clazz == LongArray.class) {
             return "L[]"; // Long array
+        } else if (clazz == BigDecimal.class) {
+            return "Ξ"; // Decimal (uppercase Greek letter Xi)
         }
         // For non-array types, return single character as string
         return String.valueOf(toSignatureChar(clazz));

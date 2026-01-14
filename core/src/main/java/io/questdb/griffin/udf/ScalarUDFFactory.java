@@ -24,6 +24,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
+import io.questdb.std.Decimals;
+
+import java.math.BigDecimal;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -77,7 +81,12 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         Function arg = args.getQuick(0);
         int outputColumnType = UDFType.toColumnType(outputType);
 
-        return switch (outputColumnType) {
+        // Handle decimal types (encoded with precision and scale)
+        if (ColumnType.isDecimal(outputColumnType)) {
+            return new UDFDecimalFunction(arg, outputColumnType);
+        }
+
+        return switch (ColumnType.tagOf(outputColumnType)) {
             case ColumnType.DOUBLE -> new UDFDoubleFunction(arg);
             case ColumnType.LONG -> new UDFLongFunction(arg);
             case ColumnType.INT -> new UDFIntFunction(arg);
@@ -111,11 +120,25 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
         } else if (inputType == LongArray.class) {
             ArrayView arrayView = arg.getArray(rec);
             return (I) (arrayView == null || arrayView.isNull() ? null : new LongArray(arrayView));
+        } else if (inputType == BigDecimal.class) {
+            // Handle decimal input - extract value and convert to BigDecimal
+            int argType = arg.getType();
+            if (ColumnType.isDecimal(argType)) {
+                int scale = ColumnType.getDecimalScale(argType);
+                long rawValue = arg.getDecimal64(rec);
+                if (rawValue == Decimals.DECIMAL64_NULL) {
+                    return null;
+                }
+                return (I) BigDecimal.valueOf(rawValue, scale);
+            }
+            // Fallback: try to get as double and convert
+            double v = arg.getDouble(rec);
+            return (I) (Double.isNaN(v) ? null : BigDecimal.valueOf(v));
         }
 
         // Handle scalar types via column type switch
         int inputColumnType = UDFType.toColumnType(inputType);
-        return (I) switch (inputColumnType) {
+        return (I) switch (ColumnType.tagOf(inputColumnType)) {
             case ColumnType.DOUBLE -> {
                 double v = arg.getDouble(rec);
                 yield Double.isNaN(v) ? null : v;
@@ -378,6 +401,47 @@ public class ScalarUDFFactory<I, O> implements FunctionFactory {
                 return ((Date) result).getMillis();
             }
             return ((Number) result).longValue();
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+    }
+
+    private class UDFDecimalFunction extends Decimal64Function implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        UDFDecimalFunction(Function arg, int decimalType) {
+            super(decimalType);
+            this.arg = arg;
+            this.scale = ColumnType.getDecimalScale(decimalType);
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            I input = extractInput(arg, rec);
+            O result = safeCompute(input);
+            if (result == null) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (result instanceof BigDecimal bd) {
+                // Convert BigDecimal to scaled long value
+                return bd.setScale(scale, java.math.RoundingMode.HALF_UP)
+                        .movePointRight(scale)
+                        .longValue();
+            }
+            // For other numeric types, convert via BigDecimal
+            BigDecimal bd = BigDecimal.valueOf(((Number) result).doubleValue());
+            return bd.setScale(scale, java.math.RoundingMode.HALF_UP)
+                    .movePointRight(scale)
+                    .longValue();
         }
 
         @Override

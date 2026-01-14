@@ -48,11 +48,11 @@ import java.util.function.Supplier;
  */
 public class AggregateUDFFactory<I, O> implements FunctionFactory {
 
-    private final String name;
     private final Class<I> inputType;
+    private final String name;
     private final Class<O> outputType;
-    private final Supplier<AggregateUDF<I, O>> supplier;
     private final String signature;
+    private final Supplier<AggregateUDF<I, O>> supplier;
 
     public AggregateUDFFactory(
             String name,
@@ -156,11 +156,6 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             udf.reset();
             I input = extractInput(arg, record);
@@ -178,6 +173,11 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
             safeAccumulate(udf, input);
             O result = safeResult(udf);
             mapValue.putDouble(valueIndex, result == null ? Double.NaN : ((Number) result).doubleValue());
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
@@ -207,87 +207,13 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         }
 
         @Override
-        public void setNull(MapValue mapValue) {
-            mapValue.putDouble(valueIndex, Double.NaN);
-        }
-
-        @Override
         public void setDouble(MapValue mapValue, double value) {
             mapValue.putDouble(valueIndex, value);
         }
 
         @Override
-        public boolean supportsParallelism() {
-            return udf.supportsParallelism();
-        }
-    }
-
-    private class LongAggregateFunction extends LongFunction implements GroupByFunction, UnaryFunction {
-        private final Function arg;
-        private final AggregateUDF<I, O> udf;
-        private int valueIndex;
-
-        LongAggregateFunction(Function arg, AggregateUDF<I, O> udf) {
-            this.arg = arg;
-            this.udf = udf;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public void computeFirst(MapValue mapValue, Record record, long rowId) {
-            udf.reset();
-            I input = extractInput(arg, record);
-            safeAccumulate(udf, input);
-            O result = safeResult(udf);
-            mapValue.putLong(valueIndex, result == null ? Long.MIN_VALUE : ((Number) result).longValue());
-        }
-
-        @Override
-        public void computeNext(MapValue mapValue, Record record, long rowId) {
-            I input = extractInput(arg, record);
-            safeAccumulate(udf, input);
-            O result = safeResult(udf);
-            mapValue.putLong(valueIndex, result == null ? Long.MIN_VALUE : ((Number) result).longValue());
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            return rec.getLong(valueIndex);
-        }
-
-        @Override
-        public String getName() {
-            return name;
-        }
-
-        @Override
-        public int getValueIndex() {
-            return valueIndex;
-        }
-
-        @Override
-        public void initValueIndex(int valueIndex) {
-            this.valueIndex = valueIndex;
-        }
-
-        @Override
-        public void initValueTypes(ArrayColumnTypes columnTypes) {
-            this.valueIndex = columnTypes.getColumnCount();
-            columnTypes.add(ColumnType.LONG);
-        }
-
-        @Override
         public void setNull(MapValue mapValue) {
-            mapValue.putLong(valueIndex, Long.MIN_VALUE);
-        }
-
-        @Override
-        public void setLong(MapValue mapValue, long value) {
-            mapValue.putLong(valueIndex, value);
+            mapValue.putDouble(valueIndex, Double.NaN);
         }
 
         @Override
@@ -307,11 +233,6 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             udf.reset();
             I input = extractInput(arg, record);
@@ -326,6 +247,11 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
             safeAccumulate(udf, input);
             O result = safeResult(udf);
             mapValue.putInt(valueIndex, result == null ? Integer.MIN_VALUE : ((Number) result).intValue());
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
@@ -355,13 +281,87 @@ public class AggregateUDFFactory<I, O> implements FunctionFactory {
         }
 
         @Override
+        public void setInt(MapValue mapValue, int value) {
+            mapValue.putInt(valueIndex, value);
+        }
+
+        @Override
         public void setNull(MapValue mapValue) {
             mapValue.putInt(valueIndex, Integer.MIN_VALUE);
         }
 
         @Override
-        public void setInt(MapValue mapValue, int value) {
-            mapValue.putInt(valueIndex, value);
+        public boolean supportsParallelism() {
+            return udf.supportsParallelism();
+        }
+    }
+
+    private class LongAggregateFunction extends LongFunction implements GroupByFunction, UnaryFunction {
+        private final Function arg;
+        private final AggregateUDF<I, O> udf;
+        private int valueIndex;
+
+        LongAggregateFunction(Function arg, AggregateUDF<I, O> udf) {
+            this.arg = arg;
+            this.udf = udf;
+        }
+
+        @Override
+        public void computeFirst(MapValue mapValue, Record record, long rowId) {
+            udf.reset();
+            I input = extractInput(arg, record);
+            safeAccumulate(udf, input);
+            O result = safeResult(udf);
+            mapValue.putLong(valueIndex, result == null ? Long.MIN_VALUE : ((Number) result).longValue());
+        }
+
+        @Override
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
+            I input = extractInput(arg, record);
+            safeAccumulate(udf, input);
+            O result = safeResult(udf);
+            mapValue.putLong(valueIndex, result == null ? Long.MIN_VALUE : ((Number) result).longValue());
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return rec.getLong(valueIndex);
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public int getValueIndex() {
+            return valueIndex;
+        }
+
+        @Override
+        public void initValueIndex(int valueIndex) {
+            this.valueIndex = valueIndex;
+        }
+
+        @Override
+        public void initValueTypes(ArrayColumnTypes columnTypes) {
+            this.valueIndex = columnTypes.getColumnCount();
+            columnTypes.add(ColumnType.LONG);
+        }
+
+        @Override
+        public void setLong(MapValue mapValue, long value) {
+            mapValue.putLong(valueIndex, value);
+        }
+
+        @Override
+        public void setNull(MapValue mapValue) {
+            mapValue.putLong(valueIndex, Long.MIN_VALUE);
         }
 
         @Override

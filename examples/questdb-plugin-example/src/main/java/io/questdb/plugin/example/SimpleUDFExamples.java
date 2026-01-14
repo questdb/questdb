@@ -23,6 +23,9 @@ import io.questdb.griffin.udf.AggregateUDF;
 import io.questdb.griffin.udf.Date;
 import io.questdb.griffin.udf.DoubleArray;
 import io.questdb.griffin.udf.PluginFunctions;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import io.questdb.griffin.udf.PluginLifecycle;
 import io.questdb.griffin.udf.Timestamp;
 import io.questdb.griffin.udf.UDFRegistry;
@@ -351,6 +354,39 @@ public class SimpleUDFExamples implements PluginLifecycle {
                                 if (v == val) return true;
                             }
                             return false;
+                        }),
+
+                // ============================================
+                // DECIMAL FUNCTIONS
+                // ============================================
+
+                // Round to 2 decimal places
+                UDFRegistry.scalar("simple_round2", BigDecimal.class, BigDecimal.class,
+                        bd -> bd == null ? null : bd.setScale(2, RoundingMode.HALF_UP)),
+
+                // Absolute value of decimal
+                UDFRegistry.scalar("simple_decimal_abs", BigDecimal.class, BigDecimal.class,
+                        bd -> bd == null ? null : bd.abs()),
+
+                // Add two decimals
+                UDFRegistry.binary("simple_decimal_add", BigDecimal.class, BigDecimal.class, BigDecimal.class,
+                        (a, b) -> {
+                            if (a == null || b == null) return null;
+                            return a.add(b);
+                        }),
+
+                // Multiply two decimals
+                UDFRegistry.binary("simple_decimal_mult", BigDecimal.class, BigDecimal.class, BigDecimal.class,
+                        (a, b) -> {
+                            if (a == null || b == null) return null;
+                            return a.multiply(b);
+                        }),
+
+                // Divide with 6 decimal places precision
+                UDFRegistry.binary("simple_decimal_div", BigDecimal.class, BigDecimal.class, BigDecimal.class,
+                        (a, b) -> {
+                            if (a == null || b == null || b.compareTo(BigDecimal.ZERO) == 0) return null;
+                            return a.divide(b, 6, RoundingMode.HALF_UP);
                         })
         );
     }

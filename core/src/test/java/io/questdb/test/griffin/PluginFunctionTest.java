@@ -415,6 +415,10 @@ public class PluginFunctionTest extends AbstractCairoTest {
                             PLUGIN_NAME + ".simple_date_month\n" +
                             PLUGIN_NAME + ".simple_date_year\n" +
                             PLUGIN_NAME + ".simple_day\n" +
+                            PLUGIN_NAME + ".simple_decimal_abs\n" +
+                            PLUGIN_NAME + ".simple_decimal_add\n" +
+                            PLUGIN_NAME + ".simple_decimal_div\n" +
+                            PLUGIN_NAME + ".simple_decimal_mult\n" +
                             PLUGIN_NAME + ".simple_floor\n" +
                             PLUGIN_NAME + ".simple_hour\n" +
                             PLUGIN_NAME + ".simple_len\n" +
@@ -430,6 +434,7 @@ public class PluginFunctionTest extends AbstractCairoTest {
                             PLUGIN_NAME + ".simple_power\n" +
                             PLUGIN_NAME + ".simple_require_nonnull\n" +
                             PLUGIN_NAME + ".simple_reverse\n" +
+                            PLUGIN_NAME + ".simple_round2\n" +
                             PLUGIN_NAME + ".simple_sqrt\n" +
                             PLUGIN_NAME + ".simple_square\n" +
                             PLUGIN_NAME + ".simple_sum\n" +
@@ -837,6 +842,72 @@ public class PluginFunctionTest extends AbstractCairoTest {
 
     // Note: Long arrays are currently not supported in QuestDB (only DOUBLE arrays are enabled)
     // The LongArray wrapper class is available for future use when LONG arrays become supported
+
+    @Test
+    public void testSimplifiedUDFDecimalFunction() throws Exception {
+        // Test simplified UDF decimal functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Create a table with decimal column using cast syntax
+            execute("CREATE TABLE decimals_test (amount DECIMAL(18,6), name STRING)");
+            execute("INSERT INTO decimals_test VALUES (123.456789::decimal(18,6), 'test1')");
+            execute("INSERT INTO decimals_test VALUES ((-99.123456)::decimal(18,6), 'test2')");
+
+            // Test simple_decimal_abs - absolute value
+            assertSql(
+                    "name\tabs_amount\n" +
+                            "test1\t123.456789\n" +
+                            "test2\t99.123456\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_decimal_abs(amount) as abs_amount FROM decimals_test ORDER BY name"
+            );
+
+            // Test simple_round2 - round to 2 decimal places (output format shows full DECIMAL(18,6) precision)
+            assertSql(
+                    "name\trounded\n" +
+                            "test1\t123.460000\n" +
+                            "test2\t-99.120000\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_round2(amount) as rounded FROM decimals_test ORDER BY name"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFDecimalBinaryFunction() throws Exception {
+        // Test simplified UDF decimal binary functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Create a table with two decimal columns using cast syntax
+            execute("CREATE TABLE decimals_calc (a DECIMAL(18,6), b DECIMAL(18,6), name STRING)");
+            execute("INSERT INTO decimals_calc VALUES (100.5::decimal(18,6), 50.25::decimal(18,6), 'test1')");
+            execute("INSERT INTO decimals_calc VALUES (10.0::decimal(18,6), 3.0::decimal(18,6), 'test2')");
+
+            // Test simple_decimal_add (output format shows full DECIMAL(18,6) precision)
+            assertSql(
+                    "name\tsum_result\n" +
+                            "test1\t150.750000\n" +
+                            "test2\t13.000000\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_decimal_add(a, b) as sum_result FROM decimals_calc ORDER BY name"
+            );
+
+            // Test simple_decimal_mult (output format shows full DECIMAL(18,6) precision)
+            assertSql(
+                    "name\tmult_result\n" +
+                            "test1\t5050.125000\n" +
+                            "test2\t30.000000\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_decimal_mult(a, b) as mult_result FROM decimals_calc ORDER BY name"
+            );
+
+            // Test simple_decimal_div (output format shows full DECIMAL(18,6) precision)
+            assertSql(
+                    "name\tdiv_result\n" +
+                            "test1\t2.000000\n" +
+                            "test2\t3.333333\n",
+                    "SELECT name, \"" + PLUGIN_NAME + "\".simple_decimal_div(a, b) as div_result FROM decimals_calc ORDER BY name"
+            );
+        });
+    }
 
     private static boolean containsIgnoreCase(io.questdb.std.ObjList<CharSequence> list, String value) {
         for (int i = 0, n = list.size(); i < n; i++) {

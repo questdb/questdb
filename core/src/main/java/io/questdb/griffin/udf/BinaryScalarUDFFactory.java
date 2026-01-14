@@ -24,6 +24,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
+import io.questdb.std.Decimals;
+
+import java.math.BigDecimal;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -86,7 +90,12 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         Function right = args.getQuick(1);
         int outputColumnType = UDFType.toColumnType(outputType);
 
-        return switch (outputColumnType) {
+        // Handle decimal types (encoded with precision and scale)
+        if (ColumnType.isDecimal(outputColumnType)) {
+            return createDecimalFunction(left, right, outputColumnType);
+        }
+
+        return switch (ColumnType.tagOf(outputColumnType)) {
             case ColumnType.DOUBLE -> createDoubleFunction(left, right);
             case ColumnType.LONG -> createLongFunction(left, right);
             case ColumnType.INT -> createIntFunction(left, right);
@@ -118,6 +127,10 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         return new UDFBinaryBooleanFunction(left, right);
     }
 
+    private Function createDecimalFunction(Function left, Function right, int decimalType) {
+        return new UDFBinaryDecimalFunction(left, right, decimalType);
+    }
+
     private Function createTimestampFunction(Function left, Function right) {
         return new UDFBinaryTimestampFunction(left, right);
     }
@@ -147,11 +160,25 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
         } else if (type == LongArray.class) {
             ArrayView arrayView = arg.getArray(rec);
             return (T) (arrayView == null || arrayView.isNull() ? null : new LongArray(arrayView));
+        } else if (type == BigDecimal.class) {
+            // Handle decimal input - extract value and convert to BigDecimal
+            int argType = arg.getType();
+            if (ColumnType.isDecimal(argType)) {
+                int scale = ColumnType.getDecimalScale(argType);
+                long rawValue = arg.getDecimal64(rec);
+                if (rawValue == Decimals.DECIMAL64_NULL) {
+                    return null;
+                }
+                return (T) BigDecimal.valueOf(rawValue, scale);
+            }
+            // Fallback: try to get as double and convert
+            double v = arg.getDouble(rec);
+            return (T) (Double.isNaN(v) ? null : BigDecimal.valueOf(v));
         }
 
         // Handle scalar types via column type switch
         int columnType = UDFType.toColumnType(type);
-        return (T) switch (columnType) {
+        return (T) switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DOUBLE -> {
                 double v = arg.getDouble(rec);
                 yield Double.isNaN(v) ? null : v;
@@ -451,6 +478,55 @@ public class BinaryScalarUDFFactory<I1, I2, O> implements FunctionFactory {
                 return ((Date) result).getMillis();
             }
             return ((Number) result).longValue();
+        }
+    }
+
+    private class UDFBinaryDecimalFunction extends Decimal64Function implements BinaryFunction {
+        private final Function left;
+        private final Function right;
+        private final int scale;
+
+        UDFBinaryDecimalFunction(Function left, Function right, int decimalType) {
+            super(decimalType);
+            this.left = left;
+            this.right = right;
+            this.scale = ColumnType.getDecimalScale(decimalType);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            I1 input1 = extractInput(left, rec, inputType1);
+            I2 input2 = extractInput(right, rec, inputType2);
+            O result = safeCompute(input1, input2);
+            if (result == null) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (result instanceof BigDecimal bd) {
+                // Convert BigDecimal to scaled long value
+                return bd.setScale(scale, java.math.RoundingMode.HALF_UP)
+                        .movePointRight(scale)
+                        .longValue();
+            }
+            // For other numeric types, convert via BigDecimal
+            BigDecimal bd = BigDecimal.valueOf(((Number) result).doubleValue());
+            return bd.setScale(scale, java.math.RoundingMode.HALF_UP)
+                    .movePointRight(scale)
+                    .longValue();
         }
     }
 }
