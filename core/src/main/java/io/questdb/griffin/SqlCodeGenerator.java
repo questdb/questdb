@@ -268,7 +268,6 @@ import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMarkoutGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
-import io.questdb.griffin.engine.table.CombinedRecord;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexRowCursorFactory;
@@ -291,6 +290,7 @@ import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.MarkoutRecord;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
@@ -453,8 +453,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
-    private final MarkoutCurveInfo markoutCurveInfo = new MarkoutCurveInfo();
-    private final MarkoutHorizonInfo markoutHorizonInfo = new MarkoutHorizonInfo();
+    private final MarkoutContext markoutContext = new MarkoutContext();
+    private final MarkoutHorizonContext markoutHorizonContext = new MarkoutHorizonContext();
     private final LongList prefixes = new LongList();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final RecordComparatorCompiler recordComparatorCompiler;
@@ -644,6 +644,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         whereClauseParser.clear();
         symbolEstimator.clear();
         intListPool.clear();
+        markoutContext.clear();
+        markoutHorizonContext.clear();
     }
 
     @Override
@@ -1754,34 +1756,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * @param model The GROUP BY query model
      * @return MarkoutCurveInfo if pattern is detected, null otherwise
      */
-    private MarkoutCurveInfo detectMarkoutCurvePattern(QueryModel model) {
+    private MarkoutContext detectMarkoutCurvePattern(QueryModel model) {
         // Check for markout_curve hint
         if (!SqlHints.hasMarkoutCurveHint(model)) {
             return null;
         }
 
         // Find the ASOF JOIN in the nested model hierarchy
-        QueryModel asofJoinModel = findAsofJoinModel(model.getNestedModel());
-        if (asofJoinModel == null) {
+        QueryModel asOfJoinModel = findAsofJoinModel(model.getNestedModel());
+        if (asOfJoinModel == null) {
             return null;
         }
 
         // Get the join models - first is master, second is slave (with ASOF join type)
-        ObjList<QueryModel> joinModels = asofJoinModel.getJoinModels();
+        ObjList<QueryModel> joinModels = asOfJoinModel.getJoinModels();
         if (joinModels.size() != 2) {
             return null;
         }
 
-        QueryModel asofMasterModel = joinModels.getQuick(0);
-        QueryModel asofSlaveModel = joinModels.getQuick(1);
+        QueryModel asOfMasterModel = joinModels.getQuick(0);
+        QueryModel asOfSlaveModel = joinModels.getQuick(1);
 
         // Verify the second model has ASOF join type
-        if (asofSlaveModel.getJoinType() != QueryModel.JOIN_ASOF) {
+        if (asOfSlaveModel.getJoinType() != QueryModel.JOIN_ASOF) {
             return null;
         }
 
         // Find the CROSS JOIN with markout_horizon hint in the ASOF master model
-        QueryModel crossJoinModel = findMarkoutHorizonCrossJoin(asofMasterModel);
+        QueryModel crossJoinModel = findMarkoutHorizonCrossJoin(asOfMasterModel);
         if (crossJoinModel == null) {
             return null;
         }
@@ -1800,21 +1802,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // Get the JoinContext from the ASOF slave model (contains join key info)
-        JoinContext asofJoinContext = asofSlaveModel.getJoinContext();
+        JoinContext asOfJoinContext = asOfSlaveModel.getJoinContext();
 
         // TODO: Extract timestamp and sequence column indices from the models
         // For now, we'll need to get these during factory generation
         int masterTimestampColumnIndex = -1;  // Will be resolved later
         int sequenceColumnIndex = -1;         // Will be resolved later
 
-        return markoutCurveInfo.of(
-                asofJoinModel,
-                asofMasterModel,
-                asofSlaveModel,
+        return markoutContext.of(
+                asOfJoinModel,
+                asOfMasterModel,
+                asOfSlaveModel,
                 crossJoinModel,
                 crossMasterModel,
                 crossSlaveModel,
-                asofJoinContext,
+                asOfJoinContext,
                 masterTimestampColumnIndex,
                 sequenceColumnIndex
         );
@@ -1852,7 +1854,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * @param slaveCursorFactory  the RHS cursor factory (should produce an arithmetic sequence)
      * @return MarkoutHorizonInfo if pattern is detected, null otherwise
      */
-    private MarkoutHorizonInfo detectMarkoutHorizonPattern(
+    private MarkoutHorizonContext detectMarkoutHorizonPattern(
             CharSequence masterAlias,
             QueryModel masterModel,
             RecordMetadata masterMetadata,
@@ -1947,7 +1949,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (slaveColumnIndex == -1) {
             return null; // Slave column not found
         }
-        return markoutHorizonInfo.of(timestampColumnIndex, slaveColumnIndex);
+        return markoutHorizonContext.of(timestampColumnIndex, slaveColumnIndex);
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
@@ -3696,7 +3698,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateOuterJoinExpressions(slaveModel, "CROSS");
 
                                 // Try to detect the markout horizon pattern
-                                MarkoutHorizonInfo horizonInfo = detectMarkoutHorizonPattern(
+                                MarkoutHorizonContext horizonInfo = detectMarkoutHorizonPattern(
                                         masterAlias,
                                         model,
                                         masterMetadata,
@@ -4729,7 +4731,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      */
     private RecordCursorFactory generateMarkoutCurveGroupBy(
             QueryModel model,
-            MarkoutCurveInfo curveInfo,
+            MarkoutContext curveInfo,
             SqlExecutionContext executionContext
     ) throws SqlException {
         RecordCursorFactory nestedFactory = null;
@@ -4777,7 +4779,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Generate slave factory for ASOF JOIN processing
             // The factory must support TimeFrameCursor for parallel cursor creation
-            slaveFactory = generateQuery(curveInfo.asofSlaveModel, executionContext, true);
+            slaveFactory = generateQuery(curveInfo.asOfSlaveModel, executionContext, true);
             if (!slaveFactory.supportsTimeFrameCursor()) {
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
@@ -4864,11 +4866,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
-            ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
+            final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
+            final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
 
             // Get slave metadata (needed for column mapping and ASOF join processing)
-            RecordMetadata slaveMetadata = slaveFactory.getMetadata();
+            final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
 
             // Build column mappings from baseMetadata to source records (master, sequence, slave)
             // These mappings are needed by CombinedRecord in MarkoutReducer to route column accesses
@@ -4877,15 +4879,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int[] columnIndices = new int[baseColumnCount];
 
             // Get table aliases from the query models
-            CharSequence masterAlias = curveInfo.crossMasterModel.getAlias() != null ?
-                    curveInfo.crossMasterModel.getAlias().token : null;
-            CharSequence sequenceAlias = curveInfo.crossSlaveModel.getAlias() != null ?
-                    curveInfo.crossSlaveModel.getAlias().token : null;
-            CharSequence slaveAlias = curveInfo.asofSlaveModel.getAlias() != null ?
-                    curveInfo.asofSlaveModel.getAlias().token : null;
+            final CharSequence masterAlias = curveInfo.crossMasterModel.getAlias() != null
+                    ? curveInfo.crossMasterModel.getAlias().token : null;
+            final CharSequence sequenceAlias = curveInfo.crossSlaveModel.getAlias() != null
+                    ? curveInfo.crossSlaveModel.getAlias().token : null;
+            final CharSequence slaveAlias = curveInfo.asOfSlaveModel.getAlias() != null
+                    ? curveInfo.asOfSlaveModel.getAlias().token : null;
 
             for (int i = 0; i < baseColumnCount; i++) {
-                CharSequence fullName = baseMetadata.getColumnName(i);
+                final CharSequence fullName = baseMetadata.getColumnName(i);
 
                 // Parse "tableAlias.columnName" format
                 int dotIndex = Chars.indexOf(fullName, '.');
@@ -4937,7 +4939,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int sequenceColumnIndex = -1;
             for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
                 int keyColIdx = listColumnFilterA.getColumnIndexFactored(i);
-                if (columnSources[keyColIdx] == CombinedRecord.SOURCE_SEQUENCE) {
+                if (columnSources[keyColIdx] == MarkoutRecord.SOURCE_SEQUENCE) {
                     sequenceColumnIndex = columnIndices[keyColIdx];
                     break;
                 }
@@ -4957,7 +4959,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Create keyCopier for GROUP BY key population from the CombinedRecord
             // Note: listColumnFilterA contains the GROUP BY key column indices (from assembleGroupByFunctions)
             // We need to save it before it gets overwritten by ASOF join key processing
-            RecordSink groupByKeyCopier = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, listColumnFilterA);
+            final RecordSink groupByKeyCopier = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, listColumnFilterA);
 
             // Process ASOF join key information for the join lookup
             int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
@@ -4966,7 +4968,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordSink slaveKeyCopier = null;
             BitSet asofWriteSymbolAsString;
 
-            JoinContext asofJoinContext = curveInfo.asofJoinContext;
+            JoinContext asofJoinContext = curveInfo.asOfJoinContext;
             if (asofJoinContext != null && !asofJoinContext.isEmpty()) {
                 // Process join context to get key types and column filters
                 // listColumnFilterA -> slave columns
@@ -5032,6 +5034,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
+            // Copy the metadata before closing the nested factory (needed for toPlan)
+            RecordMetadata innerProjectionMetadata = GenericRecordMetadata.copyOf(baseMetadata);
+
             // Close the nested factory - we don't need it for execution, only for metadata
             Misc.free(nestedFactory);
             nestedFactory = null;
@@ -5041,6 +5046,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext.getCairoEngine(),
                     executionContext.getMessageBus(),
                     outerProjectionMetadata,
+                    innerProjectionMetadata,
                     masterFactory,
                     slaveFactory,
                     sequenceFactory,
@@ -6066,7 +6072,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // Check for markout curve pattern (GROUP BY on ASOF JOIN over MarkoutHorizon)
-        MarkoutCurveInfo curveInfo = detectMarkoutCurvePattern(model);
+        MarkoutContext curveInfo = detectMarkoutCurvePattern(model);
         if (curveInfo != null && executionContext.isParallelGroupByEnabled()) {
             final RecordCursorFactory markoutFactory = generateMarkoutCurveGroupBy(model, curveInfo, executionContext);
             if (markoutFactory != null) {
@@ -8562,35 +8568,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Information extracted from detecting the markout curve pattern.
      * The pattern is: GROUP BY on top of ASOF JOIN, where the ASOF master is a MarkoutHorizon (CROSS JOIN).
      */
-    private static class MarkoutCurveInfo {
-        JoinContext asofJoinContext;   // Join context from the ASOF JOIN (contains join key info)
-        QueryModel asofJoinModel;      // The model containing the ASOF JOIN
-        QueryModel asofMasterModel;    // Master model of the ASOF JOIN (contains MarkoutHorizon)
-        QueryModel asofSlaveModel;     // Slave model of the ASOF JOIN (prices table)
+    private static class MarkoutContext implements Mutable {
+        JoinContext asOfJoinContext;   // Join context from the ASOF JOIN (contains join key info)
+        QueryModel asOfJoinModel;      // The model containing the ASOF JOIN
+        QueryModel asOfMasterModel;    // Master model of the ASOF JOIN (contains MarkoutHorizon)
+        QueryModel asOfSlaveModel;     // Slave model of the ASOF JOIN (prices table)
         QueryModel crossJoinModel;     // The CROSS JOIN model within the ASOF master
         QueryModel crossMasterModel;   // Master of the CROSS JOIN (base master table)
         QueryModel crossSlaveModel;    // Slave of the CROSS JOIN (sequence/long_sequence)
-        int masterTimestampColumnIndex;
-        int sequenceColumnIndex;
+        int masterTimestampColumnIndex = -1;
+        int sequenceColumnIndex = -1;
 
-        MarkoutCurveInfo of(
-                QueryModel asofJoinModel,
-                QueryModel asofMasterModel,
-                QueryModel asofSlaveModel,
+        @Override
+        public void clear() {
+            this.asOfJoinModel = null;
+            this.asOfMasterModel = null;
+            this.asOfSlaveModel = null;
+            this.crossJoinModel = null;
+            this.crossMasterModel = null;
+            this.crossSlaveModel = null;
+            this.asOfJoinContext = null;
+            this.masterTimestampColumnIndex = -1;
+            this.sequenceColumnIndex = -1;
+        }
+
+        MarkoutContext of(
+                QueryModel asOfJoinModel,
+                QueryModel asOfMasterModel,
+                QueryModel asOfSlaveModel,
                 QueryModel crossJoinModel,
                 QueryModel crossMasterModel,
                 QueryModel crossSlaveModel,
-                JoinContext asofJoinContext,
+                JoinContext asOfJoinContext,
                 int masterTimestampColumnIndex,
                 int sequenceColumnIndex
         ) {
-            this.asofJoinModel = asofJoinModel;
-            this.asofMasterModel = asofMasterModel;
-            this.asofSlaveModel = asofSlaveModel;
+            this.asOfJoinModel = asOfJoinModel;
+            this.asOfMasterModel = asOfMasterModel;
+            this.asOfSlaveModel = asOfSlaveModel;
             this.crossJoinModel = crossJoinModel;
             this.crossMasterModel = crossMasterModel;
             this.crossSlaveModel = crossSlaveModel;
-            this.asofJoinContext = asofJoinContext;
+            this.asOfJoinContext = asOfJoinContext;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.sequenceColumnIndex = sequenceColumnIndex;
             return this;
@@ -8600,11 +8619,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     /**
      * Container class to hold the detected parameters of a markout horizon pattern.
      */
-    private static class MarkoutHorizonInfo {
-        int masterTimestampColumnIndex;
-        int slaveSequenceColumnIndex;
+    private static class MarkoutHorizonContext implements Mutable {
+        int masterTimestampColumnIndex = -1;
+        int slaveSequenceColumnIndex = -1;
 
-        MarkoutHorizonInfo of(int timestampColumnIndex, int slaveColumnIndex) {
+        @Override
+        public void clear() {
+            this.masterTimestampColumnIndex = -1;
+            this.slaveSequenceColumnIndex = -1;
+        }
+
+        MarkoutHorizonContext of(int timestampColumnIndex, int slaveColumnIndex) {
             this.masterTimestampColumnIndex = timestampColumnIndex;
             this.slaveSequenceColumnIndex = slaveColumnIndex;
             return this;

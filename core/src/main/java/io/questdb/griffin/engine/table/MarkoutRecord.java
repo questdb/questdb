@@ -39,7 +39,7 @@ import org.jetbrains.annotations.Nullable;
  * - Sequence offset value (from long_sequence)
  * - Slave record (from ASOF JOIN)
  */
-public class CombinedRecord implements Record {
+public class MarkoutRecord implements Record {
     public static final int SOURCE_MASTER = 0;
     public static final int SOURCE_SEQUENCE = 1;
     public static final int SOURCE_SLAVE = 2;
@@ -245,9 +245,9 @@ public class CombinedRecord implements Record {
     /**
      * Sets the source records for this row.
      *
-     * @param masterRecord       the master record from the page frame
+     * @param masterRecord        the master record from the page frame
      * @param sequenceOffsetValue the sequence offset value (from long_sequence)
-     * @param slaveRecord        the matched slave record from ASOF JOIN (may be null)
+     * @param slaveRecord         the matched slave record from ASOF JOIN (may be null)
      */
     public void of(Record masterRecord, long sequenceOffsetValue, Record slaveRecord) {
         this.masterRecord = masterRecord;

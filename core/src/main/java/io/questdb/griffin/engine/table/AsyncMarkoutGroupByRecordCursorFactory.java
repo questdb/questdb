@@ -79,6 +79,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncMarkoutGroupByRecordCursor cursor;
     private final PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence;
+    // Combined metadata (master + sequence + slave) used for GROUP BY function column references in toPlan
+    private final RecordMetadata markoutMetadata;
     private final RecordCursorFactory masterFactory;
     private final ObjList<Function> recordFunctions;
     private final RecordCursorFactory sequenceFactory;
@@ -90,6 +92,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             @NotNull CairoEngine engine,
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
+            @NotNull RecordMetadata markoutMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
             @NotNull RecordCursorFactory sequenceFactory,
@@ -118,6 +121,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
     ) {
         super(metadata);
         try {
+            this.markoutMetadata = markoutMetadata;
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.sequenceFactory = sequenceFactory;
@@ -197,7 +201,10 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         }
         sink.meta("workers").val(workerCount);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
-        sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
+        // GroupByFunctions reference columns from the combined markout metadata (master + sequence + slave)
+        sink.setMetadata(markoutMetadata);
+        sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
+        sink.setMetadata(null);
         sink.child(masterFactory);
         sink.child(slaveFactory);
         sink.child(sequenceFactory);
@@ -209,19 +216,19 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
     }
 
     private static void aggregateRecord(
-            CombinedRecord combinedRecord,
+            MarkoutRecord markoutRecord,
             long masterRowId,
             Map partialMap,
             RecordSink groupByKeyCopier,
             GroupByFunctionsUpdater functionUpdater
     ) {
         MapKey key = partialMap.withKey();
-        key.put(combinedRecord, groupByKeyCopier);
+        key.put(markoutRecord, groupByKeyCopier);
         MapValue value = key.createValue();
         if (value.isNew()) {
-            functionUpdater.updateNew(value, combinedRecord, masterRowId);
+            functionUpdater.updateNew(value, markoutRecord, masterRowId);
         } else {
-            functionUpdater.updateExisting(value, combinedRecord, masterRowId);
+            functionUpdater.updateExisting(value, markoutRecord, masterRowId);
         }
     }
 
@@ -262,7 +269,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             final Map partialMap = atom.getMap(slotId);
             final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
-            final CombinedRecord combinedRecord = atom.getCombinedRecord(slotId);
+            final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
             final CompiledFilter compiledFilter = atom.getCompiledFilter();
             final Function filter = atom.getFilter(slotId);
 
@@ -312,7 +319,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         masterKeyCopier,
                         slaveKeyCopier,
                         slaveRecord,
-                        combinedRecord,
+                        markoutRecord,
                         partialMap,
                         groupByKeyCopier,
                         functionUpdater,
@@ -344,7 +351,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             RecordSink masterKeyCopier,
             RecordSink slaveKeyCopier,
             Record slaveRecord,
-            CombinedRecord combinedRecord,
+            MarkoutRecord markoutRecord,
             Map partialMap,
             RecordSink groupByKeyCopier,
             GroupByFunctionsUpdater functionUpdater,
@@ -410,8 +417,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             slaveTimeFrameHelper.recordAt(match0RowId);
             matchedSlaveRecord0 = slaveRecord;
         }
-        combinedRecord.of(masterRecord, secOffsValue0, matchedSlaveRecord0);
-        aggregateRecord(combinedRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
+        markoutRecord.of(masterRecord, secOffsValue0, matchedSlaveRecord0);
+        aggregateRecord(markoutRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
 
         // ========================================
         // REMAINING OFFSETS
@@ -461,8 +468,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                 slaveTimeFrameHelper.recordAt(effectiveMatchRowId);
                 matchedSlaveRecord = slaveRecord;
             }
-            combinedRecord.of(masterRecord, secOffsValue, matchedSlaveRecord);
-            aggregateRecord(combinedRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
+            markoutRecord.of(masterRecord, secOffsValue, matchedSlaveRecord);
+            aggregateRecord(markoutRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
         }
 
         return asOfRowId0;
@@ -505,7 +512,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             final Map partialMap = atom.getMap(slotId);
             final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
-            final CombinedRecord combinedRecord = atom.getCombinedRecord(slotId);
+            final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
 
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
@@ -538,7 +545,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         masterKeyCopier,
                         slaveKeyCopier,
                         slaveRecord,
-                        combinedRecord,
+                        markoutRecord,
                         partialMap,
                         groupByKeyCopier,
                         functionUpdater,

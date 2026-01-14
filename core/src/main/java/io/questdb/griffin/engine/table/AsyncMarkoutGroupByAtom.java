@@ -83,7 +83,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final int masterTimestampColumnIndex;
     private final GroupByAllocator ownerAllocator;
     private final Map ownerAsOfJoinMap;
-    private final CombinedRecord ownerCombinedRecord;
+    private final MarkoutRecord ownerCombinedRecord;
     private final Function ownerFilter;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
@@ -92,7 +92,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final MarkoutTimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Map> perWorkerAsOfJoinMaps;
-    private final ObjList<CombinedRecord> perWorkerCombinedRecords;
+    private final ObjList<MarkoutRecord> perWorkerCombinedRecords;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -225,11 +225,11 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             }
 
             // Per-worker combined records
-            this.ownerCombinedRecord = new CombinedRecord();
+            this.ownerCombinedRecord = new MarkoutRecord();
             this.ownerCombinedRecord.init(columnSources, columnIndices);
             this.perWorkerCombinedRecords = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                CombinedRecord record = new CombinedRecord();
+                MarkoutRecord record = new MarkoutRecord();
                 record.init(columnSources, columnIndices);
                 perWorkerCombinedRecords.add(record);
             }
@@ -322,7 +322,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         return bindVarMemory;
     }
 
-    public CombinedRecord getCombinedRecord(int slotId) {
+    public MarkoutRecord getCombinedRecord(int slotId) {
         if (slotId == -1) {
             return ownerCombinedRecord;
         }

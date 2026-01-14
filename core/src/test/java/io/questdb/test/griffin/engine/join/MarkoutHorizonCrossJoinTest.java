@@ -630,7 +630,56 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             ASOF JOIN y
                             ON (x.sym = y.sym);
                             """,
-                    ""
+                    """
+                            Async Markout GroupBy workers: 1
+                              keys: [sec_off]
+                              values: [avg(bid),avg(ask)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                                VirtualRecord
+                                  functions: [1000000*x-1,x-1]
+                                    long_sequence count: 2
+                            """
+            );
+
+            // TODO(puzpuzpuz): filter stealing is broken
+            assertPlanNoLeakCheck(
+                    """
+                            WITH offsets AS (
+                                SELECT 1_000_000 * (x-1) AS usec_off, x - 1 AS sec_off
+                                FROM long_sequence(2)
+                            ),
+                            x_off AS (
+                              SELECT * FROM (
+                                SELECT /*+ markout_horizon(x offsets) */ sym, sec_off, ts + usec_off AS ts
+                                FROM x CROSS JOIN offsets
+                                WHERE x.sym = 'sym0'
+                                ORDER BY ts + usec_off
+                              ) TIMESTAMP(ts)
+                            )
+                            SELECT /*+ markout_curve */ x.sec_off, avg(y.bid), avg(y.ask)
+                            FROM x_off as x
+                            ASOF JOIN y
+                            ON (x.sym = y.sym);
+                            """,
+                    """
+                            Async Markout GroupBy workers: 1
+                              keys: [sec_off]
+                              values: [avg(bid),avg(ask)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                                VirtualRecord
+                                  functions: [1000000*x-1,x-1]
+                                    long_sequence count: 2
+                            """
             );
         });
     }
