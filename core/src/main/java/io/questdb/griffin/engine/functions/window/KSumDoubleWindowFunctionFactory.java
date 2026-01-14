@@ -277,13 +277,17 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
-
-                    return new KSumOverRowsFrameFunction(
-                            args.get(0),
-                            rowsLo,
-                            rowsHi,
-                            mem
-                    );
+                    try {
+                        return new KSumOverRowsFrameFunction(
+                                args.get(0),
+                                rowsLo,
+                                rowsHi,
+                                mem
+                        );
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
