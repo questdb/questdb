@@ -1253,6 +1253,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         txReader.ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy());
                         TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
+                        long minTimestamp = txReader.getMinTimestamp();
                         long maxTimestamp = txReader.getMaxTimestamp();
                         long rowCount = txReader.getRowCount();
                         long writerTxn = txReader.getSeqTxn();
@@ -1272,7 +1273,16 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         // Use CAS insert - writer data always wins over hydrated data
-                        if (recentWriteTracker.recordWriteIfAbsent(tableToken, maxTimestamp, rowCount, writerTxn, sequencerTxn, walTimestamp)) {
+                        if (recentWriteTracker.recordWriteIfAbsent(
+                                tableToken,
+                                maxTimestamp,
+                                rowCount,
+                                writerTxn,
+                                sequencerTxn,
+                                walTimestamp,
+                                minTimestamp == Long.MAX_VALUE ? Numbers.LONG_NULL : minTimestamp,
+                                maxTimestamp
+                        )) {
                             hydratedCount++;
                         }
                     }

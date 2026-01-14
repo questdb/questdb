@@ -76,8 +76,8 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -534,7 +534,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("ms, rate=").$(throughput)
                             .$("rows/s, ampl=").$(amplification)
                             .I$();
-                    engine.getRecentWriteTracker().recordMergeStats(writer.getTableToken(), amplification, throughput);
+                    engine.getRecentWriteTracker().recordMergeStats(
+                            writer.getTableToken(),
+                            amplification,
+                            throughput,
+                            writer.getMinTimestamp(),
+                            writer.getMaxTimestamp()
+                    );
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
