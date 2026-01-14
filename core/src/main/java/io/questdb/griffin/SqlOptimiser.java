@@ -72,6 +72,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
@@ -182,6 +183,11 @@ public class SqlOptimiser implements Mutable {
     private final ArrayDeque<ExpressionNode> windowNodeStack = new ArrayDeque<>();
     // Collects inner window models for nested window functions (e.g., sum(row_number() OVER ()) OVER ())
     private final ObjList<QueryModel> innerWindowModels = new ObjList<>();
+    // Hash map for O(1) window function deduplication lookup: hash -> list of QueryColumns with that hash
+    private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
+    // Pool of ObjList<QueryColumn> for windowFunctionHashMap values (to avoid allocations)
+    private final ObjList<ObjList<QueryColumn>> windowColumnListPool = new ObjList<>();
+    private int windowColumnListPoolPos = 0;
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -2568,6 +2574,61 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Clears the window function hash map and resets the column list pool.
+     */
+    private void clearWindowFunctionHashMap() {
+        windowFunctionHashMap.clear();
+        windowColumnListPoolPos = 0;
+    }
+
+    /**
+     * Gets or creates a list for storing QueryColumns with the given hash.
+     */
+    private ObjList<QueryColumn> getOrCreateColumnListForHash(int hash) {
+        ObjList<QueryColumn> list = windowFunctionHashMap.get(hash);
+        if (list == null) {
+            // Get from pool or create new
+            if (windowColumnListPoolPos < windowColumnListPool.size()) {
+                list = windowColumnListPool.getQuick(windowColumnListPoolPos);
+                list.clear();
+            } else {
+                list = new ObjList<>();
+                windowColumnListPool.add(list);
+            }
+            windowColumnListPoolPos++;
+            windowFunctionHashMap.put(hash, list);
+        }
+        return list;
+    }
+
+    /**
+     * Looks up a duplicate window function in the hash map.
+     * Returns the alias of an existing identical window function, or null if none found.
+     */
+    private CharSequence findDuplicateWindowFunction(ExpressionNode node) {
+        int hash = ExpressionNode.deepHashCode(node);
+        ObjList<QueryColumn> candidates = windowFunctionHashMap.get(hash);
+        if (candidates != null) {
+            for (int i = 0, n = candidates.size(); i < n; i++) {
+                QueryColumn existing = candidates.getQuick(i);
+                if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
+                    return existing.getAlias();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Registers a window function in the hash map for future deduplication lookups.
+     */
+    private void registerWindowFunction(ExpressionNode node, QueryColumn column) {
+        int hash = ExpressionNode.deepHashCode(node);
+        ObjList<QueryColumn> list = getOrCreateColumnListForHash(hash);
+        list.add(column);
+    }
+
+    /**
      * Extracts nested window functions from an expression tree and replaces them with literal references.
      * Processes depth-first (innermost window functions first) by recursively processing children
      * before checking if the current node is a window function.
@@ -2599,26 +2660,10 @@ public class SqlOptimiser implements Mutable {
             // This creates deeper inner models if needed (recursive structure)
             extractAndRegisterNestedWindowFunctions(node, translatingModel, innerVirtualModel, baseModel, depth + 1);
 
-            // Check if an identical window function already exists in ANY inner model (cross-expression deduplication)
-            for (int m = 0, mSize = innerWindowModels.size(); m < mSize; m++) {
-                ObjList<QueryColumn> existingColumns = innerWindowModels.getQuick(m).getBottomUpColumns();
-                for (int i = 0, n = existingColumns.size(); i < n; i++) {
-                    QueryColumn existing = existingColumns.getQuick(i);
-                    if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
-                        // Found duplicate in existing inner model - reuse the existing alias
-                        return nextLiteral(existing.getAlias());
-                    }
-                }
-            }
-
-            // Also check the current inner model (for duplicates within the same expression)
-            ObjList<QueryColumn> existingColumns = innerWindowModel.getBottomUpColumns();
-            for (int i = 0, n = existingColumns.size(); i < n; i++) {
-                QueryColumn existing = existingColumns.getQuick(i);
-                if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
-                    // Found duplicate - reuse the existing alias
-                    return nextLiteral(existing.getAlias());
-                }
+            // Check if an identical window function already exists (O(1) hash lookup + O(k) comparison where k is collision count)
+            CharSequence existingAlias = findDuplicateWindowFunction(node);
+            if (existingAlias != null) {
+                return nextLiteral(existingAlias);
             }
 
             // Now add this window function (with nested windows replaced by literals) to current inner model
@@ -2629,6 +2674,8 @@ public class SqlOptimiser implements Mutable {
                 wc.of(alias, node);
             }
             innerWindowModel.addBottomUpColumn(wc);
+            // Register in hash map for future deduplication
+            registerWindowFunction(node, wc);
             // Emit literals referenced by the window column to inner models
             emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
             return nextLiteral(alias);
@@ -6698,24 +6745,17 @@ public class SqlOptimiser implements Mutable {
             // Extract any nested window functions from arguments to inner window model
             extractAndRegisterNestedWindowFunctions(ast, translatingModel, innerVirtualModel, baseModel, 0);
 
-            // Check for duplicate window column - if an identical one already exists, reuse it
-            CharSequence existingAlias = null;
-            ObjList<QueryColumn> existingWindowCols = windowModel.getBottomUpColumns();
-            for (int i = 0, n = existingWindowCols.size(); i < n; i++) {
-                QueryColumn existing = existingWindowCols.getQuick(i);
-                if (ExpressionNode.compareNodesExact(ast, existing.getAst())) {
-                    existingAlias = existing.getAlias();
-                    break;
-                }
-            }
+            // Check for duplicate window column using O(1) hash lookup
+            CharSequence existingAlias = findDuplicateWindowFunction(ast);
 
             QueryColumn ref;
             if (existingAlias != null) {
                 // Duplicate found - create reference to existing window column
                 ref = nextColumn(qc.getAlias(), existingAlias);
             } else {
-                // Not a duplicate - add to window model
+                // Not a duplicate - add to window model and register in hash map
                 windowModel.addBottomUpColumn(qc);
+                registerWindowFunction(ast, qc);
                 ref = nextColumn(qc.getAlias());
             }
             outerVirtualModel.addBottomUpColumn(ref);
@@ -7071,6 +7111,7 @@ public class SqlOptimiser implements Mutable {
         groupByAliases.clear();
         groupByNodes.clear();
         innerWindowModels.clear();
+        clearWindowFunctionHashMap();
 
         final QueryModel groupByModel = queryModelPool.next();
         groupByModel.setSelectModelType(SELECT_MODEL_GROUP_BY);

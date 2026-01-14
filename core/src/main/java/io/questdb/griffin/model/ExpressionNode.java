@@ -136,6 +136,68 @@ public class ExpressionNode implements Mutable, Sinkable {
         return true;
     }
 
+    /**
+     * Computes a hash code for an expression node tree that is consistent with compareNodesExact().
+     * Two nodes that compare equal will have the same hash code.
+     */
+    public static int deepHashCode(ExpressionNode node) {
+        if (node == null) {
+            return 0;
+        }
+        int hash = node.type;
+        if (node.token != null) {
+            // Use case-insensitive hash for FUNCTION and LITERAL types (consistent with compareNodesExact)
+            if (node.type == FUNCTION || node.type == LITERAL) {
+                hash = 31 * hash + Chars.hashCode(node.token);  // Chars.hashCode is case-insensitive
+            } else {
+                hash = 31 * hash + node.token.hashCode();
+            }
+        }
+        // Hash children (lhs, rhs, args)
+        hash = 31 * hash + deepHashCode(node.lhs);
+        hash = 31 * hash + deepHashCode(node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            hash = 31 * hash + deepHashCode(node.args.getQuick(i));
+        }
+        // Hash window expression
+        hash = 31 * hash + hashWindowExpression(node.windowExpression);
+        return hash;
+    }
+
+    /**
+     * Computes a hash code for a WindowExpression that is consistent with compareWindowExpressions().
+     */
+    public static int hashWindowExpression(WindowExpression w) {
+        if (w == null) {
+            return 0;
+        }
+        int hash = w.getFramingMode();
+        hash = 31 * hash + Long.hashCode(w.getRowsLo());
+        hash = 31 * hash + Long.hashCode(w.getRowsHi());
+        hash = 31 * hash + w.getRowsLoKind();
+        hash = 31 * hash + w.getRowsHiKind();
+        hash = 31 * hash + w.getRowsLoExprTimeUnit();
+        hash = 31 * hash + w.getRowsHiExprTimeUnit();
+        hash = 31 * hash + w.getExclusionKind();
+        hash = 31 * hash + (w.isIgnoreNulls() ? 1 : 0);
+        // Hash frame boundary expressions
+        hash = 31 * hash + deepHashCode(w.getRowsLoExpr());
+        hash = 31 * hash + deepHashCode(w.getRowsHiExpr());
+        // Hash PARTITION BY
+        ObjList<ExpressionNode> partitionBy = w.getPartitionBy();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            hash = 31 * hash + deepHashCode(partitionBy.getQuick(i));
+        }
+        // Hash ORDER BY (including direction)
+        ObjList<ExpressionNode> orderBy = w.getOrderBy();
+        IntList orderByDir = w.getOrderByDirection();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            hash = 31 * hash + deepHashCode(orderBy.getQuick(i));
+            hash = 31 * hash + orderByDir.getQuick(i);
+        }
+        return hash;
+    }
+
     public static boolean compareNodesGroupBy(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
