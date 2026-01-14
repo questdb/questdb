@@ -9120,6 +9120,49 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionArithmeticAsArgumentToAggregate() throws Exception {
+        // Test arithmetic of window functions as argument to regular aggregate
+        // sum(sum(id) OVER () + sum(id) OVER ()) should:
+        // 1. Compute sum(id) OVER () for each row: 6 (1+2+3)
+        // 2. Add them: 6 + 6 = 12 for each row
+        // 3. Sum all those values: 12+12+12 = 36
+        assertQuery(
+                """
+                        result
+                        36.0
+                        """,
+                "SELECT sum(sum(id) OVER () + sum(id) OVER ()) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x as id, timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionArithmeticInsideFunction() throws Exception {
+        // Test two window functions in arithmetic expression inside abs()
+        // This is the original bug case
+        assertQuery(
+                """
+                        result
+                        0.0
+                        0.0
+                        0.0
+                        """,
+                "SELECT abs(sum(x) OVER () - sum(x) OVER ()) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testWindowFunctionArithmeticWithOrderBy() throws Exception {
         // Test window function with ORDER BY and arithmetic: row_number() + 1
         assertQuery(
@@ -9138,6 +9181,92 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") TIMESTAMP(ts) PARTITION BY DAY",
                 null,
                 false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregate() throws Exception {
+        // Test window function as argument to regular aggregate (not window function)
+        // sum(row_number() OVER (order by ts)) should:
+        // 1. Compute row_number() for each row ordered by ts: 1, 2, 3
+        // 2. Sum all those values: 1+2+3 = 6
+        // 3. Return single aggregated result
+        assertQuery(
+                """
+                        result
+                        6
+                        """,
+                "SELECT sum(row_number() OVER (order by ts)) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToCast() throws Exception {
+        // Test window function as direct argument to cast() function
+        assertQuery(
+                """
+                        result
+                        1
+                        2
+                        3
+                        """,
+                "SELECT cast(row_number() OVER (ORDER BY ts) AS int) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToFunction() throws Exception {
+        // Test window function as direct argument to abs() function
+        assertQuery(
+                """
+                        result
+                        1
+                        2
+                        3
+                        """,
+                "SELECT abs(row_number() OVER (ORDER BY ts)) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToWindowFunction() throws Exception {
+        // Test window function as argument to another window function
+        // sum(row_number() OVER ()) OVER () should:
+        // 1. Compute row_number() for each row: 1, 2, 3
+        // 2. Sum all those values: 1+2+3 = 6
+        // 3. Return 6 for each row
+        assertQuery(
+                """
+                        result
+                        6.0
+                        6.0
+                        6.0
+                        """,
+                "SELECT sum(row_number() OVER ()) OVER () AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
                 true
         );
     }
