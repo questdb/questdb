@@ -697,7 +697,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     if encoder.is_null() {
         let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
         err.add_context("error in StreamingPartitionEncoder.finish");
-        err.into_cairo_exception().throw::<jlong>(&mut env);
+        err.into_cairo_exception().throw::<*const u8>(&mut env);
         return std::ptr::null();
     }
 
