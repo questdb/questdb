@@ -124,7 +124,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             this.recordFunctions = recordFunctions;
             this.workerCount = workerCount;
 
-            AsyncMarkoutGroupByAtom atom = new AsyncMarkoutGroupByAtom(
+            final AsyncMarkoutGroupByAtom atom = new AsyncMarkoutGroupByAtom(
                     asm,
                     configuration,
                     slaveFactory,
@@ -199,8 +199,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
         sink.child(masterFactory);
-        sink.child(sequenceFactory);
         sink.child(slaveFactory);
+        sink.child(sequenceFactory);
     }
 
     @Override

@@ -607,6 +607,35 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMarkoutCurveParallelPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE y (sym SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertPlanNoLeakCheck(
+                    """
+                            WITH offsets AS (
+                                SELECT 1_000_000 * (x-1) AS usec_off, x - 1 AS sec_off
+                                FROM long_sequence(2)
+                            ),
+                            x_off AS (
+                              SELECT * FROM (
+                                SELECT /*+ markout_horizon(x offsets) */ sym, sec_off, ts + usec_off AS ts
+                                FROM x CROSS JOIN offsets
+                                ORDER BY ts + usec_off
+                              ) TIMESTAMP(ts)
+                            )
+                            SELECT /*+ markout_curve */ x.sec_off, avg(y.bid), avg(y.ask)
+                            FROM x_off as x
+                            ASOF JOIN y
+                            ON (x.sym = y.sym);
+                            """,
+                    ""
+            );
+        });
+    }
+
+    @Test
     public void testMasterWithFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");

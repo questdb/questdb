@@ -6068,7 +6068,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Check for markout curve pattern (GROUP BY on ASOF JOIN over MarkoutHorizon)
         MarkoutCurveInfo curveInfo = detectMarkoutCurvePattern(model);
         if (curveInfo != null && executionContext.isParallelGroupByEnabled()) {
-            RecordCursorFactory markoutFactory = generateMarkoutCurveGroupBy(model, curveInfo, executionContext);
+            final RecordCursorFactory markoutFactory = generateMarkoutCurveGroupBy(model, curveInfo, executionContext);
             if (markoutFactory != null) {
                 return markoutFactory;
             }
