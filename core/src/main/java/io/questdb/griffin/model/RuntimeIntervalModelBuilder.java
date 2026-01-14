@@ -55,7 +55,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     // ListLongs has STATIC_LONGS_PER_DYNAMIC_INTERVAL entries per 1 dynamic interval
     // and pairs of static intervals in the end
     private final LongList staticIntervals = new LongList();
-    private long betweenBoundary;
+    private long betweenBoundary = Numbers.LONG_NULL;
     private Function betweenBoundaryFunc;
     private boolean betweenBoundarySet;
     private boolean betweenNegated;
