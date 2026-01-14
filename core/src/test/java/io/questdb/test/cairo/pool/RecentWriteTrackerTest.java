@@ -476,7 +476,7 @@ public class RecentWriteTrackerTest {
         tracker.recordWrite(table1, 5000L, 500L, 50L);
 
         // Attempt to insert via recordWriteIfAbsent (simulates hydration with stale data)
-        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L, 5L, 1000L);
+        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L, 5L, 1000L, 500L, 1500L);
 
         // Should not have overwritten
         Assert.assertFalse("recordWriteIfAbsent should return false when entry exists", inserted);
@@ -493,13 +493,15 @@ public class RecentWriteTrackerTest {
         TableToken table1 = createTableToken("table1", 1);
 
         // Insert via recordWriteIfAbsent when no entry exists (with sequencerTxn)
-        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L, 5L, 1000L);
+        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L, 5L, 1000L, 500L, 1500L);
 
         Assert.assertTrue("recordWriteIfAbsent should return true when inserting new entry", inserted);
         Assert.assertEquals(1000L, tracker.getWriteTimestamp(table1));
         Assert.assertEquals(100L, tracker.getRowCount(table1));
         Assert.assertEquals(10L, tracker.getWriterTxn(table1));
         Assert.assertEquals(5L, tracker.getSequencerTxn(table1));
+        Assert.assertEquals(500L, tracker.getWriteStats(table1).getTableMinTimestamp());
+        Assert.assertEquals(1500L, tracker.getWriteStats(table1).getTableMaxTimestamp());
         Assert.assertEquals(1, tracker.size());
     }
 
@@ -510,7 +512,7 @@ public class RecentWriteTrackerTest {
         TableToken table1 = createTableToken("table1", 1);
 
         // First insert via recordWriteIfAbsent (simulates hydration with sequencerTxn)
-        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L, 5L, 1000L);
+        boolean inserted = tracker.recordWriteIfAbsent(table1, 1000L, 100L, 10L, 5L, 1000L, 500L, 1500L);
         Assert.assertTrue(inserted);
         Assert.assertEquals(5L, tracker.getSequencerTxn(table1));
         Assert.assertEquals(1000L, tracker.getWriteStats(table1).getLastWalTimestamp());

@@ -159,7 +159,7 @@ import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -2545,7 +2545,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowExpression.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20, WindowExpression.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
                             }
                             Function function = null;
                             try {

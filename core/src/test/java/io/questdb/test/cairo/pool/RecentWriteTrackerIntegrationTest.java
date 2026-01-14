@@ -464,8 +464,11 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
 
             // Also verify via SQL
             assertSql(
-                    "table_row_count\tdedup_row_count_since_start\n1000\t0\n",
-                    "SELECT table_row_count, dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'"
+                    """
+                            table_row_count\twal_dedup_row_count_since_start
+                            1000\t0
+                            """,
+                    "SELECT table_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'"
             );
 
             // Now insert actual duplicates - same timestamps as first 200 rows
@@ -479,8 +482,8 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
 
             // Verify via SQL
             assertSql(
-                    "table_row_count\tdedup_row_count_since_start\n1000\t200\n",
-                    "SELECT table_row_count, dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'"
+                    "table_row_count\twal_dedup_row_count_since_start\n1000\t200\n",
+                    "SELECT table_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'"
             );
         });
     }
@@ -572,8 +575,8 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
 
             // After draining - table_row_count should be 1000, wal_pending_row_count should be 0, no dedup yet
             assertSql(
-                    "table_row_count\twal_pending_row_count\tdedup_row_count_since_start\n1000\t0\t0\n",
-                    "SELECT table_row_count, wal_pending_row_count, dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'"
+                    "table_row_count\twal_pending_row_count\twal_dedup_row_count_since_start\n1000\t0\t0\n",
+                    "SELECT table_row_count, wal_pending_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'"
             );
 
             // Now insert duplicate data - same timestamps as first 300 rows (1-300 seconds)
@@ -587,8 +590,8 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             // - wal_pending_row_count should be 0
             // - dedup_row_count_since_start should be 300 (cumulative - the 300 duplicates just added)
             assertSql(
-                    "table_row_count\twal_pending_row_count\tdedup_row_count_since_start\n1000\t0\t300\n",
-                    "SELECT table_row_count, wal_pending_row_count, dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'"
+                    "table_row_count\twal_pending_row_count\twal_dedup_row_count_since_start\n1000\t0\t300\n",
+                    "SELECT table_row_count, wal_pending_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'"
             );
 
             // Verify the values were actually updated (not just row count unchanged)
