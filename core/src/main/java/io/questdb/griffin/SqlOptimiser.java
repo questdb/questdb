@@ -2599,6 +2599,28 @@ public class SqlOptimiser implements Mutable {
             // This creates deeper inner models if needed (recursive structure)
             extractAndRegisterNestedWindowFunctions(node, translatingModel, innerVirtualModel, baseModel, depth + 1);
 
+            // Check if an identical window function already exists in ANY inner model (cross-expression deduplication)
+            for (int m = 0, mSize = innerWindowModels.size(); m < mSize; m++) {
+                ObjList<QueryColumn> existingColumns = innerWindowModels.getQuick(m).getBottomUpColumns();
+                for (int i = 0, n = existingColumns.size(); i < n; i++) {
+                    QueryColumn existing = existingColumns.getQuick(i);
+                    if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
+                        // Found duplicate in existing inner model - reuse the existing alias
+                        return nextLiteral(existing.getAlias());
+                    }
+                }
+            }
+
+            // Also check the current inner model (for duplicates within the same expression)
+            ObjList<QueryColumn> existingColumns = innerWindowModel.getBottomUpColumns();
+            for (int i = 0, n = existingColumns.size(); i < n; i++) {
+                QueryColumn existing = existingColumns.getQuick(i);
+                if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
+                    // Found duplicate - reuse the existing alias
+                    return nextLiteral(existing.getAlias());
+                }
+            }
+
             // Now add this window function (with nested windows replaced by literals) to current inner model
             WindowExpression wc = node.windowExpression;
             CharSequence alias = wc.getAlias();
@@ -2704,6 +2726,34 @@ public class SqlOptimiser implements Mutable {
                 if (alias != null && aliasMap.keyIndex(alias) > -1) {
                     aliasMap.put(alias, alias);
                 }
+            }
+        }
+    }
+
+    /**
+     * Validates that a window expression does not contain window functions in its
+     * PARTITION BY or ORDER BY clauses. Window functions are not allowed in these
+     * clauses per SQL standard.
+     *
+     * @param windowExpr The window expression to validate
+     * @throws SqlException if a window function is found in PARTITION BY or ORDER BY
+     */
+    private void validateNoWindowFunctionsInWindowSpec(WindowExpression windowExpr) throws SqlException {
+        // Check PARTITION BY
+        ObjList<ExpressionNode> partitionBy = windowExpr.getPartitionBy();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            ExpressionNode node = partitionBy.getQuick(i);
+            if (checkForChildWindowFunctions(node)) {
+                throw SqlException.$(node.position, "window function is not allowed in PARTITION BY clause");
+            }
+        }
+
+        // Check ORDER BY
+        ObjList<ExpressionNode> orderBy = windowExpr.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            ExpressionNode node = orderBy.getQuick(i);
+            if (checkForChildWindowFunctions(node)) {
+                throw SqlException.$(node.position, "window function is not allowed in ORDER BY clause of window specification");
             }
         }
     }
@@ -6641,6 +6691,9 @@ public class SqlOptimiser implements Mutable {
         // we can add it to group-by model right away
         if (qc.isWindowColumn()) {
             ExpressionNode ast = qc.getAst();
+
+            // Validate that PARTITION BY and ORDER BY don't contain window functions
+            validateNoWindowFunctionsInWindowSpec((WindowExpression) qc);
 
             // Extract any nested window functions from arguments to inner window model
             extractAndRegisterNestedWindowFunctions(ast, translatingModel, innerVirtualModel, baseModel, 0);
