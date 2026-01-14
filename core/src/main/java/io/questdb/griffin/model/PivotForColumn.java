@@ -28,8 +28,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
-import java.util.Objects;
-
 public final class PivotForColumn implements Mutable {
     public final static ObjectFactory<PivotForColumn> FACTORY = PivotForColumn::new;
     private final ObjList<CharSequence> valueAliases = new ObjList<>();
@@ -54,19 +52,6 @@ public final class PivotForColumn implements Mutable {
         inExprAlias = null;
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        PivotForColumn that = (PivotForColumn) o;
-        return isValueList == that.isValueList
-                && Objects.equals(valueAliases, that.valueAliases)
-                && Objects.equals(valueList, that.valueList)
-                && Objects.equals(inExpr, that.inExpr)
-                && Objects.equals(selectSubqueryExpr, that.selectSubqueryExpr)
-                && Objects.equals(inExprAlias, that.inExprAlias);
-    }
-
     public ExpressionNode getInExpr() {
         return inExpr;
     }
@@ -85,11 +70,6 @@ public final class PivotForColumn implements Mutable {
 
     public ObjList<ExpressionNode> getValueList() {
         return valueList;
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(valueAliases, valueList, inExpr, isValueList, selectSubqueryExpr, inExprAlias);
     }
 
     public boolean isValueList() {
