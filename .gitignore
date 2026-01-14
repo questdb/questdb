@@ -33,6 +33,7 @@ core/rust/qdbr/parquet2/target
 .envrc
 .vscode
 core/rust/qdb-core/target
+core/rust/qdb-core/Cargo.lock
 core/rust/qdbr/target
 core/rust/qdbr/parquet2/parquet-tools/target/
 core/rust/qdbr/parquet2/parquet-tools/Cargo.lock
