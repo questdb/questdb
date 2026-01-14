@@ -26,7 +26,11 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
-import io.questdb.std.*;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 
 
 // Metadata describing join conditions
@@ -55,6 +59,7 @@ public class JoinContext implements Mutable, Plannable {
         bNames.clear();
         bNodes.clear();
 
+        inCount = 0;
         slaveIndex = -1;
         parents.clear();
     }

@@ -154,6 +154,9 @@
 /* JEMALLOC_PROF enables allocation profiling. */
 /* #undef JEMALLOC_PROF */
 
+/* Use frame pointers for profile backtracing if defined. */
+/* #undef JEMALLOC_PROF_FRAME_POINTER */
+
 /* Use libunwind for profile backtracing if defined. */
 /* #undef JEMALLOC_PROF_LIBUNWIND */
 

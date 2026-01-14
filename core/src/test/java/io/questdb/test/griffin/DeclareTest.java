@@ -713,6 +713,32 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectWithWindowFunctionPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(AAPL_DDL);
+            drainWalQueue();
+            // Test declared variable in PARTITION BY clause
+            assertModel("select-window timestamp, bid_px_00, " +
+                            "ROW_NUMBER() row_num over (partition by bid_px_00 order by timestamp) " +
+                            "from (select [timestamp, bid_px_00] from AAPL_orderbook timestamp (timestamp)) limit 5",
+                    """
+                            DECLARE
+                                @partition_col := bid_px_00,
+                                @order_col := timestamp
+                            SELECT
+                                @order_col,
+                                @partition_col,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY @partition_col
+                                    ORDER BY @order_col
+                                ) AS row_num
+                            FROM AAPL_orderbook
+                            LIMIT 5;"""
+                    , ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
     public void testDeclareSelectWrongAssignmentOperator() throws Exception {
         assertException("DECLARE @x = 5 SELECT @x;", 11, "expected variable assignment operator");
     }
