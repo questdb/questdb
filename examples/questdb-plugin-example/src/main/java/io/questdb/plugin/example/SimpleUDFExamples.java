@@ -387,7 +387,43 @@ public class SimpleUDFExamples implements PluginLifecycle {
                         (a, b) -> {
                             if (a == null || b == null || b.compareTo(BigDecimal.ZERO) == 0) return null;
                             return a.divide(b, 6, RoundingMode.HALF_UP);
-                        })
+                        }),
+
+                // ============================================
+                // VARIADIC DECIMAL FUNCTIONS
+                // ============================================
+
+                // Sum of N decimal values
+                UDFRegistry.varargs("simple_decimal_sum_of", BigDecimal.class, BigDecimal.class,
+                        args -> args.stream()
+                                .filter(d -> d != null)
+                                .reduce(BigDecimal.ZERO, BigDecimal::add)),
+
+                // Maximum of N decimal values
+                UDFRegistry.varargs("simple_decimal_max_of", BigDecimal.class, BigDecimal.class,
+                        args -> args.stream()
+                                .filter(d -> d != null)
+                                .max(BigDecimal::compareTo)
+                                .orElse(null)),
+
+                // Minimum of N decimal values
+                UDFRegistry.varargs("simple_decimal_min_of", BigDecimal.class, BigDecimal.class,
+                        args -> args.stream()
+                                .filter(d -> d != null)
+                                .min(BigDecimal::compareTo)
+                                .orElse(null)),
+
+                // ============================================
+                // AGGREGATE DECIMAL FUNCTIONS
+                // ============================================
+
+                // Sum aggregate for decimals
+                UDFRegistry.aggregate("simple_decimal_sum", BigDecimal.class, BigDecimal.class,
+                        DecimalSumAggregate::new),
+
+                // Average aggregate for decimals
+                UDFRegistry.aggregate("simple_decimal_avg", BigDecimal.class, BigDecimal.class,
+                        DecimalAvgAggregate::new)
         );
     }
 
@@ -525,6 +561,60 @@ public class SimpleUDFExamples implements PluginLifecycle {
         public void reset() {
             max = Double.MIN_VALUE;
             hasValue = false;
+        }
+    }
+
+    /**
+     * Decimal sum aggregate.
+     */
+    public static class DecimalSumAggregate implements AggregateUDF<BigDecimal, BigDecimal> {
+        private BigDecimal sum = BigDecimal.ZERO;
+
+        @Override
+        public void accumulate(BigDecimal value) {
+            if (value != null) {
+                sum = sum.add(value);
+            }
+        }
+
+        @Override
+        public BigDecimal result() {
+            return sum;
+        }
+
+        @Override
+        public void reset() {
+            sum = BigDecimal.ZERO;
+        }
+    }
+
+    /**
+     * Decimal average aggregate.
+     */
+    public static class DecimalAvgAggregate implements AggregateUDF<BigDecimal, BigDecimal> {
+        private BigDecimal sum = BigDecimal.ZERO;
+        private long count = 0;
+
+        @Override
+        public void accumulate(BigDecimal value) {
+            if (value != null) {
+                sum = sum.add(value);
+                count++;
+            }
+        }
+
+        @Override
+        public BigDecimal result() {
+            if (count == 0) {
+                return null;
+            }
+            return sum.divide(BigDecimal.valueOf(count), 6, RoundingMode.HALF_UP);
+        }
+
+        @Override
+        public void reset() {
+            sum = BigDecimal.ZERO;
+            count = 0;
         }
     }
 }

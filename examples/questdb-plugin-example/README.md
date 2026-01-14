@@ -133,6 +133,19 @@ UDFRegistry.binary("my_decimal_div", BigDecimal.class, BigDecimal.class, BigDeci
         if (a == null || b == null || b.compareTo(BigDecimal.ZERO) == 0) return null;
         return a.divide(b, 6, RoundingMode.HALF_UP);
     })
+
+// Variadic: Sum of N decimal values
+UDFRegistry.varargs("my_decimal_sum_of", BigDecimal.class, BigDecimal.class,
+    args -> args.stream().filter(d -> d != null).reduce(BigDecimal.ZERO, BigDecimal::add))
+
+// Aggregate: Decimal sum
+UDFRegistry.aggregate("my_decimal_sum", BigDecimal.class, BigDecimal.class,
+    () -> new AggregateUDF<BigDecimal, BigDecimal>() {
+        private BigDecimal sum = BigDecimal.ZERO;
+        public void accumulate(BigDecimal v) { if (v != null) sum = sum.add(v); }
+        public BigDecimal result() { return sum; }
+        public void reset() { sum = BigDecimal.ZERO; }
+    })
 ```
 
 Note: `BigDecimal` maps to QuestDB's `DECIMAL(18,6)` type by default. Input values are automatically converted from any DECIMAL type, and output values use 6 decimal places of precision.
@@ -333,6 +346,11 @@ Plugins should declare QuestDB as a `provided` dependency since it's supplied by
 | `simple_decimal_add` | `(ΞΞ)Ξ` | Add two decimals |
 | `simple_decimal_mult` | `(ΞΞ)Ξ` | Multiply two decimals |
 | `simple_decimal_div` | `(ΞΞ)Ξ` | Divide two decimals |
+| `simple_decimal_sum_of` | `(V)Ξ` | Sum of N decimal values |
+| `simple_decimal_max_of` | `(V)Ξ` | Maximum of N decimal values |
+| `simple_decimal_min_of` | `(V)Ξ` | Minimum of N decimal values |
+| `simple_decimal_sum` | `(Ξ)Ξ` | Decimal sum aggregate |
+| `simple_decimal_avg` | `(Ξ)Ξ` | Decimal average aggregate |
 
 ### Traditional API Functions
 

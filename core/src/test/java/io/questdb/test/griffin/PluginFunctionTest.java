@@ -417,8 +417,13 @@ public class PluginFunctionTest extends AbstractCairoTest {
                             PLUGIN_NAME + ".simple_day\n" +
                             PLUGIN_NAME + ".simple_decimal_abs\n" +
                             PLUGIN_NAME + ".simple_decimal_add\n" +
+                            PLUGIN_NAME + ".simple_decimal_avg\n" +
                             PLUGIN_NAME + ".simple_decimal_div\n" +
+                            PLUGIN_NAME + ".simple_decimal_max_of\n" +
+                            PLUGIN_NAME + ".simple_decimal_min_of\n" +
                             PLUGIN_NAME + ".simple_decimal_mult\n" +
+                            PLUGIN_NAME + ".simple_decimal_sum\n" +
+                            PLUGIN_NAME + ".simple_decimal_sum_of\n" +
                             PLUGIN_NAME + ".simple_floor\n" +
                             PLUGIN_NAME + ".simple_hour\n" +
                             PLUGIN_NAME + ".simple_len\n" +
@@ -905,6 +910,93 @@ public class PluginFunctionTest extends AbstractCairoTest {
                             "test1\t2.000000\n" +
                             "test2\t3.333333\n",
                     "SELECT name, \"" + PLUGIN_NAME + "\".simple_decimal_div(a, b) as div_result FROM decimals_calc ORDER BY name"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFDecimalVarargsFunction() throws Exception {
+        // Test simplified UDF variadic decimal functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Test simple_decimal_sum_of - sum of multiple decimal values
+            // 10.5 + 20.25 + 30.125 = 60.875
+            assertSql(
+                    "simple_decimal_sum_of\n" +
+                            "60.875000\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_decimal_sum_of(" +
+                            "10.5::decimal(18,6), 20.25::decimal(18,6), 30.125::decimal(18,6))"
+            );
+
+            // Test simple_decimal_max_of - maximum of multiple decimal values
+            assertSql(
+                    "simple_decimal_max_of\n" +
+                            "99.990000\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_decimal_max_of(" +
+                            "10.5::decimal(18,6), 99.99::decimal(18,6), 50.0::decimal(18,6))"
+            );
+
+            // Test simple_decimal_min_of - minimum of multiple decimal values
+            assertSql(
+                    "simple_decimal_min_of\n" +
+                            "5.500000\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_decimal_min_of(" +
+                            "10.5::decimal(18,6), 5.5::decimal(18,6), 50.0::decimal(18,6))"
+            );
+
+            // Test with two arguments (edge case)
+            assertSql(
+                    "simple_decimal_max_of\n" +
+                            "200.000000\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_decimal_max_of(" +
+                            "100.0::decimal(18,6), 200.0::decimal(18,6))"
+            );
+        });
+    }
+
+    @Test
+    public void testSimplifiedUDFDecimalAggregateFunction() throws Exception {
+        // Test simplified UDF aggregate decimal functions
+        assertMemoryLeak(() -> {
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+
+            // Create a table with decimal column
+            execute("CREATE TABLE decimals_agg (amount DECIMAL(18,6), category SYMBOL)");
+            execute("INSERT INTO decimals_agg VALUES (10.5::decimal(18,6), 'A')");
+            execute("INSERT INTO decimals_agg VALUES (20.25::decimal(18,6), 'A')");
+            execute("INSERT INTO decimals_agg VALUES (30.125::decimal(18,6), 'A')");
+            execute("INSERT INTO decimals_agg VALUES (100.0::decimal(18,6), 'B')");
+            execute("INSERT INTO decimals_agg VALUES (200.0::decimal(18,6), 'B')");
+
+            // Test simple_decimal_sum - sum aggregate
+            // Category A: 10.5 + 20.25 + 30.125 = 60.875
+            // Category B: 100.0 + 200.0 = 300.0
+            assertSql(
+                    "category\tdecimal_sum\n" +
+                            "A\t60.875000\n" +
+                            "B\t300.000000\n",
+                    "SELECT category, \"" + PLUGIN_NAME + "\".simple_decimal_sum(amount) as decimal_sum " +
+                            "FROM decimals_agg GROUP BY category ORDER BY category"
+            );
+
+            // Test simple_decimal_avg - average aggregate
+            // Category A: 60.875 / 3 = 20.291667
+            // Category B: 300.0 / 2 = 150.0
+            assertSql(
+                    "category\tdecimal_avg\n" +
+                            "A\t20.291667\n" +
+                            "B\t150.000000\n",
+                    "SELECT category, \"" + PLUGIN_NAME + "\".simple_decimal_avg(amount) as decimal_avg " +
+                            "FROM decimals_agg GROUP BY category ORDER BY category"
+            );
+
+            // Test aggregate without GROUP BY (whole table)
+            // Total sum: 60.875 + 300.0 = 360.875
+            assertSql(
+                    "simple_decimal_sum\n" +
+                            "360.875000\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".simple_decimal_sum(amount) FROM decimals_agg"
             );
         });
     }
