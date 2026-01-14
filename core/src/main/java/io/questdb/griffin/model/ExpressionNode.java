@@ -146,18 +146,24 @@ public class ExpressionNode implements Mutable, Sinkable {
         }
         int hash = node.type;
         if (node.token != null) {
-            // Use case-insensitive hash for FUNCTION and LITERAL types (consistent with compareNodesExact)
+            // Use case-insensitive hash for FUNCTION and LITERAL types (consistent with compareNodesExact
+            // which uses Chars.equalsIgnoreCase for these types)
             if (node.type == FUNCTION || node.type == LITERAL) {
-                hash = 31 * hash + Chars.hashCode(node.token);  // Chars.hashCode is case-insensitive
+                hash = 31 * hash + Chars.lowerCaseHashCode(node.token);
             } else {
                 hash = 31 * hash + node.token.hashCode();
             }
         }
-        // Hash children (lhs, rhs, args)
-        hash = 31 * hash + deepHashCode(node.lhs);
-        hash = 31 * hash + deepHashCode(node.rhs);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            hash = 31 * hash + deepHashCode(node.args.getQuick(i));
+        // Hash children - must be consistent with compareArgsExact()
+        // When args.size() < 3, comparison uses lhs/rhs; otherwise uses args
+        int argsSize = node.args.size();
+        if (argsSize < 3) {
+            hash = 31 * hash + deepHashCode(node.lhs);
+            hash = 31 * hash + deepHashCode(node.rhs);
+        } else {
+            for (int i = 0; i < argsSize; i++) {
+                hash = 31 * hash + deepHashCode(node.args.getQuick(i));
+            }
         }
         // Hash window expression
         hash = 31 * hash + hashWindowExpression(node.windowExpression);

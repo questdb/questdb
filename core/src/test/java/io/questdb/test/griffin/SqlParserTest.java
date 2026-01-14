@@ -8223,6 +8223,37 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionDeduplicationCaseInsensitive() throws Exception {
+        // Window functions with different case should be deduplicated
+        // ROW_NUMBER() and row_number() are the same function - first occurrence (uppercase) is kept
+        assertQuery(
+                "select-choose ROW_NUMBER, ROW_NUMBER row_number1 from (" +
+                        "select-window [ROW_NUMBER() ROW_NUMBER over ()] " +
+                        "ROW_NUMBER() ROW_NUMBER over () from (x timestamp (ts)))",
+                "SELECT ROW_NUMBER() OVER (), row_number() OVER () FROM x",
+                modelOf("x").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionDeduplicationCaseInsensitiveWithPartitionBy() throws Exception {
+        // Case-insensitive deduplication with PARTITION BY and ORDER BY
+        // SUM() and sum() should be deduplicated - first occurrence (uppercase) is kept
+        assertQuery(
+                "select-choose SUM, SUM sum1 from (" +
+                        "select-window [SUM(X) SUM over (partition by Y order by TS)] " +
+                        "SUM(X) SUM over (partition by Y order by TS) from (" +
+                        "select-choose [X, Y, TS] X, Y, TS from (" +
+                        "select [X, Y, TS] from t timestamp (ts))))",
+                "SELECT SUM(X) OVER (PARTITION BY Y ORDER BY TS), sum(x) OVER (partition by y order by ts) FROM t",
+                modelOf("t")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWindowFunctionAsArgumentToWindowFunction() throws Exception {
         // Window function as argument to another window function
         // sum(row_number() OVER ()) OVER ()
@@ -8347,6 +8378,29 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 35,
                 "window function is not allowed in PARTITION BY clause",
                 modelOf("x").col("x", ColumnType.INT).col("y", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNotAllowedInNestedWindowPartitionBy() throws Exception {
+        // Nested window function (sum(row_number()...) OVER ()) with window function in its PARTITION BY
+        // The outer sum's window spec contains a window function - should be rejected
+        assertSyntaxError(
+                "SELECT sum(row_number() OVER ()) OVER (PARTITION BY rank() OVER ()) FROM x",
+                52,
+                "window function is not allowed in PARTITION BY clause",
+                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNotAllowedInNestedWindowOrderBy() throws Exception {
+        // Nested window function with window function in its ORDER BY
+        assertSyntaxError(
+                "SELECT sum(row_number() OVER ()) OVER (ORDER BY rank() OVER ()) FROM x",
+                48,
+                "window function is not allowed in ORDER BY clause of window specification",
+                modelOf("x").col("x", ColumnType.INT).timestamp("ts")
         );
     }
 

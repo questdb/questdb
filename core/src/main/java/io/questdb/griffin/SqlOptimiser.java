@@ -120,6 +120,8 @@ public class SqlOptimiser implements Mutable {
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
     // Maximum depth of nested window functions (e.g., sum(sum(row_number() OVER ()) OVER ()) OVER () is 3 levels)
     private static final int MAX_WINDOW_FUNCTION_NESTING_DEPTH = 8;
+    // Maximum size of windowColumnListPool to prevent unbounded growth across queries
+    private static final int MAX_WINDOW_COLUMN_LIST_POOL_SIZE = 16;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_EQUAL = 8;
     private static final int NOT_OP_GREATER = 4;
@@ -188,6 +190,8 @@ public class SqlOptimiser implements Mutable {
     // Pool of ObjList<QueryColumn> for windowFunctionHashMap values (to avoid allocations)
     private final ObjList<ObjList<QueryColumn>> windowColumnListPool = new ObjList<>();
     private int windowColumnListPoolPos = 0;
+    // Cached hash from findDuplicateWindowFunction for reuse in registerWindowFunction
+    private int lastWindowFunctionHash;
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -326,6 +330,7 @@ public class SqlOptimiser implements Mutable {
         tempCharSequenceHashSet.clear();
         pivotAliasMap.clear();
         tmpStringSink.clear();
+        clearWindowFunctionHashMap();
     }
 
     public void clearForUnionModelInJoin() {
@@ -2575,9 +2580,18 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Clears the window function hash map and resets the column list pool.
+     * Trims the pool if it exceeds the maximum size to prevent unbounded growth.
      */
     private void clearWindowFunctionHashMap() {
         windowFunctionHashMap.clear();
+        // Clear lists to release references to QueryColumn objects
+        for (int i = 0, n = windowColumnListPoolPos; i < n; i++) {
+            windowColumnListPool.getQuick(i).clear();
+        }
+        // Trim pool if it grew too large
+        if (windowColumnListPool.size() > MAX_WINDOW_COLUMN_LIST_POOL_SIZE) {
+            windowColumnListPool.setPos(MAX_WINDOW_COLUMN_LIST_POOL_SIZE);
+        }
         windowColumnListPoolPos = 0;
     }
 
@@ -2604,9 +2618,11 @@ public class SqlOptimiser implements Mutable {
     /**
      * Looks up a duplicate window function in the hash map.
      * Returns the alias of an existing identical window function, or null if none found.
+     * The hash is stored in lastWindowFunctionHash for reuse by registerWindowFunction.
      */
     private CharSequence findDuplicateWindowFunction(ExpressionNode node) {
         int hash = ExpressionNode.deepHashCode(node);
+        lastWindowFunctionHash = hash;
         ObjList<QueryColumn> candidates = windowFunctionHashMap.get(hash);
         if (candidates != null) {
             for (int i = 0, n = candidates.size(); i < n; i++) {
@@ -2621,10 +2637,10 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Registers a window function in the hash map for future deduplication lookups.
+     * Must be called after findDuplicateWindowFunction() to reuse the computed hash.
      */
-    private void registerWindowFunction(ExpressionNode node, QueryColumn column) {
-        int hash = ExpressionNode.deepHashCode(node);
-        ObjList<QueryColumn> list = getOrCreateColumnListForHash(hash);
+    private void registerWindowFunction(QueryColumn column) {
+        ObjList<QueryColumn> list = getOrCreateColumnListForHash(lastWindowFunctionHash);
         list.add(column);
     }
 
@@ -2660,6 +2676,9 @@ public class SqlOptimiser implements Mutable {
             // This creates deeper inner models if needed (recursive structure)
             extractAndRegisterNestedWindowFunctions(node, translatingModel, innerVirtualModel, baseModel, depth + 1);
 
+            // Validate that PARTITION BY and ORDER BY don't contain window functions
+            validateNoWindowFunctionsInWindowSpec(node.windowExpression);
+
             // Check if an identical window function already exists (O(1) hash lookup + O(k) comparison where k is collision count)
             CharSequence existingAlias = findDuplicateWindowFunction(node);
             if (existingAlias != null) {
@@ -2675,7 +2694,7 @@ public class SqlOptimiser implements Mutable {
             }
             innerWindowModel.addBottomUpColumn(wc);
             // Register in hash map for future deduplication
-            registerWindowFunction(node, wc);
+            registerWindowFunction(wc);
             // Emit literals referenced by the window column to inner models
             emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
             return nextLiteral(alias);
@@ -6755,7 +6774,7 @@ public class SqlOptimiser implements Mutable {
             } else {
                 // Not a duplicate - add to window model and register in hash map
                 windowModel.addBottomUpColumn(qc);
-                registerWindowFunction(ast, qc);
+                registerWindowFunction(qc);
                 ref = nextColumn(qc.getAlias());
             }
             outerVirtualModel.addBottomUpColumn(ref);
