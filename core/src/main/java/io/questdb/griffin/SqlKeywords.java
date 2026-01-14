@@ -348,6 +348,20 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'v';
     }
 
+    public static boolean isCumulativeKeyword(CharSequence tok) {
+        return tok.length() == 10
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'u'
+                && (tok.charAt(4) | 32) == 'l'
+                && (tok.charAt(5) | 32) == 'a'
+                && (tok.charAt(6) | 32) == 't'
+                && (tok.charAt(7) | 32) == 'i'
+                && (tok.charAt(8) | 32) == 'v'
+                && (tok.charAt(9) | 32) == 'e';
+    }
+
     public static boolean isCurrentKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'c'
