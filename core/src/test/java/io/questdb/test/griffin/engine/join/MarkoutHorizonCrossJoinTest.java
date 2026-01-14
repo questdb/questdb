@@ -609,8 +609,8 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testMarkoutCurveParallelPlan() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute("CREATE TABLE y (sym SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE prices (sym SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
             assertPlanNoLeakCheck(
                     """
@@ -618,17 +618,17 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) AS usec_off, x - 1 AS sec_off
                                 FROM long_sequence(2)
                             ),
-                            x_off AS (
+                            trades_off AS (
                               SELECT * FROM (
-                                SELECT /*+ markout_horizon(x offsets) */ sym, sec_off, ts + usec_off AS ts
-                                FROM x CROSS JOIN offsets
+                                SELECT /*+ markout_horizon(trades offsets) */ sym, sec_off, ts + usec_off AS ts
+                                FROM trades CROSS JOIN offsets
                                 ORDER BY ts + usec_off
                               ) TIMESTAMP(ts)
                             )
-                            SELECT /*+ markout_curve */ x.sec_off, avg(y.bid), avg(y.ask)
-                            FROM x_off as x
-                            ASOF JOIN y
-                            ON (x.sym = y.sym);
+                            SELECT /*+ markout_curve */ t.sec_off, avg(p.bid), avg(p.ask)
+                            FROM trades_off as t
+                            ASOF JOIN prices as p
+                            ON (t.sym = p.sym);
                             """,
                     """
                             Async Markout GroupBy workers: 1
@@ -636,10 +636,10 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                               values: [avg(bid),avg(ask)]
                                 PageFrame
                                     Row forward scan
-                                    Frame forward scan on: x
+                                    Frame forward scan on: trades
                                 PageFrame
                                     Row forward scan
-                                    Frame forward scan on: y
+                                    Frame forward scan on: prices
                                 VirtualRecord
                                   functions: [1000000*x-1,x-1]
                                     long_sequence count: 2
@@ -653,18 +653,18 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) AS usec_off, x - 1 AS sec_off
                                 FROM long_sequence(2)
                             ),
-                            x_off AS (
+                            trades_off AS (
                               SELECT * FROM (
-                                SELECT /*+ markout_horizon(x offsets) */ sym, sec_off, ts + usec_off AS ts
-                                FROM x CROSS JOIN offsets
-                                WHERE x.sym = 'sym0'
+                                SELECT /*+ markout_horizon(trades offsets) */ sym, sec_off, ts + usec_off AS ts
+                                FROM trades CROSS JOIN offsets
+                                WHERE trades.sym = 'sym0'
                                 ORDER BY ts + usec_off
                               ) TIMESTAMP(ts)
                             )
-                            SELECT /*+ markout_curve */ x.sec_off, avg(y.bid), avg(y.ask)
-                            FROM x_off as x
-                            ASOF JOIN y
-                            ON (x.sym = y.sym);
+                            SELECT /*+ markout_curve */ t.sec_off, avg(p.bid), avg(p.ask)
+                            FROM trades_off as t
+                            ASOF JOIN prices as p
+                            ON (t.sym = p.sym);
                             """,
                     """
                             Async Markout GroupBy workers: 1
@@ -672,14 +672,63 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                               values: [avg(bid),avg(ask)]
                                 PageFrame
                                     Row forward scan
-                                    Frame forward scan on: x
+                                    Frame forward scan on: trades
                                 PageFrame
                                     Row forward scan
-                                    Frame forward scan on: y
+                                    Frame forward scan on: prices
                                 VirtualRecord
                                   functions: [1000000*x-1,x-1]
                                     long_sequence count: 2
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testMarkoutCurveParallelWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('sym1', '2000-01-01T00:00:00.000000Z'),
+                                ('sym2', '2000-01-01T00:00:05.000000Z'),
+                                ('sym3', '2000-01-01T00:00:10.000000Z')
+                            """
+            );
+            execute("CREATE TABLE prices (sym SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('sym1', 1, 2, '2000-01-01T00:00:00.000000Z'),
+                                ('sym2', 3, 4, '2000-01-01T00:00:05.000000Z'),
+                                ('sym3', 5, 6, '2000-01-01T00:00:10.000000Z')
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    "",
+                    """
+                            WITH offsets AS (
+                                SELECT 1_000_000 * (x-2) AS usec_off, x - 2 AS sec_off
+                                FROM long_sequence(3)
+                            ),
+                            trades_off AS (
+                              SELECT * FROM (
+                                SELECT /*+ markout_horizon(trades offsets) */ sym, sec_off, ts + usec_off AS ts
+                                FROM trades CROSS JOIN offsets
+                                WHERE trades.sym = 'sym0'
+                                ORDER BY ts + usec_off
+                              ) TIMESTAMP(ts)
+                            )
+                            SELECT /*+ markout_curve */ t.sec_off, t.sym, avg(p.bid), avg(p.ask)
+                            FROM trades_off as t
+                            ASOF JOIN prices as p
+                            ON (t.sym = p.sym);
+                            """,
+                    null,
+                    true,
+                    false
             );
         });
     }

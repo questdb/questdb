@@ -4873,7 +4873,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
 
             // Build column mappings from baseMetadata to source records (master, sequence, slave)
-            // These mappings are needed by CombinedRecord in MarkoutReducer to route column accesses
+            // These mappings are needed by MarkoutRecord to route column accesses
             final int baseColumnCount = baseMetadata.getColumnCount();
             final int[] columnSources = new int[baseColumnCount];
             final int[] columnIndices = new int[baseColumnCount];
@@ -4909,7 +4909,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
                         continue;
                     }
-                    throw new AssertionError("failed to resolve table.column: " + fullName);
+                    throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
                 }
                 // No alias prefix - try matching by name in priority order
                 int idx = sequenceMetadata.getColumnIndexQuiet(fullName);
@@ -4930,7 +4930,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndices[i] = idx;
                     continue;
                 }
-                throw new AssertionError("failed to resolve column" + fullName);
+                throw SqlException.$(0, "failed to resolve column: ").put(fullName);
             }
 
             // Find the sequence column index by looking at which GROUP BY key column comes from the sequence.
@@ -4968,20 +4968,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordSink slaveKeyCopier = null;
             BitSet asofWriteSymbolAsString;
 
-            JoinContext asofJoinContext = curveInfo.asOfJoinContext;
-            if (asofJoinContext != null && !asofJoinContext.isEmpty()) {
+            JoinContext asOfJoinContext = curveInfo.asOfJoinContext;
+            if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
                 // Process join context to get key types and column filters
                 // listColumnFilterA -> slave columns
                 // listColumnFilterB -> master columns
-                lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asofJoinContext.aNames, slaveMetadata);
-                lookupColumnIndexes(listColumnFilterB, asofJoinContext.bNodes, masterMetadata);
+                lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asOfJoinContext.aNames, slaveMetadata);
+                lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
 
                 // Build ASOF join key types and configure symbol/string handling
                 // Create fresh BitSets - don't reuse the ones from GROUP BY setup
                 asofJoinKeyTypes = new ArrayColumnTypes();
                 asofWriteSymbolAsString = new BitSet();
-                BitSet asofWriteStringAsVarcharA = new BitSet();
-                BitSet asofWriteStringAsVarcharB = new BitSet();
+                BitSet asOfWriteStringAsVarcharA = new BitSet();
+                BitSet asOfWriteStringAsVarcharB = new BitSet();
 
                 for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
                     final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
@@ -4993,9 +4993,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
                         asofJoinKeyTypes.add(ColumnType.VARCHAR);
                         if (ColumnType.isVarchar(columnTypeA)) {
-                            asofWriteStringAsVarcharB.set(columnIndexB);
+                            asOfWriteStringAsVarcharB.set(columnIndexB);
                         } else {
-                            asofWriteStringAsVarcharA.set(columnIndexA);
+                            asOfWriteStringAsVarcharA.set(columnIndexA);
                         }
                         asofWriteSymbolAsString.set(columnIndexA);
                         asofWriteSymbolAsString.set(columnIndexB);
@@ -5020,7 +5020,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterMetadata,
                         listColumnFilterB,
                         asofWriteSymbolAsString,
-                        asofWriteStringAsVarcharB,
+                        asOfWriteStringAsVarcharB,
                         writeTimestampAsNanosB
                 );
                 slaveKeyCopier = RecordSinkFactory.getInstance(
@@ -5029,7 +5029,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveMetadata,
                         listColumnFilterA,
                         asofWriteSymbolAsString,
-                        asofWriteStringAsVarcharA,
+                        asOfWriteStringAsVarcharA,
                         writeTimestampAsNanosA
                 );
             }
