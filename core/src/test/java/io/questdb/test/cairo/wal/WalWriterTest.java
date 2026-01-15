@@ -28,8 +28,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -116,6 +118,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
+import static io.questdb.cairo.sql.SymbolTable.VALUE_NOT_FOUND;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static org.junit.Assert.*;
 
@@ -3663,6 +3666,359 @@ public class WalWriterTest extends AbstractCairoTest {
             Assert.assertTrue(fdOpenNoCacheCount.get() > 0);
         });
 
+    }
+
+    @Test
+    public void testSymbolWatermarkOnRollover() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymTable";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            int symbolCount = 5;
+            try (WalWriter tableWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < symbolCount; i++) {
+                    TableWriter.Row row = tableWriter.newRow(0);
+                    row.putSym(0, "s" + i);
+                    row.append();
+                }
+                tableWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Test that symbol watermarks are refreshed on segment rollover
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Before rollover, watermark is stale (pool reuse case)
+                int watermarkBeforeRollover = walWriter.getSymbolCountWatermark(0);
+                Assert.assertEquals(0, watermarkBeforeRollover);
+
+                // Trigger segment rollover - this should refresh symbol watermarks
+                walWriter.rollSegment();
+
+                // After rollover, watermark should be updated
+                int watermarkAfterRollover = walWriter.getSymbolCountWatermark(0);
+                SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(0);
+
+                Assert.assertEquals(symbolCount, watermarkAfterRollover);
+                Assert.assertFalse(symbolMapReader instanceof EmptySymbolMapReader);
+                Assert.assertNotEquals(VALUE_NOT_FOUND, symbolMapReader.keyOf("s0"));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolNullFlagResetOnRollover() throws Exception {
+        // Test that symbolMapNullFlags is correctly reset on rollover when symbol column
+        // stays empty. This prevents stale null flags from leaking into the WAL event stream.
+        //
+        // Real scenario: WAL writer has EmptySymbolMapReader but writes NULL to it,
+        // which sets symbolMapNullFlags to true. On rollover, the flag should be reset
+        // to false because the main table still has no symbols (EmptySymbolMapReader).
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymNullFlag";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Initially EmptySymbolMapReader - main table has no symbols
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+
+                // Write NULL to symbol column - this sets symbolMapNullFlags to true
+                // even though the reader is EmptySymbolMapReader
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, null);
+                row.append();
+
+                row = walWriter.newRow(1);
+                row.putSym(0, "foo");
+                row.append();
+
+                walWriter.commit();
+
+                // Note: NOT draining WAL queue - main table still has no symbols
+
+                // Verify main table still has no symbols
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertEquals(0, reader.getSymbolMapReader(0).getSymbolCount());
+                    Assert.assertFalse("Main table should have no NULLs yet", reader.getSymbolMapReader(0).containsNullValue());
+                }
+
+                // Roll segment - should reset symbolMapNullFlags to false
+                // because main table still has EmptySymbolMapReader
+                walWriter.rollSegment();
+
+                // After rollover - but before WAL apply - the wal reader should have EmptySymbolMapReader
+                // and null flag should be reset to false (not stale true)
+                Assert.assertTrue("Should still be empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertFalse("Null flag should be reset", walWriter.getSymbolMapReader(0).containsNullValue());
+
+
+                // after WAL apply the table reader should see the symbols: both null and non-null
+                drainWalQueue();
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertEquals(1, reader.getSymbolMapReader(0).getSymbolCount());
+                    Assert.assertTrue("Main table should have no NULLs yet", reader.getSymbolMapReader(0).containsNullValue());
+                }
+
+                // the WAL writer should STILL not see the applied symbols - they will become visible only after a rollover
+                Assert.assertTrue("Should still be empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertFalse("Null flag should be reset", walWriter.getSymbolMapReader(0).containsNullValue());
+
+
+                // now do a rollover -> after which the WAL writer should see committed and applied symbols
+                // and null flag should be reset to false (not stale true)
+                walWriter.rollSegment();
+                Assert.assertFalse("Should NOT be empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertTrue("Null flag should be reloaded", walWriter.getSymbolMapReader(0).containsNullValue());
+                Assert.assertEquals(1, walWriter.getSymbolMapReader(0).getSymbolCount());
+                Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCapacityRebuildOnRollover() throws Exception {
+        // Test that WAL writer correctly reopens symbol files when symbolTableNameTxn changes
+        // due to a capacity rebuild on the main table. The key verification is that after
+        // capacity rebuild, symbols can still be resolved (files were re-hardlinked correctly).
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymCapRebuild";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL).symbolCapacity(4)  // Small initial capacity
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            // Add symbols via first WAL writer to populate the table
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putSym(0, "sym" + i);
+                    row.append();
+                }
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Open WAL writer - it starts with EmptySymbolMapReader (stale state)
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // WAL writers always open with EmptySymbolMapReader, watermark is stale
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+
+                // First rollover - upgrades to real reader
+                walWriter.rollSegment();
+
+                Assert.assertFalse("Should be upgraded", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertEquals(3, walWriter.getSymbolCountWatermark(0));
+
+                // Verify symbols work before capacity change
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("sym0"));
+
+                // Now change capacity on the main table (while WAL writer is open with real reader)
+                // This creates new symbol files with different txn in _cv
+                try (TableWriter tableWriter = getWriter(tableToken)) {
+                    tableWriter.changeSymbolCapacity("s", 64, AllowAllSecurityContext.INSTANCE);
+                }
+
+                // Second rollover - should detect new symbolTableNameTxn and re-hardlink files
+                walWriter.rollSegment();
+
+                // After second rollover, the reader should still be valid (re-hardlinked with new files)
+                SymbolMapReader readerAfter = walWriter.getSymbolMapReader(0);
+                Assert.assertFalse("Should still have real reader", readerAfter instanceof EmptySymbolMapReader);
+                Assert.assertEquals(3, walWriter.getSymbolCountWatermark(0));
+
+                // Verify symbols can still be resolved - this confirms files were re-hardlinked correctly
+                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym0"));
+                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym1"));
+                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym2"));
+            }
+        });
+    }
+
+    @Test
+    public void testMultipleSymbolColumnsOnRollover() throws Exception {
+        // Test that multiple symbol columns with different states are handled correctly:
+        // - Column 1: Has symbols, needs count update
+        // - Column 2: Empty initially, but symbols added externally, needs upgrade from EmptySymbolMapReader
+        // - Column 3: Empty and stays empty
+        assertMemoryLeak(() -> {
+            final String tableName = "testMultiSym";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s1", ColumnType.SYMBOL)
+                    .col("s2", ColumnType.SYMBOL)
+                    .col("s3", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            // Add symbols only to s1 via first WAL writer
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putSym(0, "s1_" + i);  // s1 gets values
+                    // s2 and s3 get nulls
+                    row.append();
+                }
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Verify initial state - s1 has symbols, s2 and s3 are empty
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertEquals(3, reader.getSymbolMapReader(0).getSymbolCount());
+                Assert.assertEquals(0, reader.getSymbolMapReader(1).getSymbolCount());
+                Assert.assertEquals(0, reader.getSymbolMapReader(2).getSymbolCount());
+            }
+
+            // Add more symbols to s1 and add symbols to s2 via another WAL writer
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < 2; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putSym(0, "s1_extra_" + i);  // More s1 values
+                    row.putSym(1, "s2_" + i);        // s2 gets values now
+                    // s3 still gets nulls
+                    row.append();
+                }
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Now open a new WAL writer - it will have stale state for all columns
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Check initial state (stale)
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));  // Stale for s1
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(1));  // Stale for s2
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(2));  // Correct for s3 (still 0)
+
+                // s1 has EmptySymbolMapReader (opens empty, needs upgrade)
+                Assert.assertTrue("s1 should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                // s2 has EmptySymbolMapReader (opens empty, needs upgrade)
+                Assert.assertTrue("s2 should start empty", walWriter.getSymbolMapReader(1) instanceof EmptySymbolMapReader);
+                // s3 has EmptySymbolMapReader (stays empty)
+                Assert.assertTrue("s3 should start empty", walWriter.getSymbolMapReader(2) instanceof EmptySymbolMapReader);
+
+                // Trigger rollover - should refresh all symbol watermarks
+                walWriter.rollSegment();
+
+                // After rollover:
+                // - s1 should be upgraded to real reader with 5 symbols (3 + 2 extra)
+                Assert.assertEquals(5, walWriter.getSymbolCountWatermark(0));
+                Assert.assertFalse("s1 should be upgraded", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("s1_0"));
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("s1_extra_0"));
+
+                // - s2 should be upgraded to real reader with 2 symbols
+                Assert.assertEquals(2, walWriter.getSymbolCountWatermark(1));
+                Assert.assertFalse("s2 should be upgraded", walWriter.getSymbolMapReader(1) instanceof EmptySymbolMapReader);
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(1).keyOf("s2_0"));
+
+                // - s3 should stay empty
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(2));
+                Assert.assertTrue("s3 should stay empty", walWriter.getSymbolMapReader(2) instanceof EmptySymbolMapReader);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolNullValueOnRollover() throws Exception {
+        // Test that null value flag is correctly refreshed on rollover
+        // When symbols including null are added to the main table, the WAL writer should
+        // see containsNullValue=true after rollover.
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymNullVal";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            // Add symbols including explicit NULL via WAL writer
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Add regular symbol
+                TableWriter.Row row1 = walWriter.newRow(0);
+                row1.putSym(0, "sym1");
+                row1.append();
+
+                // Add NULL symbol - this sets the null flag in the symbol map
+                TableWriter.Row row2 = walWriter.newRow(0);
+                row2.putSym(0, null);
+                row2.append();
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Open a new WAL writer - should pick up null flag on rollover
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Initial state - EmptySymbolMapReader which reports containsNullValue=false
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertFalse("Empty reader reports no null", walWriter.getSymbolMapReader(0).containsNullValue());
+
+                // Trigger rollover
+                walWriter.rollSegment();
+
+                // After rollover - should have real reader with correct null flag
+                SymbolMapReader reader = walWriter.getSymbolMapReader(0);
+                Assert.assertFalse("Should be upgraded", reader instanceof EmptySymbolMapReader);
+                Assert.assertTrue("Should detect null value", reader.containsNullValue());
+                Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));  // Only "sym1", null doesn't count
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolWatermarkFallbackOnStructureVersionMismatch() throws Exception {
+        // Test that on structure version mismatch we fall back to stale reader counts.
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymFallback";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+
+                // Add symbols via another WAL writer and apply to table.
+                try (WalWriter writer2 = getWalWriter(tableName)) {
+                    TableWriter.Row row = writer2.newRow(0);
+                    row.putSym(0, "sym1");
+                    row.append();
+                    writer2.commit();
+                }
+                drainWalQueue();
+
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertEquals(1, reader.getSymbolMapReader(0).getSymbolCount());
+                }
+
+                // Create structure version mismatch: add a column but do not apply WAL.
+                walWriter.addColumn("x", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertTrue("WAL metadata should be ahead of table", walWriter.getMetadataVersion() > reader.getMetadataVersion());
+                }
+
+                // Rollover should skip refresh and keep stale reader/watermark.
+                walWriter.rollSegment();
+                Assert.assertTrue("Fallback should keep empty reader", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+            }
+        });
     }
 
     @Test

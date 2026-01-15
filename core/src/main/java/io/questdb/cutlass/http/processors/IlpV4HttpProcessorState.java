@@ -133,7 +133,19 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
         clear();
         tudCache.reset();
         connectionSymbolDict.clear();  // Reset delta symbol dictionary on disconnect
-        symbolCache.clear();  // Reset symbol ID cache on disconnect
+
+        // Log cache stats before clearing (only if there were any lookups)
+        long hits = symbolCache.getCacheHits();
+        long misses = symbolCache.getCacheMisses();
+        if (hits + misses > 0) {
+            LOG.info()
+                    .$("symbol cache stats [fd=").$(fd)
+                    .$(", hits=").$(hits)
+                    .$(", misses=").$(misses)
+                    .$(", hitRate=").$(symbolCache.getHitRatePercent())
+                    .$("%]").$();
+        }
+        symbolCache.clear();
     }
 
     public void addData(long lo, long hi) {

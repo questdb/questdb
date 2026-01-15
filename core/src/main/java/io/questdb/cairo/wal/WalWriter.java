@@ -1060,72 +1060,163 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private void configureSymbolTable() {
         boolean initialized = false;
-        try {
-            int denseSymbolIndex = 0;
+        int denseSymbolIndex = 0;
 
-            for (int i = 0; i < columnCount; i++) {
-                int columnType = metadata.getColumnType(i);
-                if (!ColumnType.isSymbol(columnType)) {
-                    // Maintain sparse list of symbol writers
-                    // Note: we don't need to set initialSymbolCounts and symbolMapNullFlags values
-                    // here since we already filled it with -1 and false initially
-                    symbolMapReaders.extendAndSet(i, null);
-                    symbolMaps.extendAndSet(i, null);
-                    utf8SymbolMaps.extendAndSet(i, null);
-                } else {
-                    if (txReader == null) {
-                        txReader = new TxReader(ff);
-                        columnVersionReader = new ColumnVersionReader();
-                    }
-
-                    if (!initialized) {
-                        MillisecondClock milliClock = configuration.getMillisecondClock();
-                        long spinLockTimeout = configuration.getSpinLockTimeout();
-
-                        // todo: use own path
-                        Path path = Path.PATH2.get();
-                        path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME);
-
-                        // Does not matter which PartitionBy, as long as it is partitioned
-                        // WAL tables must be partitioned
-                        txReader.ofRO(path.$(), metadata.getTimestampType(), PartitionBy.DAY);
-                        path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
-                        columnVersionReader.ofRO(ff, path.$());
-
-                        initialized = true;
-                        long structureVersion = getMetadataVersion();
-
-                        do {
-                            TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
-                            if (txReader.getColumnStructureVersion() != structureVersion) {
-                                initialized = false;
-                                break;
-                            }
-                            columnVersionReader.readSafe(milliClock, spinLockTimeout);
-                        } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
-                    }
-
-                    if (initialized) {
-                        int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
-                        long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(i);
-                        configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, symbolTableNameTxn);
-                    } else {
-                        // table on disk structure version does not match the structure version of the WalWriter
-                        // it is not possible to re-use table symbol table because the column name may not match.
-                        // The symbol counts stored as dense in _txn file and removal of symbols
-                        // shifts the counts that's why it's not possible to find out the symbol count if metadata versions
-                        // don't match.
-                        configureSymbolMapWriter(i, metadata.getColumnName(i), 0, COLUMN_NAME_TXN_NONE);
-                    }
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (!ColumnType.isSymbol(columnType)) {
+                // Maintain sparse list of symbol writers
+                // Note: we don't need to set initialSymbolCounts and symbolMapNullFlags values
+                // here since we already filled it with -1 and false initially
+                symbolMapReaders.extendAndSet(i, null);
+                symbolMaps.extendAndSet(i, null);
+                utf8SymbolMaps.extendAndSet(i, null);
+            } else {
+                if (txReader == null) {
+                    txReader = new TxReader(ff);
+                    columnVersionReader = new ColumnVersionReader();
                 }
 
-                if (columnType == ColumnType.SYMBOL) {
-                    denseSymbolIndex++;
+                if (!initialized) {
+                    MillisecondClock milliClock = configuration.getMillisecondClock();
+                    long spinLockTimeout = configuration.getSpinLockTimeout();
+
+                    // todo: use own path
+                    Path path = Path.PATH2.get();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME);
+
+                    // Does not matter which PartitionBy, as long as it is partitioned
+                    // WAL tables must be partitioned
+                    txReader.ofRO(path.$(), metadata.getTimestampType(), PartitionBy.DAY);
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
+                    columnVersionReader.ofRO(ff, path.$());
+
+                    initialized = true;
+                    long structureVersion = getMetadataVersion();
+
+                    do {
+                        TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
+                        if (txReader.getColumnStructureVersion() != structureVersion) {
+                            initialized = false;
+                            break;
+                        }
+                        columnVersionReader.readSafe(milliClock, spinLockTimeout);
+                    } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+                }
+
+                if (initialized) {
+                    int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
+                    long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(i);
+                    configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, symbolTableNameTxn);
+                } else {
+                    // table on disk structure version does not match the structure version of the WalWriter
+                    // it is not possible to re-use table symbol table because the column name may not match.
+                    // The symbol counts stored as dense in _txn file and removal of symbols
+                    // shifts the counts that's why it's not possible to find out the symbol count if metadata versions
+                    // don't match.
+                    configureSymbolMapWriter(i, metadata.getColumnName(i), 0, COLUMN_NAME_TXN_NONE);
                 }
             }
-        } finally {
-            Misc.free(txReader);
+
+            if (columnType == ColumnType.SYMBOL) {
+                denseSymbolIndex++;
+            }
         }
+    }
+
+    /**
+     * Refreshes symbol watermarks from _txn/_cv files on segment rollover.
+     * Returns true if refresh succeeded, false if skipped (version mismatch or first open).
+     */
+    private boolean refreshSymbolWatermarks() {
+        // Skip on first open - configureSymbolTable() hasn't run yet
+        if (segmentId < 0) {
+            return false;
+        }
+
+        // Count actual symbol columns
+        int symbolColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                symbolColumnCount++;
+            }
+        }
+        if (symbolColumnCount == 0) {
+            return true; // No symbols, nothing to refresh
+        }
+
+        // Lazy init readers if needed
+        if (txReader == null) {
+            txReader = new TxReader(ff);
+        }
+        if (columnVersionReader == null) {
+            columnVersionReader = new ColumnVersionReader();
+        }
+
+        // Read _txn and _cv files
+        MillisecondClock milliClock = configuration.getMillisecondClock();
+        long spinLockTimeout = configuration.getSpinLockTimeout();
+
+        Path txPath = Path.PATH2.get();
+        txPath.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME);
+        txReader.ofRO(txPath.$(), metadata.getTimestampType(), PartitionBy.DAY);
+
+        txPath.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
+        columnVersionReader.ofRO(ff, txPath.$());
+
+        long structureVersion = getMetadataVersion();
+        do {
+            TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
+            if (txReader.getColumnStructureVersion() != structureVersion) {
+                return false; // Version mismatch - caller should use fallback
+            }
+            columnVersionReader.readSafe(milliClock, spinLockTimeout);
+        } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+
+        // Update each symbol column
+        int denseSymbolIndex = 0;
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (!ColumnType.isSymbol(columnType)) {
+                continue;
+            }
+
+            int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
+            long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(i);
+            SymbolMapReader reader = symbolMapReaders.getQuick(i);
+
+            if (reader == EmptySymbolMapReader.INSTANCE) {
+                if (symbolValueCount > 0) {
+                    // Upgrade empty reader to real reader (re-hardlinks files)
+                    // Close existing native hash map before configureSymbolMapWriter creates new one
+                    Misc.free(symbolMaps.getQuick(i));
+                    configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, symbolTableNameTxn);
+                } else {
+                    // Still empty - ensure watermarks are reset (not stale from previous segments)
+                    initialSymbolCounts.set(i, 0);
+                    symbolMapNullFlags.set(i, false);
+                }
+            } else {
+                SymbolMapReaderImpl readerImpl = (SymbolMapReaderImpl) reader;
+                if (readerImpl.needsReopen(symbolTableNameTxn)) {
+                    // Capacity rebuild - re-hardlink and reopen via configureSymbolMapWriter
+                    // Close existing resources before configureSymbolMapWriter creates new ones
+                    Misc.free(readerImpl);
+                    Misc.free(symbolMaps.getQuick(i));
+                    // Remove old symbol files before re-hardlinking (files exist from previous segment)
+                    removeSymbolFiles(path, pathSize, metadata.getColumnName(i));
+                    configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, symbolTableNameTxn);
+                } else {
+                    // Just update count (extends memory mappings)
+                    readerImpl.updateSymbolCount(symbolValueCount);
+                    initialSymbolCounts.set(i, symbolValueCount);
+                    symbolMapNullFlags.set(i, readerImpl.containsNullValue());
+                }
+            }
+
+            denseSymbolIndex++;
+        }
+        return true;
     }
 
     private MemoryMA createAuxColumnMem(int columnType) {
@@ -1162,6 +1253,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 LOG.info().$("closed [table=").$(tableToken).I$();
             }
             columnVersionReader = Misc.free(columnVersionReader);
+            txReader = Misc.free(txReader);
         }
     }
 
@@ -1311,6 +1403,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void openNewSegment() {
+        boolean refreshed = refreshSymbolWatermarks();
+
         final int oldSegmentId = segmentId;
         final int newSegmentId = segmentId + 1;
         final long oldSegmentLockFd = segmentLockFd;
@@ -1338,9 +1432,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
                     if (columnType == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
                         final SymbolMapReader reader = symbolMapReaders.getQuick(i);
-                        initialSymbolCounts.set(i, reader.getSymbolCount());
+                        if (!refreshed) {
+                            // fallback: use stale reader counts, possibly stale
+                            initialSymbolCounts.set(i, reader.getSymbolCount());
+                            symbolMapNullFlags.set(i, reader.containsNullValue());
+                        }
                         localSymbolIds.set(i, 0);
-                        symbolMapNullFlags.set(i, reader.containsNullValue());
                         symbolMaps.getQuick(i).clear();
                         utf8SymbolMaps.getQuick(i).clear();
                     }
