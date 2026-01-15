@@ -335,18 +335,13 @@ impl DataPageSlicer for RleLocalIsGlobalSymbolDecoder<'_, '_> {
             let batch = remaining.min(BATCH_SIZE);
             let mut written = 0;
 
-            for slot in buffer.iter_mut().take(batch) {
+            while written < batch {
                 if let Some(idx) = self.inner.data.next() {
-                    *slot = idx;
+                    buffer[written] = idx;
                     written += 1;
                 } else {
                     match self.decode() {
-                        Ok(()) => {
-                            if let Some(idx) = self.inner.data.next() {
-                                *slot = idx;
-                                written += 1;
-                            }
-                        }
+                        Ok(()) => {}
                         Err(err) => {
                             self.inner.error = Some(err);
                             break;
