@@ -313,7 +313,9 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
                         );
                         self.data_offset += suffix_len;
                         // SAFETY: we extend lifetime to 'a because last_value lives as long as self
-                        unsafe { std::mem::transmute::<&[u8], &'a [u8]>(self.last_value.as_slice()) }
+                        unsafe {
+                            std::mem::transmute::<&[u8], &'a [u8]>(self.last_value.as_slice())
+                        }
                     }
                     None => {
                         self.error = Err(fmt_err!(Layout, "not enough suffix values to iterate"));
@@ -377,7 +379,8 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
                             dest.extend_from_slice(&self.last_value)?;
                         }
                         None => {
-                            self.error = Err(fmt_err!(Layout, "not enough suffix values to iterate"));
+                            self.error =
+                                Err(fmt_err!(Layout, "not enough suffix values to iterate"));
                             return Ok(());
                         }
                     }
@@ -472,8 +475,8 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
     #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            let len =
-                unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) } as usize;
+            let len = unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) }
+                as usize;
             self.pos += size_of::<u32>();
             dest.extend_from_slice(&self.data[self.pos..self.pos + len])?;
             self.pos += len;
@@ -604,7 +607,7 @@ pub struct ValueConvertSlicer<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &m
 }
 
 impl<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> DataPageSlicer
-for ValueConvertSlicer<N, T, F>
+    for ValueConvertSlicer<N, T, F>
 {
     #[inline]
     fn next(&mut self) -> &[u8] {

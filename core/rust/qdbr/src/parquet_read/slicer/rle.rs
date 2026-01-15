@@ -357,7 +357,10 @@ impl DataPageSlicer for RleLocalIsGlobalSymbolDecoder<'_, '_> {
 
             if written > 0 {
                 let bytes = unsafe {
-                    std::slice::from_raw_parts(buffer.as_ptr() as *const u8, written * size_of::<u32>())
+                    std::slice::from_raw_parts(
+                        buffer.as_ptr() as *const u8,
+                        written * size_of::<u32>(),
+                    )
                 };
                 dest.extend_from_slice(bytes)?;
                 remaining -= written;

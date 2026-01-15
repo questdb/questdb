@@ -187,7 +187,11 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
 
         // Fill data_vec with 0xff bytes (-1i32 per null)
         unsafe {
-            ptr::write_bytes(self.buffers.data_vec.as_mut_ptr().add(base), 0xff, count * ELEM);
+            ptr::write_bytes(
+                self.buffers.data_vec.as_mut_ptr().add(base),
+                0xff,
+                count * ELEM,
+            );
             self.buffers.data_vec.set_len(base + count * ELEM);
         }
         write_offset_sequence(&mut self.buffers.aux_vec, base + ELEM, ELEM, count)
@@ -278,7 +282,11 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
 
         // Fill data_vec with 0xff bytes (-1i64 per null)
         unsafe {
-            ptr::write_bytes(self.buffers.data_vec.as_mut_ptr().add(base), 0xff, count * ELEM);
+            ptr::write_bytes(
+                self.buffers.data_vec.as_mut_ptr().add(base),
+                0xff,
+                count * ELEM,
+            );
             self.buffers.data_vec.set_len(base + count * ELEM);
         }
         write_offset_sequence(&mut self.buffers.aux_vec, base + ELEM, ELEM, count)

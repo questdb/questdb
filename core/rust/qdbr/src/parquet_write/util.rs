@@ -293,7 +293,11 @@ pub fn build_plain_page(
     Ok(DataPage::new(
         header,
         buffer,
-        Descriptor { primitive_type, max_def_level: if required { 0 } else { 1 }, max_rep_level: 0 },
+        Descriptor {
+            primitive_type,
+            max_def_level: if required { 0 } else { 1 },
+            max_rep_level: 0,
+        },
         Some(num_rows),
     ))
 }

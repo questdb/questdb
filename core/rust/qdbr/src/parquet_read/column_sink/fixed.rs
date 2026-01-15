@@ -47,7 +47,8 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumn
     #[inline]
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         if N == R {
-            self.slicer.next_slice_into(count, &mut self.buffers.data_vec)?;
+            self.slicer
+                .next_slice_into(count, &mut self.buffers.data_vec)?;
         } else {
             for _ in 0..count {
                 self.push()?;
