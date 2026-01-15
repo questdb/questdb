@@ -2136,4 +2136,1169 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
+
+    // ==================== Symbol Cache Tests ====================
+    // These tests exercise the server-side symbol ID cache optimization
+    // which maps clientSymbolId → tableSymbolId to bypass string lookups.
+
+    @Test
+    public void testSymbolCache_manyRepeatedSymbols() throws Exception {
+        // This test sends many rows with repeated symbols to exercise the cache.
+        // The cache should provide a performance benefit by avoiding string lookups
+        // for repeated symbols.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    String[] regions = {"us-east", "us-west", "eu-west", "eu-central", "asia-pacific"};
+                    String[] hosts = {"host1", "host2", "host3", "host4", "host5",
+                                     "host6", "host7", "host8", "host9", "host10"};
+
+                    // Send 1000 rows with repeated symbol values
+                    for (int i = 0; i < 1000; i++) {
+                        sender.table("ws_symbol_cache_test")
+                                .symbol("region", regions[i % regions.length])
+                                .symbol("host", hosts[i % hosts.length])
+                                .longColumn("cpu_usage", i % 100)
+                                .doubleColumn("memory_free", 1024.0 + (i % 512))
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+
+                        // Flush every 100 rows
+                        if ((i + 1) % 100 == 0) {
+                            sender.flush();
+                        }
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_symbol_cache_test");
+                serverMain.assertSql("select count() from ws_symbol_cache_test", "count\n1000\n");
+                serverMain.assertSql("select count(distinct region) from ws_symbol_cache_test", "count_distinct\n5\n");
+                serverMain.assertSql("select count(distinct host) from ws_symbol_cache_test", "count_distinct\n10\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCache_multipleTablesIndependentSymbols() throws Exception {
+        // Tests that symbol caches are independent per table.
+        // The same symbol value in different tables should be cached separately.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // Send to table1 with symbols
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_table1")
+                                .symbol("status", i % 2 == 0 ? "active" : "inactive")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+
+                    // Send to table2 with same symbol column name but different values
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_table2")
+                                .symbol("status", i % 3 == 0 ? "running" : i % 3 == 1 ? "stopped" : "pending")
+                                .longColumn("value", i * 10)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_cache_table1");
+                serverMain.awaitTable("ws_cache_table2");
+
+                // Verify table1
+                serverMain.assertSql("select count() from ws_cache_table1", "count\n10\n");
+                serverMain.assertSql("select count(distinct status) from ws_cache_table1", "count_distinct\n2\n");
+
+                // Verify table2
+                serverMain.assertSql("select count() from ws_cache_table2", "count\n10\n");
+                serverMain.assertSql("select count(distinct status) from ws_cache_table2", "count_distinct\n3\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCache_multipleColumnsWithRepeatedSymbols() throws Exception {
+        // Tests caching with multiple symbol columns in the same table.
+        // Each column should have its own independent cache.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    String[] devices = {"sensor_a", "sensor_b", "sensor_c"};
+                    String[] locations = {"floor1", "floor2"};
+                    String[] types = {"temperature", "humidity", "pressure"};
+
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("ws_multi_symbol_cols")
+                                .symbol("device", devices[i % devices.length])
+                                .symbol("location", locations[i % locations.length])
+                                .symbol("measurement_type", types[i % types.length])
+                                .doubleColumn("value", 20.0 + (i % 30))
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_multi_symbol_cols");
+                serverMain.assertSql("select count() from ws_multi_symbol_cols", "count\n100\n");
+                serverMain.assertSql("select count(distinct device) from ws_multi_symbol_cols", "count_distinct\n3\n");
+                serverMain.assertSql("select count(distinct location) from ws_multi_symbol_cols", "count_distinct\n2\n");
+                serverMain.assertSql("select count(distinct measurement_type) from ws_multi_symbol_cols", "count_distinct\n3\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCache_reconnect_clearsCache() throws Exception {
+        // Tests that disconnecting and reconnecting clears the symbol cache.
+        // The new connection should still work correctly with fresh symbols.
+        Assume.assumeFalse("Skip in async mode - reconnection behavior differs", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // First connection
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_reconnect_test")
+                                .symbol("tag", "conn1_val" + (i % 3))
+                                .longColumn("value", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                // Wait for first batch to be processed
+                serverMain.awaitTable("ws_reconnect_test");
+
+                // Second connection with different symbols
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_reconnect_test")
+                                .symbol("tag", "conn2_val" + (i % 3))
+                                .longColumn("value", i + 100)
+                                .at(1000000001000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_reconnect_test");
+                serverMain.assertSql("select count() from ws_reconnect_test", "count\n20\n");
+                // Should have 6 distinct tags: conn1_val0, conn1_val1, conn1_val2, conn2_val0, conn2_val1, conn2_val2
+                serverMain.assertSql("select count(distinct tag) from ws_reconnect_test", "count_distinct\n6\n");
+            }
+        });
+    }
+
+    // ==================== Symbol Interleaving Tests ====================
+    // These tests exercise various interleavings of server-side commits,
+    // WAL apply jobs, and sender batches.
+
+    @Test
+    public void testSymbol_flushBetweenEachRow() throws Exception {
+        // Tests symbol handling when each row is flushed separately.
+        // This creates maximum interleaving of commits.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    String[] symbols = {"alpha", "beta", "gamma", "delta"};
+                    for (int i = 0; i < 20; i++) {
+                        sender.table("ws_flush_each_row")
+                                .symbol("tag", symbols[i % symbols.length])
+                                .longColumn("value", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                        sender.flush();  // Flush after every single row
+                    }
+                }
+
+                serverMain.awaitTable("ws_flush_each_row");
+                serverMain.assertSql("select count() from ws_flush_each_row", "count\n20\n");
+                serverMain.assertSql("select count(distinct tag) from ws_flush_each_row", "count_distinct\n4\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_walApplyBetweenBatches() throws Exception {
+        // Tests symbol handling when WAL is applied between sender batches.
+        // This exercises the watermark change detection in the cache.
+        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // Batch 1: Send some symbols
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_wal_apply_test")
+                                .symbol("region", i % 2 == 0 ? "east" : "west")
+                                .longColumn("value", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                // Wait for table to be created and drain WAL
+                serverMain.awaitTable("ws_wal_apply_test");
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // Batch 2: Reuse some symbols, add new ones
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_wal_apply_test")
+                                .symbol("region", i % 3 == 0 ? "east" : i % 3 == 1 ? "west" : "central")
+                                .longColumn("value", i + 100)
+                                .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                // Drain WAL again
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // Batch 3: More symbols
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_wal_apply_test")
+                                .symbol("region", i % 4 == 0 ? "north" : i % 4 == 1 ? "south" : i % 4 == 2 ? "east" : "west")
+                                .longColumn("value", i + 200)
+                                .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_wal_apply_test");
+                serverMain.assertSql("select count() from ws_wal_apply_test", "count\n30\n");
+                // east, west, central, north, south = 5 distinct
+                serverMain.assertSql("select count(distinct region) from ws_wal_apply_test", "count_distinct\n5\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_interleavedTablesWithWalApply() throws Exception {
+        // Tests interleaved writes to multiple tables with WAL apply between batches.
+        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Round 1: Write to both tables
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 5; i++) {
+                        sender.table("ws_interleave_t1")
+                                .symbol("sym", "t1_v" + (i % 2))
+                                .longColumn("val", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                        sender.table("ws_interleave_t2")
+                                .symbol("sym", "t2_v" + (i % 3))
+                                .longColumn("val", i * 10)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_interleave_t1");
+                serverMain.awaitTable("ws_interleave_t2");
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                // Round 2: More interleaved writes with some symbol reuse
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 5; i++) {
+                        // Reuse t1_v0, t1_v1, add t1_v2
+                        sender.table("ws_interleave_t1")
+                                .symbol("sym", "t1_v" + (i % 3))
+                                .longColumn("val", i + 100)
+                                .at(1000000001000L + i, ChronoUnit.MICROS);
+                        // Reuse t2_v0, t2_v1, t2_v2, add t2_v3
+                        sender.table("ws_interleave_t2")
+                                .symbol("sym", "t2_v" + (i % 4))
+                                .longColumn("val", i * 10 + 100)
+                                .at(1000000001000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                serverMain.assertSql("select count() from ws_interleave_t1", "count\n10\n");
+                serverMain.assertSql("select count(distinct sym) from ws_interleave_t1", "count_distinct\n3\n");
+                serverMain.assertSql("select count() from ws_interleave_t2", "count\n10\n");
+                serverMain.assertSql("select count(distinct sym) from ws_interleave_t2", "count_distinct\n4\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_sameConnectionMultipleBatchesWithWalApply() throws Exception {
+        // Tests multiple batches on the same connection with WAL apply between them.
+        // This is the most realistic scenario for long-lived connections.
+        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // Batch 1
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_same_conn_wal")
+                                .symbol("status", i % 2 == 0 ? "ok" : "error")
+                                .longColumn("code", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    // Wait and apply WAL while connection is still open
+                    serverMain.awaitTable("ws_same_conn_wal");
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Batch 2 - reuse symbols on same connection after WAL apply
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_same_conn_wal")
+                                .symbol("status", i % 3 == 0 ? "ok" : i % 3 == 1 ? "error" : "warning")
+                                .longColumn("code", i + 100)
+                                .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    // Apply WAL again
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Batch 3 - more symbols
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_same_conn_wal")
+                                .symbol("status", i % 4 == 0 ? "ok" : i % 4 == 1 ? "error" : i % 4 == 2 ? "warning" : "critical")
+                                .longColumn("code", i + 200)
+                                .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_same_conn_wal", "count\n30\n");
+                serverMain.assertSql("select count(distinct status) from ws_same_conn_wal", "count_distinct\n4\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_rapidFlushWithWalApply() throws Exception {
+        // Stress test: rapid small flushes with periodic WAL apply.
+        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    String[] envs = {"prod", "staging", "dev", "test"};
+                    String[] services = {"api", "web", "worker", "scheduler", "cache"};
+
+                    for (int batch = 0; batch < 10; batch++) {
+                        // Small batch of rows
+                        for (int i = 0; i < 5; i++) {
+                            int idx = batch * 5 + i;
+                            sender.table("ws_rapid_flush")
+                                    .symbol("env", envs[idx % envs.length])
+                                    .symbol("service", services[idx % services.length])
+                                    .doubleColumn("latency", 10.0 + (idx % 100))
+                                    .at(1000000000000L + idx * 1000L, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+
+                        // Drain WAL every 3 batches
+                        if ((batch + 1) % 3 == 0) {
+                            serverMain.awaitTable("ws_rapid_flush");
+                            TestUtils.drainWalQueue(serverMain.getEngine());
+                        }
+                    }
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_rapid_flush", "count\n50\n");
+                serverMain.assertSql("select count(distinct env) from ws_rapid_flush", "count_distinct\n4\n");
+                serverMain.assertSql("select count(distinct service) from ws_rapid_flush", "count_distinct\n5\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_newSymbolsAfterWalApply() throws Exception {
+        // Tests that new symbols can be added after WAL apply has committed previous symbols.
+        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Phase 1: Initial symbols
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_new_after_wal")
+                            .symbol("category", "cat_a")
+                            .longColumn("id", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.table("ws_new_after_wal")
+                            .symbol("category", "cat_b")
+                            .longColumn("id", 2)
+                            .at(1000000000001L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_new_after_wal");
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                // Phase 2: Mix of existing and new symbols
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_new_after_wal")
+                            .symbol("category", "cat_a")  // existing
+                            .longColumn("id", 3)
+                            .at(1000000001000L, ChronoUnit.MICROS);
+                    sender.table("ws_new_after_wal")
+                            .symbol("category", "cat_c")  // NEW
+                            .longColumn("id", 4)
+                            .at(1000000001001L, ChronoUnit.MICROS);
+                    sender.table("ws_new_after_wal")
+                            .symbol("category", "cat_b")  // existing
+                            .longColumn("id", 5)
+                            .at(1000000001002L, ChronoUnit.MICROS);
+                    sender.table("ws_new_after_wal")
+                            .symbol("category", "cat_d")  // NEW
+                            .longColumn("id", 6)
+                            .at(1000000001003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                // Phase 3: Even more new symbols
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_new_after_wal")
+                            .symbol("category", "cat_e")  // NEW
+                            .longColumn("id", 7)
+                            .at(1000000002000L, ChronoUnit.MICROS);
+                    sender.table("ws_new_after_wal")
+                            .symbol("category", "cat_a")  // existing from phase 1
+                            .longColumn("id", 8)
+                            .at(1000000002001L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_new_after_wal", "count\n8\n");
+                serverMain.assertSql("select count(distinct category) from ws_new_after_wal", "count_distinct\n5\n");
+                // Verify all categories exist
+                serverMain.assertSql(
+                        "select category from ws_new_after_wal order by category",
+                        "category\ncat_a\ncat_a\ncat_a\ncat_b\ncat_b\ncat_c\ncat_d\ncat_e\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_manySymbolsWithPeriodicWalApply() throws Exception {
+        // Tests a large number of distinct symbols with periodic WAL apply.
+        // This exercises symbol table growth and cache behavior.
+        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                int totalSymbols = 100;
+                int batchSize = 10;
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < totalSymbols; i++) {
+                        sender.table("ws_many_symbols_wal")
+                                .symbol("unique_tag", "tag_" + i)
+                                .symbol("group", "group_" + (i % 10))
+                                .longColumn("seq", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+
+                        // Flush every batchSize rows
+                        if ((i + 1) % batchSize == 0) {
+                            sender.flush();
+
+                            // Apply WAL periodically
+                            if ((i + 1) % (batchSize * 3) == 0) {
+                                serverMain.awaitTable("ws_many_symbols_wal");
+                                TestUtils.drainWalQueue(serverMain.getEngine());
+                            }
+                        }
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_many_symbols_wal", "count\n100\n");
+                serverMain.assertSql("select count(distinct unique_tag) from ws_many_symbols_wal", "count_distinct\n100\n");
+                serverMain.assertSql("select count(distinct \"group\") from ws_many_symbols_wal", "count_distinct\n10\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_alternatingTablesRapidFlush() throws Exception {
+        // Rapidly alternate between two tables with different symbol sets.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 50; i++) {
+                        // Alternate tables on each row
+                        if (i % 2 == 0) {
+                            sender.table("ws_alt_table_a")
+                                    .symbol("color", i % 6 < 3 ? "red" : "blue")
+                                    .longColumn("n", i)
+                                    .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                        } else {
+                            sender.table("ws_alt_table_b")
+                                    .symbol("size", i % 6 < 2 ? "small" : i % 6 < 4 ? "medium" : "large")
+                                    .longColumn("n", i)
+                                    .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                        }
+
+                        // Flush every 5 rows
+                        if ((i + 1) % 5 == 0) {
+                            sender.flush();
+                        }
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_alt_table_a");
+                serverMain.awaitTable("ws_alt_table_b");
+
+                serverMain.assertSql("select count() from ws_alt_table_a", "count\n25\n");
+                serverMain.assertSql("select count(distinct color) from ws_alt_table_a", "count_distinct\n2\n");
+                serverMain.assertSql("select count() from ws_alt_table_b", "count\n25\n");
+                serverMain.assertSql("select count(distinct size) from ws_alt_table_b", "count_distinct\n3\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_nullSymbolsInterleaved() throws Exception {
+        // Tests interleaving of null and non-null symbol values.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 30; i++) {
+                        Sender row = sender.table("ws_null_interleave")
+                                .longColumn("id", i);
+
+                        // Alternate between null and non-null symbols
+                        if (i % 3 == 0) {
+                            row.symbol("optional", null);
+                        } else {
+                            row.symbol("optional", "val_" + (i % 5));
+                        }
+
+                        row.at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+
+                        if ((i + 1) % 10 == 0) {
+                            sender.flush();
+                        }
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_null_interleave");
+                serverMain.assertSql("select count() from ws_null_interleave", "count\n30\n");
+                // 10 nulls (i % 3 == 0), 20 non-nulls with values val_1, val_2, val_3, val_4 (not val_0 since those are null rows)
+                serverMain.assertSql("select count() from ws_null_interleave where optional is null", "count\n10\n");
+                serverMain.assertSql("select count() from ws_null_interleave where optional is not null", "count\n20\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_connectionDropAndReconnectMidBatch() throws Exception {
+        // Tests behavior when connection drops and reconnects in the middle of data ingestion.
+        Assume.assumeFalse("Skip in async mode - connection behavior differs", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Connection 1: Send partial data
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_drop_reconnect")
+                                .symbol("source", "conn1")
+                                .symbol("type", i % 2 == 0 ? "typeA" : "typeB")
+                                .longColumn("seq", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+                // Connection 1 closed
+
+                serverMain.awaitTable("ws_drop_reconnect");
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                // Connection 2: Different symbols for "source", reuse "type" values
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_drop_reconnect")
+                                .symbol("source", "conn2")
+                                .symbol("type", i % 3 == 0 ? "typeA" : i % 3 == 1 ? "typeB" : "typeC")
+                                .longColumn("seq", i + 100)
+                                .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                // Connection 3: Mix of all previous symbols plus new
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_drop_reconnect")
+                                .symbol("source", i % 3 == 0 ? "conn1" : i % 3 == 1 ? "conn2" : "conn3")
+                                .symbol("type", i % 4 == 0 ? "typeA" : i % 4 == 1 ? "typeB" : i % 4 == 2 ? "typeC" : "typeD")
+                                .longColumn("seq", i + 200)
+                                .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_drop_reconnect", "count\n30\n");
+                serverMain.assertSql("select count(distinct source) from ws_drop_reconnect", "count_distinct\n3\n");
+                serverMain.assertSql("select count(distinct type) from ws_drop_reconnect", "count_distinct\n4\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbol_highCardinalityColumn() throws Exception {
+        // Tests a high-cardinality symbol column (many unique values).
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // 500 unique user_id values, 5 action values
+                    for (int i = 0; i < 500; i++) {
+                        sender.table("ws_high_cardinality")
+                                .symbol("user_id", "user_" + i)  // High cardinality
+                                .symbol("action", "action_" + (i % 5))  // Low cardinality
+                                .longColumn("timestamp_ms", System.currentTimeMillis())
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+
+                        if ((i + 1) % 50 == 0) {
+                            sender.flush();
+                        }
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_high_cardinality");
+                serverMain.assertSql("select count() from ws_high_cardinality", "count\n500\n");
+                serverMain.assertSql("select count(distinct user_id) from ws_high_cardinality", "count_distinct\n500\n");
+                serverMain.assertSql("select count(distinct action) from ws_high_cardinality", "count_distinct\n5\n");
+            }
+        });
+    }
+
+    // ==================== Symbol Cache Fast Path Tests ====================
+    // These tests specifically exercise the cache hit (fast path) in writeSymbolWithCache().
+    // The fast path requires:
+    // 1. Symbols committed to table (WAL applied)
+    // 2. Cache populated via SymbolMapReader lookup (on first reuse after commit)
+    // 3. Same symbols used again on SAME connection (cache hit)
+
+    @Test
+    public void testSymbolCache_fastPath_sameConnectionThreeRounds() throws Exception {
+        // This test exercises the cache fast path by:
+        // Round 1: Insert new symbols (cache miss, putSym - symbols are local/uncommitted)
+        // WAL apply: Symbols become committed
+        // Round 2: Reuse symbols (cache miss, SymbolMapReader finds them, cache populated)
+        // Round 3: Reuse symbols again (CACHE HIT - fast path via putSymIndex)
+        //
+        // All rounds MUST be on the same connection for cache to persist.
+        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // Round 1: Insert new symbols
+                    // These go through putSym() since they're new (not in committed table)
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_fast_path")
+                                .symbol("device", "device_" + (i % 3))  // 3 distinct values
+                                .symbol("status", i % 2 == 0 ? "online" : "offline")  // 2 distinct values
+                                .longColumn("seq", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    // Wait for table creation
+                    serverMain.awaitTable("ws_cache_fast_path");
+
+                    // Apply WAL - symbols become committed to table
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Round 2: Reuse the SAME symbols
+                    // Cache miss -> SymbolMapReader.keyOf() finds committed symbols -> cache populated
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_fast_path")
+                                .symbol("device", "device_" + (i % 3))  // Same 3 values
+                                .symbol("status", i % 2 == 0 ? "online" : "offline")  // Same 2 values
+                                .longColumn("seq", i + 100)
+                                .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    // Apply WAL again
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Round 3: Reuse the SAME symbols AGAIN
+                    // NOW the cache should be populated from Round 2
+                    // This should hit the FAST PATH: cachedTableId != NO_ENTRY && cachedTableId < watermark
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_fast_path")
+                                .symbol("device", "device_" + (i % 3))  // Cache HIT!
+                                .symbol("status", i % 2 == 0 ? "online" : "offline")  // Cache HIT!
+                                .longColumn("seq", i + 200)
+                                .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    // Round 4: Even more reuse to maximize cache hits
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_fast_path")
+                                .symbol("device", "device_" + (i % 3))  // Cache HIT!
+                                .symbol("status", i % 2 == 0 ? "online" : "offline")  // Cache HIT!
+                                .longColumn("seq", i + 300)
+                                .at(1000000003000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_cache_fast_path", "count\n40\n");
+                serverMain.assertSql("select count(distinct device) from ws_cache_fast_path", "count_distinct\n3\n");
+                serverMain.assertSql("select count(distinct status) from ws_cache_fast_path", "count_distinct\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCache_fastPath_manyRoundsNoWalApplyBetween() throws Exception {
+        // Tests cache behavior when WAL is applied once, then many rounds of symbol reuse.
+        // After initial WAL apply:
+        // - Round 2: cache miss, populates cache
+        // - Rounds 3-10: all cache HITS (fast path)
+        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    String[] symbols = {"alpha", "beta", "gamma"};
+
+                    // Round 1: New symbols
+                    for (int i = 0; i < 6; i++) {
+                        sender.table("ws_cache_many_rounds")
+                                .symbol("tag", symbols[i % symbols.length])
+                                .longColumn("round", 1)
+                                .longColumn("idx", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    serverMain.awaitTable("ws_cache_many_rounds");
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Rounds 2-10: All reuse the same symbols
+                    // Round 2 populates cache, Rounds 3-10 hit cache
+                    for (int round = 2; round <= 10; round++) {
+                        for (int i = 0; i < 6; i++) {
+                            sender.table("ws_cache_many_rounds")
+                                    .symbol("tag", symbols[i % symbols.length])
+                                    .longColumn("round", round)
+                                    .longColumn("idx", i)
+                                    .at(1000000000000L + (round * 1000) + i, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+                    }
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                // 6 rows * 10 rounds = 60 rows
+                serverMain.assertSql("select count() from ws_cache_many_rounds", "count\n60\n");
+                serverMain.assertSql("select count(distinct tag) from ws_cache_many_rounds", "count_distinct\n3\n");
+                // Verify all rounds are present
+                serverMain.assertSql("select count(distinct round) from ws_cache_many_rounds", "count_distinct\n10\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCache_fastPath_mixedNewAndCached() throws Exception {
+        // Tests interleaving of new symbols (cache miss) and existing symbols (cache hit).
+        // After WAL apply and cache warmup:
+        // - Existing symbols should hit cache (fast path)
+        // - New symbols should miss cache (slow path via putSym)
+        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // Round 1: Initial symbols
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "existing_a")
+                            .longColumn("val", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "existing_b")
+                            .longColumn("val", 2)
+                            .at(1000000000001L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    serverMain.awaitTable("ws_cache_mixed");
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Round 2: Populate cache for existing symbols
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "existing_a")  // Cache miss -> populate
+                            .longColumn("val", 3)
+                            .at(1000000001000L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "existing_b")  // Cache miss -> populate
+                            .longColumn("val", 4)
+                            .at(1000000001001L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Round 3: Mix of cached (fast path) and new (slow path)
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "existing_a")  // CACHE HIT (fast path)
+                            .longColumn("val", 5)
+                            .at(1000000002000L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "new_c")  // NEW - cache miss, putSym
+                            .longColumn("val", 6)
+                            .at(1000000002001L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "existing_b")  // CACHE HIT (fast path)
+                            .longColumn("val", 7)
+                            .at(1000000002002L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "new_d")  // NEW - cache miss, putSym
+                            .longColumn("val", 8)
+                            .at(1000000002003L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "existing_a")  // CACHE HIT (fast path)
+                            .longColumn("val", 9)
+                            .at(1000000002004L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Round 4: All symbols now exist, but new_c and new_d not yet in cache
+                    // After WAL apply, they'll be committed
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Round 5: new_c, new_d should now be cacheable
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "new_c")  // Cache miss -> populate (now committed)
+                            .longColumn("val", 10)
+                            .at(1000000003000L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "new_d")  // Cache miss -> populate (now committed)
+                            .longColumn("val", 11)
+                            .at(1000000003001L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Round 6: All four symbols should now hit cache
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "existing_a")  // CACHE HIT
+                            .longColumn("val", 12)
+                            .at(1000000004000L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "existing_b")  // CACHE HIT
+                            .longColumn("val", 13)
+                            .at(1000000004001L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "new_c")  // CACHE HIT
+                            .longColumn("val", 14)
+                            .at(1000000004002L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_mixed")
+                            .symbol("type", "new_d")  // CACHE HIT
+                            .longColumn("val", 15)
+                            .at(1000000004003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_cache_mixed", "count\n15\n");
+                serverMain.assertSql("select count(distinct type) from ws_cache_mixed", "count_distinct\n4\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCache_fastPath_multipleColumnsIndependentCaches() throws Exception {
+        // Tests that each symbol column has its own independent cache.
+        // Cache for column A should not affect cache for column B.
+        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // Round 1: Different symbols in each column
+                    for (int i = 0; i < 5; i++) {
+                        sender.table("ws_cache_multi_col")
+                                .symbol("col_a", "a_val_" + (i % 2))  // 2 distinct
+                                .symbol("col_b", "b_val_" + (i % 3))  // 3 distinct
+                                .symbol("col_c", "c_val_" + (i % 4))  // 4 distinct (but only 4 rows so actually max 4)
+                                .longColumn("seq", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    serverMain.awaitTable("ws_cache_multi_col");
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Round 2: Populate caches (cache miss -> SymbolMapReader)
+                    for (int i = 0; i < 5; i++) {
+                        sender.table("ws_cache_multi_col")
+                                .symbol("col_a", "a_val_" + (i % 2))
+                                .symbol("col_b", "b_val_" + (i % 3))
+                                .symbol("col_c", "c_val_" + (i % 4))
+                                .longColumn("seq", i + 10)
+                                .at(1000000001000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    // Round 3: All caches should hit (fast path for all 3 columns)
+                    for (int i = 0; i < 5; i++) {
+                        sender.table("ws_cache_multi_col")
+                                .symbol("col_a", "a_val_" + (i % 2))  // CACHE HIT
+                                .symbol("col_b", "b_val_" + (i % 3))  // CACHE HIT
+                                .symbol("col_c", "c_val_" + (i % 4))  // CACHE HIT
+                                .longColumn("seq", i + 20)
+                                .at(1000000002000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    // Round 4: Add new symbol to col_a, reuse others
+                    // col_a cache miss for new value, col_b and col_c still hit
+                    sender.table("ws_cache_multi_col")
+                            .symbol("col_a", "a_val_NEW")  // NEW - cache miss
+                            .symbol("col_b", "b_val_0")  // CACHE HIT
+                            .symbol("col_c", "c_val_0")  // CACHE HIT
+                            .longColumn("seq", 100)
+                            .at(1000000003000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_cache_multi_col", "count\n16\n");
+                serverMain.assertSql("select count(distinct col_a) from ws_cache_multi_col", "count_distinct\n3\n");
+                serverMain.assertSql("select count(distinct col_b) from ws_cache_multi_col", "count_distinct\n3\n");
+                serverMain.assertSql("select count(distinct col_c) from ws_cache_multi_col", "count_distinct\n4\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCache_fastPath_highVolumeReuse() throws Exception {
+        // High-volume test: many rows reusing the same small set of symbols.
+        // After warmup, the vast majority should be cache hits.
+        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    String[] levels = {"DEBUG", "INFO", "WARN", "ERROR"};  // 4 symbols
+                    String[] sources = {"app", "db", "cache"};  // 3 symbols
+
+                    // Round 1: Initial batch to create symbols
+                    for (int i = 0; i < 12; i++) {  // 4*3 = 12 combinations
+                        sender.table("ws_cache_high_volume")
+                                .symbol("level", levels[i % levels.length])
+                                .symbol("source", sources[i % sources.length])
+                                .longColumn("seq", i)
+                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    serverMain.awaitTable("ws_cache_high_volume");
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Round 2: Populate caches
+                    for (int i = 0; i < 12; i++) {
+                        sender.table("ws_cache_high_volume")
+                                .symbol("level", levels[i % levels.length])
+                                .symbol("source", sources[i % sources.length])
+                                .longColumn("seq", i + 100)
+                                .at(1000000001000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    // Rounds 3-12: 1000 more rows, all should be cache hits
+                    for (int batch = 0; batch < 10; batch++) {
+                        for (int i = 0; i < 100; i++) {
+                            int idx = batch * 100 + i;
+                            sender.table("ws_cache_high_volume")
+                                    .symbol("level", levels[idx % levels.length])  // CACHE HIT
+                                    .symbol("source", sources[idx % sources.length])  // CACHE HIT
+                                    .longColumn("seq", idx + 1000)
+                                    .at(1000000002000L + idx, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+                    }
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                // 12 + 12 + 1000 = 1024 rows
+                serverMain.assertSql("select count() from ws_cache_high_volume", "count\n1024\n");
+                serverMain.assertSql("select count(distinct level) from ws_cache_high_volume", "count_distinct\n4\n");
+                serverMain.assertSql("select count(distinct source) from ws_cache_high_volume", "count_distinct\n3\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCache_fastPath_cacheInvalidationOnWalApply() throws Exception {
+        // Tests that cache is properly invalidated when watermark changes.
+        // The cache uses checkAndInvalidate(watermark) to detect changes.
+        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    // Phase 1: Insert and commit sym_a, sym_b
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_a")
+                            .longColumn("val", 1)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_b")
+                            .longColumn("val", 2)
+                            .at(1000000000001L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    serverMain.awaitTable("ws_cache_invalidate");
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Phase 2: Populate cache for sym_a, sym_b
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_a")
+                            .longColumn("val", 3)
+                            .at(1000000001000L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_b")
+                            .longColumn("val", 4)
+                            .at(1000000001001L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Phase 3: Add sym_c (new symbol)
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_c")  // NEW
+                            .longColumn("val", 5)
+                            .at(1000000002000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Apply WAL - sym_c becomes committed, watermark changes
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    // Phase 4: After WAL apply, watermark changed
+                    // Cache should be invalidated, but sym_a and sym_b are still in table
+                    // This round repopulates cache with new watermark
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_a")  // Cache invalidated, repopulate
+                            .longColumn("val", 6)
+                            .at(1000000003000L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_b")  // Cache invalidated, repopulate
+                            .longColumn("val", 7)
+                            .at(1000000003001L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_c")  // Now committed, can be cached
+                            .longColumn("val", 8)
+                            .at(1000000003002L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Phase 5: All three should now hit cache
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_a")  // CACHE HIT
+                            .longColumn("val", 9)
+                            .at(1000000004000L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_b")  // CACHE HIT
+                            .longColumn("val", 10)
+                            .at(1000000004001L, ChronoUnit.MICROS);
+                    sender.table("ws_cache_invalidate")
+                            .symbol("tag", "sym_c")  // CACHE HIT
+                            .longColumn("val", 11)
+                            .at(1000000004002L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_cache_invalidate", "count\n11\n");
+                serverMain.assertSql("select count(distinct tag) from ws_cache_invalidate", "count_distinct\n3\n");
+            }
+        });
+    }
 }

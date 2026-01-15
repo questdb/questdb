@@ -367,6 +367,36 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
+    /**
+     * Looks up a symbol ID from the internal cache.
+     * <p>
+     * This method checks the WalWriter's internal symbol cache (utf16Map) which is
+     * populated during putSym calls. Unlike SymbolMapReader.keyOf(), this cache
+     * is always up-to-date within the current WalWriter session.
+     * <p>
+     * Note: This returns IDs that may be either committed (from SymbolMapReader) or
+     * local (assigned during this session). Both are valid for use with putSymIndex.
+     *
+     * @param columnIndex the column index
+     * @param value       the symbol value to look up
+     * @return the symbol ID, or {@link SymbolTable#VALUE_NOT_FOUND} if not in cache
+     */
+    public int getCachedSymbolKey(int columnIndex, CharSequence value) {
+        if (value == null) {
+            return SymbolTable.VALUE_IS_NULL;
+        }
+        DirectCharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
+        if (utf16Map == null) {
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+        int index = utf16Map.keyIndex(value);
+        if (index < 0) {
+            // Found in cache
+            return utf16Map.valueAt(index);
+        }
+        return SymbolTable.VALUE_NOT_FOUND;
+    }
+
     @Override
     public long getUncommittedRowCount() {
         return segmentRowCount - currentTxnStartRowNum;

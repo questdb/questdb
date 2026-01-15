@@ -26,8 +26,10 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.http.ilpv4.*;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.log.Log;
@@ -67,6 +69,10 @@ public class IlpV4WalAppender implements QuietCloseable {
     // Reusable array for writing array columns
     private final DirectArray reusableArray = new DirectArray();
 
+    // Optional symbol ID cache for performance optimization
+    // Maps clientSymbolId → tableSymbolId to avoid string lookups
+    private ConnectionSymbolCache symbolCache;
+
     /**
      * Creates a new WAL appender.
      *
@@ -84,6 +90,25 @@ public class IlpV4WalAppender implements QuietCloseable {
     @Override
     public void close() {
         reusableArray.close();
+    }
+
+    /**
+     * Sets the symbol cache to use for optimizing symbol lookups.
+     * <p>
+     * When set, the appender will cache clientSymbolId → tableSymbolId mappings
+     * to avoid repeated string lookups for frequently used symbols.
+     *
+     * @param symbolCache the connection-level symbol cache, or null to disable caching
+     */
+    public void setSymbolCache(ConnectionSymbolCache symbolCache) {
+        this.symbolCache = symbolCache;
+    }
+
+    /**
+     * Returns the current symbol cache, or null if not set.
+     */
+    public ConnectionSymbolCache getSymbolCache() {
+        return symbolCache;
     }
 
     /**
@@ -228,6 +253,21 @@ public class IlpV4WalAppender implements QuietCloseable {
                     int columnIndex = columnIndexMap[col];
                     int columnType = columnTypeMap[col];
                     byte ilpType = ilpTypes[col];
+
+                     // Special handling for SYMBOL columns with caching
+                     if (ColumnType.tagOf(columnType) == ColumnType.SYMBOL && symbolCache != null) {
+                         IlpV4ColumnCursor cursor = tableBlock.getColumn(col);
+                         if (cursor instanceof IlpV4SymbolColumnCursor) {
+                             long tableToken = writer.getTableToken().getTableId();
+                             int watermark = writer.getSymbolCountWatermark(columnIndex);
+                             ClientSymbolCache columnCache = symbolCache.getCache(tableToken, columnIndex);
+                             if (writeSymbolWithCache(columnIndex, (IlpV4SymbolColumnCursor) cursor, r,
+                                     writer, tableToken, columnCache, watermark)) {
+                                 continue;  // Cache path succeeded
+                             }
+                             // Cache path couldn't handle it - fall through to writeValueFromCursor
+                         }
+                     }
 
                     writeValueFromCursor(r, columnIndex, columnType, ilpType, tableBlock.getColumn(col));
                 }
@@ -544,5 +584,92 @@ public class IlpV4WalAppender implements QuietCloseable {
             default:
                 throw new IllegalArgumentException("Unsupported QuestDB type: " + columnType);
         }
+    }
+
+    /**
+     * Writes a symbol value using the cache for optimization.
+     * <p>
+     * This method attempts to use a cached clientSymbolId → tableSymbolId mapping
+     * to avoid string lookups for frequently used symbols.
+     * <p>
+     * The caching strategy is:
+     * <ul>
+     *   <li>Cache hit + tableId &lt; watermark: use putSymIndex (committed symbol)</li>
+     *   <li>Cache miss: lookup via SymbolMapReader if available, cache if found, then write</li>
+     *   <li>New symbol (not in committed table): use putSym, don't cache (local ID)</li>
+     * </ul>
+     *
+     * @param columnIndex    the table column index
+     * @param cursor         the symbol column cursor
+     * @param r              the row to write to
+     * @param writer         the table writer
+     * @param tableToken     the table's unique token
+     * @param columnCache    the cache for this (table, column) pair
+     * @param watermark      the current symbol count watermark (committed symbol count)
+     * @return true if the symbol was written successfully, false if the caller should
+     *         fall back to the standard write path
+     */
+    private boolean writeSymbolWithCache(
+            int columnIndex,
+            IlpV4SymbolColumnCursor cursor,
+            TableWriter.Row r,
+            TableWriterAPI writer,
+            long tableToken,
+            ClientSymbolCache columnCache,
+            int watermark
+    ) {
+        int clientSymbolId = cursor.getSymbolIndex();
+        if (clientSymbolId < 0) {
+            // NULL symbol - nothing to write, but we handled it
+            return true;
+        }
+
+        // Try cache first
+        // We must check cachedTableId < watermark because:
+        // - IDs < watermark are committed symbols - safe to use putSymIndex
+        // - IDs >= watermark are local symbols - must use putSym for proper WAL tracking
+        int cachedTableId = columnCache.get(clientSymbolId);
+        if (cachedTableId != ClientSymbolCache.NO_ENTRY && cachedTableId < watermark) {
+            // Cache hit for committed symbol - use putSymIndex (fast path)
+            r.putSymIndex(columnIndex, cachedTableId);
+            if (symbolCache != null) {
+                symbolCache.recordHit();
+            }
+            return true;
+        }
+
+        // Cache miss - need to do lookup
+        if (symbolCache != null) {
+            symbolCache.recordMiss();
+        }
+
+        String symbolValue = cursor.getSymbolString();
+        if (symbolValue == null) {
+            // clientSymbolId >= 0 but getSymbolString() returned null
+            // This could happen if the dictionary lookup failed in delta mode.
+            // Return false so caller can fall back to the standard write path.
+            // Note: This is different from a genuine NULL symbol, which is
+            // handled above (clientSymbolId < 0).
+            return false;
+        }
+
+        // Try to lookup in WalWriter's internal symbol cache
+        // This cache is always up-to-date (unlike SymbolMapReader which can be stale)
+        if (writer instanceof WalWriter) {
+            WalWriter walWriter = (WalWriter) writer;
+            int tableId = walWriter.getCachedSymbolKey(columnIndex, symbolValue);
+            if (tableId != SymbolTable.VALUE_NOT_FOUND) {
+                // Found in WalWriter's cache - cache and use putSymIndex
+                columnCache.put(clientSymbolId, tableId);
+                r.putSymIndex(columnIndex, tableId);
+                return true;
+            }
+        }
+
+        // Not found in committed table or not a WalWriter - use putSym
+        // This handles new symbols (local IDs) and non-WAL writers
+        r.putSym(columnIndex, symbolValue);
+        // Don't cache - we don't know the assigned ID and it might be a local ID
+        return true;
     }
 }

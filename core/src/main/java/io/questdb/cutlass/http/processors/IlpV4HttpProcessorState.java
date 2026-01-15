@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.*;
 import io.questdb.cutlass.http.ConnectionAware;
+import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.IlpV4WalAppender;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
@@ -58,6 +59,9 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
     // Per-connection accumulated symbol dictionary for delta encoding
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
 
+    // Per-connection symbol ID cache: clientSymbolId → tableSymbolId
+    private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
+
     // Buffer to accumulate incoming data
     private long bufferAddress;
     private int bufferSize;
@@ -83,6 +87,7 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
                 configuration.autoCreateNewColumns(),
                 engine.getConfiguration().getMaxFileNameLength()
         );
+        this.walAppender.setSymbolCache(symbolCache);
 
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.tudCache = new IlpV4HttpTudCache(
@@ -128,6 +133,7 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
         clear();
         tudCache.reset();
         connectionSymbolDict.clear();  // Reset delta symbol dictionary on disconnect
+        symbolCache.clear();  // Reset symbol ID cache on disconnect
     }
 
     public void addData(long lo, long hi) {

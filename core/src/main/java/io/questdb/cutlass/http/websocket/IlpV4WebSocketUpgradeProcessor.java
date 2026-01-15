@@ -367,9 +367,8 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
                 errorMessage = "Processing failed";
             }
 
-            // Reset state for next message
-            state.onDisconnected();
-            state.of(context.getFd(), context.getSecurityContext());
+            // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
+            state.clear();
         } catch (Throwable e) {
             LOG.error().$("WebSocket ILP processing error [fd=").$(context.getFd())
                     .$(", seq=").$(seq)
@@ -385,8 +384,8 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
             errorMessage = e.getMessage();
 
-            state.onDisconnected();
-            state.of(context.getFd(), context.getSecurityContext());
+            // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
+            state.clear();
         }
 
         // Send response using cumulative ACK strategy
