@@ -543,7 +543,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA dataMem, MemoryMA auxMem, BoolList symbolMapNullFlagsChanged, BoolList symbolMapNullFlags, int columnIndex) {
+    private static void configureNullSetters(
+            ObjList<Runnable> nullers,
+            int type,
+            MemoryMA dataMem,
+            MemoryMA auxMem,
+            int columnIndex,
+            BoolList symbolMapNullFlagsChanged,
+            BoolList symbolMapNullFlags
+    ) {
         int columnTag = ColumnType.tagOf(type);
         if (ColumnType.isVarSize(columnTag)) {
             final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
@@ -920,7 +928,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             final MemoryMA auxMem = createAuxColumnMem(columnType);
             columns.extendAndSet(dataColumnOffset, dataMem);
             columns.extendAndSet(dataColumnOffset + 1, auxMem);
-            configureNullSetters(nullSetters, columnType, dataMem, auxMem, symbolMapNullFlagsChanged, symbolMapNullFlags, columnIndex);
+            configureNullSetters(nullSetters, columnType, dataMem, auxMem, columnIndex, symbolMapNullFlagsChanged, symbolMapNullFlags);
             rowValueIsNotNull.add(-1);
         } else {
             columns.extendAndSet(dataColumnOffset, NullMemory.INSTANCE);
