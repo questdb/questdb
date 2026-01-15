@@ -302,6 +302,7 @@ pub struct Column {
     /// Passed by QuestDB during writes to indicate that the column contains no null values.
     /// Currently only Symbol dataType columns support this flag.
     pub required: bool,
+    pub designated_timestamp_ascending: bool,
 }
 
 impl Column {
@@ -319,6 +320,7 @@ impl Column {
         symbol_offsets_ptr: *const u64,
         symbol_offsets_size: usize,
         designated_timestamp: bool,
+        designated_timestamp_ascending: bool,
     ) -> ParquetResult<Self> {
         assert!(
             !primary_data_ptr.is_null() || primary_data_size == 0,
@@ -363,6 +365,7 @@ impl Column {
             symbol_offsets,
             designated_timestamp,
             required,
+            designated_timestamp_ascending,
         })
     }
 }
@@ -400,7 +403,9 @@ pub fn to_parquet_schema(
         };
 
         let column_type = if column.designated_timestamp {
-            column.data_type.into_designated()?
+            column
+                .data_type
+                .into_designated_with_order(column.designated_timestamp_ascending)?
         } else {
             column.data_type
         };

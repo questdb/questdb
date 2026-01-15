@@ -129,6 +129,7 @@ mod tests {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::deserialize::{HybridEncoded, HybridRleIter};
     use parquet2::encoding::{hybrid_rle, uleb128};
+    use parquet2::metadata::SortingColumn;
     use parquet2::page::CompressedPage;
     use parquet2::types;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
@@ -167,6 +168,7 @@ mod tests {
                     0,
                     null(),
                     0,
+                    false,
                     false,
                 )
                 .expect("column")
@@ -278,6 +280,7 @@ mod tests {
             offsets.as_ptr(),
             offsets.len(),
             false,
+            false,
         )
         .unwrap();
 
@@ -342,6 +345,7 @@ mod tests {
             null(),
             0,
             false,
+            false,
         )
         .unwrap();
 
@@ -357,6 +361,7 @@ mod tests {
             0,
             null(),
             0,
+            false,
             false,
         )
         .unwrap();
@@ -415,6 +420,7 @@ mod tests {
             0,
             null(),
             0,
+            false,
             false,
         )
         .unwrap();
@@ -512,5 +518,118 @@ mod tests {
         ];
         let len = types::decode::<i32>(&data[0..4]);
         assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn test_write_parquet_with_designated_timestamp_descending() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let timestamps: Vec<i64> = vec![1000, 2000, 3000, 4000, 5000];
+        let row_count = timestamps.len();
+        let ts_col = Column::from_raw_data(
+            0,
+            "timestamp",
+            ColumnTypeTag::Timestamp.into_type().code(),
+            0,
+            row_count,
+            timestamps.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            true,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![ts_col],
+        };
+
+        let sorting_columns = Some(vec![SortingColumn::new(0, true, false)]); // descending=true
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_sorting_columns(sorting_columns)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let mut reader = Cursor::new(bytes);
+        let meta = parquet2::read::read_metadata(&mut reader).expect("metadata");
+
+        assert!(!meta.row_groups.is_empty());
+        let sorting_cols = meta.row_groups[0].sorting_columns();
+        assert!(
+            sorting_cols.is_some(),
+            "Expected sorting columns in metadata"
+        );
+        let sorting_cols = sorting_cols.as_ref().unwrap();
+        assert_eq!(sorting_cols.len(), 1);
+        assert_eq!(sorting_cols[0].column_idx, 0);
+        assert!(
+            sorting_cols[0].descending,
+            "Expected descending=true for timestamp column"
+        );
+        assert!(!sorting_cols[0].nulls_first);
+    }
+
+    #[test]
+    fn test_write_parquet_with_designated_timestamp_ascending() {
+        use parquet2::metadata::SortingColumn;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let timestamps: Vec<i64> = vec![1000, 2000, 3000, 4000, 5000];
+        let row_count = timestamps.len();
+
+        let ts_col = Column::from_raw_data(
+            0,
+            "timestamp",
+            ColumnTypeTag::Timestamp.into_type().code(),
+            0,
+            row_count,
+            timestamps.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            true,
+            true,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![ts_col],
+        };
+
+        let sorting_columns = Some(vec![SortingColumn::new(0, false, false)]); // descending=false
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_sorting_columns(sorting_columns)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let mut reader = Cursor::new(bytes);
+        let meta = parquet2::read::read_metadata(&mut reader).expect("metadata");
+
+        assert!(!meta.row_groups.is_empty());
+        let sorting_cols = meta.row_groups[0].sorting_columns();
+        assert!(
+            sorting_cols.is_some(),
+            "Expected sorting columns in metadata"
+        );
+        let sorting_cols = sorting_cols.as_ref().unwrap();
+        assert_eq!(sorting_cols.len(), 1);
+        assert_eq!(sorting_cols[0].column_idx, 0);
+        assert!(
+            !sorting_cols[0].descending,
+            "Expected descending=false for ascending timestamp"
+        );
+        assert!(!sorting_cols[0].nulls_first);
     }
 }

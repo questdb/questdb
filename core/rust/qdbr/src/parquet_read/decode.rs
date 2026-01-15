@@ -2213,6 +2213,7 @@ mod tests {
             null(),
             0,
             false,
+            false,
         )
         .unwrap()
     }
@@ -2237,6 +2238,7 @@ mod tests {
             aux_data.len(),
             null(),
             0,
+            false,
             false,
         )
         .unwrap()
@@ -2263,6 +2265,7 @@ mod tests {
             chars_data.len(),
             offsets.as_ptr(),
             offsets.len(),
+            false,
             false,
         )
         .unwrap()
