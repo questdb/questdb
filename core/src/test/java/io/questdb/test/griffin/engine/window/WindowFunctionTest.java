@@ -335,59 +335,113 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmaExceptions() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+    public void testEmaExceptionAlphaMustBeBetween0And1() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'alpha', 1.5) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                34,
+                "alpha must be between 0 (exclusive) and 1 (inclusive)"
+        );
+    }
 
-            // avg() requires ORDER BY
-            assertExceptionNoLeakCheck(
-                    "select ts, val, avg(val, 'alpha', 0.5) over () from tab",
-                    16,
-                    "avg() requires ORDER BY"
-            );
+    @Test
+    public void testEmaExceptionFramingNotSupported() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'alpha', 0.5) over (order by ts rows between 1 preceding and current row) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                16,
+                "avg() does not support framing; remove ROWS/RANGE clause"
+        );
+    }
 
-            // avg() does not support framing
-            assertExceptionNoLeakCheck(
-                    "select ts, val, avg(val, 'alpha', 0.5) over (order by ts rows between 1 preceding and current row) from tab",
-                    16,
-                    "avg() does not support framing"
-            );
+    @Test
+    public void testEmaExceptionInfinityParameterValue() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'alpha', 1.0/0.0) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                37,
+                "parameter value must be a positive number"
+        );
+    }
 
-            // Invalid kind parameter
-            assertExceptionNoLeakCheck(
-                    "select ts, val, avg(val, 'invalid', 0.5) over (order by ts) from tab",
-                    25,
-                    "invalid kind parameter"
-            );
+    @Test
+    public void testEmaExceptionInvalidKind() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'invalid', 0.5) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                25,
+                "invalid kind parameter: expected 'alpha', 'period', or a time unit (second, minute, hour, day, week)"
+        );
+    }
 
-            // Alpha must be between 0 and 1
-            assertExceptionNoLeakCheck(
-                    "select ts, val, avg(val, 'alpha', 1.5) over (order by ts) from tab",
-                    34,
-                    "alpha must be between 0 (exclusive) and 1 (inclusive)"
-            );
+    @Test
+    public void testEmaExceptionKindCannotBeNull() throws Exception {
+        assertException(
+                "select ts, val, avg(val, cast(null as string), 0.5) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                25,
+                "kind parameter cannot be null"
+        );
+    }
 
-            // Parameter value must be positive
-            assertExceptionNoLeakCheck(
-                    "select ts, val, avg(val, 'period', -1) over (order by ts) from tab",
-                    35,
-                    "parameter value must be a positive number"
-            );
+    @Test
+    public void testEmaExceptionKindMustBeConstant() throws Exception {
+        assertException(
+                "select ts, kind, val, avg(val, kind, 0.5) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", kind string, val double) timestamp(ts)",
+                31,
+                "kind parameter must be a constant"
+        );
+    }
 
-            // Parameter value must be positive
-            assertExceptionNoLeakCheck(
-                    "select ts, val, avg(val, 'alpha', 0) over (order by ts) from tab",
-                    34,
-                    "parameter value must be a positive number"
-            );
+    @Test
+    public void testEmaExceptionNaNParameterValue() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'alpha', 0.0/0.0) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                37,
+                "parameter value must be a positive number"
+        );
+    }
 
-            // Kind parameter must be a constant
-            assertExceptionNoLeakCheck(
-                    "select ts, val, avg(val, 's' || 'alpha', 0.5) over (order by ts) from tab",
-                    29,
-                    "invalid kind parameter: expected 'alpha', 'period', or a time unit (second, minute, hour, day, week)"
-            );
-        });
+    @Test
+    public void testEmaExceptionNegativeParameterValue() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'period', -1) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                35,
+                "parameter value must be a positive number"
+        );
+    }
+
+    @Test
+    public void testEmaExceptionOrderByRequired() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'alpha', 0.5) over () from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                16,
+                "avg() requires ORDER BY"
+        );
+    }
+
+    @Test
+    public void testEmaExceptionParameterMustBeConstant() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'alpha', val) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                34,
+                "parameter value must be a constant"
+        );
+    }
+
+    @Test
+    public void testEmaExceptionZeroParameterValue() throws Exception {
+        assertException(
+                "select ts, val, avg(val, 'alpha', 0) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                34,
+                "parameter value must be a positive number"
+        );
     }
 
     @Test
@@ -447,6 +501,146 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """,
                     "explain select ts, i, val, avg(val, 'minute', 5) over (partition by i order by ts) from tab"
             );
+        });
+    }
+
+    @Test
+    public void testEmaTimeUnitDay() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values ('1970-01-01T00:00:00.000000Z'::timestamp, 10.0)");
+            execute("insert into tab values ('1970-01-02T00:00:00.000000Z'::timestamp, 20.0)");
+
+            // tau = 1 day, dt = 1 day, so alpha = 1 - exp(-1) ≈ 0.6321
+            String expected = replaceTimestampSuffix("""
+                    ts\tval\tavg
+                    1970-01-01T00:00:00.000000Z\t10.0\t10.0
+                    1970-01-02T00:00:00.000000Z\t20.0\t16.321205588285576
+                    """);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'day', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'days', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'DAY', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Days', 1) over (order by ts) from tab", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testEmaTimeUnitHour() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values ('1970-01-01T00:00:00.000000Z'::timestamp, 10.0)");
+            execute("insert into tab values ('1970-01-01T01:00:00.000000Z'::timestamp, 20.0)");
+
+            // tau = 1 hour, dt = 1 hour, so alpha = 1 - exp(-1) ≈ 0.6321
+            String expected = replaceTimestampSuffix("""
+                    ts\tval\tavg
+                    1970-01-01T00:00:00.000000Z\t10.0\t10.0
+                    1970-01-01T01:00:00.000000Z\t20.0\t16.321205588285576
+                    """);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'hour', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'hours', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'HOUR', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Hours', 1) over (order by ts) from tab", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testEmaTimeUnitMicrosecond() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values ('1970-01-01T00:00:00.000000Z'::timestamp, 10.0)");
+            execute("insert into tab values ('1970-01-01T00:00:00.000001Z'::timestamp, 20.0)");
+
+            // tau = 1 microsecond, dt = 1 microsecond, so alpha = 1 - exp(-1) ≈ 0.6321
+            String expected = replaceTimestampSuffix("""
+                    ts\tval\tavg
+                    1970-01-01T00:00:00.000000Z\t10.0\t10.0
+                    1970-01-01T00:00:00.000001Z\t20.0\t16.321205588285576
+                    """);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'microsecond', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'microseconds', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'MICROSECOND', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Microseconds', 1) over (order by ts) from tab", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testEmaTimeUnitMillisecond() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values ('1970-01-01T00:00:00.000Z'::timestamp, 10.0)");
+            execute("insert into tab values ('1970-01-01T00:00:00.001Z'::timestamp, 20.0)");
+
+            // tau = 1 millisecond, dt = 1 millisecond, so alpha = 1 - exp(-1) ≈ 0.6321
+            String expected = replaceTimestampSuffix("""
+                    ts\tval\tavg
+                    1970-01-01T00:00:00.000000Z\t10.0\t10.0
+                    1970-01-01T00:00:00.001000Z\t20.0\t16.321205588285576
+                    """);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'millisecond', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'milliseconds', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'MILLISECOND', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Milliseconds', 1) over (order by ts) from tab", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testEmaTimeUnitMinute() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values ('1970-01-01T00:00:00.000000Z'::timestamp, 10.0)");
+            execute("insert into tab values ('1970-01-01T00:01:00.000000Z'::timestamp, 20.0)");
+
+            // tau = 1 minute, dt = 1 minute, so alpha = 1 - exp(-1) ≈ 0.6321
+            String expected = replaceTimestampSuffix("""
+                    ts\tval\tavg
+                    1970-01-01T00:00:00.000000Z\t10.0\t10.0
+                    1970-01-01T00:01:00.000000Z\t20.0\t16.321205588285576
+                    """);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'minute', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'minutes', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'MINUTE', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Minutes', 1) over (order by ts) from tab", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testEmaTimeUnitSecond() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values ('1970-01-01T00:00:00.000000Z'::timestamp, 10.0)");
+            execute("insert into tab values ('1970-01-01T00:00:01.000000Z'::timestamp, 20.0)");
+
+            // tau = 1 second, dt = 1 second, so alpha = 1 - exp(-1) ≈ 0.6321
+            String expected = replaceTimestampSuffix("""
+                    ts\tval\tavg
+                    1970-01-01T00:00:00.000000Z\t10.0\t10.0
+                    1970-01-01T00:00:01.000000Z\t20.0\t16.321205588285576
+                    """);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'second', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'seconds', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'SECOND', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Seconds', 1) over (order by ts) from tab", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testEmaTimeUnitWeek() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values ('1970-01-01T00:00:00.000000Z'::timestamp, 10.0)");
+            execute("insert into tab values ('1970-01-08T00:00:00.000000Z'::timestamp, 20.0)");
+
+            // tau = 1 week, dt = 1 week, so alpha = 1 - exp(-1) ≈ 0.6321
+            String expected = replaceTimestampSuffix("""
+                    ts\tval\tavg
+                    1970-01-01T00:00:00.000000Z\t10.0\t10.0
+                    1970-01-08T00:00:00.000000Z\t20.0\t16.321205588285576
+                    """);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'week', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'weeks', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'WEEK', 1) over (order by ts) from tab", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Weeks', 1) over (order by ts) from tab", "ts", false, true);
         });
     }
 

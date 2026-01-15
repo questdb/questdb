@@ -41,9 +41,9 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -101,9 +101,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         // EMA doesn't support custom framing - it always uses all preceding rows
-        long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
-        if (!windowContext.isDefaultFrame() && !(rowsLo == Long.MIN_VALUE && rowsHi == 0)) {
+        if (!windowContext.isDefaultFrame()) {
             throw SqlException.$(position, "avg() does not support framing; remove ROWS/RANGE clause");
         }
 
@@ -144,13 +142,13 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         double alpha = 0;
         long tau = 0;
 
-        if (Chars.equalsIgnoreCaseNc("alpha", kind)) {
+        if (SqlKeywords.isAlphaKeyword(kind)) {
             mode = MODE_ALPHA;
             if (paramValue > 1) {
                 throw SqlException.$(argPositions.getQuick(2), "alpha must be between 0 (exclusive) and 1 (inclusive)");
             }
             alpha = paramValue;
-        } else if (Chars.equalsIgnoreCaseNc("period", kind)) {
+        } else if (SqlKeywords.isPeriodKeyword(kind)) {
             mode = MODE_PERIOD;
             alpha = 2.0 / (paramValue + 1.0);
         } else {
@@ -214,19 +212,19 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
      * Parse time unit and return tau in native timestamp precision (micros or nanos).
      */
     private static long parseTimeUnit(CharSequence kind, double value, int position, TimestampDriver driver) throws SqlException {
-        if (Chars.equalsIgnoreCaseNc("microsecond", kind) || Chars.equalsIgnoreCaseNc("microseconds", kind)) {
+        if (SqlKeywords.isMicrosecondKeyword(kind) || SqlKeywords.isMicrosecondsKeyword(kind)) {
             return driver.fromMicros((long) value);
-        } else if (Chars.equalsIgnoreCaseNc("millisecond", kind) || Chars.equalsIgnoreCaseNc("milliseconds", kind)) {
+        } else if (SqlKeywords.isMillisecondKeyword(kind) || SqlKeywords.isMillisecondsKeyword(kind)) {
             return driver.fromMillis((long) value);
-        } else if (Chars.equalsIgnoreCaseNc("second", kind) || Chars.equalsIgnoreCaseNc("seconds", kind)) {
+        } else if (SqlKeywords.isSecondKeyword(kind) || SqlKeywords.isSecondsKeyword(kind)) {
             return driver.fromSeconds((long) value);
-        } else if (Chars.equalsIgnoreCaseNc("minute", kind) || Chars.equalsIgnoreCaseNc("minutes", kind)) {
+        } else if (SqlKeywords.isMinuteKeyword(kind) || SqlKeywords.isMinutesKeyword(kind)) {
             return driver.fromMinutes((int) value);
-        } else if (Chars.equalsIgnoreCaseNc("hour", kind) || Chars.equalsIgnoreCaseNc("hours", kind)) {
+        } else if (SqlKeywords.isHourKeyword(kind) || SqlKeywords.isHoursKeyword(kind)) {
             return driver.fromHours((int) value);
-        } else if (Chars.equalsIgnoreCaseNc("day", kind) || Chars.equalsIgnoreCaseNc("days", kind)) {
+        } else if (SqlKeywords.isDayKeyword(kind) || SqlKeywords.isDaysKeyword(kind)) {
             return driver.fromDays((int) value);
-        } else if (Chars.equalsIgnoreCaseNc("week", kind) || Chars.equalsIgnoreCaseNc("weeks", kind)) {
+        } else if (SqlKeywords.isWeekKeyword(kind) || SqlKeywords.isWeeksKeyword(kind)) {
             return driver.fromWeeks((int) value);
         } else {
             throw SqlException.$(position, "invalid kind parameter: expected 'alpha', 'period', or a time unit (second, minute, hour, day, week)");
@@ -580,11 +578,8 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     ema = d;
                     hasValue = true;
                 }
-                prevTimestamp = timestamp;
-            } else {
-                // Null value - update timestamp but keep previous EMA
-                prevTimestamp = timestamp;
             }
+            prevTimestamp = timestamp;
         }
 
         @Override
