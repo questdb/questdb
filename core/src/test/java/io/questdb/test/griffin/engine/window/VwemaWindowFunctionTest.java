@@ -437,6 +437,52 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVwemaTimeWeightedModeDays() throws Exception {
+        // Test 'day' and 'days' time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-02T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-03T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'day', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select dateadd('d', x::int - 1, '2024-01-01'::timestamp) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by month",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeDaysPlural() throws Exception {
+        // Test 'days' plural time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-02T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-03T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'days', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select dateadd('d', x::int - 1, '2024-01-01'::timestamp) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by month",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testVwemaTimeWeightedModeExplainPlan() throws Exception {
         // VwemaTimeWeightedOverUnboundedRowsFrameFunction
         execute("create table tab (ts timestamp, price double, volume double) timestamp(ts)");
@@ -449,6 +495,190 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: tab
                         """
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeHours() throws Exception {
+        // Test 'hour' time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T01:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T02:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'hour', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select dateadd('h', x::int - 1, '2024-01-01'::timestamp) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeHoursPlural() throws Exception {
+        // Test 'hours' plural time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T01:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T02:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'hours', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select dateadd('h', x::int - 1, '2024-01-01'::timestamp) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeMicroseconds() throws Exception {
+        // Test 'microsecond' time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.000001Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:00.000002Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'microsecond', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select timestamp_sequence('2024-01-01', 1) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeMicrosecondsPlural() throws Exception {
+        // Test 'microseconds' plural time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.000001Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:00.000002Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'microseconds', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select timestamp_sequence('2024-01-01', 1) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeMilliseconds() throws Exception {
+        // Test 'millisecond' time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.001000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:00.002000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'millisecond', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select timestamp_sequence('2024-01-01', 1000) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeMillisecondsPlural() throws Exception {
+        // Test 'milliseconds' plural time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:00.001000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:00.002000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'milliseconds', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select timestamp_sequence('2024-01-01', 1000) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeMinutes() throws Exception {
+        // Test 'minute' time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:01:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:02:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'minute', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select dateadd('m', x::int - 1, '2024-01-01'::timestamp) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeMinutesPlural() throws Exception {
+        // Test 'minutes' plural time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:01:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:02:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'minutes', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select dateadd('m', x::int - 1, '2024-01-01'::timestamp) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
         );
     }
 
@@ -514,6 +744,75 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                         "case when x = 1 then 100.0 else 200.0 end as volume " +
                         "from long_sequence(2)" +
                         ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeSecondsPlural() throws Exception {
+        // Test 'seconds' plural time unit parsing (singular 'second' tested in testVwemaTimeWeightedMode)
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:01.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:02.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-01T00:00:03.000000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'seconds', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select dateadd('s', x::int, '2024-01-01'::timestamp) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeWeeks() throws Exception {
+        // Test 'week' time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-08T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-15T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'week', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select dateadd('d', (x::int - 1) * 7, '2024-01-01'::timestamp) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by month",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaTimeWeightedModeWeeksPlural() throws Exception {
+        // Test 'weeks' plural time unit parsing
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-08T00:00:00.000000Z\t20.0\t200.0\t17.74600326439436
+                        2024-01-15T00:00:00.000000Z\t30.0\t300.0\t27.053175178756817
+                        """,
+                "select ts, price, volume, avg(price, 'weeks', 1, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select dateadd('d', (x::int - 1) * 7, '2024-01-01'::timestamp) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by month",
                 "ts",
                 false,
                 true
