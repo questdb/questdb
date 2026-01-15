@@ -84,6 +84,11 @@ public class WalLockManager implements QuietCloseable {
         tableIds.remove(tableDirName);
     }
 
+    @SuppressWarnings("unused")
+    public WalLocker getWalLocker() {
+        return locker;
+    }
+
     /**
      * Checks if a specific WAL segment is currently locked.
      *
