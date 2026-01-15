@@ -177,14 +177,18 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
                         switch (entry.getPhase()) {
                             case POPULATING_TEMP_TABLE:
                                 msgSink.clear();
-                                msgSink.put("rows: ").put(entry.getPopulatedRowCount());
+                                msgSink.putAscii("rows: ").put(entry.getPopulatedRowCount());
                                 if (entry.getTotalRowCount() > 0) {
-                                    msgSink.put(" / ").put(entry.getTotalRowCount());
+                                    msgSink.putAscii(" / ").put(entry.getTotalRowCount());
                                 }
                                 return msgSink;
                             case CONVERTING_PARTITIONS:
                                 msgSink.clear();
-                                msgSink.put("finish partition count: ").put(entry.getFinishedPartitionCount()).put(" / ").put(entry.getTotalPartitionCount());
+                                msgSink.putAscii("finish partition count: ").put(entry.getFinishedPartitionCount()).putAscii(" / ").put(entry.getTotalPartitionCount());
+                                return msgSink;
+                            case STREAM_SENDING_DATA:
+                                msgSink.clear();
+                                msgSink.putAscii("exported rows: ").put(entry.getStreamingSendRowCount());
                                 return msgSink;
                             default:
                                 return null;

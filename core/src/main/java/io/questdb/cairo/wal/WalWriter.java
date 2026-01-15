@@ -125,6 +125,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final BoolList symbolMapNullFlags = new BoolList();
+    private final BoolList symbolMapNullFlagsChanged = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<DirectCharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final TimestampDriver timestampDriver;
@@ -187,7 +188,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             initialSymbolCounts = new AtomicIntList(columnCount);
             localSymbolIds = new IntList(columnCount);
 
-            events.of(symbolMaps, initialSymbolCounts, symbolMapNullFlags);
+            events.of(symbolMaps, initialSymbolCounts, symbolMapNullFlags, symbolMapNullFlagsChanged);
 
             configureColumns();
             openNewSegment();
@@ -543,7 +544,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA dataMem, MemoryMA auxMem) {
+    private static void configureNullSetters(
+            ObjList<Runnable> nullers,
+            int type,
+            MemoryMA dataMem,
+            MemoryMA auxMem,
+            int columnIndex,
+            BoolList symbolMapNullFlagsChanged,
+            BoolList symbolMapNullFlags
+    ) {
         int columnTag = ColumnType.tagOf(type);
         if (ColumnType.isVarSize(columnTag)) {
             final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
@@ -581,7 +590,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     nullers.add(() -> dataMem.putChar((char) 0));
                     break;
                 case ColumnType.SYMBOL:
-                    nullers.add(() -> dataMem.putInt(SymbolTable.VALUE_IS_NULL));
+                    nullers.add(() ->
+                            {
+                                dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                                if (!symbolMapNullFlags.get(columnIndex)) {
+                                    symbolMapNullFlags.setQuick(columnIndex, true);
+                                    symbolMapNullFlagsChanged.setQuick(columnIndex, true);
+                                }
+                            }
+                    );
                     break;
                 case ColumnType.GEOBYTE:
                     nullers.add(() -> dataMem.putByte(GeoHashes.BYTE_NULL));
@@ -912,7 +929,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             final MemoryMA auxMem = createAuxColumnMem(columnType);
             columns.extendAndSet(dataColumnOffset, dataMem);
             columns.extendAndSet(dataColumnOffset + 1, auxMem);
-            configureNullSetters(nullSetters, columnType, dataMem, auxMem);
+            configureNullSetters(nullSetters, columnType, dataMem, auxMem, columnIndex, symbolMapNullFlagsChanged, symbolMapNullFlags);
             rowValueIsNotNull.add(-1);
         } else {
             columns.extendAndSet(dataColumnOffset, NullMemory.INSTANCE);
@@ -933,6 +950,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
+        symbolMapNullFlagsChanged.extendAndSet(columnWriterIndex, false);
         symbolMaps.extendAndSet(columnWriterIndex, new DirectCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         utf8SymbolMaps.extendAndSet(columnWriterIndex, new Utf8StringIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
@@ -1027,6 +1045,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, symbolMapReader.containsNullValue());
+        symbolMapNullFlagsChanged.extendAndSet(columnWriterIndex, false);
     }
 
     private void configureSymbolTable() {
@@ -1314,6 +1333,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         initialSymbolCounts.set(i, reader.getSymbolCount());
                         localSymbolIds.set(i, 0);
                         symbolMapNullFlags.set(i, reader.containsNullValue());
+                        symbolMapNullFlagsChanged.set(i, false);
                         symbolMaps.getQuick(i).clear();
                         utf8SymbolMaps.getQuick(i).clear();
                     }
@@ -1374,6 +1394,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         initialSymbolCounts.set(index, -1);
         localSymbolIds.set(index, 0);
         symbolMapNullFlags.set(index, false);
+        symbolMapNullFlagsChanged.set(index, false);
         removeSymbolFiles(path, pathSize, metadata.getColumnName(index));
     }
 
@@ -1430,6 +1451,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 initialSymbolCounts.set(i, reader.getSymbolCount());
                 localSymbolIds.set(i, 0);
                 symbolMapNullFlags.set(i, reader.containsNullValue());
+                symbolMapNullFlagsChanged.set(i, false);
             }
         }
     }
@@ -2610,7 +2632,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             } else {
                 key = SymbolTable.VALUE_IS_NULL;
-                symbolMapNullFlags.set(columnIndex, true);
+                if (!symbolMapNullFlags.get(columnIndex)) {
+                    symbolMapNullFlags.set(columnIndex, true);
+                    symbolMapNullFlagsChanged.set(columnIndex, true);
+                }
             }
 
             getPrimaryColumn(columnIndex).putInt(key);

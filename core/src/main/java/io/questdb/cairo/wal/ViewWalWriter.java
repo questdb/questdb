@@ -69,7 +69,7 @@ public class ViewWalWriter extends WalWriterBase {
             lockWal();
             mkWalDir();
 
-            events.of(null, null, null);
+            events.of(null, null, null, null);
 
             openNewSegment();
         } catch (Throwable e) {
