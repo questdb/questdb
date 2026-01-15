@@ -58,6 +58,8 @@ public interface WindowContext {
 
     int getTimestampIndex();
 
+    int getTimestampType();
+
     boolean isDefaultFrame();
 
     boolean isEmpty();

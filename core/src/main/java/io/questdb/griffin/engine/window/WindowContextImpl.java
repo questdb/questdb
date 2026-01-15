@@ -54,6 +54,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private long rowsLo;
     private int rowsLoKindPos;
     private int timestampIndex;
+    private int timestampType;
 
     @Override
     public boolean baseSupportsRandomAccess() {
@@ -78,6 +79,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.rowsHiKindPos = 0;
         this.exclusionKindPos = 0;
         this.timestampIndex = -1;
+        this.timestampType = ColumnType.UNDEFINED;
         this.ignoreNulls = false;
         this.nullsDescPos = 0;
     }
@@ -143,6 +145,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    @Override
+    public int getTimestampType() {
+        return timestampType;
     }
 
     @Override
@@ -217,6 +224,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.exclusionKind = exclusionKind;
         this.exclusionKindPos = exclusionKindPos;
         this.timestampIndex = timestampIndex;
+        this.timestampType = timestampType;
         this.ignoreNulls = ignoreNulls;
         this.nullsDescPos = nullsDescPos;
     }
