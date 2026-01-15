@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.line.tcp.AdaptiveRecvBuffer;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
@@ -306,7 +307,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return UUID.randomUUID().toString().substring(24, 36);
     }
 
-    private Status appendMeasurement() throws LineHttpTudCache.TableCreateException, LineHttpTudCache.TableRenameException {
+    private Status appendMeasurement() throws LineHttpTudCache.TableCreateException {
         WalTableUpdateDetails tud = this.ilpTudCache.getTableUpdateDetails(securityContext, parser, symbolCachePool);
         try {
             appender.appendToWal(securityContext, parser, tud);
@@ -359,6 +360,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 errorRec = LOG.critical();
                 status = Status.INTERNAL_ERROR;
             }
+        } else if (ex instanceof TableReferenceOutOfDateException) {
+            errorId = ERROR_COUNT.incrementAndGet();
+            errorLine = -1;
+            error.put("table renamed during request, retry the operation");
+            LOG.info().$('[').$(fd).$("] table renamed during request, rejecting with retryable error [errorId=")
+                    .$(ERROR_ID).$('-').$(errorId).I$();
+            return Status.TABLE_SCHEMA_CHANGED;
         } else {
             error.put(", error: ").put(ex.getClass().getCanonicalName());
             errorRec = LOG.critical();
@@ -370,15 +378,6 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .$(", ex=").$safe(ex.getMessage())
                 .I$();
         return status;
-    }
-
-    private Status handleTableRenameError() {
-        errorId = ERROR_COUNT.incrementAndGet();
-        errorLine = -1;
-        error.put("table renamed during request, retry the operation");
-        LOG.info().$('[').$(fd).$("] table renamed during request, rejecting with retryable error [errorId=")
-                .$(ERROR_ID).$('-').$(errorId).I$();
-        return Status.TABLE_SCHEMA_CHANGED;
     }
 
     private Status handleLineError(LineTcpParser parser) {
@@ -526,8 +525,6 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                         return Status.NEEDS_READ;
                     }
                 }
-            } catch (LineHttpTudCache.TableRenameException e) {
-                return handleTableRenameError();
             } catch (LineHttpTudCache.TableCreateException parseException) {
                 return handleLineError(parser, parseException);
             } catch (CairoException parseException) {

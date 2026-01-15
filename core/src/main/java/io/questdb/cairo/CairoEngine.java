@@ -190,7 +190,6 @@ public class CairoEngine implements Closeable, WriterSource {
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     // Incremented on table rename to invalidate ILP caches that may hold stale TableTokens
-    private final AtomicLong tableRenameGeneration = new AtomicLong(0);
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
     private final WalWriterPool walWriterPool;
@@ -1142,15 +1141,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return unpublishedWalTxnCount.get();
     }
 
-    /**
-     * Returns the current table rename generation. This counter is incremented
-     * each time a table is renamed, allowing ILP caches to detect when they
-     * may hold stale TableTokens and need to be invalidated.
-     */
-    public long getTableRenameGeneration() {
-        return tableRenameGeneration.get();
-    }
-
     public TableToken getUpdatedTableToken(TableToken tableToken) {
         return tableNameRegistry.getTokenByDirName(tableToken.getDirName());
     }
@@ -1672,8 +1662,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
             enqueueCompileView(fromTableToken);
             enqueueCompileView(toTableToken);
-            // Increment generation to invalidate ILP caches holding stale TableTokens
-            tableRenameGeneration.incrementAndGet();
             getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
 
             return toTableToken;

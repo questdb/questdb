@@ -33,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -289,6 +290,9 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
+                if (tableSequencer.getTableToken() != tableToken) {
+                    throw TableReferenceOutOfDateException.of(tableToken);
+                }
                 txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
             } finally {
                 tableSequencer.unlockWrite();

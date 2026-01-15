@@ -40,8 +40,6 @@ import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.SymbolCache;
 import io.questdb.cutlass.line.tcp.TableStructureAdapter;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -56,7 +54,6 @@ import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
 public class LineHttpTudCache implements QuietCloseable {
-    public static final Log LOG = LogFactory.getLog(LineHttpTudCache.class);
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final MemoryMARW ddlMem = Vm.getCMARWInstance();
@@ -69,8 +66,6 @@ public class LineHttpTudCache implements QuietCloseable {
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
     private boolean distressed = false;
-    // Tracks the rename generation when cache was last validated
-    private long lastKnownRenameGeneration;
 
     public LineHttpTudCache(
             CairoEngine engine,
@@ -85,21 +80,9 @@ public class LineHttpTudCache implements QuietCloseable {
         this.autoCreateNewTables = autoCreateNewTables;
         this.defaultColumnTypes = defaultColumnTypes;
         this.tableStructureAdapter = new TableStructureAdapter(engine.getConfiguration(), this.defaultColumnTypes, defaultPartitionBy, true);
-        this.lastKnownRenameGeneration = engine.getTableRenameGeneration();
     }
 
     public void clear() {
-        // If a table was renamed since we last checked, the cached TUDs have stale
-        // WAL writers that may fail on rollback. In this case, just close them.
-        // Note: we don't update lastKnownRenameGeneration here - the generation
-        // check in getTableUpdateDetails() will throw an exception to inform the
-        // client that a retry is needed.
-        long currentGeneration = engine.getTableRenameGeneration();
-        if (currentGeneration != lastKnownRenameGeneration) {
-            reset();
-            return;
-        }
-
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
@@ -107,14 +90,7 @@ public class LineHttpTudCache implements QuietCloseable {
             if (distressed) {
                 Misc.free(tud);
             } else {
-                try {
-                    tud.rollback();
-                } catch (Throwable t) {
-                    // Rollback may fail if underlying resources are stale.
-                    // Mark as distressed to ensure cleanup.
-                    distressed = true;
-                    Misc.free(tud);
-                }
+                tud.rollback();
             }
         }
         if (distressed) {
@@ -174,30 +150,21 @@ public class LineHttpTudCache implements QuietCloseable {
             SecurityContext securityContext,
             @NotNull LineTcpParser parser,
             Pool<SymbolCache> symbolCachePool
-    ) throws TableCreateException, TableRenameException {
-        // Check if any table renames happened since we last validated the cache.
-        // If so, rollback uncommitted data and reject the request as retryable.
-        // This ensures the entire batch goes to one table, not split across two.
-        long currentGeneration = engine.getTableRenameGeneration();
-        if (currentGeneration != lastKnownRenameGeneration) {
-            // A table rename happened. Rollback uncommitted data, clear the cache,
-            // and reject the request so the client can retry with fresh state.
-            //
-            // We update lastKnownRenameGeneration AFTER clearing so that clear()
-            // knows it needs to reset the cache.
-            try {
-                clear();  // This will detect generation change and call reset()
-            } catch (Throwable t) {
-                // Ensure cache is cleared even if clear() failed
-                tableUpdateDetails.clear();
-            }
-            lastKnownRenameGeneration = currentGeneration;
-            throw TableRenameException.INSTANCE;
-        }
-
+    ) throws TableCreateException {
         int key = tableUpdateDetails.keyIndex(parser.getMeasurementName());
         if (key < 0) {
-            return tableUpdateDetails.valueAt(key);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
+            // We only need to check for rename if there are no uncommitted rows
+            // it's too taxing to check for renames for every row
+            if (!tud.isFirstRow() || !tud.isTableRenamed()) {
+                return tud;
+            } else {
+                // Table was renamed, we need to evict this TUD from cache
+                tableUpdateDetails.removeAt(key);
+                Misc.free(tud);
+                // continue and re-create the tud
+                key = -key - 1;
+            }
         }
 
         tableNameUtf16.clear();
@@ -232,13 +199,7 @@ public class LineHttpTudCache implements QuietCloseable {
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            try {
-                Misc.free(tud);
-            } catch (Throwable t) {
-                // Close may fail if underlying resources are stale (e.g., after table rename).
-                LOG.error().$("failed to close tud [msg=").$(t.getMessage()).I$();
-                // Continue cleaning up remaining TUDs.
-            }
+            Misc.free(tud);
         }
         tableUpdateDetails.clear();
     }
@@ -303,17 +264,6 @@ public class LineHttpTudCache implements QuietCloseable {
             this.msg = message;
             this.token = token;
             return this;
-        }
-    }
-
-    /**
-     * Thrown when a table rename is detected mid-batch. The client should retry
-     * the entire request to ensure all rows go to the correct table.
-     */
-    public static class TableRenameException extends Exception {
-        public static final TableRenameException INSTANCE = new TableRenameException();
-
-        private TableRenameException() {
         }
     }
 }
