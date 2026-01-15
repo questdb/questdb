@@ -189,7 +189,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Telemetry<TelemetryWalTask> telemetryWal;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
-    // Incremented on table rename to invalidate ILP caches that may hold stale TableTokens
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
     private final WalWriterPool walWriterPool;
