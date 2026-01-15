@@ -40,6 +40,8 @@ import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.SymbolCache;
 import io.questdb.cutlass.line.tcp.TableStructureAdapter;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -54,6 +56,7 @@ import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
 public class LineHttpTudCache implements QuietCloseable {
+    public static final Log LOG = LogFactory.getLog(LineHttpTudCache.class);
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final MemoryMARW ddlMem = Vm.getCMARWInstance();
@@ -233,6 +236,7 @@ public class LineHttpTudCache implements QuietCloseable {
                 Misc.free(tud);
             } catch (Throwable t) {
                 // Close may fail if underlying resources are stale (e.g., after table rename).
+                LOG.error().$("failed to close tud [msg=").$(t.getMessage()).I$();
                 // Continue cleaning up remaining TUDs.
             }
         }
