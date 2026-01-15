@@ -194,7 +194,6 @@ public class LineHttpTudCache implements QuietCloseable {
 
         int key = tableUpdateDetails.keyIndex(parser.getMeasurementName());
         if (key < 0) {
-            // Fast path - cache hit, no per-lookup validation needed
             return tableUpdateDetails.valueAt(key);
         }
 
