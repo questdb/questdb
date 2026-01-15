@@ -14,6 +14,7 @@ enum RleIterator<'a> {
 }
 
 impl RleIterator<'_> {
+    #[inline(always)]
     pub fn next(&mut self) -> Option<u32> {
         match self {
             RleIterator::Bitpacked(iter) => iter.next(),
