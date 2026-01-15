@@ -301,7 +301,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 nSend -= n;
                 totalBytesSent += n;
             } else {
-                // This branch is for tests only
+                totalBytesSent += n;
                 sendBuf.onRead(n);
                 throw PeerIsSlowToReadException.INSTANCE;
             }
@@ -438,13 +438,25 @@ public class HttpResponseSink implements Closeable, Mutable {
         void prepareToReadFromBuffer(boolean addChunkHeader, boolean addEofChunk) {
             if (addChunkHeader) {
                 int len = (int) (_wptr - bufStartOfData);
-                int padding = len == 0 ? 6 : (Integer.numberOfLeadingZeros(len) >> 3) << 1;
-                long tmp = _wptr;
-                _rptr = _wptr = bufStart + padding;
-                putEOL();
-                Numbers.appendHex(this, len);
-                putEOL();
-                _wptr = tmp;
+                // When len=0 and addEofChunk=true, skip writing zero-length chunk header to avoid
+                // duplicate: \r\n00\r\n (header) + \r\n00\r\n\r\n (EOF) = \r\n00\r\n\r\n00\r\n\r\n
+                // If this 14-byte sequence is split across packets (e.g., 10 bytes + 4 bytes), the client
+                // may see \r\n00\r\n\r\n as a complete termination and stop reading, leaving the remaining
+                // 00\r\n\r\n in the socket buffer, which pollutes the next HTTP request.
+                // The EOF chunk already contains the complete termination sequence.
+                if (len > 0 || !addEofChunk) {
+                    int padding = len == 0 ? 6 : (Integer.numberOfLeadingZeros(len) >> 3) << 1;
+                    long tmp = _wptr;
+                    _rptr = _wptr = bufStart + padding;
+                    putEOL();
+                    Numbers.appendHex(this, len);
+                    putEOL();
+                    _wptr = tmp;
+                } else {
+                    // len=0 && addEofChunk=true: skip chunk header, set read pointer to data start
+                    // where EOF chunk will be written
+                    _rptr = bufStartOfData;
+                }
             }
             if (addEofChunk) {
                 // safety: unchecked store, but we reserve space for the last chunk -> this is sound as long as all

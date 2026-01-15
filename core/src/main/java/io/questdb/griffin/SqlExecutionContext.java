@@ -60,6 +60,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Deterministic-only functions are enforced e.g. when compiling a mat view.
     boolean allowNonDeterministicFunctions();
 
+    void changePageFrameSizes(int minRows, int maxRows);
+
     void clearWindowContext();
 
     @Override
@@ -145,6 +147,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     long getNow(int timestampType);
 
     int getNowTimestampType();
+
+    int getPageFrameMaxRows();
+
+    int getPageFrameMinRows();
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
@@ -245,6 +251,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void pushTimestampRequiredFlag(boolean flag);
 
     void reset();
+
+    void restoreToDefaultPageFrameSizes();
 
     void setAllowNonDeterministicFunction(boolean value);
 
