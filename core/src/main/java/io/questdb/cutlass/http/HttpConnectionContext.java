@@ -115,6 +115,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private String processorName;
+    private boolean protocolSwitched = false;  // WebSocket protocol switch flag
     private int receivedBytes;
     private long recvBuffer;
     private int recvBufferReadSize;
@@ -179,6 +180,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.selectCache = selectCache;
     }
 
+    // called when returning the context back to a pool (=connection closed)
     @Override
     public void clear() {
         LOG.debug().$("clear [fd=").$(getFd()).I$();
@@ -197,6 +199,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.forceDisconnectOnComplete = false;
         this.localValueMap.disconnect();
+        this.protocolSwitched = false;
+        // Security: Always reset security context when context is returned to pool.
+        // This ensures no security context leaks between connections.
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
     }
 
     @Override
@@ -296,6 +302,46 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return securityContext;
     }
 
+    /**
+     * Returns the underlying socket for direct I/O after protocol switch (e.g., WebSocket).
+     */
+    public Socket getSocket() {
+        return socket;
+    }
+
+    /**
+     * Returns the receive buffer address for protocol-switched connections.
+     */
+    public long getRecvBuffer() {
+        return recvBuffer;
+    }
+
+    /**
+     * Returns the receive buffer size for protocol-switched connections.
+     */
+    public int getRecvBufferSize() {
+        return recvBufferSize;
+    }
+
+    /**
+     * Switches the connection to a different protocol (e.g., WebSocket).
+     * After calling this, normal HTTP parsing is bypassed and the processor
+     * handles raw socket I/O directly.
+     *
+     * @param processor the processor to handle the switched protocol
+     */
+    public void switchProtocol(HttpRequestProcessor processor) {
+        this.protocolSwitched = true;
+        this.resumeProcessor = processor;
+    }
+
+    /**
+     * Returns true if the connection has been switched to a different protocol.
+     */
+    public boolean isProtocolSwitched() {
+        return protocolSwitched;
+    }
+
     public AssociativeCache<RecordCursorFactory> getSelectCache() {
         return selectCache;
     }
@@ -344,12 +390,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return pendingRetry || receivedBytes > 0 || this.socket == null;
     }
 
+    // called between requests on the same connections
     public void reset() {
         LOG.debug().$("reset [fd=").$(getFd()).$(']').$();
         this.totalBytesSent += responseSink.getTotalBytesSent();
         this.responseSink.clear();
         this.nCompletedRequests++;
-        this.resumeProcessor = null;
+        // Preserve resumeProcessor for protocol-switched connections (e.g., WebSocket)
+        if (!protocolSwitched) {
+            this.resumeProcessor = null;
+        }
         this.headerParser.clear();
         this.multipartContentParser.clear();
         this.multipartContentHeaderParser.clear();
@@ -361,7 +411,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.retryAttemptAttributes.attempt = 0;
         this.receivedBytes = 0;
         this.authenticationNanos = 0L;
-        this.securityContext = DenyAllSecurityContext.INSTANCE;
+        // Preserve securityContext for protocol-switched connections (e.g., WebSocket)
+        // The security context was configured during the initial HTTP request and should
+        // persist for the lifetime of the WebSocket connection.
+        if (!protocolSwitched) {
+            this.securityContext = DenyAllSecurityContext.INSTANCE;
+        }
         this.sessionIdSink.clear();
         this.authenticator.clear();
         this.totalReceived = 0;
@@ -881,7 +936,37 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return requestValidator.validateRequestType(processor, rejectProcessor);
     }
 
+    /**
+     * Handles receive for protocol-switched connections (e.g., WebSocket).
+     * Instead of parsing HTTP, delegates to the processor's resumeRecv.
+     */
+    private boolean handleProtocolSwitchedRecv() throws PeerIsSlowToWriteException, ServerDisconnectException {
+        try {
+            resumeProcessor.resumeRecv(this);
+            // If resumeRecv returns normally, keep processing
+            return true;
+        } catch (PeerIsSlowToWriteException e) {
+            // Need more data from peer, register for read
+            throw e;
+        } catch (ServerDisconnectException e) {
+            // Connection should be closed
+            LOG.info().$("protocol-switched connection closing [fd=").$(getFd()).I$();
+            resumeProcessor.onConnectionClosed(this);
+            throw e;
+        } catch (Throwable e) {
+            // Any other error, close connection
+            LOG.error().$("error in protocol-switched recv [fd=").$(getFd()).$(", e=").$(e).I$();
+            resumeProcessor.onConnectionClosed(this);
+            throw registerDispatcherDisconnect(DISCONNECT_REASON_SERVER_ERROR);
+        }
+    }
+
     private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
+        // Handle protocol-switched connections (e.g., WebSocket)
+        if (protocolSwitched && resumeProcessor != null) {
+            return handleProtocolSwitchedRecv();
+        }
+
         boolean busyRecv = true;
         try {
             // this is address of where header ended in our receiving buffer
@@ -983,7 +1068,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         processor.onHeadersReady(this);
                         LOG.debug().$("good [fd=").$(getFd()).I$();
                         processor.onRequestComplete(this);
-                        resumeProcessor = null;
+                        // Don't clear resumeProcessor for protocol-switched connections (e.g., WebSocket)
+                        if (!protocolSwitched) {
+                            resumeProcessor = null;
+                        }
                         reset();
                     }
                 }

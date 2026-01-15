@@ -61,6 +61,10 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
     private boolean nullable;
     private int rowCount;
     private int dictionarySize;
+    private boolean deltaMode;  // When true, use connectionDict instead of per-column dictionary
+
+    // External dictionary reference (for delta mode)
+    private ObjList<String> connectionDict;
 
     // Wire pointers
     private long nullBitmapAddress;
@@ -87,9 +91,29 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
      */
     public int of(long dataAddress, int dataLength, int rowCount, boolean nullable,
                   long nameAddress, int nameLength) throws IlpV4ParseException {
+        return of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength, null);
+    }
+
+    /**
+     * Initializes this cursor for the given column data with delta dictionary support.
+     *
+     * @param dataAddress    address of column data
+     * @param dataLength     available bytes
+     * @param rowCount       number of rows
+     * @param nullable       whether column is nullable
+     * @param nameAddress    address of column name UTF-8 bytes
+     * @param nameLength     column name length in bytes
+     * @param connectionDict connection-level symbol dictionary (if not null, uses delta mode)
+     * @return bytes consumed from dataAddress
+     * @throws IlpV4ParseException if parsing fails
+     */
+    public int of(long dataAddress, int dataLength, int rowCount, boolean nullable,
+                  long nameAddress, int nameLength, ObjList<String> connectionDict) throws IlpV4ParseException {
         this.nullable = nullable;
         this.rowCount = rowCount;
         this.nameUtf8.of(nameAddress, nameAddress + nameLength);
+        this.deltaMode = connectionDict != null;
+        this.connectionDict = connectionDict;
 
         long limit = dataAddress + dataLength;
         int offset = 0;
@@ -102,25 +126,31 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
             this.nullBitmapAddress = 0;
         }
 
-        // Parse dictionary size
-        IlpV4Varint.decode(dataAddress + offset, limit, decodeResult);
-        this.dictionarySize = (int) decodeResult.value;
-        offset += decodeResult.bytesRead;
-
-        // Parse dictionary entries into flyweights
-        ensureDictionaryCapacity(dictionarySize);
-        for (int i = 0; i < dictionarySize; i++) {
+        if (deltaMode) {
+            // Delta mode: no per-column dictionary, indices reference connection dictionary
+            this.dictionarySize = 0;
+        } else {
+            // Standard mode: parse per-column dictionary
+            // Parse dictionary size
             IlpV4Varint.decode(dataAddress + offset, limit, decodeResult);
-            int stringLen = (int) decodeResult.value;
+            this.dictionarySize = (int) decodeResult.value;
             offset += decodeResult.bytesRead;
 
-            DirectUtf8String entry = dictionaryUtf8.getQuick(i);
-            entry.of(dataAddress + offset, dataAddress + offset + stringLen);
-            // Clear cached String for this entry
-            if (i < dictionaryStrings.size()) {
-                dictionaryStrings.setQuick(i, null);
+            // Parse dictionary entries into flyweights
+            ensureDictionaryCapacity(dictionarySize);
+            for (int i = 0; i < dictionarySize; i++) {
+                IlpV4Varint.decode(dataAddress + offset, limit, decodeResult);
+                int stringLen = (int) decodeResult.value;
+                offset += decodeResult.bytesRead;
+
+                DirectUtf8String entry = dictionaryUtf8.getQuick(i);
+                entry.of(dataAddress + offset, dataAddress + offset + stringLen);
+                // Clear cached String for this entry
+                if (i < dictionaryStrings.size()) {
+                    dictionaryStrings.setQuick(i, null);
+                }
+                offset += stringLen;
             }
-            offset += stringLen;
         }
 
         this.indicesAddress = dataAddress + offset;
@@ -210,6 +240,8 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
         nullable = false;
         rowCount = 0;
         dictionarySize = 0;
+        deltaMode = false;
+        connectionDict = null;
         nullBitmapAddress = 0;
         indicesAddress = 0;
         indicesEnd = 0;
@@ -244,11 +276,13 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
      * Returns current row's symbol value as a UTF-8 sequence.
      * <p>
      * <b>Zero-allocation:</b> Returns a flyweight from the dictionary.
+     * <p>
+     * <b>Note:</b> Returns null in delta mode (use {@link #getSymbolString()} instead).
      *
-     * @return UTF-8 sequence from dictionary, or null if NULL
+     * @return UTF-8 sequence from dictionary, or null if NULL or delta mode
      */
     public DirectUtf8Sequence getSymbolUtf8() {
-        if (currentIsNull || currentSymbolIndex < 0) {
+        if (currentIsNull || currentSymbolIndex < 0 || deltaMode) {
             return null;
         }
         return dictionaryUtf8.getQuick(currentSymbolIndex);
@@ -259,6 +293,8 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
      * <p>
      * <b>Lazy allocation:</b> String is created on first access per dictionary entry,
      * then cached for subsequent accesses.
+     * <p>
+     * In delta mode, retrieves from the connection-level dictionary.
      *
      * @return String value, or null if NULL
      */
@@ -266,6 +302,14 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
         if (currentIsNull || currentSymbolIndex < 0) {
             return null;
         }
+        if (deltaMode) {
+            // In delta mode, use connection dictionary
+            if (connectionDict != null && currentSymbolIndex < connectionDict.size()) {
+                return connectionDict.getQuick(currentSymbolIndex);
+            }
+            return null;
+        }
+        // Standard mode: use per-column dictionary
         String cached = dictionaryStrings.getQuick(currentSymbolIndex);
         if (cached == null) {
             cached = dictionaryUtf8.getQuick(currentSymbolIndex).toString();
@@ -275,12 +319,24 @@ public final class IlpV4SymbolColumnCursor implements IlpV4ColumnCursor {
     }
 
     /**
+     * Returns whether this cursor is using delta mode (connection dictionary).
+     *
+     * @return true if delta mode is enabled
+     */
+    public boolean isDeltaMode() {
+        return deltaMode;
+    }
+
+    /**
      * Returns a dictionary entry by index as UTF-8.
      *
      * @param index dictionary index
-     * @return UTF-8 sequence
+     * @return UTF-8 sequence, or null if delta mode
      */
     public DirectUtf8Sequence getDictionaryEntry(int index) {
+        if (deltaMode) {
+            return null;
+        }
         return dictionaryUtf8.getQuick(index);
     }
 }

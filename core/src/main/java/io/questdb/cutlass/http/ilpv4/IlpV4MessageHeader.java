@@ -225,6 +225,15 @@ public class IlpV4MessageHeader {
     }
 
     /**
+     * Returns true if delta symbol dictionary encoding is enabled.
+     *
+     * @return true if delta symbol dictionary mode
+     */
+    public boolean isDeltaSymbolDictEnabled() {
+        return (flags & FLAG_DELTA_SYMBOL_DICT) != 0;
+    }
+
+    /**
      * Returns the number of tables in this batch.
      *
      * @return table count (0-65535)

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.ilpv4;
 
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
 /**
@@ -105,8 +106,26 @@ public class IlpV4StreamingDecoder implements QuietCloseable {
      * @throws IlpV4ParseException if the message is malformed
      */
     public IlpV4MessageCursor decode(long messageAddress, int messageLength) throws IlpV4ParseException {
+        return decode(messageAddress, messageLength, null);
+    }
+
+    /**
+     * Decodes an ILP v4 message from direct memory with delta symbol dictionary support.
+     * <p>
+     * If the message has FLAG_DELTA_SYMBOL_DICT set, the delta symbols are accumulated
+     * to the provided connection dictionary. Symbol columns then reference this dictionary
+     * using global IDs.
+     *
+     * @param messageAddress           address of the complete ILP v4 message
+     * @param messageLength            total message length in bytes
+     * @param connectionSymbolDict     connection-level symbol dictionary for delta mode (may be null)
+     * @return message cursor for streaming access
+     * @throws IlpV4ParseException if the message is malformed
+     */
+    public IlpV4MessageCursor decode(long messageAddress, int messageLength, ObjList<String> connectionSymbolDict)
+            throws IlpV4ParseException {
         messageCursor.clear();
-        messageCursor.of(messageAddress, messageLength, schemaCache);
+        messageCursor.of(messageAddress, messageLength, schemaCache, connectionSymbolDict);
         return messageCursor;
     }
 

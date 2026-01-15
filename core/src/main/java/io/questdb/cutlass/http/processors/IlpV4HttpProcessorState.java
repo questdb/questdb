@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.ilpv4.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
@@ -53,6 +54,9 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
     private final IlpV4HttpTudCache tudCache;
     private final int maxResponseErrorMessageLength;
     private final IlpV4SchemaCache schemaCache;
+
+    // Per-connection accumulated symbol dictionary for delta encoding
+    private final ObjList<String> connectionSymbolDict = new ObjList<>();
 
     // Buffer to accumulate incoming data
     private long bufferAddress;
@@ -123,6 +127,7 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
     public void onDisconnected() {
         clear();
         tudCache.reset();
+        connectionSymbolDict.clear();  // Reset delta symbol dictionary on disconnect
     }
 
     public void addData(long lo, long hi) {
@@ -138,8 +143,9 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
         }
 
         try {
-            // Decode using streaming decoder (zero-allocation after warmup)
-            IlpV4MessageCursor messageCursor = streamingDecoder.decode(bufferAddress, bufferPosition);
+            // Decode using streaming decoder with delta symbol dictionary support
+            IlpV4MessageCursor messageCursor = streamingDecoder.decode(
+                    bufferAddress, bufferPosition, connectionSymbolDict);
 
             // Process each table block using streaming cursors
             while (messageCursor.hasNextTable()) {

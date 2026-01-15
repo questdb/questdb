@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.line.tcp.v4;
 
 import io.questdb.client.Sender;
+import io.questdb.cutlass.line.websocket.IlpV4WebSocketSender;
 
 import java.io.IOException;
 import java.time.temporal.ChronoUnit;
@@ -38,6 +39,7 @@ import java.util.concurrent.TimeUnit;
  *   <li>ilp-tcp: Old ILP text protocol over TCP (port 9009)</li>
  *   <li>ilp-http: Old ILP text protocol over HTTP (port 9000)</li>
  *   <li>ilpv4-http: New ILPv4 binary protocol over HTTP (port 9000)</li>
+ *   <li>ilpv4-websocket: New ILPv4 binary protocol over WebSocket (port 9000)</li>
  * </ul>
  * <p>
  * Sends rows with various column types to exercise all code paths.
@@ -69,12 +71,17 @@ public class IlpV4AllocationTestClient {
     private static final String PROTOCOL_ILP_TCP = "ilp-tcp";
     private static final String PROTOCOL_ILP_HTTP = "ilp-http";
     private static final String PROTOCOL_ILPV4_HTTP = "ilpv4-http";
+    private static final String PROTOCOL_ILPV4_WEBSOCKET = "ilpv4-websocket";
 
 
     // Default configuration
     private static final String DEFAULT_HOST = "localhost";
     private static final int DEFAULT_ROWS = 80_000_000;
     private static final int DEFAULT_BATCH_SIZE = 10_000;
+    private static final int DEFAULT_FLUSH_BYTES = 0; // 0 = use protocol default
+    private static final long DEFAULT_FLUSH_INTERVAL_MS = 0; // 0 = use protocol default
+    private static final int DEFAULT_IN_FLIGHT_WINDOW = 0; // 0 = use protocol default (8)
+    private static final int DEFAULT_SEND_QUEUE = 0; // 0 = use protocol default (16)
     private static final int DEFAULT_WARMUP_ROWS = 100_000;
     private static final int DEFAULT_REPORT_INTERVAL = 1_000_000;
 
@@ -97,6 +104,10 @@ public class IlpV4AllocationTestClient {
         int port = -1; // -1 means use default for protocol
         int totalRows = DEFAULT_ROWS;
         int batchSize = DEFAULT_BATCH_SIZE;
+        int flushBytes = DEFAULT_FLUSH_BYTES;
+        long flushIntervalMs = DEFAULT_FLUSH_INTERVAL_MS;
+        int inFlightWindow = DEFAULT_IN_FLIGHT_WINDOW;
+        int sendQueue = DEFAULT_SEND_QUEUE;
         int warmupRows = DEFAULT_WARMUP_ROWS;
         int reportInterval = DEFAULT_REPORT_INTERVAL;
 
@@ -114,6 +125,14 @@ public class IlpV4AllocationTestClient {
                 totalRows = Integer.parseInt(arg.substring("--rows=".length()));
             } else if (arg.startsWith("--batch=")) {
                 batchSize = Integer.parseInt(arg.substring("--batch=".length()));
+            } else if (arg.startsWith("--flush-bytes=")) {
+                flushBytes = Integer.parseInt(arg.substring("--flush-bytes=".length()));
+            } else if (arg.startsWith("--flush-interval-ms=")) {
+                flushIntervalMs = Long.parseLong(arg.substring("--flush-interval-ms=".length()));
+            } else if (arg.startsWith("--in-flight-window=")) {
+                inFlightWindow = Integer.parseInt(arg.substring("--in-flight-window=".length()));
+            } else if (arg.startsWith("--send-queue=")) {
+                sendQueue = Integer.parseInt(arg.substring("--send-queue=".length()));
             } else if (arg.startsWith("--warmup=")) {
                 warmupRows = Integer.parseInt(arg.substring("--warmup=".length()));
             } else if (arg.startsWith("--report=")) {
@@ -141,13 +160,18 @@ public class IlpV4AllocationTestClient {
         System.out.println("Host: " + host);
         System.out.println("Port: " + port);
         System.out.println("Total rows: " + String.format("%,d", totalRows));
-        System.out.println("Batch size: " + String.format("%,d", batchSize));
+        System.out.println("Batch size (rows): " + String.format("%,d", batchSize) + (batchSize == 0 ? " (default)" : ""));
+        System.out.println("Flush bytes: " + (flushBytes == 0 ? "(default)" : String.format("%,d", flushBytes)));
+        System.out.println("Flush interval: " + (flushIntervalMs == 0 ? "(default)" : flushIntervalMs + " ms"));
+        System.out.println("In-flight window: " + (inFlightWindow == 0 ? "(default: 8)" : inFlightWindow));
+        System.out.println("Send queue: " + (sendQueue == 0 ? "(default: 16)" : sendQueue));
         System.out.println("Warmup rows: " + String.format("%,d", warmupRows));
         System.out.println("Report interval: " + String.format("%,d", reportInterval));
         System.out.println();
 
         try {
-            runTest(protocol, host, port, totalRows, batchSize, warmupRows, reportInterval);
+            runTest(protocol, host, port, totalRows, batchSize, flushBytes, flushIntervalMs,
+                    inFlightWindow, sendQueue, warmupRows, reportInterval);
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
             e.printStackTrace();
@@ -161,20 +185,25 @@ public class IlpV4AllocationTestClient {
         System.out.println("Usage: IlpV4AllocationTestClient [options]");
         System.out.println();
         System.out.println("Options:");
-        System.out.println("  --protocol=PROTOCOL   Protocol to use (default: ilpv4-http)");
-        System.out.println("  --host=HOST           Server host (default: localhost)");
-        System.out.println("  --port=PORT           Server port (default: 9009 for TCP, 9000 for HTTP)");
-        System.out.println("  --rows=N              Total rows to send (default: 10000000)");
-        System.out.println("  --batch=N             Batch/flush size (default: 10000)");
-        System.out.println("  --warmup=N            Warmup rows (default: 100000)");
-        System.out.println("  --report=N            Report progress every N rows (default: 8000000)");
-        System.out.println("  --no-warmup           Skip warmup phase");
-        System.out.println("  --help                Show this help");
+        System.out.println("  --protocol=PROTOCOL      Protocol to use (default: ilpv4-http)");
+        System.out.println("  --host=HOST              Server host (default: localhost)");
+        System.out.println("  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP)");
+        System.out.println("  --rows=N                 Total rows to send (default: 80000000)");
+        System.out.println("  --batch=N                Auto-flush after N rows (default: 10000)");
+        System.out.println("  --flush-bytes=N          Auto-flush after N bytes (default: protocol default)");
+        System.out.println("  --flush-interval-ms=N    Auto-flush after N ms (default: protocol default)");
+        System.out.println("  --in-flight-window=N     Max batches awaiting server ACK (default: 8, WebSocket only)");
+        System.out.println("  --send-queue=N           Max batches waiting to send (default: 16, WebSocket only)");
+        System.out.println("  --warmup=N               Warmup rows (default: 100000)");
+        System.out.println("  --report=N               Report progress every N rows (default: 1000000)");
+        System.out.println("  --no-warmup              Skip warmup phase");
+        System.out.println("  --help                   Show this help");
         System.out.println();
         System.out.println("Protocols:");
-        System.out.println("  ilp-tcp     Old ILP text protocol over TCP (default port: 9009)");
-        System.out.println("  ilp-http    Old ILP text protocol over HTTP (default port: 9000)");
-        System.out.println("  ilpv4-http  New ILPv4 binary protocol over HTTP (default port: 9000)");
+        System.out.println("  ilp-tcp          Old ILP text protocol over TCP (default port: 9009)");
+        System.out.println("  ilp-http         Old ILP text protocol over HTTP (default port: 9000)");
+        System.out.println("  ilpv4-http       New ILPv4 binary protocol over HTTP (default port: 9000)");
+        System.out.println("  ilpv4-websocket  New ILPv4 binary protocol over WebSocket (default port: 9000)");
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  IlpV4AllocationTestClient --protocol=ilpv4-http --rows=1000000 --batch=5000");
@@ -186,6 +215,7 @@ public class IlpV4AllocationTestClient {
         switch (protocol) {
             case PROTOCOL_ILP_HTTP:
             case PROTOCOL_ILPV4_HTTP:
+            case PROTOCOL_ILPV4_WEBSOCKET:
                 return 9000;
             case PROTOCOL_ILP_TCP:
             default:
@@ -194,10 +224,13 @@ public class IlpV4AllocationTestClient {
     }
 
     private static void runTest(String protocol, String host, int port, int totalRows,
-                                  int batchSize, int warmupRows, int reportInterval) throws IOException {
+                                  int batchSize, int flushBytes, long flushIntervalMs,
+                                  int inFlightWindow, int sendQueue,
+                                  int warmupRows, int reportInterval) throws IOException {
         System.out.println("Connecting to " + host + ":" + port + "...");
 
-        try (Sender sender = createSender(protocol, host, port, batchSize)) {
+        try (Sender sender = createSender(protocol, host, port, batchSize, flushBytes, flushIntervalMs,
+                inFlightWindow, sendQueue)) {
             System.out.println("Connected! Protocol: " + protocol);
             System.out.println();
 
@@ -273,7 +306,12 @@ public class IlpV4AllocationTestClient {
         }
     }
 
-    private static Sender createSender(String protocol, String host, int port, int batchSize) throws IOException {
+    private static Sender createSender(String protocol, String host, int port,
+                                         int batchSize, int flushBytes, long flushIntervalMs,
+                                         int inFlightWindow, int sendQueue) throws IOException {
+        // Convert interval from ms to nanos for WebSocket sender
+        long flushIntervalNanos = flushIntervalMs * 1_000_000L;
+
         switch (protocol) {
             case PROTOCOL_ILP_TCP:
                 return Sender.builder(Sender.Transport.TCP)
@@ -296,9 +334,17 @@ public class IlpV4AllocationTestClient {
                         .autoFlushRows(batchSize)
                         .build();
 
+            case PROTOCOL_ILPV4_WEBSOCKET:
+                // Use defaults if not specified (0 = default)
+                int windowSize = inFlightWindow > 0 ? inFlightWindow : 8;
+                int queueCapacity = sendQueue > 0 ? sendQueue : 16;
+                return IlpV4WebSocketSender.connectAsync(host, port, false,
+                        batchSize, flushBytes, flushIntervalNanos,
+                        windowSize, queueCapacity);
+
             default:
                 throw new IllegalArgumentException("Unknown protocol: " + protocol +
-                        ". Use one of: ilp-tcp, ilp-http, ilpv4-http");
+                        ". Use one of: ilp-tcp, ilp-http, ilpv4-http, ilpv4-websocket");
         }
     }
 

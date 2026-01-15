@@ -28,7 +28,7 @@ import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
-import io.questdb.cutlass.http.processors.IlpV4HttpProcessor;
+import io.questdb.cutlass.http.processors.IlpV4CompositeHandler;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.SettingsProcessor;
@@ -168,7 +168,7 @@ public class HttpServer implements Closeable {
                 }
             });
 
-            // ILP v4 endpoint
+            // ILP v4 endpoint (supports both HTTP POST and WebSocket)
             server.bind(new HttpRequestHandlerFactory() {
                 @Override
                 public ObjHashSet<String> getUrls() {
@@ -177,7 +177,7 @@ public class HttpServer implements Closeable {
 
                 @Override
                 public HttpRequestHandler newInstance() {
-                    return new IlpV4HttpProcessor(cairoEngine, httpServerConfiguration);
+                    return new IlpV4CompositeHandler(cairoEngine, httpServerConfiguration);
                 }
             });
         }

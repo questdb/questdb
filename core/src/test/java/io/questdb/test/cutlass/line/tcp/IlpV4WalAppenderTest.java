@@ -75,7 +75,8 @@ public class IlpV4WalAppenderTest {
 
     @Test
     public void testMapIlpV4TypeToQuestDBString() {
-        assertEquals(ColumnType.STRING, IlpV4WalAppender.mapIlpV4TypeToQuestDB(IlpV4Constants.TYPE_STRING));
+        // ILP v4 TYPE_STRING maps to VARCHAR (not STRING) for consistency
+        assertEquals(ColumnType.VARCHAR, IlpV4WalAppender.mapIlpV4TypeToQuestDB(IlpV4Constants.TYPE_STRING));
     }
 
     @Test
@@ -220,7 +221,9 @@ public class IlpV4WalAppenderTest {
 
     @Test
     public void testRoundTripAllTypes() {
-        // Test that all supported types round-trip correctly
+        // Test that supported types round-trip correctly
+        // Note: TYPE_STRING is excluded because it intentionally maps to VARCHAR
+        // (both TYPE_STRING and TYPE_VARCHAR map to QuestDB VARCHAR)
         int[] ilpTypes = {
                 IlpV4Constants.TYPE_BOOLEAN,
                 IlpV4Constants.TYPE_BYTE,
@@ -229,7 +232,6 @@ public class IlpV4WalAppenderTest {
                 IlpV4Constants.TYPE_LONG,
                 IlpV4Constants.TYPE_FLOAT,
                 IlpV4Constants.TYPE_DOUBLE,
-                IlpV4Constants.TYPE_STRING,
                 IlpV4Constants.TYPE_VARCHAR,
                 IlpV4Constants.TYPE_SYMBOL,
                 IlpV4Constants.TYPE_TIMESTAMP,
@@ -243,6 +245,17 @@ public class IlpV4WalAppenderTest {
             byte mappedBack = IlpV4WalAppender.mapQuestDBTypeToIlpV4(questdbType);
             assertEquals("Round-trip failed for ILP type " + ilpType, ilpType, mappedBack & 0xFF);
         }
+    }
+
+    @Test
+    public void testStringToVarcharMapping() {
+        // TYPE_STRING intentionally maps to VARCHAR (lossy conversion)
+        // This is by design: both STRING and VARCHAR in ILP v4 become VARCHAR in QuestDB
+        int questdbType = IlpV4WalAppender.mapIlpV4TypeToQuestDB(IlpV4Constants.TYPE_STRING);
+        assertEquals(ColumnType.VARCHAR, questdbType);
+
+        byte mappedBack = IlpV4WalAppender.mapQuestDBTypeToIlpV4(questdbType);
+        assertEquals(IlpV4Constants.TYPE_VARCHAR, mappedBack);
     }
 
     // ==================== Constructor Test ====================

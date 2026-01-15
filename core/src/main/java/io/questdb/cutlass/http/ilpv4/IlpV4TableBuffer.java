@@ -389,6 +389,10 @@ public class IlpV4TableBuffer {
         private ObjList<String> symbolList;
         private int[] symbolIndices;
 
+        // Global symbol IDs for delta encoding (parallel to symbolIndices)
+        private int[] globalSymbolIds;
+        private int maxGlobalSymbolId = -1;
+
         // Decimal storage
         // All values in a decimal column must share the same scale
         // For Decimal64: single long per value (64-bit unscaled)
@@ -635,6 +639,52 @@ public class IlpV4TableBuffer {
             return arrayDataOffset;
         }
 
+        /**
+         * Returns the symbol indices array (one index per value).
+         * Each index refers to a position in the symbol dictionary.
+         */
+        public int[] getSymbolIndices() {
+            return symbolIndices;
+        }
+
+        /**
+         * Returns the symbol dictionary as a String array.
+         * Index i in symbolIndices maps to symbolDictionary[i].
+         */
+        public String[] getSymbolDictionary() {
+            if (symbolList == null) {
+                return new String[0];
+            }
+            String[] dict = new String[symbolList.size()];
+            for (int i = 0; i < symbolList.size(); i++) {
+                dict[i] = symbolList.get(i);
+            }
+            return dict;
+        }
+
+        /**
+         * Returns the size of the symbol dictionary.
+         */
+        public int getSymbolDictionarySize() {
+            return symbolList == null ? 0 : symbolList.size();
+        }
+
+        /**
+         * Returns the global symbol IDs array for delta encoding.
+         * Returns null if no global IDs have been stored.
+         */
+        public int[] getGlobalSymbolIds() {
+            return globalSymbolIds;
+        }
+
+        /**
+         * Returns the maximum global symbol ID used in this column.
+         * Returns -1 if no symbols have been added with global IDs.
+         */
+        public int getMaxGlobalSymbolId() {
+            return maxGlobalSymbolId;
+        }
+
         public void addBoolean(boolean value) {
             ensureCapacity();
             booleanValues[valueCount++] = value;
@@ -705,6 +755,46 @@ public class IlpV4TableBuffer {
                     symbolList.add(value);
                 }
                 symbolIndices[valueCount++] = idx;
+                size++;
+            }
+        }
+
+        /**
+         * Adds a symbol with both local dictionary and global ID tracking.
+         * Used for delta dictionary encoding where global IDs are shared across all columns.
+         *
+         * @param value    the symbol string
+         * @param globalId the global ID from GlobalSymbolDictionary
+         */
+        public void addSymbolWithGlobalId(String value, int globalId) {
+            ensureCapacity();
+            if (value == null) {
+                if (nullable) {
+                    markNull(size);
+                }
+                size++;
+            } else {
+                // Add to local dictionary (for backward compatibility with existing encoder)
+                int localIdx = symbolDict.get(value);
+                if (localIdx == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+                    localIdx = symbolList.size();
+                    symbolDict.put(value, localIdx);
+                    symbolList.add(value);
+                }
+                symbolIndices[valueCount] = localIdx;
+
+                // Also store global ID for delta encoding
+                if (globalSymbolIds == null) {
+                    globalSymbolIds = new int[capacity];
+                }
+                globalSymbolIds[valueCount] = globalId;
+
+                // Track max global ID for this column
+                if (globalId > maxGlobalSymbolId) {
+                    maxGlobalSymbolId = globalId;
+                }
+
+                valueCount++;
                 size++;
             }
         }
@@ -1160,6 +1250,8 @@ public class IlpV4TableBuffer {
                 symbolDict.clear();
                 symbolList.clear();
             }
+            // Reset global symbol tracking
+            maxGlobalSymbolId = -1;
             // Reset array tracking
             arrayShapeOffset = 0;
             arrayDataOffset = 0;
@@ -1330,6 +1422,9 @@ public class IlpV4TableBuffer {
                     break;
                 case TYPE_SYMBOL:
                     symbolIndices = Arrays.copyOf(symbolIndices, newCap);
+                    if (globalSymbolIds != null) {
+                        globalSymbolIds = Arrays.copyOf(globalSymbolIds, newCap);
+                    }
                     break;
                 case TYPE_UUID:
                     uuidHigh = Arrays.copyOf(uuidHigh, newCap);

@@ -108,6 +108,12 @@ public final class IlpV4Constants {
     public static final byte FLAG_GORILLA = 0x04;
 
     /**
+     * Flag bit: Delta symbol dictionary encoding enabled.
+     * When set, symbol columns use global IDs and send only new dictionary entries.
+     */
+    public static final byte FLAG_DELTA_SYMBOL_DICT = 0x08;
+
+    /**
      * Mask for compression flags (bits 0-1).
      */
     public static final byte FLAG_COMPRESSION_MASK = FLAG_LZ4 | FLAG_ZSTD;

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.ilpv4;
 
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
@@ -59,7 +60,9 @@ public class IlpV4MessageCursor implements Mutable {
     private int currentTableIndex;
     private long currentTableAddress;
     private boolean gorillaEnabled;
+    private boolean deltaSymbolDictEnabled;
     private IlpV4SchemaCache schemaCache;
+    private ObjList<String> connectionSymbolDict;
 
     /**
      * Initializes this cursor for the given message data.
@@ -70,20 +73,154 @@ public class IlpV4MessageCursor implements Mutable {
      * @throws IlpV4ParseException if parsing fails
      */
     public void of(long messageAddress, int messageLength, IlpV4SchemaCache schemaCache) throws IlpV4ParseException {
+        of(messageAddress, messageLength, schemaCache, null);
+    }
+
+    /**
+     * Initializes this cursor for the given message data with delta symbol dictionary support.
+     *
+     * @param messageAddress       address of message (including header)
+     * @param messageLength        total message length in bytes
+     * @param schemaCache          schema cache for reference mode (may be null)
+     * @param connectionSymbolDict connection-level symbol dictionary (may be null)
+     * @throws IlpV4ParseException if parsing fails
+     */
+    public void of(long messageAddress, int messageLength, IlpV4SchemaCache schemaCache,
+                   ObjList<String> connectionSymbolDict) throws IlpV4ParseException {
         this.schemaCache = schemaCache;
+        this.connectionSymbolDict = connectionSymbolDict;
 
         // Parse message header
         messageHeader.parse(messageAddress, messageLength);
 
         this.tableCount = messageHeader.getTableCount();
         this.gorillaEnabled = messageHeader.isGorillaEnabled();
+        this.deltaSymbolDictEnabled = messageHeader.isDeltaSymbolDictEnabled();
 
         // Calculate payload bounds
         long payloadLength = messageHeader.getPayloadLength();
         this.payloadAddress = messageAddress + HEADER_SIZE;
         this.payloadEnd = payloadAddress + payloadLength;
         this.currentTableAddress = payloadAddress;
+
+        // Parse delta symbol dictionary if enabled
+        if (deltaSymbolDictEnabled && connectionSymbolDict != null) {
+            currentTableAddress = parseDeltaSymbolDict(currentTableAddress);
+        }
+
         this.currentTableIndex = -1;
+    }
+
+    /**
+     * Parses the delta symbol dictionary section at the start of the payload.
+     * <p>
+     * Wire format:
+     * <pre>
+     * [deltaStartId: varint]   - First ID in this delta
+     * [deltaCount: varint]     - Number of new symbols
+     * [symbol_0 length: varint][symbol_0 bytes]
+     * [symbol_1 length: varint][symbol_1 bytes]
+     * ...
+     * </pre>
+     *
+     * @param address start address of delta section
+     * @return address after delta section
+     * @throws IlpV4ParseException if parsing fails
+     */
+    private long parseDeltaSymbolDict(long address) throws IlpV4ParseException {
+        if (address >= payloadEnd) {
+            throw IlpV4ParseException.create(
+                    IlpV4ParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "truncated delta symbol dictionary"
+            );
+        }
+
+        // Read deltaStartId
+        long[] result = new long[2];
+        readVarint(address, result);
+        int deltaStartId = (int) result[0];
+        address += result[1];
+
+        // Read deltaCount
+        readVarint(address, result);
+        int deltaCount = (int) result[0];
+        address += result[1];
+
+        // Ensure connectionSymbolDict has capacity
+        int requiredSize = deltaStartId + deltaCount;
+        while (connectionSymbolDict.size() < requiredSize) {
+            connectionSymbolDict.add(null);
+        }
+
+        // Read and accumulate symbols
+        for (int i = 0; i < deltaCount; i++) {
+            if (address >= payloadEnd) {
+                throw IlpV4ParseException.create(
+                        IlpV4ParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "truncated delta symbol entry"
+                );
+            }
+
+            // Read symbol length
+            readVarint(address, result);
+            int symbolLen = (int) result[0];
+            address += result[1];
+
+            if (address + symbolLen > payloadEnd) {
+                throw IlpV4ParseException.create(
+                        IlpV4ParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "truncated delta symbol value"
+                );
+            }
+
+            // Read symbol value as UTF-8
+            byte[] symbolBytes = new byte[symbolLen];
+            for (int j = 0; j < symbolLen; j++) {
+                symbolBytes[j] = Unsafe.getUnsafe().getByte(address + j);
+            }
+            String symbol = new String(symbolBytes, java.nio.charset.StandardCharsets.UTF_8);
+            address += symbolLen;
+
+            // Store in dictionary
+            connectionSymbolDict.setQuick(deltaStartId + i, symbol);
+        }
+
+        return address;
+    }
+
+    /**
+     * Reads a varint from direct memory.
+     *
+     * @param address memory address
+     * @param result  output array: [0]=value, [1]=bytes consumed
+     */
+    private void readVarint(long address, long[] result) throws IlpV4ParseException {
+        long value = 0;
+        int shift = 0;
+        int bytesRead = 0;
+
+        while (address + bytesRead < payloadEnd) {
+            byte b = Unsafe.getUnsafe().getByte(address + bytesRead);
+            bytesRead++;
+            value |= (long) (b & 0x7F) << shift;
+            if ((b & 0x80) == 0) {
+                result[0] = value;
+                result[1] = bytesRead;
+                return;
+            }
+            shift += 7;
+            if (shift > 63) {
+                throw IlpV4ParseException.create(
+                        IlpV4ParseException.ErrorCode.VARINT_OVERFLOW,
+                        "varint overflow"
+                );
+            }
+        }
+
+        throw IlpV4ParseException.create(
+                IlpV4ParseException.ErrorCode.INSUFFICIENT_DATA,
+                "truncated varint"
+        );
     }
 
     /**
@@ -125,7 +262,9 @@ public class IlpV4MessageCursor implements Mutable {
         tableBlockCursor.clear();
 
         int remainingBytes = (int) (payloadEnd - currentTableAddress);
-        int consumed = tableBlockCursor.of(currentTableAddress, remainingBytes, gorillaEnabled, schemaCache);
+        int consumed = tableBlockCursor.of(
+                currentTableAddress, remainingBytes, gorillaEnabled, schemaCache,
+                connectionSymbolDict, deltaSymbolDictEnabled);
         currentTableAddress += consumed;
 
         return tableBlockCursor;
@@ -154,6 +293,13 @@ public class IlpV4MessageCursor implements Mutable {
         return messageHeader;
     }
 
+    /**
+     * Returns whether delta symbol dictionary mode is enabled.
+     */
+    public boolean isDeltaSymbolDictEnabled() {
+        return deltaSymbolDictEnabled;
+    }
+
     @Override
     public void clear() {
         tableBlockCursor.clear();
@@ -164,6 +310,8 @@ public class IlpV4MessageCursor implements Mutable {
         currentTableIndex = -1;
         currentTableAddress = 0;
         gorillaEnabled = false;
+        deltaSymbolDictEnabled = false;
         schemaCache = null;
+        connectionSymbolDict = null;
     }
 }

@@ -12,14 +12,18 @@
 #   ./run-alloc-test.sh compare [options]   - Compare all protocols
 #
 # Options (passed to client):
-#   --protocol=PROTOCOL   Protocol: ilp-tcp, ilp-http, ilpv4-tcp, ilpv4-http
-#   --host=HOST           Server host (default: localhost)
-#   --port=PORT           Server port
-#   --rows=N              Total rows to send
-#   --batch=N             Batch/flush size
-#   --warmup=N            Warmup rows
-#   --report=N            Report interval
-#   --no-warmup           Skip warmup
+#   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-http, ilpv4-websocket
+#   --host=HOST              Server host (default: localhost)
+#   --port=PORT              Server port
+#   --rows=N                 Total rows to send
+#   --batch=N                Auto-flush after N rows
+#   --flush-bytes=N          Auto-flush after N bytes (WebSocket only)
+#   --flush-interval-ms=N    Auto-flush after N ms (WebSocket only)
+#   --in-flight-window=N     Max batches awaiting server ACK (WebSocket only, default: 8)
+#   --send-queue=N           Max batches waiting to send (WebSocket only, default: 16)
+#   --warmup=N               Warmup rows
+#   --report=N               Report interval
+#   --no-warmup              Skip warmup
 #
 
 set -e
@@ -53,7 +57,7 @@ get_protocol_from_args() {
             return
         fi
     done
-    echo "ilpv4-tcp"  # default
+    echo "ilpv4-http"  # default
 }
 
 case "$1" in
@@ -142,7 +146,7 @@ case "$1" in
         echo "Make sure QuestDB server is running!"
         echo ""
 
-        for protocol in ilp-tcp ilp-http ilpv4-tcp ilpv4-http; do
+        for protocol in ilp-tcp ilp-http ilpv4-http ilpv4-websocket; do
             echo "=========================================="
             echo "Testing: $protocol"
             echo "=========================================="
@@ -166,19 +170,23 @@ case "$1" in
         echo "  compare [options]   Run all 4 protocols and compare"
         echo ""
         echo "Options:"
-        echo "  --protocol=PROTOCOL   Protocol: ilp-tcp, ilp-http, ilpv4-tcp, ilpv4-http (default: ilpv4-tcp)"
-        echo "  --host=HOST           Server host (default: localhost)"
-        echo "  --port=PORT           Server port (default: 9009 for TCP, 9000 for HTTP)"
-        echo "  --rows=N              Total rows to send (default: 10000000)"
-        echo "  --batch=N             Batch/flush size (default: 10000)"
-        echo "  --warmup=N            Warmup rows (default: 100000)"
-        echo "  --report=N            Report progress every N rows (default: 1000000)"
-        echo "  --no-warmup           Skip warmup phase"
+        echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-http, ilpv4-websocket (default: ilpv4-http)"
+        echo "  --host=HOST              Server host (default: localhost)"
+        echo "  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP/WebSocket)"
+        echo "  --rows=N                 Total rows to send (default: 80000000)"
+        echo "  --batch=N                Auto-flush after N rows (default: 10000)"
+        echo "  --flush-bytes=N          Auto-flush after N bytes (WebSocket only, default: 1MB)"
+        echo "  --flush-interval-ms=N    Auto-flush after N ms (WebSocket only, default: 100ms)"
+        echo "  --in-flight-window=N     Max batches awaiting server ACK (WebSocket only, default: 8)"
+        echo "  --send-queue=N           Max batches waiting to send (WebSocket only, default: 16)"
+        echo "  --warmup=N               Warmup rows (default: 100000)"
+        echo "  --report=N               Report progress every N rows (default: 1000000)"
+        echo "  --no-warmup              Skip warmup phase"
         echo ""
         echo "Examples:"
         echo "  Terminal 1: $0 server"
-        echo "  Terminal 2: $0 client --protocol=ilpv4-tcp --rows=1000000 --batch=5000"
-        echo "  Terminal 2: $0 client --protocol=ilp-http --rows=100000 --no-warmup"
+        echo "  Terminal 2: $0 client --protocol=ilpv4-http --rows=1000000 --batch=5000"
+        echo "  Terminal 2: $0 client --protocol=ilpv4-websocket --rows=100000 --no-warmup"
         echo "  Terminal 2: $0 jfr --protocol=ilpv4-http --rows=10000000"
         echo "  Terminal 2: $0 compare --rows=1000000 --batch=10000"
         ;;

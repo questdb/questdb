@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
@@ -89,7 +90,7 @@ public interface HttpRequestProcessor {
         return false;
     }
 
-    default void resumeRecv(HttpConnectionContext context) {
+    default void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException {
     }
 
     default void resumeSend(

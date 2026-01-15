@@ -82,6 +82,10 @@ public class IlpV4TableBlockCursor implements Mutable {
     // Schema cache reference
     private IlpV4SchemaCache schemaCache;
 
+    // Delta symbol dictionary support
+    private ObjList<String> connectionSymbolDict;
+    private boolean deltaSymbolDictEnabled;
+
     // Table state
     private int rowCount;
     private int columnCount;
@@ -106,8 +110,28 @@ public class IlpV4TableBlockCursor implements Mutable {
      */
     public int of(long dataAddress, int dataLength, boolean gorillaEnabled, IlpV4SchemaCache schemaCache)
             throws IlpV4ParseException {
+        return of(dataAddress, dataLength, gorillaEnabled, schemaCache, null, false);
+    }
+
+    /**
+     * Initializes this cursor for the given table block data with delta symbol dictionary support.
+     *
+     * @param dataAddress            address of table block data
+     * @param dataLength             available bytes
+     * @param gorillaEnabled         whether Gorilla encoding is enabled
+     * @param schemaCache            schema cache for reference mode (may be null)
+     * @param connectionSymbolDict   connection-level symbol dictionary (may be null)
+     * @param deltaSymbolDictEnabled whether delta mode is enabled
+     * @return bytes consumed from dataAddress
+     * @throws IlpV4ParseException if parsing fails
+     */
+    public int of(long dataAddress, int dataLength, boolean gorillaEnabled, IlpV4SchemaCache schemaCache,
+                  ObjList<String> connectionSymbolDict, boolean deltaSymbolDictEnabled)
+            throws IlpV4ParseException {
         this.gorillaEnabled = gorillaEnabled;
         this.schemaCache = schemaCache;
+        this.connectionSymbolDict = connectionSymbolDict;
+        this.deltaSymbolDictEnabled = deltaSymbolDictEnabled;
 
         int offset = 0;
         long limit = dataAddress + dataLength;
@@ -266,7 +290,9 @@ public class IlpV4TableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, symCursor);
                 }
                 symbolColumnIndices[symbolColumnCount++] = colIndex;
-                return symCursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength);
+                // In delta mode, pass connection dictionary; otherwise null (per-column dict)
+                ObjList<String> dictForSymbol = deltaSymbolDictEnabled ? connectionSymbolDict : null;
+                return symCursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength, dictForSymbol);
 
             case TYPE_GEOHASH:
                 IlpV4GeoHashColumnCursor geoCursor;
@@ -526,6 +552,8 @@ public class IlpV4TableBlockCursor implements Mutable {
         columnDefs = null;
         bytesConsumed = 0;
         schemaCache = null;
+        connectionSymbolDict = null;
+        deltaSymbolDictEnabled = false;
 
         // Reset type bucket counts
         booleanColumnCount = 0;
