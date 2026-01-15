@@ -274,6 +274,51 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByInsertNullSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month");
+            execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
+            execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-03T00:00:00.000000Z\t\t
+                            2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByInsertNullSymbolsOnWal() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month wal");
+            execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
+            execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
+            drainWalQueue();
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-03T00:00:00.000000Z\t\t
+                            2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLatestByMultipleChangedColSymbols() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
