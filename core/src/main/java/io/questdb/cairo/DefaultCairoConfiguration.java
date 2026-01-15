@@ -692,7 +692,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getParquetExportCompressionCodec() {
-        return ParquetCompression.COMPRESSION_ZSTD;
+        return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
 
     @Override
