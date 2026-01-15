@@ -210,7 +210,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this(configuration, new WalLocker());
     }
 
-    public CairoEngine(CairoConfiguration configuration, WalLocker walLocker) {
+    public CairoEngine(CairoConfiguration configuration, WalLockManager.WalLocker walLocker) {
         try {
             this.walLockManager = new WalLockManager(walLocker);
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
