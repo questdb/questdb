@@ -1157,7 +1157,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                         CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                                         params.put("fmt", "parquet");
                                         params.put("query", "basic_parquet_test");
-                                        client.assertGetParquet("/exp", 1268, params, null);
+                                        client.assertGetParquet("/exp", 1231, params, null);
                                     } catch (Throwable ex) {
                                         LOG.error().$(ex.getMessage()).$();
                                         errors.incrementAndGet();
@@ -1334,7 +1334,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         ")");
 
                 try (var httpClient = new TestHttpClient()) {
-                    httpClient.assertGetParquet(serverMain.getHttpServerPort(), "/exp", "200", 1268, "basic_parquet_test");
+                    httpClient.assertGetParquet(serverMain.getHttpServerPort(), "/exp", "200", 1231, "basic_parquet_test");
                 }
             }
         });
