@@ -118,12 +118,35 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVwemaAlphaModeZeroVolume() throws Exception {
-        // L558 false via volume <= 0 in VwemaOverUnboundedRowsFrameFunction
+    public void testVwemaAlphaEqualsOne() throws Exception {
+        // alpha=1.0 should be valid (inclusive upper bound) - each new value fully replaces the previous
         assertQuery(
                 """
                         ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t0.0\tnull
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t30.0
+                        """,
+                "select ts, price, volume, avg(price, 'alpha', 1.0, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaAlphaModeNegativeVolume() throws Exception {
+        // Negative volume should be treated as invalid like zero volume
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t-100.0\tnull
                         2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
                         2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
                         """,
@@ -131,7 +154,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                 "create table tab as (" +
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "(x * 10.0) as price, " +
-                        "case when x = 1 then 0.0 else (x * 100.0) end as volume " +
+                        "case when x = 1 then -100.0 else (x * 100.0) end as volume " +
                         "from long_sequence(3)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -387,7 +410,41 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
         );
     }
 
-    // ========================= Edge Case Tests for VwemaOverPartitionFunction =========================
+    @Test
+    public void testVwemaAlphaModeZeroVolume() throws Exception {
+        // L558 false via volume <= 0 in VwemaOverUnboundedRowsFrameFunction
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t0.0\tnull
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
+                        """,
+                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "case when x = 1 then 0.0 else (x * 100.0) end as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaExceptionAlphaEqualsZero() throws Exception {
+        // alpha=0.0 should be invalid (exclusive lower bound) - caught by general positive check
+        assertException(
+                "select ts, price, volume, avg(price, 'alpha', 0.0, volume) over (order by ts) from tab",
+                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                46,
+                "parameter value must be a positive number"
+        );
+    }
+
+    // ========================= Period and Time-Weighted Mode Tests =========================
 
     @Test
     public void testVwemaPeriodMode() throws Exception {
@@ -1001,7 +1058,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
         );
     }
 
-    // ========================= Explain Plan Tests =========================
+    // ========================= Zero Volume Edge Case Tests =========================
 
     @Test
     public void testVwemaTimeWeightedPartitionZeroVolume() throws Exception {

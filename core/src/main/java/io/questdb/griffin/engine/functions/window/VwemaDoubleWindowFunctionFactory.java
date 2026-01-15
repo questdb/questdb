@@ -221,6 +221,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
 
     /**
      * Parse time unit and return tau in native timestamp precision (micros or nanos).
+     * Note: Fractional values are truncated to integers for all time units.
+     * For example, avg(price, 'hour', 2.7, volume) uses tau for 2 hours, not 2.7 hours.
      */
     private static long parseTimeUnit(CharSequence kind, double value, int position, TimestampDriver driver) throws SqlException {
         if (SqlKeywords.isMicrosecondKeyword(kind) || SqlKeywords.isMicrosecondsKeyword(kind)) {
