@@ -1074,7 +1074,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlParquetFrameCacheCapacity() {
-        return 3;
+        return 8;
     }
 
     @Override
