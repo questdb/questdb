@@ -40,9 +40,9 @@ macro_rules! unpack_impl {
             assert!(input.len() >= NUM_BITS * $bytes);
 
             let r = |output_idx: usize| {
-                unsafe { // 15% performance enhancement
+                unsafe { // 20 % performance enhancement use unsafe
                     let ptr = input.as_ptr().add(output_idx * $bytes);
-                    <$t>::from_le_bytes(std::ptr::read_unaligned(ptr as *const [u8; $bytes]))
+                    <$t>::from_le(std::ptr::read_unaligned(ptr as *const $t))
                 }
             };
 
