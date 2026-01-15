@@ -207,8 +207,12 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull WalLockManager walLockManager;
 
     public CairoEngine(CairoConfiguration configuration) {
+        this(configuration, new WalLocker());
+    }
+
+    public CairoEngine(CairoConfiguration configuration, WalLocker walLocker) {
         try {
-            this.walLockManager = new WalLockManager(new WalLocker());
+            this.walLockManager = new WalLockManager(walLocker);
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
