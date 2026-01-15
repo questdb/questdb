@@ -28,7 +28,6 @@ import io.questdb.ConfigPropertyKey;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
-import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;

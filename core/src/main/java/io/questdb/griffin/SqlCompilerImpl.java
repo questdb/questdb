@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoConfiguration;
@@ -133,8 +132,6 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;

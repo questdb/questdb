@@ -74,6 +74,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -2242,16 +2243,16 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     private static void copyDirectory(File source, File target) throws IOException {
-        java.nio.file.Files.walkFileTree(source.toPath(), new SimpleFileVisitor<java.nio.file.Path>() {
+        java.nio.file.Files.walkFileTree(source.toPath(), new SimpleFileVisitor<>() {
             @Override
-            public FileVisitResult preVisitDirectory(java.nio.file.Path dir, BasicFileAttributes attrs) throws IOException {
+            public @NotNull FileVisitResult preVisitDirectory(java.nio.file.@NotNull Path dir, @NotNull BasicFileAttributes attrs) throws IOException {
                 java.nio.file.Path targetDir = target.toPath().resolve(source.toPath().relativize(dir));
                 java.nio.file.Files.createDirectories(targetDir);
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
-            public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes attrs) throws IOException {
+            public @NotNull FileVisitResult visitFile(java.nio.file.@NotNull Path file, @NotNull BasicFileAttributes attrs) throws IOException {
                 java.nio.file.Files.copy(file, target.toPath().resolve(source.toPath().relativize(file)),
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 return FileVisitResult.CONTINUE;
@@ -2531,17 +2532,19 @@ public class CheckpointTest extends AbstractCairoTest {
                 // Wait for WAL to flush
                 TestUtils.assertEventually(() -> server1.assertSql(
                         "SELECT sym, x FROM t ORDER BY x",
-                        "sym\tx\n" +
-                                "SYM\t1\n" +
-                                "SYM\t2\n" +
-                                "SYM\t3\n" +
-                                "SYM\t4\n" +
-                                "SYM\t5\n" +
-                                "SYM\t6\n" +
-                                "SYM\t7\n" +
-                                "SYM\t8\n" +
-                                "SYM\t9\n" +
-                                "SYM\t10\n"
+                        """
+                                sym\tx
+                                SYM\t1
+                                SYM\t2
+                                SYM\t3
+                                SYM\t4
+                                SYM\t5
+                                SYM\t6
+                                SYM\t7
+                                SYM\t8
+                                SYM\t9
+                                SYM\t10
+                                """
                 ));
 
                 server1.execute("CHECKPOINT CREATE");
@@ -2639,17 +2642,19 @@ public class CheckpointTest extends AbstractCairoTest {
             // Wait for WAL to flush and assert full data
             TestUtils.assertEventually(() -> server1.assertSql(
                     "SELECT sym, x FROM t ORDER BY x",
-                    "sym\tx\n" +
-                            "OLD_SYM\t1\n" +
-                            "OLD_SYM\t2\n" +
-                            "OLD_SYM\t3\n" +
-                            "OLD_SYM\t4\n" +
-                            "OLD_SYM\t5\n" +
-                            "OLD_SYM\t6\n" +
-                            "OLD_SYM\t7\n" +
-                            "OLD_SYM\t8\n" +
-                            "OLD_SYM\t9\n" +
-                            "OLD_SYM\t10\n"
+                    """
+                            sym\tx
+                            OLD_SYM\t1
+                            OLD_SYM\t2
+                            OLD_SYM\t3
+                            OLD_SYM\t4
+                            OLD_SYM\t5
+                            OLD_SYM\t6
+                            OLD_SYM\t7
+                            OLD_SYM\t8
+                            OLD_SYM\t9
+                            OLD_SYM\t10
+                            """
             ));
 
             server1.execute("CHECKPOINT CREATE");
@@ -2662,22 +2667,24 @@ public class CheckpointTest extends AbstractCairoTest {
             // Wait for WAL to flush the new data
             TestUtils.assertEventually(() -> server1.assertSql(
                     "SELECT sym, x FROM t ORDER BY x",
-                    "sym\tx\n" +
-                            "OLD_SYM\t1\n" +
-                            "OLD_SYM\t2\n" +
-                            "OLD_SYM\t3\n" +
-                            "OLD_SYM\t4\n" +
-                            "OLD_SYM\t5\n" +
-                            "OLD_SYM\t6\n" +
-                            "OLD_SYM\t7\n" +
-                            "OLD_SYM\t8\n" +
-                            "OLD_SYM\t9\n" +
-                            "OLD_SYM\t10\n" +
-                            "OLD_SYM\t11\n" +
-                            "OLD_SYM\t12\n" +
-                            "OLD_SYM\t13\n" +
-                            "OLD_SYM\t14\n" +
-                            "OLD_SYM\t15\n"
+                    """
+                            sym\tx
+                            OLD_SYM\t1
+                            OLD_SYM\t2
+                            OLD_SYM\t3
+                            OLD_SYM\t4
+                            OLD_SYM\t5
+                            OLD_SYM\t6
+                            OLD_SYM\t7
+                            OLD_SYM\t8
+                            OLD_SYM\t9
+                            OLD_SYM\t10
+                            OLD_SYM\t11
+                            OLD_SYM\t12
+                            OLD_SYM\t13
+                            OLD_SYM\t14
+                            OLD_SYM\t15
+                            """
             ));
 
             // Get the table directory name for later index reading
@@ -2705,7 +2712,7 @@ public class CheckpointTest extends AbstractCairoTest {
         }
 
         // Server 2: Start with the specified rebuild setting
-        try (TestServerMain server2 = startServerMain(
+        try (TestServerMain ignored = startServerMain(
                 dir2.getAbsolutePath(),
                 CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES.getEnvVarName(), String.valueOf(rebuildColumnIndexes)
         )) {
