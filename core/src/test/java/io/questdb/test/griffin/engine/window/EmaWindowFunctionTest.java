@@ -255,6 +255,17 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmaExceptionTauTooSmall() throws Exception {
+        // When value < 1, casting to long produces 0, which would make tau = 0
+        assertException(
+                "select ts, val, avg(val, 'microsecond', 0.5) over (order by ts) from tab",
+                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
+                25,
+                "time constant must be at least 1 unit in native timestamp precision"
+        );
+    }
+
+    @Test
     public void testEmaExplainPlan() throws Exception {
         // Test that explain shows correct plan for avg() EMA function
         assertMemoryLeak(() -> {

@@ -343,7 +343,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // Time-weighted EMA with partition by
     static class EmaTimeWeightedOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
-        private final CharSequence kindStr;
+        private final String kindStr;
         private final double paramValue;
         private final long tau;
         private final int timestampIndex;
@@ -356,7 +356,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 Function arg,
                 int timestampIndex,
                 long tau,
-                CharSequence kindStr,
+                String kindStr,
                 double paramValue
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -538,7 +538,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // Time-weighted EMA, no partition by
     static class EmaTimeWeightedOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDoubleFunction {
 
-        private final CharSequence kindStr;
+        private final String kindStr;
         private final double paramValue;
         private final long tau;
         private final int timestampIndex;
@@ -550,7 +550,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 Function arg,
                 int timestampIndex,
                 long tau,
-                CharSequence kindStr,
+                String kindStr,
                 double paramValue
         ) {
             super(arg);
