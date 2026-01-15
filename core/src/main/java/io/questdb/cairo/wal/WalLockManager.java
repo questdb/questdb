@@ -24,13 +24,10 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.BiLongFunction;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ConcurrentLongHashMap;
-import io.questdb.std.Numbers;
-import io.questdb.std.WeakClosableObjectPool;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -58,14 +55,8 @@ import java.util.function.Function;
  * It is the caller's responsibility to ensure that the same WAL directory is not
  * locked by multiple writers or purge jobs concurrently.
  */
-public class WalLockManager {
-    private final ConcurrentLongHashMap<WalEntry> entries = new ConcurrentLongHashMap<>();
-    // ThreadLocal context for passing parameters to non-capturing lambdas
-    private final ThreadLocal<OpContext> opContext = ThreadLocal.withInitial(OpContext::new);
-    private final WeakClosableObjectPool<WalEntry> pool = new WeakClosableObjectPool<>(WalEntry::new, 8);
-    private final BiLongFunction<WalEntry, WalEntry> lockPurgeFn = this::doLockPurge;
-    private final BiLongFunction<WalEntry, WalEntry> lockWriterFn = this::doLockWriter;
-    private final BiLongFunction<WalEntry, WalEntry> setMinSegmentFn = this::doSetMinSegment;
+public class WalLockManager implements QuietCloseable {
+    private final WalLocker locker;
     /**
      * Table ID from {@link TableToken} are not unique.
      * To circumvent this, we maintain our own sequence of table IDs because table directory names are unique.
@@ -73,8 +64,15 @@ public class WalLockManager {
     private final AtomicInteger tableIdSeq = new AtomicInteger(0);
     private final Function<CharSequence, Integer> getNextTableIdFn = k -> tableIdSeq.getAndIncrement();
     private final ConcurrentHashMap<Integer> tableIds = new ConcurrentHashMap<>();
-    private final BiLongFunction<WalEntry, WalEntry> unlockPurgeFn = this::doUnlockPurge;
-    private final BiLongFunction<WalEntry, WalEntry> unlockWriterFn = this::doUnlockWriter;
+
+    public WalLockManager(WalLocker locker) {
+        this.locker = locker;
+    }
+
+    @Override
+    public void close() {
+        locker.close();
+    }
 
     /**
      * Drop a table ID mapping. Should be called when a table is dropped and no more writers/purge jobs
@@ -97,9 +95,7 @@ public class WalLockManager {
     @TestOnly
     public boolean isSegmentLocked(@NotNull CharSequence tableDirName, int walId, int segmentId) {
         final int tableId = getTableId(tableDirName);
-        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
-        final WalEntry entry = this.entries.get(walKey);
-        return entry != null && entry.hasSegment(segmentId);
+        return locker.isSegmentLocked(tableId, walId, segmentId);
     }
 
     /**
@@ -112,8 +108,7 @@ public class WalLockManager {
     @TestOnly
     public boolean isWalLocked(@NotNull CharSequence tableDirName, int walId) {
         final int tableId = getTableId(tableDirName);
-        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
-        return this.entries.containsKey(walKey);
+        return locker.isWalLocked(tableId, walId);
     }
 
     /**
@@ -129,8 +124,6 @@ public class WalLockManager {
      */
     public int lockPurge(@NotNull CharSequence tableDirName, int walId) {
         final int tableId = getTableId(tableDirName);
-        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
-        final WalEntry entry = this.entries.compute(walKey, lockPurgeFn);
 
         // Race safety: minSegmentId is only mutated in 2 cases:
         //  - when the purge lock is released: as we assume that no 2 purge jobs will run concurrently
@@ -139,10 +132,12 @@ public class WalLockManager {
         //  must ensure that the new minSegmentId is greater than or equal to the current minSegmentId.
         //  A stale read returns a conservative (lower) max-purgeable ID, which is safe - we may under-purge
         //  but never over-purge.
-        if (entry.minSegmentId == WalUtils.SEG_NONE_ID) {
+        final int lockedMinSegmentId = locker.lockPurge(tableId, walId);
+        if (lockedMinSegmentId == Integer.MAX_VALUE) {
+            // We have exclusive lock, whole WAL can be purged
             return WalUtils.SEG_NONE_ID;
         } else {
-            return entry.minSegmentId - 1;
+            return lockedMinSegmentId - 1;
         }
     }
 
@@ -157,21 +152,7 @@ public class WalLockManager {
      */
     public void lockWriter(@NotNull CharSequence tableDirName, int walId, int minSegmentId) {
         final int tableId = getTableId(tableDirName);
-        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
-
-        final OpContext ctx = opContext.get();
-        ctx.minSegmentId = minSegmentId;
-
-        final WalEntry entry = this.entries.compute(walKey, lockWriterFn);
-
-        try {
-            entry.lock.acquire();
-        } catch (InterruptedException e) {
-            unlockWriter(walKey);
-            throw CairoException.critical(0)
-                    .put("Interrupted while acquiring WAL lock [table=").put(tableDirName)
-                    .put(", wal=").put(walId).put(']');
-        }
+        locker.lockWriter(tableId, walId, minSegmentId);
     }
 
     /**
@@ -181,10 +162,9 @@ public class WalLockManager {
      * Calling this while locks are held may lead to inconsistent state.
      */
     public void reset() {
-        entries.clear();
-        pool.close();
         tableIds.clear();
         tableIdSeq.set(0);
+        locker.clear();
     }
 
     /**
@@ -198,12 +178,7 @@ public class WalLockManager {
      */
     public void setWalSegmentMinId(@NotNull CharSequence tableDirName, int walId, int newMinSegmentId) {
         final int tableId = getTableId(tableDirName);
-        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
-
-        final OpContext ctx = opContext.get();
-        ctx.minSegmentId = newMinSegmentId;
-
-        this.entries.computeIfPresent(walKey, setMinSegmentFn);
+        locker.setWalSegmentMinId(tableId, walId, newMinSegmentId);
     }
 
     /**
@@ -216,8 +191,7 @@ public class WalLockManager {
      */
     public void unlockPurge(@NotNull CharSequence tableDirName, int walId) {
         final int tableId = getTableId(tableDirName);
-        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
-        this.entries.compute(walKey, unlockPurgeFn);
+        locker.unlockPurge(tableId, walId);
     }
 
     /**
@@ -230,145 +204,28 @@ public class WalLockManager {
      */
     public void unlockWriter(@NotNull CharSequence tableDirName, int walId) {
         final int tableId = getTableId(tableDirName);
-        final long walKey = Numbers.encodeLowHighInts(tableId, walId);
-        unlockWriter(walKey);
-    }
-
-    private WalEntry doLockPurge(long walKey, WalEntry existingEntry) {
-        if (existingEntry == null) {
-            final WalEntry newEntry;
-            synchronized (pool) {
-                newEntry = pool.pop();
-            }
-            newEntry.of(walKey, WalEntry.STATUS_PURGE_EXCLUSIVE, WalUtils.SEG_NONE_ID);
-            // We can hold the lock safely here as there are no other holders.
-            newEntry.lock.acquireUninterruptibly();
-            return newEntry;
-        }
-        if (existingEntry.status != WalEntry.STATUS_ACTIVE_WRITER) {
-            throw CairoException.critical(0).put("cannot attach purge, WAL is not writer locked [status=").put(existingEntry.status).put(']');
-        }
-        // The semaphore is already held by the writer, we don't need to wait for it.
-        existingEntry.status = WalEntry.STATUS_WRITER_PURGE;
-        return existingEntry;
-    }
-
-    private WalEntry doLockWriter(long walKey, WalEntry existingEntry) {
-        final int minSegmentId = opContext.get().minSegmentId;
-        if (existingEntry == null) {
-            final WalEntry newEntry;
-            synchronized (pool) {
-                newEntry = pool.pop();
-            }
-            newEntry.of(walKey, WalEntry.STATUS_ACTIVE_WRITER, minSegmentId);
-            return newEntry;
-        }
-        if (existingEntry.status != WalEntry.STATUS_PURGE_EXCLUSIVE) {
-            throw CairoException.critical(0).put("cannot attach writer, WAL is already writer locked [status=").put(existingEntry.status).put(']');
-        }
-        existingEntry.status = WalEntry.STATUS_WRITER_ACQUIRING;
-        existingEntry.nextMinSegmentId = minSegmentId;
-        return existingEntry;
-    }
-
-    private WalEntry doSetMinSegment(long walKey, WalEntry existingEntry) {
-        final int newMinSegmentId = opContext.get().minSegmentId;
-        if (existingEntry.minSegmentId > newMinSegmentId) {
-            throw CairoException.critical(0).put("new minSegmentId must be >= current [current=").put(existingEntry.minSegmentId).put(", new=").put(newMinSegmentId).put(']');
-        }
-        existingEntry.minSegmentId = newMinSegmentId;
-        return existingEntry;
-    }
-
-    private WalEntry doUnlockPurge(long walKey, WalEntry existingEntry) {
-        if (existingEntry.status == WalEntry.STATUS_PURGE_EXCLUSIVE) {
-            // We can safely release the lock and give back the entry to the pool.
-            existingEntry.lock.release();
-            existingEntry.walKey = -1;
-            synchronized (pool) {
-                pool.push(existingEntry);
-            }
-            return null;
-        }
-
-        if (existingEntry.status == WalEntry.STATUS_WRITER_PURGE) {
-            // Downgrade to active writer, let the writer release the lock.
-            existingEntry.status = WalEntry.STATUS_ACTIVE_WRITER;
-            return existingEntry;
-        }
-
-        if (existingEntry.status != WalEntry.STATUS_WRITER_ACQUIRING) {
-            throw CairoException.critical(0).put("unexpected WAL status on purge unlock [status=").put(existingEntry.status).put(']');
-        }
-        existingEntry.status = WalEntry.STATUS_ACTIVE_WRITER;
-        existingEntry.minSegmentId = existingEntry.nextMinSegmentId;
-        existingEntry.lock.release();
-        return existingEntry;
-    }
-
-    private WalEntry doUnlockWriter(long walKey, WalEntry existingEntry) {
-        if (existingEntry.status == WalEntry.STATUS_ACTIVE_WRITER) {
-            // We can safely release the lock and give back the entry to the pool.
-            existingEntry.lock.release();
-            existingEntry.walKey = -1;
-            synchronized (pool) {
-                pool.push(existingEntry);
-            }
-            return null;
-        }
-
-        if (existingEntry.status == WalEntry.STATUS_WRITER_ACQUIRING) {
-            // Downgrade to purge exclusive, let the purge release the lock.
-            existingEntry.status = WalEntry.STATUS_PURGE_EXCLUSIVE;
-            return existingEntry;
-        }
-
-        if (existingEntry.status != WalEntry.STATUS_WRITER_PURGE) {
-            throw CairoException.critical(0).put("unexpected WAL status on writer unlock [status=").put(existingEntry.status).put(']');
-        }
-        existingEntry.status = WalEntry.STATUS_PURGE_EXCLUSIVE;
-        return existingEntry;
+        locker.unlockWriter(tableId, walId);
     }
 
     private int getTableId(@NotNull CharSequence tableDirName) {
         return tableIds.computeIfAbsent(tableDirName, getNextTableIdFn);
     }
 
-    private void unlockWriter(long walKey) {
-        this.entries.compute(walKey, unlockWriterFn);
-    }
+    public interface WalLocker extends QuietCloseable {
+        void clear();
 
-    // Context for passing parameters to non-capturing lambdas via ThreadLocal
-    private static class OpContext {
-        int minSegmentId;
-    }
+        boolean isSegmentLocked(int tableId, int walId, int segmentId);
 
-    // A WalEntry stores the lock and state for a specific WAL directory.
-    private static class WalEntry {
-        // There is an active writer, purge cannot take exclusive lock.
-        private static final int STATUS_ACTIVE_WRITER = 2;
-        // The purge job has an exclusive lock on the WAL, no writers are allowed.
-        private static final int STATUS_PURGE_EXCLUSIVE = 1;
-        // A writer is acquiring the lock but purge already holds exclusive access over it.
-        private static final int STATUS_WRITER_ACQUIRING = 0;
-        // Both purge and writer are active.
-        private static final int STATUS_WRITER_PURGE = 3;
-        private final Semaphore lock = new Semaphore(1);
-        int minSegmentId = Integer.MAX_VALUE;
-        // Solely used when a writer is acquiring the lock while purge is active.
-        int nextMinSegmentId = Integer.MAX_VALUE;
-        long walKey = -1;
-        private int status = STATUS_WRITER_ACQUIRING;
+        boolean isWalLocked(int tableId, int walId);
 
-        public boolean hasSegment(int segmentId) {
-            return segmentId >= minSegmentId;
-        }
+        int lockPurge(int tableId, int walId);
 
-        public void of(long walKey, int status, int minSegmentId) {
-            this.walKey = walKey;
-            this.status = status;
-            this.minSegmentId = minSegmentId;
-            this.nextMinSegmentId = -1;
-        }
+        void lockWriter(int tableId, int walId, int minSegmentId);
+
+        void setWalSegmentMinId(int tableId, int walId, int newMinSegmentId);
+
+        void unlockPurge(int tableId, int walId);
+
+        void unlockWriter(int tableId, int walId);
     }
 }

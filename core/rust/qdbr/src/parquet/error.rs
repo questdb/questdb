@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 use crate::allocator::{take_last_alloc_error, AllocFailure};
-use crate::cairo::CairoException;
+use qdb_core::cairo::CairoException;
 use qdb_core::error::{CoreError, CoreErrorReason};
 use std::alloc::AllocError;
 use std::backtrace::{Backtrace, BacktraceStatus};

@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.wal.WalLockManager;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -47,12 +48,14 @@ public class WalLockManagerTest {
 
     @Before
     public void setUp() {
-        lockManager = new WalLockManager();
+        lockManager = new WalLockManager(new WalLocker());
     }
 
     @After
     public void tearDown() {
-        lockManager.reset();
+        if (lockManager != null) {
+            lockManager.close();
+        }
     }
 
     @Test
@@ -144,7 +147,7 @@ public class WalLockManagerTest {
             lockManager.lockPurge("table1", 1);
             Assert.fail("Expected CairoException");
         } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("cannot attach purge, WAL is not writer locked"));
+            TestUtils.assertContains(e.getMessage(), "cannot acquire purge lock: already exists");
         }
 
         lockManager.unlockPurge("table1", 1);
@@ -158,7 +161,7 @@ public class WalLockManagerTest {
             lockManager.lockWriter("table1", 1, 5);
             Assert.fail("Expected CairoException");
         } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("cannot attach writer, WAL is already writer locked"));
+            TestUtils.assertContains(e.getMessage(), "cannot acquire writer lock: already exists");
         }
 
         lockManager.unlockWriter("table1", 1);
@@ -213,7 +216,7 @@ public class WalLockManagerTest {
             lockManager.lockPurge("table1", 1);
             Assert.fail("Expected CairoException");
         } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("cannot attach purge, WAL is not writer locked"));
+            TestUtils.assertContains(e.getMessage(), "cannot acquire purge lock: already exists");
         }
 
         lockManager.unlockPurge("table1", 1);
@@ -388,7 +391,7 @@ public class WalLockManagerTest {
             lockManager.unlockPurge("table1", 1);
             Assert.fail("Expected CairoException");
         } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("unexpected WAL status on purge unlock"));
+            TestUtils.assertContains(e.getMessage(), "cannot release purge lock: invalid state");
         }
 
         // Clean up
@@ -405,60 +408,11 @@ public class WalLockManagerTest {
             lockManager.unlockWriter("table1", 1);
             Assert.fail("Expected CairoException");
         } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("unexpected WAL status on writer unlock"));
+            TestUtils.assertContains(e.getMessage(), "cannot release writer lock: invalid state");
         }
 
         // Clean up
         lockManager.unlockPurge("table1", 1);
-    }
-
-    @Test
-    public void testWriterInterruptedWhileWaitingForPurge() throws Exception {
-        // Purge locks first
-        lockManager.lockPurge("table1", 1);
-
-        AtomicReference<Throwable> error = new AtomicReference<>();
-        CountDownLatch writerStarted = new CountDownLatch(1);
-        CountDownLatch writerFinished = new CountDownLatch(1);
-
-        // Writer tries to lock in another thread, will block waiting for purge
-        Thread writerThread = new Thread(() -> {
-            try {
-                writerStarted.countDown();
-                lockManager.lockWriter("table1", 1, 5);
-                // Should not reach here
-                Assert.fail("Expected CairoException due to interruption");
-            } catch (CairoException e) {
-                if (!e.getMessage().contains("Interrupted while acquiring WAL lock")) {
-                    error.set(e);
-                }
-            } catch (Throwable t) {
-                error.set(t);
-            } finally {
-                writerFinished.countDown();
-            }
-        });
-        writerThread.start();
-
-        // Wait for writer to start blocking
-        Assert.assertTrue(writerStarted.await(1, TimeUnit.SECONDS));
-        Thread.sleep(100);
-
-        // Interrupt the writer thread
-        writerThread.interrupt();
-
-        // Writer should finish with exception
-        Assert.assertTrue(writerFinished.await(1, TimeUnit.SECONDS));
-        Assert.assertNull("Unexpected error: " + error.get(), error.get());
-
-        // WAL should still be locked by purge (writer cleaned up properly)
-        Assert.assertTrue(lockManager.isWalLocked("table1", 1));
-
-        // Clean up
-        lockManager.unlockPurge("table1", 1);
-        Assert.assertFalse(lockManager.isWalLocked("table1", 1));
-
-        writerThread.join(1000);
     }
 
     @Test

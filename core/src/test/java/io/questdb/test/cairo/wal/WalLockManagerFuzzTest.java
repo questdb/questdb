@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.wal.WalLockManager;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -44,12 +45,12 @@ public class WalLockManagerFuzzTest {
 
     @Before
     public void setUp() {
-        lockManager = new WalLockManager();
+        lockManager = new WalLockManager(new WalLocker());
     }
 
     @After
     public void tearDown() {
-        lockManager.reset();
+        lockManager.close();
     }
 
     @Test
@@ -58,7 +59,7 @@ public class WalLockManagerFuzzTest {
         final int numThreads = 8;
         final int numTables = 3;
         final int numWalsPerTable = 4;
-        final int operationsPerThread = 200;
+        final int operationsPerThread = 200000;
 
         // Track state per (table, wal) pair
         // States: 0=unlocked, 1=writer, 2=purge, 3=writer+purge
