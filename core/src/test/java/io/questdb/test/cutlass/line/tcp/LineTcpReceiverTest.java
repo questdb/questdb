@@ -61,6 +61,8 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8s;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -478,9 +480,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public void setWalSegmentMinId(@NotNull CharSequence tableDirName, int walId, int segmentId) {
+            public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int segmentId) {
                 if (
-                        Chars.contains(tableDirName, weather)
+                        Utf8s.containsAscii(tableDirName, weather)
                                 && walId == 1
                                 && segmentId == 1
                                 && --count == 0
@@ -858,7 +860,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public void setWalSegmentMinId(@NotNull CharSequence tableDirName, int walId, int segmentId) {
+            public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int segmentId) {
                 if (walId == 1 && segmentId == 1 && count.decrementAndGet() == 0) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
@@ -916,8 +918,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public void setWalSegmentMinId(@NotNull CharSequence tableDirName, int walId, int segmentId) {
-                if (Chars.contains(tableDirName, weather) && walId == 1 && segmentId == 1 && --count == 0) {
+            public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int segmentId) {
+                if (Utf8s.containsAscii(tableDirName, weather) && walId == 1 && segmentId == 1 && --count == 0) {
                     renameTable(weather, meteorology);
                 }
                 super.setWalSegmentMinId(tableDirName, walId, segmentId);

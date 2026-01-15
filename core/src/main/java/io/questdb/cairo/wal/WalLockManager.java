@@ -24,16 +24,13 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ConcurrentLongHashMap;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.DirectUtf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 
 /**
  * Manages in-memory locks for WAL directories and segments.
@@ -57,13 +54,6 @@ import java.util.function.Function;
  */
 public class WalLockManager implements QuietCloseable {
     private final WalLocker locker;
-    /**
-     * Table ID from {@link TableToken} are not unique.
-     * To circumvent this, we maintain our own sequence of table IDs because table directory names are unique.
-     */
-    private final AtomicInteger tableIdSeq = new AtomicInteger(0);
-    private final Function<CharSequence, Integer> getNextTableIdFn = k -> tableIdSeq.getAndIncrement();
-    private final ConcurrentHashMap<Integer> tableIds = new ConcurrentHashMap<>();
 
     public WalLockManager(WalLocker locker) {
         this.locker = locker;
@@ -80,8 +70,8 @@ public class WalLockManager implements QuietCloseable {
      *
      * @param tableDirName the table directory name identifying the table
      */
-    public void dropTable(@NotNull CharSequence tableDirName) {
-        tableIds.remove(tableDirName);
+    public void dropTable(@NotNull DirectUtf8Sequence tableDirName) {
+        locker.purgeTable(tableDirName);
     }
 
     @SuppressWarnings("unused")
@@ -98,9 +88,8 @@ public class WalLockManager implements QuietCloseable {
      * @return {@code true} if the segment is locked, {@code false} otherwise
      */
     @TestOnly
-    public boolean isSegmentLocked(@NotNull CharSequence tableDirName, int walId, int segmentId) {
-        final int tableId = getTableId(tableDirName);
-        return locker.isSegmentLocked(tableId, walId, segmentId);
+    public boolean isSegmentLocked(@NotNull DirectUtf8Sequence tableDirName, int walId, int segmentId) {
+        return locker.isSegmentLocked(tableDirName, walId, segmentId);
     }
 
     /**
@@ -111,9 +100,8 @@ public class WalLockManager implements QuietCloseable {
      * @return {@code true} if the WAL is locked, {@code false} otherwise
      */
     @TestOnly
-    public boolean isWalLocked(@NotNull CharSequence tableDirName, int walId) {
-        final int tableId = getTableId(tableDirName);
-        return locker.isWalLocked(tableId, walId);
+    public boolean isWalLocked(@NotNull DirectUtf8Sequence tableDirName, int walId) {
+        return locker.isWalLocked(tableDirName, walId);
     }
 
     /**
@@ -127,9 +115,7 @@ public class WalLockManager implements QuietCloseable {
      * @return the maximum segment ID that can be safely purged, or {@link WalUtils#SEG_NONE_ID} if exclusive lock is held
      * and the whole WAL can be purged.
      */
-    public int lockPurge(@NotNull CharSequence tableDirName, int walId) {
-        final int tableId = getTableId(tableDirName);
-
+    public int lockPurge(@NotNull DirectUtf8Sequence tableDirName, int walId) {
         // Race safety: minSegmentId is only mutated in 2 cases:
         //  - when the purge lock is released: as we assume that no 2 purge jobs will run concurrently
         //  on the same WAL, this read is safe.
@@ -137,7 +123,7 @@ public class WalLockManager implements QuietCloseable {
         //  must ensure that the new minSegmentId is greater than or equal to the current minSegmentId.
         //  A stale read returns a conservative (lower) max-purgeable ID, which is safe - we may under-purge
         //  but never over-purge.
-        final int lockedMinSegmentId = locker.lockPurge(tableId, walId);
+        final int lockedMinSegmentId = locker.lockPurge(tableDirName, walId);
         if (lockedMinSegmentId == Integer.MAX_VALUE) {
             // We have exclusive lock, whole WAL can be purged
             return WalUtils.SEG_NONE_ID;
@@ -149,15 +135,14 @@ public class WalLockManager implements QuietCloseable {
     /**
      * Locks the writer lock on the specified WAL directory.
      * This will block if a purge job is currently holding an exclusive lock on the WAL.
-     * The caller must ensure to call {@link #unlockWriter(CharSequence, int)} to release the lock.
+     * The caller must ensure to call {@link #unlockWriter(DirectUtf8Sequence, int)} to release the lock.
      *
      * @param tableDirName the table directory name identifying the table
      * @param walId        the WAL identifier (e.g., 1 for wal1)
      * @param minSegmentId the minimum segment ID that the writer will be working with
      */
-    public void lockWriter(@NotNull CharSequence tableDirName, int walId, int minSegmentId) {
-        final int tableId = getTableId(tableDirName);
-        locker.lockWriter(tableId, walId, minSegmentId);
+    public void lockWriter(@NotNull DirectUtf8Sequence tableDirName, int walId, int minSegmentId) {
+        locker.lockWriter(tableDirName, walId, minSegmentId);
     }
 
     /**
@@ -167,8 +152,6 @@ public class WalLockManager implements QuietCloseable {
      * Calling this while locks are held may lead to inconsistent state.
      */
     public void reset() {
-        tableIds.clear();
-        tableIdSeq.set(0);
         locker.clear();
     }
 
@@ -181,9 +164,8 @@ public class WalLockManager implements QuietCloseable {
      * @param walId           the WAL identifier (e.g., 1 for wal1)
      * @param newMinSegmentId the new minimum segment ID to set
      */
-    public void setWalSegmentMinId(@NotNull CharSequence tableDirName, int walId, int newMinSegmentId) {
-        final int tableId = getTableId(tableDirName);
-        locker.setWalSegmentMinId(tableId, walId, newMinSegmentId);
+    public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int newMinSegmentId) {
+        locker.setWalSegmentMinId(tableDirName, walId, newMinSegmentId);
     }
 
     /**
@@ -194,9 +176,8 @@ public class WalLockManager implements QuietCloseable {
      * @param tableDirName the table directory name identifying the table
      * @param walId        the WAL identifier (e.g., 1 for wal1)
      */
-    public void unlockPurge(@NotNull CharSequence tableDirName, int walId) {
-        final int tableId = getTableId(tableDirName);
-        locker.unlockPurge(tableId, walId);
+    public void unlockPurge(@NotNull DirectUtf8Sequence tableDirName, int walId) {
+        locker.unlockPurge(tableDirName, walId);
     }
 
     /**
@@ -207,30 +188,27 @@ public class WalLockManager implements QuietCloseable {
      * @param tableDirName the table directory name identifying the table
      * @param walId        the WAL identifier (e.g., 1 for wal1)
      */
-    public void unlockWriter(@NotNull CharSequence tableDirName, int walId) {
-        final int tableId = getTableId(tableDirName);
-        locker.unlockWriter(tableId, walId);
-    }
-
-    private int getTableId(@NotNull CharSequence tableDirName) {
-        return tableIds.computeIfAbsent(tableDirName, getNextTableIdFn);
+    public void unlockWriter(@NotNull DirectUtf8Sequence tableDirName, int walId) {
+        locker.unlockWriter(tableDirName, walId);
     }
 
     public interface WalLocker extends QuietCloseable {
         void clear();
 
-        boolean isSegmentLocked(int tableId, int walId, int segmentId);
+        boolean isSegmentLocked(DirectUtf8Sequence tableDirName, int walId, int segmentId);
 
-        boolean isWalLocked(int tableId, int walId);
+        boolean isWalLocked(DirectUtf8Sequence tableDirName, int walId);
 
-        int lockPurge(int tableId, int walId);
+        int lockPurge(DirectUtf8Sequence tableDirName, int walId);
 
-        void lockWriter(int tableId, int walId, int minSegmentId);
+        void lockWriter(DirectUtf8Sequence tableDirName, int walId, int minSegmentId);
 
-        void setWalSegmentMinId(int tableId, int walId, int newMinSegmentId);
+        void purgeTable(DirectUtf8Sequence tableDirName);
 
-        void unlockPurge(int tableId, int walId);
+        void setWalSegmentMinId(DirectUtf8Sequence tableDirName, int walId, int newMinSegmentId);
 
-        void unlockWriter(int tableId, int walId);
+        void unlockPurge(DirectUtf8Sequence tableDirName, int walId);
+
+        void unlockWriter(DirectUtf8Sequence tableDirName, int walId);
     }
 }

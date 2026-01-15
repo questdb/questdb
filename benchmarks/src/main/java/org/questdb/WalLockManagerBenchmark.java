@@ -29,6 +29,7 @@ import io.questdb.cairo.wal.WalLockManager;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -75,7 +76,7 @@ public class WalLockManagerBenchmark {
     private int pathLen;
     private int segmentId;
     private int tableIndex;
-    private String[] tableNames;
+    private DirectUtf8Sink[] tableNames;
     private java.nio.file.Path tempDir;
     private int walIndex;
 
@@ -107,9 +108,10 @@ public class WalLockManagerBenchmark {
     @Setup(Level.Trial)
     public void setupTrial() {
         lockManager = new WalLockManager(new WalLocker());
-        tableNames = new String[NUM_TABLES];
+        tableNames = new DirectUtf8Sink[NUM_TABLES];
         for (int i = 0; i < NUM_TABLES; i++) {
-            tableNames[i] = "table" + i;
+            tableNames[i] = new DirectUtf8Sink(32);
+            tableNames[i].putAscii("table").put(i);
         }
     }
 
@@ -125,11 +127,14 @@ public class WalLockManagerBenchmark {
     public void tearDownTrial() {
         lockManager.reset();
         path.close();
+        for (int i = 0; i < NUM_TABLES; i++) {
+            tableNames[i].close();
+        }
     }
 
     @Benchmark
     public void testWriterFileLockUnlock(Blackhole bh) throws InterruptedException {
-        String tableName = tableNames[tableIndex];
+        DirectUtf8Sink tableName = tableNames[tableIndex];
         path.trimTo(pathLen).concat(tableName);
         final LPSZ lpsz = TableUtils.lockName(path);
         long fd = TableUtils.lock(filesFacade, lpsz);
@@ -140,7 +145,7 @@ public class WalLockManagerBenchmark {
 
     @Benchmark
     public void testWriterLockUnlock() {
-        String tableName = tableNames[tableIndex];
+        DirectUtf8Sink tableName = tableNames[tableIndex];
         lockManager.lockWriter(tableName, walIndex, segmentId);
         lockManager.unlockWriter(tableName, walIndex);
     }

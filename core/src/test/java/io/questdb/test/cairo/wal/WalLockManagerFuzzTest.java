@@ -28,6 +28,7 @@ import io.questdb.cairo.wal.WalLockManager;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -42,15 +43,19 @@ import java.util.concurrent.atomic.AtomicReference;
 public class WalLockManagerFuzzTest {
 
     private WalLockManager lockManager;
+    private DirectUtf8Sink concurrentTestTable;
 
     @Before
     public void setUp() {
         lockManager = new WalLockManager(new WalLocker());
+        concurrentTestTable = new DirectUtf8Sink(32);
+        concurrentTestTable.putAscii("concurrent_test");
     }
 
     @After
     public void tearDown() {
         lockManager.close();
+        concurrentTestTable.close();
     }
 
     @Test
@@ -73,9 +78,10 @@ public class WalLockManagerFuzzTest {
             }
         }
 
-        final String[] tableNames = new String[numTables];
+        final DirectUtf8Sink[] tableNames = new DirectUtf8Sink[numTables];
         for (int t = 0; t < numTables; t++) {
-            tableNames[t] = "fuzz_table_" + t;
+            tableNames[t] = new DirectUtf8Sink(32);
+            tableNames[t].putAscii("fuzz_table_").put(t);
         }
 
         final CountDownLatch startLatch = new CountDownLatch(1);
@@ -92,7 +98,7 @@ public class WalLockManagerFuzzTest {
                     for (int op = 0; op < operationsPerThread && error.get() == null; op++) {
                         int tableIdx = threadRnd.nextInt(numTables);
                         int walId = threadRnd.nextInt(numWalsPerTable);
-                        String tableName = tableNames[tableIdx];
+                        DirectUtf8Sink tableName = tableNames[tableIdx];
 
                         synchronized (walLocks[tableIdx][walId]) {
                             int currentState = walStates[tableIdx][walId];
@@ -217,6 +223,11 @@ public class WalLockManagerFuzzTest {
                         lockManager.isWalLocked(tableNames[t], w));
             }
         }
+
+        // Clean up DirectUtf8Sink instances
+        for (int t = 0; t < numTables; t++) {
+            tableNames[t].close();
+        }
     }
 
     @Test
@@ -239,14 +250,14 @@ public class WalLockManagerFuzzTest {
                     ready.countDown();
                     barrier.await();
 
-                    lockManager.lockWriter("concurrent_test", 1, minSegment);
+                    lockManager.lockWriter(concurrentTestTable, 1, minSegment);
 
                     // Random work
                     for (int i = 0; i < 5; i++) {
                         Thread.yield();
                     }
 
-                    lockManager.unlockWriter("concurrent_test", 1);
+                    lockManager.unlockWriter(concurrentTestTable, 1);
                 } catch (Throwable t) {
                     error.compareAndSet(null, t);
                 } finally {
@@ -260,7 +271,7 @@ public class WalLockManagerFuzzTest {
                     ready.countDown();
                     barrier.await();
 
-                    int maxPurgeable = lockManager.lockPurge("concurrent_test", 1);
+                    int maxPurgeable = lockManager.lockPurge(concurrentTestTable, 1);
                     // Should be either SEG_NONE_ID (exclusive) or minSegment-1 (shared with writer)
                     Assert.assertTrue("maxPurgeable should be valid",
                             maxPurgeable == WalUtils.SEG_NONE_ID || maxPurgeable == minSegment - 1);
@@ -270,7 +281,7 @@ public class WalLockManagerFuzzTest {
                         Thread.yield();
                     }
 
-                    lockManager.unlockPurge("concurrent_test", 1);
+                    lockManager.unlockPurge(concurrentTestTable, 1);
                 } catch (Throwable t) {
                     error.compareAndSet(null, t);
                 } finally {
@@ -290,7 +301,7 @@ public class WalLockManagerFuzzTest {
             }
 
             Assert.assertFalse("WAL should be unlocked after iteration " + iter,
-                    lockManager.isWalLocked("concurrent_test", 1));
+                    lockManager.isWalLocked(concurrentTestTable, 1));
         }
     }
 }

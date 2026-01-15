@@ -3,7 +3,7 @@ use std::sync::Arc;
 use qdb_core::{
     cairo::{CairoException, ResultToCairoException},
     types::{IdNumber, SegmentId, WalId},
-    wal_lock::{self, TableId},
+    wal_lock,
 };
 
 macro_rules! get_wal_lock {
@@ -47,15 +47,21 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_isSegmentLocked0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
-    table_id: jni::sys::jint,
+    table_dir_name_ptr: *const u8,
+    table_dir_name_size: jni::sys::jint,
     wal_id: jni::sys::jint,
     segment_id: jni::sys::jint,
 ) -> jni::sys::jboolean {
     let wal_lock = get_wal_lock!(env, ptr);
-    let table_id = TableId::new(table_id as u32);
+    let table_dir_name = unsafe {
+        str::from_utf8_unchecked(std::slice::from_raw_parts(
+            table_dir_name_ptr,
+            table_dir_name_size as usize,
+        ))
+    };
     let wal_id = WalId::new(wal_id as u32);
     let segment_id = SegmentId::new(segment_id);
-    let is_locked = wal_lock.is_segment_locked(table_id, wal_id, segment_id);
+    let is_locked = wal_lock.is_segment_locked(table_dir_name, wal_id, segment_id);
     if is_locked {
         jni::sys::JNI_TRUE
     } else {
@@ -68,13 +74,19 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_isWalLocked0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
-    table_id: jni::sys::jint,
+    table_dir_name_ptr: *const u8,
+    table_dir_name_size: jni::sys::jint,
     wal_id: jni::sys::jint,
 ) -> jni::sys::jboolean {
     let wal_lock = get_wal_lock!(env, ptr);
-    let table_id = TableId::new(table_id as u32);
+    let table_dir_name = unsafe {
+        str::from_utf8_unchecked(std::slice::from_raw_parts(
+            table_dir_name_ptr,
+            table_dir_name_size as usize,
+        ))
+    };
     let wal_id = WalId::new(wal_id as u32);
-    let is_locked = wal_lock.is_locked(table_id, wal_id);
+    let is_locked = wal_lock.is_locked(table_dir_name, wal_id);
     if is_locked {
         jni::sys::JNI_TRUE
     } else {
@@ -87,14 +99,20 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_lockPurge0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
-    table_id: jni::sys::jint,
+    table_dir_name_ptr: *const u8,
+    table_dir_name_size: jni::sys::jint,
     wal_id: jni::sys::jint,
 ) -> jni::sys::jint {
     let wal_lock = get_wal_lock!(env, ptr);
-    let table_id = TableId::new(table_id as u32);
+    let table_dir_name = unsafe {
+        str::from_utf8_unchecked(std::slice::from_raw_parts(
+            table_dir_name_ptr,
+            table_dir_name_size as usize,
+        ))
+    };
     let wal_id = WalId::new(wal_id as u32);
     wal_lock
-        .purge_lock(table_id, wal_id)
+        .purge_lock(table_dir_name, wal_id)
         .map(|min_segment_id| {
             min_segment_id.map_or(jni::sys::jint::MAX, |sid| sid.value() as jni::sys::jint)
         })
@@ -106,14 +124,20 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_unlockPurge0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
-    table_id: jni::sys::jint,
+    table_dir_name_ptr: *const u8,
+    table_dir_name_size: jni::sys::jint,
     wal_id: jni::sys::jint,
 ) {
     let wal_lock = get_wal_lock!(env, ptr);
-    let table_id = TableId::new(table_id as u32);
+    let table_dir_name = unsafe {
+        str::from_utf8_unchecked(std::slice::from_raw_parts(
+            table_dir_name_ptr,
+            table_dir_name_size as usize,
+        ))
+    };
     let wal_id = WalId::new(wal_id as u32);
     wal_lock
-        .purge_unlock(table_id, wal_id)
+        .purge_unlock(table_dir_name, wal_id)
         .or_throw_to_java(&mut env);
 }
 
@@ -122,16 +146,22 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_lockWriter0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
-    table_id: jni::sys::jint,
+    table_dir_name_ptr: *const u8,
+    table_dir_name_size: jni::sys::jint,
     wal_id: jni::sys::jint,
     min_segment_id: jni::sys::jint,
 ) {
     let wal_lock = get_wal_lock!(env, ptr);
-    let table_id = TableId::new(table_id as u32);
+    let table_dir_name = unsafe {
+        str::from_utf8_unchecked(std::slice::from_raw_parts(
+            table_dir_name_ptr,
+            table_dir_name_size as usize,
+        ))
+    };
     let wal_id = WalId::new(wal_id as u32);
     let min_segment_id = SegmentId::new(min_segment_id);
     wal_lock
-        .writer_lock(table_id, wal_id, min_segment_id)
+        .writer_lock(table_dir_name, wal_id, min_segment_id)
         .or_throw_to_java(&mut env);
 }
 
@@ -140,14 +170,20 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_unlockWriter0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
-    table_id: jni::sys::jint,
+    table_dir_name_ptr: *const u8,
+    table_dir_name_size: jni::sys::jint,
     wal_id: jni::sys::jint,
 ) {
     let wal_lock = get_wal_lock!(env, ptr);
-    let table_id = TableId::new(table_id as u32);
+    let table_dir_name = unsafe {
+        str::from_utf8_unchecked(std::slice::from_raw_parts(
+            table_dir_name_ptr,
+            table_dir_name_size as usize,
+        ))
+    };
     let wal_id = WalId::new(wal_id as u32);
     wal_lock
-        .writer_unlock(table_id, wal_id)
+        .writer_unlock(table_dir_name, wal_id)
         .or_throw_to_java(&mut env);
 }
 
@@ -156,17 +192,41 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_setWalSegmentMinId0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
-    table_id: jni::sys::jint,
+    table_dir_name_ptr: *const u8,
+    table_dir_name_size: jni::sys::jint,
     wal_id: jni::sys::jint,
     min_segment_id: jni::sys::jint,
 ) {
     let wal_lock = get_wal_lock!(env, ptr);
-    let table_id = TableId::new(table_id as u32);
+    let table_dir_name = unsafe {
+        str::from_utf8_unchecked(std::slice::from_raw_parts(
+            table_dir_name_ptr,
+            table_dir_name_size as usize,
+        ))
+    };
     let wal_id = WalId::new(wal_id as u32);
     let min_segment_id = SegmentId::new(min_segment_id);
     wal_lock
-        .update_writer_min_segment_id(table_id, wal_id, min_segment_id)
+        .update_writer_min_segment_id(table_dir_name, wal_id, min_segment_id)
         .or_throw_to_java(&mut env);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_purgeTable0(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    ptr: *mut Arc<wal_lock::WalLock>,
+    table_dir_name_ptr: *const u8,
+    table_dir_name_size: jni::sys::jint,
+) {
+    let wal_lock = get_wal_lock!(env, ptr);
+    let table_dir_name = unsafe {
+        str::from_utf8_unchecked(std::slice::from_raw_parts(
+            table_dir_name_ptr,
+            table_dir_name_size as usize,
+        ))
+    };
+    wal_lock.purge_table(table_dir_name);
 }
 
 #[no_mangle]

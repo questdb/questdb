@@ -121,7 +121,7 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     void lockWal() {
-        walLockManager.lockWriter(tableToken.getDirName(), walId, 0);
+        walLockManager.lockWriter(tableToken.getDirNameUtf8(), walId, 0);
         LOG.debug().$("locked WAL [walId=").$(walId).I$();
     }
 
@@ -135,7 +135,7 @@ abstract class WalWriterBase implements AutoCloseable {
 
     void releaseSegmentLock(int segmentId, long segmentTxn, int newSegmentId) {
         if (newSegmentId > -1) {
-            walLockManager.setWalSegmentMinId(tableToken.getDirName(), walId, newSegmentId);
+            walLockManager.setWalSegmentMinId(tableToken.getDirNameUtf8(), walId, newSegmentId);
         }
         // if events file has some transactions
         if (segmentTxn >= 0) {
@@ -151,7 +151,7 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     void releaseWalLock() {
-        walLockManager.unlockWriter(tableToken.getDirName(), walId);
+        walLockManager.unlockWriter(tableToken.getDirNameUtf8(), walId);
         LOG.debug().$("released WAL lock [walId=").$(walId).I$();
     }
 }
