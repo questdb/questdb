@@ -2920,6 +2920,61 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testSymbolCache_fastPath_sameConnectionThreeRounds_singleSymbol() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_fast_path")
+                                .symbol("device", "foo")
+                                .longColumn("seq", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_fast_path")
+                                .symbol("device", "foo")
+                                .longColumn("seq", i + 100)
+                                .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    TestUtils.drainWalQueue(serverMain.getEngine());
+
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_fast_path")
+                                .symbol("device", "foo")
+                                .longColumn("seq", i + 200)
+                                .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
+                    // Round 4: Even more reuse to maximize cache hits
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_cache_fast_path")
+                                .symbol("device", "foo")
+                                .longColumn("seq", i + 300)
+                                .at(1000000003000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+                serverMain.assertSql("select count() from ws_cache_fast_path", "count\n40\n");
+                serverMain.assertSql("select count(distinct device) from ws_cache_fast_path", "count_distinct\n1\n");
+            }
+        });
+    }
+
+    @Test
     public void testSymbolCache_fastPath_manyRoundsNoWalApplyBetween() throws Exception {
         // Tests cache behavior when WAL is applied once, then many rounds of symbol reuse.
         // After initial WAL apply:

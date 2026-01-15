@@ -261,6 +261,7 @@ public class IlpV4WalAppender implements QuietCloseable {
                              long tableToken = writer.getTableToken().getTableId();
                              int watermark = writer.getSymbolCountWatermark(columnIndex);
                              ClientSymbolCache columnCache = symbolCache.getCache(tableToken, columnIndex);
+                             columnCache.checkAndInvalidate(watermark);  // Clear cache if watermark changed
                              if (writeSymbolWithCache(columnIndex, (IlpV4SymbolColumnCursor) cursor, r,
                                      writer, tableToken, columnCache, watermark)) {
                                  continue;  // Cache path succeeded
@@ -624,10 +625,9 @@ public class IlpV4WalAppender implements QuietCloseable {
             return true;
         }
 
-        // Try cache first
-        // We must check cachedTableId < watermark because:
-        // - IDs < watermark are committed symbols - safe to use putSymIndex
-        // - IDs >= watermark are local symbols - must use putSym for proper WAL tracking
+        // Try cache first (maps clientSymbolId -> tableSymbolId)
+        // Only use cached committed symbols (< watermark). Local symbols are not cached because
+        // segment rollover resets local IDs without necessarily changing the watermark.
         int cachedTableId = columnCache.get(clientSymbolId);
         if (cachedTableId != ClientSymbolCache.NO_ENTRY && cachedTableId < watermark) {
             // Cache hit for committed symbol - use putSymIndex (fast path)
@@ -655,21 +655,22 @@ public class IlpV4WalAppender implements QuietCloseable {
 
         // Try to lookup in WalWriter's internal symbol cache
         // This cache is always up-to-date (unlike SymbolMapReader which can be stale)
-        if (writer instanceof WalWriter) {
-            WalWriter walWriter = (WalWriter) writer;
+        if (writer instanceof WalWriter walWriter) {
             int tableId = walWriter.getCachedSymbolKey(columnIndex, symbolValue);
             if (tableId != SymbolTable.VALUE_NOT_FOUND) {
-                // Found in WalWriter's cache - cache and use putSymIndex
-                columnCache.put(clientSymbolId, tableId);
+                // Only cache committed symbols (< watermark)
+                // Local symbols may be reassigned after segment rollover
+                if (tableId < watermark) {
+                    columnCache.put(clientSymbolId, tableId);
+                }
                 r.putSymIndex(columnIndex, tableId);
                 return true;
             }
         }
 
-        // Not found in committed table or not a WalWriter - use putSym
-        // This handles new symbols (local IDs) and non-WAL writers
+        // Not found - use putSym which will assign a new local ID
         r.putSym(columnIndex, symbolValue);
-        // Don't cache - we don't know the assigned ID and it might be a local ID
+        // Can't cache - putSym doesn't return the assigned ID
         return true;
     }
 }

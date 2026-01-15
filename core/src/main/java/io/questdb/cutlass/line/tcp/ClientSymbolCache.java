@@ -36,8 +36,7 @@ import io.questdb.std.IntIntHashMap;
  * Thread safety: This class is NOT thread-safe. It should only be accessed from a single thread.
  * <p>
  * Cache invalidation: When the symbol watermark changes (e.g., after WAL segment rollover),
- * entries with tableSymbolId >= new watermark should be invalidated using
- * {@link #invalidateAboveWatermark(int)}.
+ * the cache should be cleared using {@link #checkAndInvalidate(int)}.
  */
 public class ClientSymbolCache {
 
