@@ -290,7 +290,7 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
-                if (tableSequencer.getTableToken() != tableToken) {
+                if (!tableSequencer.getTableToken().equals(tableToken)) {
                     throw TableReferenceOutOfDateException.of(tableToken);
                 }
                 txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
