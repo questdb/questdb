@@ -30,6 +30,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
@@ -56,6 +58,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -88,6 +91,8 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final Map ownerMap;
+    private final SingleRecordSink ownerMasterSinkTarget;
+    private final SingleRecordSink ownerSlaveSinkTarget;
     private final ConcurrentTimeFrameCursor ownerSlaveTimeFrameCursor;
     private final MarkoutTimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
@@ -98,7 +103,9 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Map> perWorkerMaps;
+    private final ObjList<SingleRecordSink> perWorkerMasterSinkTargets;
     private final LongList perWorkerPrevFirstOffsetAsOfRowIds;
+    private final ObjList<SingleRecordSink> perWorkerSlaveSinkTargets;
     private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     private final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final int sequenceColumnIndex;
@@ -122,7 +129,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             int slaveTimestampIndex,
             @NotNull RecordSink groupByKeyCopier,
             int @NotNull [] columnSources,
-            int @NotNull [] columnIndices,
+            int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @Nullable CompiledFilter compiledFilter,
@@ -153,7 +160,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             this.slaveKeyCopier = slaveKeyCopier;
             this.slaveTimestampIndex = slaveTimestampIndex;
 
-            // GROUP BY key copier and column mappings for CombinedRecord
+            // GROUP BY key copier and column mappings for MarkoutRecord
             this.groupByKeyCopier = groupByKeyCopier;
 
             // Per-worker locks
@@ -170,20 +177,28 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
                 perWorkerSlaveTimeFrameHelpers.add(new MarkoutTimeFrameHelper(lookahead));
             }
 
-            // Per-worker ASOF maps
-            this.perWorkerAsOfJoinMaps = new ObjList<>(slotCount);
+            // Per-worker ASOF maps and SingleRecordSink targets for key comparison
             if (asOfJoinKeyTypes != null) {
-                ArrayColumnTypes asOfValueTypes = new ArrayColumnTypes();
-                asOfValueTypes.add(ColumnType.LONG);
+                this.perWorkerAsOfJoinMaps = new ObjList<>(slotCount);
+                this.perWorkerMasterSinkTargets = new ObjList<>(slotCount);
+                this.perWorkerSlaveSinkTargets = new ObjList<>(slotCount);
+                final SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
+                final long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
                 for (int i = 0; i < slotCount; i++) {
                     perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes));
+                    perWorkerMasterSinkTargets.add(new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN));
+                    perWorkerSlaveSinkTargets.add(new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN));
                 }
                 this.ownerAsOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
+                this.ownerMasterSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN);
+                this.ownerSlaveSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN);
             } else {
-                for (int i = 0; i < slotCount; i++) {
-                    perWorkerAsOfJoinMaps.add(null);
-                }
+                this.perWorkerAsOfJoinMaps = null;
+                this.perWorkerMasterSinkTargets = null;
+                this.perWorkerSlaveSinkTargets = null;
                 this.ownerAsOfJoinMap = null;
+                this.ownerMasterSinkTarget = null;
+                this.ownerSlaveSinkTarget = null;
             }
 
             // Per-worker aggregation maps
@@ -226,11 +241,11 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
             // Per-worker combined records
             this.ownerCombinedRecord = new MarkoutRecord();
-            this.ownerCombinedRecord.init(columnSources, columnIndices);
+            ownerCombinedRecord.init(columnSources, columnIndexes);
             this.perWorkerCombinedRecords = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 MarkoutRecord record = new MarkoutRecord();
-                record.init(columnSources, columnIndices);
+                record.init(columnSources, columnIndexes);
                 perWorkerCombinedRecords.add(record);
             }
 
@@ -263,9 +278,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         Misc.clearObjList(perWorkerAllocators);
 
         // Clear ASOF join maps
-        if (ownerAsOfJoinMap != null) {
-            Misc.free(ownerAsOfJoinMap);
-        }
+        Misc.free(ownerAsOfJoinMap);
         Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
 
         // Clear time frame cursors
@@ -291,6 +304,10 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         }
         Misc.free(ownerAsOfJoinMap);
         Misc.freeObjList(perWorkerAsOfJoinMaps);
+        Misc.free(ownerMasterSinkTarget);
+        Misc.free(ownerSlaveSinkTarget);
+        Misc.freeObjList(perWorkerMasterSinkTargets);
+        Misc.freeObjList(perWorkerSlaveSinkTargets);
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
         // Filter resources
@@ -302,16 +319,10 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     }
 
     public Map getAsOfJoinMap(int slotId) {
-        Map map;
         if (slotId == -1) {
-            map = ownerAsOfJoinMap;
-        } else {
-            map = perWorkerAsOfJoinMaps.getQuick(slotId);
+            return ownerAsOfJoinMap;
         }
-        if (map != null && !map.isOpen()) {
-            map.reopen();
-        }
-        return map;
+        return perWorkerAsOfJoinMaps != null ? perWorkerAsOfJoinMaps.getQuick(slotId) : null;
     }
 
     public ObjList<Function> getBindVarFunctions() {
@@ -368,6 +379,23 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         return masterKeyCopier;
     }
 
+    /**
+     * Get the master key sink target for ASOF join key comparison.
+     * Must call reopen() before use and clear() before each copy.
+     */
+    public SingleRecordSink getMasterSinkTarget(int slotId) {
+        SingleRecordSink sink;
+        if (slotId == -1) {
+            sink = ownerMasterSinkTarget;
+        } else {
+            sink = perWorkerMasterSinkTargets != null ? perWorkerMasterSinkTargets.getQuick(slotId) : null;
+        }
+        if (sink != null) {
+            sink.reopen();
+        }
+        return sink;
+    }
+
     public int getMasterTimestampColumnIndex() {
         return masterTimestampColumnIndex;
     }
@@ -396,6 +424,23 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     public RecordSink getSlaveKeyCopier() {
         return slaveKeyCopier;
+    }
+
+    /**
+     * Get the slave key sink target for ASOF join key comparison.
+     * Must call reopen() before use and clear() before each copy.
+     */
+    public SingleRecordSink getSlaveSinkTarget(int slotId) {
+        SingleRecordSink sink;
+        if (slotId == -1) {
+            sink = ownerSlaveSinkTarget;
+        } else {
+            sink = perWorkerSlaveSinkTargets != null ? perWorkerSlaveSinkTargets.getQuick(slotId) : null;
+        }
+        if (sink != null) {
+            sink.reopen();
+        }
+        return sink;
     }
 
     /**
@@ -496,10 +541,12 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         if (ownerAsOfJoinMap != null) {
             ownerAsOfJoinMap.reopen();
         }
-        for (int i = 0, n = perWorkerAsOfJoinMaps.size(); i < n; i++) {
-            Map map = perWorkerAsOfJoinMaps.getQuick(i);
-            if (map != null) {
-                map.reopen();
+        if (perWorkerAsOfJoinMaps != null) {
+            for (int i = 0, n = perWorkerAsOfJoinMaps.size(); i < n; i++) {
+                Map map = perWorkerAsOfJoinMaps.getQuick(i);
+                if (map != null) {
+                    map.reopen();
+                }
             }
         }
 
@@ -535,20 +582,19 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
      * Merge all per-worker maps into the owner map.
      */
     public Map mergeOwnerMap() {
-        Map destMap = ownerMap;
-        if (!destMap.isOpen()) {
-            destMap.reopen();
+        if (!ownerMap.isOpen()) {
+            ownerMap.reopen();
         }
 
         for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
-            Map srcMap = perWorkerMaps.getQuick(i);
-            if (srcMap.isOpen() && srcMap.size() > 0) {
-                destMap.merge(srcMap, ownerFunctionUpdater);
-                srcMap.close();
+            Map workerMap = perWorkerMaps.getQuick(i);
+            if (workerMap.isOpen() && workerMap.size() > 0) {
+                ownerMap.merge(workerMap, ownerFunctionUpdater);
+                workerMap.close();
             }
         }
 
-        return destMap;
+        return ownerMap;
     }
 
     public void release(int slotId) {

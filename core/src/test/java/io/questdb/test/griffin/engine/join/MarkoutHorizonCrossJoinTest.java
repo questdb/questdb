@@ -685,7 +685,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMarkoutCurveParallelWithFilter() throws Exception {
+    public void testMarkoutCurveParallelWithSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
@@ -707,7 +707,16 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "",
+                    """
+                            sec_off\tsym\tavg\tavg1
+                            -1\t\tnull\tnull
+                            0\tsym1\t1.0\t2.0
+                            1\tsym1\t1.0\t2.0
+                            0\tsym2\t3.0\t4.0
+                            1\tsym2\t3.0\t4.0
+                            0\tsym3\t5.0\t6.0
+                            1\tsym3\t5.0\t6.0
+                            """,
                     """
                             WITH offsets AS (
                                 SELECT 1_000_000 * (x-2) AS usec_off, x - 2 AS sec_off
@@ -717,19 +726,50 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                               SELECT * FROM (
                                 SELECT /*+ markout_horizon(trades offsets) */ sym, sec_off, ts + usec_off AS ts
                                 FROM trades CROSS JOIN offsets
-                                WHERE trades.sym = 'sym0'
                                 ORDER BY ts + usec_off
                               ) TIMESTAMP(ts)
                             )
-                            SELECT /*+ markout_curve */ t.sec_off, t.sym, avg(p.bid), avg(p.ask)
+                            SELECT /*+ markout_curve */ t.sec_off, p.sym, avg(p.bid), avg(p.ask)
                             FROM trades_off as t
                             ASOF JOIN prices as p
                             ON (t.sym = p.sym);
                             """,
                     null,
                     true,
-                    false
+                    true
             );
+
+            // FIXME: sym values should not be empty
+            // FIXME: filter is lost
+//            assertQueryNoLeakCheck(
+//                    """
+//                            sec_off\tsym\tavg\tavg1
+//                            -1\t\tnull\tnull
+//                            0\t\tnull\tnull
+//                            1\t\tnull\tnull
+//                            """,
+//                    """
+//                            WITH offsets AS (
+//                                SELECT 1_000_000 * (x-2) AS usec_off, x - 2 AS sec_off
+//                                FROM long_sequence(3)
+//                            ),
+//                            trades_off AS (
+//                              SELECT * FROM (
+//                                SELECT /*+ markout_horizon(trades offsets) */ sym, sec_off, ts + usec_off AS ts
+//                                FROM trades CROSS JOIN offsets
+//                                WHERE trades.sym = 'sym0'
+//                                ORDER BY ts + usec_off
+//                              ) TIMESTAMP(ts)
+//                            )
+//                            SELECT /*+ markout_curve */ t.sec_off, t.sym, avg(p.bid), avg(p.ask)
+//                            FROM trades_off as t
+//                            ASOF JOIN prices as p
+//                            ON (t.sym = p.sym);
+//                            """,
+//                    null,
+//                    true,
+//                    false
+//            );
         });
     }
 

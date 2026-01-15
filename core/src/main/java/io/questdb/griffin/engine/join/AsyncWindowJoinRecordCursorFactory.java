@@ -105,8 +105,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
     public AsyncWindowJoinRecordCursorFactory(
             @NotNull CairoEngine engine,
-            @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
+            @Transient @NotNull BytecodeAssembler asm,
             @NotNull MessageBus messageBus,
             @NotNull JoinRecordMetadata joinMetadata,
             @NotNull RecordMetadata outMetadata,
@@ -139,7 +139,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
         this.joinMetadata = joinMetadata;
         this.cursor = new AsyncWindowJoinRecordCursor(
-                configuration,
                 groupByFunctions,
                 slaveFactory.getMetadata(),
                 columnIndex,

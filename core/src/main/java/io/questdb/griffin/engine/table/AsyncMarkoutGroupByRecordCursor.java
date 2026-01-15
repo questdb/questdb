@@ -51,6 +51,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -70,6 +71,7 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
     private final IntList slaveTimeFramePartitionIndexes = new IntList();
     private final LongList slaveTimeFrameRowCounts = new LongList();
+    private final MarkoutSymbolTableSource symbolTableSource;
     private int frameLimit;
     private PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence;
     private boolean isDataMapBuilt;
@@ -82,13 +84,16 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     public AsyncMarkoutGroupByRecordCursor(
             ObjList<Function> recordFunctions,
             RecordCursorFactory sequenceFactory,
-            RecordCursorFactory slaveFactory
+            RecordCursorFactory slaveFactory,
+            int @NotNull [] columnSources,
+            int @NotNull [] columnIndexes
     ) {
         this.recordFunctions = recordFunctions;
         this.sequenceFactory = sequenceFactory;
         this.slaveFactory = slaveFactory;
         this.recordA = new VirtualRecord(recordFunctions);
         this.recordB = new VirtualRecord(recordFunctions);
+        this.symbolTableSource = new MarkoutSymbolTableSource(columnSources, columnIndexes);
         this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
         this.isOpen = true;
     }
@@ -310,7 +315,6 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
             atom.reopen();
         }
         this.frameSequence = frameSequence;
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
 
         // Materialize sequence cursor
         this.sequenceCursor = sequenceFactory.getCursor(executionContext);
@@ -318,6 +322,11 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
 
         // Get slave page frame cursor for time frame initialization
         this.slavePageFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
+
+        // Initialize record functions with a symbol table source that routes lookups
+        // to the correct source (master or slave) based on column mappings
+        symbolTableSource.of(frameSequence.getSymbolTableSource(), slavePageFrameCursor.getTableReader());
+        Function.init(recordFunctions, symbolTableSource, executionContext, null);
 
         isDataMapBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;

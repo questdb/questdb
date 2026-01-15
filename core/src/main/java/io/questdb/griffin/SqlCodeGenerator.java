@@ -4066,8 +4066,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         assert rightSymbolIndex != -1;
                                         master = new AsyncWindowJoinFastRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
-                                                asm,
                                                 configuration,
+                                                asm,
                                                 executionContext.getMessageBus(),
                                                 joinMetadata,
                                                 outerProjectionMetadata,
@@ -4114,8 +4114,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     } else {
                                         master = new AsyncWindowJoinRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
-                                                asm,
                                                 configuration,
+                                                asm,
                                                 executionContext.getMessageBus(),
                                                 joinMetadata,
                                                 outerProjectionMetadata,

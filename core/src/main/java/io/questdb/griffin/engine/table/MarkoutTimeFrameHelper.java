@@ -25,8 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TimeFrame;
@@ -46,9 +45,10 @@ import io.questdb.std.Rows;
 public class MarkoutTimeFrameHelper {
     private static final int LINEAR_SCAN_LIMIT = 64;
     private final long lookahead;
+    // Bookmark position: where to start the next findAsOfRow search (optimization for sequential access)
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
-    // Current position after findAsOfRow or backward scan
+    // Current position: result of the last findAsOfRow or backwardScanForKeyMatch call
     private int currentFrameIndex = -1;
     private long currentRowIndex = -1;
     private Record record;
@@ -66,13 +66,15 @@ public class MarkoutTimeFrameHelper {
      * The scan starts from the current position (set by findAsOfRow) and moves
      * backward until a row with matching key is found or stopRowId is reached.
      *
-     * @param keyMap         temporary map for key comparison (should have master key already set)
-     * @param slaveKeyCopier copier for slave's join key columns
-     * @param stopRowId      don't scan past this rowId (exclusive), or Long.MIN_VALUE for no limit
+     * @param masterSinkTarget sink containing serialized master key (already populated)
+     * @param slaveSinkTarget  sink for serializing slave key for comparison
+     * @param slaveKeyCopier   copier for slave's join key columns
+     * @param stopRowId        don't scan past this rowId (exclusive), or Long.MIN_VALUE for no limit
      * @return matched rowId, or Long.MIN_VALUE if no match found
      */
     public long backwardScanForKeyMatch(
-            Map keyMap,
+            SingleRecordSink masterSinkTarget,
+            SingleRecordSink slaveSinkTarget,
             RecordSink slaveKeyCopier,
             long stopRowId
     ) {
@@ -96,12 +98,12 @@ public class MarkoutTimeFrameHelper {
                 return Long.MIN_VALUE;
             }
 
-            // Position record and check key match
+            // Position record and check key match using memeq comparison
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
 
-            MapKey key = keyMap.withKey();
-            key.put(record, slaveKeyCopier);
-            if (key.findValue() != null) {
+            slaveSinkTarget.clear();
+            slaveKeyCopier.copy(record, slaveSinkTarget);
+            if (masterSinkTarget.memeq(slaveSinkTarget)) {
                 // Found a match!
                 setCurrentPosition(frameIndex, rowIndex);
                 return currentRowId;
@@ -202,6 +204,8 @@ public class MarkoutTimeFrameHelper {
                             setCurrentPosition(bestFrameIndex, bestRowIndex);
                             return Rows.toRowID(bestFrameIndex, bestRowIndex);
                         }
+                        // Bookmark current frame so subsequent searches with larger timestamps can find it
+                        bookmarkCurrentFrame(0);
                         return Long.MIN_VALUE;
                     }
 
@@ -212,6 +216,8 @@ public class MarkoutTimeFrameHelper {
                         setCurrentPosition(bestFrameIndex, bestRowIndex);
                         return Rows.toRowID(bestFrameIndex, bestRowIndex);
                     }
+                    // Bookmark current frame so subsequent searches with larger timestamps can find it
+                    bookmarkCurrentFrame(0);
                     return Long.MIN_VALUE;
                 }
 

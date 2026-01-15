@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -109,7 +110,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             int slaveTimestampIndex,
             @NotNull RecordSink groupByKeyCopier,
             int @NotNull [] columnSources,
-            int @NotNull [] columnIndices,
+            int @NotNull [] columnIndexes,
             @Nullable CompiledFilter compiledFilter,
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
@@ -142,7 +143,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     slaveTimestampIndex,
                     groupByKeyCopier,
                     columnSources,
-                    columnIndices,
+                    columnIndexes,
                     groupByFunctions,
                     perWorkerGroupByFunctions,
                     compiledFilter,
@@ -164,7 +165,13 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
 
-            this.cursor = new AsyncMarkoutGroupByRecordCursor(recordFunctions, sequenceFactory, slaveFactory);
+            this.cursor = new AsyncMarkoutGroupByRecordCursor(
+                    recordFunctions,
+                    sequenceFactory,
+                    slaveFactory,
+                    columnSources,
+                    columnIndexes
+            );
         } catch (Throwable th) {
             close();
             throw th;
@@ -292,6 +299,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
+            final SingleRecordSink masterSinkTarget = atom.getMasterSinkTarget(slotId);
+            final SingleRecordSink slaveSinkTarget = atom.getSlaveSinkTarget(slotId);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             // Process filtered rows
@@ -308,7 +317,11 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(r);
 
                 // Set bookmark to previous master row's first offset position
-                slaveTimeFrameHelper.setBookmark(prevFirstOffsetAsOfRowId);
+                if (prevFirstOffsetAsOfRowId != Long.MIN_VALUE) {
+                    slaveTimeFrameHelper.setBookmark(prevFirstOffsetAsOfRowId);
+                } else { // Reset to search from the beginning
+                    slaveTimeFrameHelper.toTop();
+                }
 
                 prevFirstOffsetAsOfRowId = processMarkoutRow(
                         record,
@@ -318,6 +331,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         asOfJoinMap,
                         masterKeyCopier,
                         slaveKeyCopier,
+                        masterSinkTarget,
+                        slaveSinkTarget,
                         slaveRecord,
                         markoutRecord,
                         partialMap,
@@ -350,6 +365,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             Map asOfJoinMap,
             RecordSink masterKeyCopier,
             RecordSink slaveKeyCopier,
+            SingleRecordSink masterSinkTarget,
+            SingleRecordSink slaveSinkTarget,
             Record slaveRecord,
             MarkoutRecord markoutRecord,
             Map partialMap,
@@ -365,14 +382,14 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         if (asOfJoinMap != null && masterKeyCopier != null) {
             MapKey cacheKey = asOfJoinMap.withKey();
             cacheKey.put(masterRecord, masterKeyCopier);
-            MapValue cacheValue = cacheKey.createValue();
-            if (cacheValue.isNew()) {
-                // backwardScanForKeyMatch relies on presence of the key in the map,
-                // so let's create an entry for it.
-                cacheValue.putLong(0, Long.MIN_VALUE);
-            } else {
+            MapValue cacheValue = cacheKey.findValue();
+            if (cacheValue != null) {
                 cachedRowId = cacheValue.getLong(0);
             }
+
+            // Copy master key to sink target for key comparison in backwardScanForKeyMatch
+            masterSinkTarget.clear();
+            masterKeyCopier.copy(masterRecord, masterSinkTarget);
         }
 
         // Track state across offsets
@@ -394,9 +411,10 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             prevAsOfRowId = asOfRowId0;
 
             if (asOfRowId0 != Long.MIN_VALUE) {
-                // Backward scan for key match, stop at cached position
+                // Backward scan for key match using memeq comparison, stop at cached position
                 match0RowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                        asOfJoinMap,
+                        masterSinkTarget,
+                        slaveSinkTarget,
                         slaveKeyCopier,
                         cachedRowId
                 );
@@ -431,9 +449,9 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             long matchRowId = Long.MIN_VALUE;
             if (asOfJoinMap != null && masterKeyCopier != null) {
                 // Navigate forward to ASOF position for this offset
-                long asofRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
+                long asOfRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
 
-                if (asofRowId != Long.MIN_VALUE) {
+                if (asOfRowId != Long.MIN_VALUE) {
                     // Determine stop position for backward scan
                     long stopRowId;
                     if (prevMatchRowId != Long.MIN_VALUE) {
@@ -444,9 +462,10 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         stopRowId = prevAsOfRowId;
                     }
 
-                    // Backward scan for key match
+                    // Backward scan for key match using memeq comparison
                     matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                            asOfJoinMap,
+                            masterSinkTarget,
+                            slaveSinkTarget,
                             slaveKeyCopier,
                             stopRowId
                     );
@@ -457,7 +476,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     }
                     // If no new match found, prevMatchRowId stays valid (its ts <= horizonTs0 < horizonTs)
 
-                    prevAsOfRowId = asofRowId;
+                    prevAsOfRowId = asOfRowId;
                 }
             }
 
@@ -519,6 +538,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
+            final SingleRecordSink masterSinkTarget = atom.getMasterSinkTarget(slotId);
+            final SingleRecordSink slaveSinkTarget = atom.getSlaveSinkTarget(slotId);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             // Process rows
@@ -534,7 +555,11 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(r);
 
                 // Set bookmark to previous master row's first offset position
-                slaveTimeFrameHelper.setBookmark(prevFirstOffsetAsOfRowId);
+                if (prevFirstOffsetAsOfRowId != Long.MIN_VALUE) {
+                    slaveTimeFrameHelper.setBookmark(prevFirstOffsetAsOfRowId);
+                } else { // Reset to search from the beginning
+                    slaveTimeFrameHelper.toTop();
+                }
 
                 prevFirstOffsetAsOfRowId = processMarkoutRow(
                         record,
@@ -544,6 +569,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                         asOfJoinMap,
                         masterKeyCopier,
                         slaveKeyCopier,
+                        masterSinkTarget,
+                        slaveSinkTarget,
                         slaveRecord,
                         markoutRecord,
                         partialMap,
