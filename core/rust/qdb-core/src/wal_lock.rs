@@ -55,6 +55,8 @@ pub struct WalLock {
     entries: dashmap::DashMap<WalLockKey, WalEntry>,
 
     // TableDirName -> Table id
+    // We cannot rely on `TableToken` table ids as they are not really unique, instead
+    // we maintain our own mapping because table dir names are guaranteed to be unique.
     table_ids: dashmap::DashMap<String, TableId>,
 
     // Next table id to assign.
