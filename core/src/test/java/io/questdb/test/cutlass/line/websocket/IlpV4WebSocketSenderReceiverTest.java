@@ -2344,7 +2344,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -2359,8 +2360,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
 
-                // Wait for table to be created and drain WAL
-                serverMain.awaitTable("ws_wal_apply_test");
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
@@ -2374,7 +2373,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
 
-                // Drain WAL again
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
@@ -2387,8 +2385,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     }
                     sender.flush();
                 }
+                TestUtils.drainWalQueue(serverMain.getEngine());
 
-                serverMain.awaitTable("ws_wal_apply_test");
                 serverMain.assertSql("select count() from ws_wal_apply_test", "count\n30\n");
                 // east, west, central, north, south = 5 distinct
                 serverMain.assertSql("select count(distinct region) from ws_wal_apply_test", "count_distinct\n5\n");
@@ -2402,7 +2400,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -2421,8 +2420,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
 
-                serverMain.awaitTable("ws_interleave_t1");
-                serverMain.awaitTable("ws_interleave_t2");
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 // Round 2: More interleaved writes with some symbol reuse
@@ -2459,7 +2456,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -2473,8 +2471,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     }
                     sender.flush();
 
-                    // Wait and apply WAL while connection is still open
-                    serverMain.awaitTable("ws_same_conn_wal");
                     TestUtils.drainWalQueue(serverMain.getEngine());
 
                     // Batch 2 - reuse symbols on same connection after WAL apply
@@ -2554,7 +2550,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -2571,7 +2568,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
 
-                serverMain.awaitTable("ws_new_after_wal");
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 // Phase 2: Mix of existing and new symbols
@@ -2629,7 +2625,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -2650,7 +2647,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
                             // Apply WAL periodically
                             if ((i + 1) % (batchSize * 3) == 0) {
-                                serverMain.awaitTable("ws_many_symbols_wal");
                                 TestUtils.drainWalQueue(serverMain.getEngine());
                             }
                         }
@@ -2754,7 +2750,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - connection behavior differs", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -2771,7 +2768,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 }
                 // Connection 1 closed
 
-                serverMain.awaitTable("ws_drop_reconnect");
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 // Connection 2: Different symbols for "source", reuse "type" values
@@ -2856,11 +2852,10 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         // Round 2: Reuse symbols (cache miss, SymbolMapReader finds them, cache populated)
         // Round 3: Reuse symbols again (CACHE HIT - fast path via putSymIndex)
         //
-        // All rounds MUST be on the same connection for cache to persist.
-        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -2875,9 +2870,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                                 .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
-
-                    // Wait for table creation
-                    serverMain.awaitTable("ws_cache_fast_path");
 
                     // Apply WAL - symbols become committed to table
                     TestUtils.drainWalQueue(serverMain.getEngine());
@@ -2933,10 +2925,10 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         // After initial WAL apply:
         // - Round 2: cache miss, populates cache
         // - Rounds 3-10: all cache HITS (fast path)
-        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -2953,7 +2945,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     }
                     sender.flush();
 
-                    serverMain.awaitTable("ws_cache_many_rounds");
                     TestUtils.drainWalQueue(serverMain.getEngine());
 
                     // Rounds 2-10: All reuse the same symbols
@@ -2989,7 +2980,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -3005,7 +2997,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                             .at(1000000000001L, ChronoUnit.MICROS);
                     sender.flush();
 
-                    serverMain.awaitTable("ws_cache_mixed");
                     TestUtils.drainWalQueue(serverMain.getEngine());
 
                     // Round 2: Populate cache for existing symbols
@@ -3093,7 +3084,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -3109,7 +3101,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     }
                     sender.flush();
 
-                    serverMain.awaitTable("ws_cache_multi_col");
                     TestUtils.drainWalQueue(serverMain.getEngine());
 
                     // Round 2: Populate caches (cache miss -> SymbolMapReader)
@@ -3161,7 +3152,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -3179,7 +3171,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     }
                     sender.flush();
 
-                    serverMain.awaitTable("ws_cache_high_volume");
                     TestUtils.drainWalQueue(serverMain.getEngine());
 
                     // Round 2: Populate caches
@@ -3222,7 +3213,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -3238,7 +3230,6 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                             .at(1000000000001L, ChronoUnit.MICROS);
                     sender.flush();
 
-                    serverMain.awaitTable("ws_cache_invalidate");
                     TestUtils.drainWalQueue(serverMain.getEngine());
 
                     // Phase 2: Populate cache for sym_a, sym_b
