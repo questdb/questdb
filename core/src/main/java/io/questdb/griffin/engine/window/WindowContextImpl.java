@@ -72,6 +72,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.rowsHiKindPos = 0;
         this.exclusionKindPos = 0;
         this.timestampIndex = -1;
+        this.timestampType = ColumnType.UNDEFINED;
         this.ignoreNulls = false;
         this.nullsDescPos = 0;
     }

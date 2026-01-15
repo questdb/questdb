@@ -173,7 +173,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         valueArg,
                         timestampIndex,
                         tau,
-                        kind,
+                        kind.toString(),
                         paramValue
                 );
             } else {
@@ -194,7 +194,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         valueArg,
                         timestampIndex,
                         tau,
-                        kind,
+                        kind.toString(),
                         paramValue
                 );
             } else {
@@ -212,23 +212,28 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
      * Parse time unit and return tau in native timestamp precision (micros or nanos).
      */
     private static long parseTimeUnit(CharSequence kind, double value, int position, TimestampDriver driver) throws SqlException {
+        long tau;
         if (SqlKeywords.isMicrosecondKeyword(kind) || SqlKeywords.isMicrosecondsKeyword(kind)) {
-            return driver.fromMicros((long) value);
+            tau = driver.fromMicros((long) value);
         } else if (SqlKeywords.isMillisecondKeyword(kind) || SqlKeywords.isMillisecondsKeyword(kind)) {
-            return driver.fromMillis((long) value);
+            tau = driver.fromMillis((long) value);
         } else if (SqlKeywords.isSecondKeyword(kind) || SqlKeywords.isSecondsKeyword(kind)) {
-            return driver.fromSeconds((long) value);
+            tau = driver.fromSeconds((long) value);
         } else if (SqlKeywords.isMinuteKeyword(kind) || SqlKeywords.isMinutesKeyword(kind)) {
-            return driver.fromMinutes((int) value);
+            tau = driver.fromMinutes((int) value);
         } else if (SqlKeywords.isHourKeyword(kind) || SqlKeywords.isHoursKeyword(kind)) {
-            return driver.fromHours((int) value);
+            tau = driver.fromHours((int) value);
         } else if (SqlKeywords.isDayKeyword(kind) || SqlKeywords.isDaysKeyword(kind)) {
-            return driver.fromDays((int) value);
+            tau = driver.fromDays((int) value);
         } else if (SqlKeywords.isWeekKeyword(kind) || SqlKeywords.isWeeksKeyword(kind)) {
-            return driver.fromWeeks((int) value);
+            tau = driver.fromWeeks((int) value);
         } else {
             throw SqlException.$(position, "invalid kind parameter: expected 'alpha', 'period', or a time unit (second, minute, hour, day, week)");
         }
+        if (tau <= 0) {
+            throw SqlException.$(position, "time constant must be at least 1 unit in native timestamp precision");
+        }
+        return tau;
     }
 
     // EMA with fixed alpha, with partition by
