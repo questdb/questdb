@@ -1,4 +1,42 @@
+//! Write-Ahead Log (WAL) lock manager.
 //!
+//! This module provides a lock manager for handling concurrent access to WAL
+//! directories by multiple writers and purge jobs.
+//! It ensures that writers and purge jobs do not interfere with each other
+//! by managing locks on a per-WAL (table/wal-id) basis.
+//!
+//! Note:
+//! It is expected for at most one writer and one purge job to be active
+//! for a given WAL at any time. Multiple writers or purge jobs for the same
+//! WAL are not supported and will result in errors.
+//!
+//! WAL inner structure:
+//! WALs directories contains multiple segments that contains the actual data.
+//! WAL segments are identified by a segment id (SegmentId) which is a
+//! non-negative integer.
+//! The folder structure looks like this:
+//! ```text
+//! /table_name/wal[wal_id]/[segment_id]
+//! ```
+//!
+//! WAL writer behavior:
+//! When a WAL writer starts, it acquires a new WalId, locks the WAL for
+//! writing and starts writing to segments starting from segment id 0.
+//! When the writer advances to a new segment, it updates the minSegmentId in
+//! the lock manager.
+//!
+//! WAL purge job behavior:
+//! When a WAL purge job starts, it iterates over all WAL directories.
+//! For each WAL, it tries to acquire a purge lock which returns the max
+//! segment id that can be deleted or None if no writer is active.
+//! The purge job has now exclusive access to all segments with id less than
+//! or equal to the returned segment id and no writer may lock these segments
+//! until the purge job releases the lock.
+//!
+//! We need WAL writers to be able to lock/unlock/lock WALs for replication
+//! to work properly. As we do not know whether a WAL writer is closed on the
+//! primary node, the replica locks the WAL when it needs to update a table,
+//! downloads the WAL segments, finish its work and then unlocks the WAL.
 
 use std::{
     error::Error,

@@ -55,7 +55,7 @@ import java.nio.file.Files;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Benchmark to measure allocation behavior of WalLockManager operations.
+ * Benchmark to measure allocation behavior of WalLocker operations.
  * <p>
  * The goal is to verify that steady-state lock/unlock operations do not allocate
  * because WalEntry objects are reused from an internal pool.
