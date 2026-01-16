@@ -359,6 +359,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         columnNameIndexMap.clear();
 
         int columnCount = newMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.writerColumnCount = columnCount;
         assert columnCount >= existingColumnCount;
         columnMetadata.setPos(columnCount);
         int timestampIndex = newMetaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);

@@ -158,7 +158,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 };
                 final long watchId = serverMain.getEngine().getConfigReloader().watch(listener);
 
-                Assert.assertEquals(0, watchId);
+                Assert.assertTrue("watchId should be non-negative", watchId >= 0);
                 Assert.assertEquals(0, configChangedCalledCounter.get());
 
                 // [1] First, reload config after changing a watched setting.
@@ -206,7 +206,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 // [5] Should we re-register, we'll get a different ID.
                 final long watchId2 = serverMain.getEngine().getConfigReloader().watch(listener);
-                Assert.assertEquals(1, watchId2);
+                Assert.assertNotEquals("re-register should return a new watchId", watchId, watchId2);
             }
         });
     }

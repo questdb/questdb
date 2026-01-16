@@ -10153,7 +10153,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long squashCounterFileFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
             Unsafe.getUnsafe().putLong(tempMem16b, configuration.getMicrosecondClock().getTicks());
 
-            if (squashCounterFileFd == -1 || ff.write(squashCounterFileFd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
+            if (ff.write(squashCounterFileFd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
                 // Log as critical, this is not fatal
                 LOG.critical().$("cannot write partition squash timestamp, " +
                                 "incremental backup may not be able to track partition update [path=")

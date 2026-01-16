@@ -459,7 +459,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         dstPath.concat(fileName);
 
         if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-            if (optional && Files.isErrnoFileDoesNotExist(ff.errno()) && !ff.exists(srcPath.$())) {
+            if (optional && Files.isErrnoFileDoesNotExist(ff.errno())) {
                 // File is optional and doesn't exist - this is expected
                 return;
             }
