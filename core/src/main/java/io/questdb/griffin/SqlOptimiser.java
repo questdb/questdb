@@ -2406,49 +2406,21 @@ public class SqlOptimiser implements Mutable {
         if (windowCall) {
             assert innerVirtualModel != null;
             ExpressionNode n = doReplaceLiteral0(node, translatingModel, innerVirtualModel, false, baseModel);
-            // Use columnNameToAliasMap (maps token -> alias) to check if the column is already referenced.
-            // This ensures we handle renamed columns correctly (e.g., when table column 'b' is renamed to 'b1').
-            LowerCaseCharSequenceObjHashMap<CharSequence> map = innerVirtualModel.getColumnNameToAliasMap();
-            int index = map.keyIndex(n.token);
+            LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = innerVirtualModel.getColumnNameToAliasMap();
+            int index = columnNameToAliasMap.keyIndex(n.token);
             if (index > -1) {
-                // Token not found in columnNameToAliasMap. Check if it exists as an alias.
-                // This handles the case where multiple output aliases reference the same column (e.g., "x as a, x as b").
-                // But ONLY if the table doesn't have a column with that name - if it does, let normal flow handle it.
-                if (baseModel.getAliasToColumnMap().excludes(n.token)) {
-                    LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = innerVirtualModel.getAliasToColumnMap();
-                    int aliasIndex = aliasMap.keyIndex(n.token);
-                    if (aliasIndex < 0) {
-                        // The token exists as an alias in innerVirtualModel but table doesn't have this column.
-                        // Verify it can be resolved - if it references another alias that's not a table column, throw error.
-                        QueryColumn innerCol = aliasMap.valueAtQuick(aliasIndex);
-                        ExpressionNode innerAst = innerCol.getAst();
-                        // Only check for invalid column if the alias references a literal (column reference).
-                        // If it references a function or other expression type, it's valid (e.g., "f(a) c, lag(c)").
-                        if (innerAst.type == ExpressionNode.LITERAL) {
-                            CharSequence innerToken = innerAst.token;
-                            // Check if the underlying token resolves to a table column
-                            QueryColumn translatingCol = translatingModel.getAliasToColumnMap().get(n.token);
-                            if (translatingCol == null && baseModel.getAliasToColumnMap().excludes(innerToken)) {
-                                // The alias references another alias that doesn't resolve to a table column
-                                throw SqlException.invalidColumn(node.position, node.token);
-                            }
-                        }
-                        // Let normal flow proceed to add the column reference with a new alias if needed
-                    }
-                }
-                // column is not referenced by inner model - add it
+                // Column not yet referenced by inner model - validate and add it
+                validateWindowColumnReference(node, n.token, translatingModel, innerVirtualModel, baseModel);
                 CharSequence alias = createColumnAlias(n.token, innerVirtualModel);
                 innerVirtualModel.addBottomUpColumn(queryColumnPool.next().of(alias, n));
-                // when alias is not the same as token, e.g., column aliases as "token" is already on the list,
-                // we have to create a new expression node that uses this alias
                 if (alias != n.token) {
                     return nextLiteral(alias);
                 } else {
                     return n;
                 }
             } else {
-                // column is already referenced
-                return nextLiteral(map.valueAt(index), node.position);
+                // Column already referenced - return existing alias
+                return nextLiteral(columnNameToAliasMap.valueAt(index), node.position);
             }
         }
         return doReplaceLiteral0(node, translatingModel, innerVirtualModel, addColumnToInnerVirtualModel, baseModel);
@@ -8463,6 +8435,69 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return index;
+    }
+
+    /**
+     * Validates that a column reference in a window function argument can be resolved.
+     * <p>
+     * This catches invalid SQL like: {@code SELECT x as a, x as b, sum(sum(b) OVER ()) OVER () FROM t}
+     * <p>
+     * The problem: when the same column has multiple aliases ({@code x as a, x as b}), the second
+     * alias internally stores a reference to the first alias's token, not the original column.
+     * So {@code b}'s AST contains literal "a", not "x". When a window function references {@code b},
+     * we must verify this alias chain resolves to an actual table column.
+     * <p>
+     * Valid cases that should NOT throw:
+     * <ul>
+     *   <li>{@code f(x) as c, lag(c)} - alias references a function result</li>
+     *   <li>{@code x as a, sum(a)} - alias references a table column directly</li>
+     *   <li>Table has column matching the alias name - normal column renaming handles it</li>
+     * </ul>
+     *
+     * @param node              Original expression node (for error position)
+     * @param token             The resolved token to validate
+     * @param translatingModel  Model containing column-to-alias mappings
+     * @param innerVirtualModel Model containing projection aliases
+     * @param baseModel         Base model with actual table columns
+     */
+    private void validateWindowColumnReference(
+            ExpressionNode node,
+            CharSequence token,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        // If the table has a column with this name, normal flow handles renaming (e.g., b -> b1)
+        if (!baseModel.getAliasToColumnMap().excludes(token)) {
+            return;
+        }
+
+        // Check if token exists as a projection alias
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = innerVirtualModel.getAliasToColumnMap();
+        int aliasIndex = aliasMap.keyIndex(token);
+        if (aliasIndex >= 0) {
+            // Not an alias - will be handled by normal flow
+            return;
+        }
+
+        // Token is a projection alias. Check what it references.
+        QueryColumn aliasedColumn = aliasMap.valueAtQuick(aliasIndex);
+        ExpressionNode aliasAst = aliasedColumn.getAst();
+
+        // Only validate if alias references a column (LITERAL). Functions, constants, etc. are fine.
+        if (aliasAst.type != ExpressionNode.LITERAL) {
+            return;
+        }
+
+        // The alias references another literal. Verify that literal resolves to a table column.
+        CharSequence referencedToken = aliasAst.token;
+        boolean inTranslatingModel = translatingModel.getAliasToColumnMap().get(token) != null;
+        boolean isTableColumn = !baseModel.getAliasToColumnMap().excludes(referencedToken);
+
+        if (!inTranslatingModel && !isTableColumn) {
+            // The alias references another alias that doesn't resolve to a table column
+            throw SqlException.invalidColumn(node.position, node.token);
+        }
     }
 
     private void validateConstOrRuntimeConstFunction(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
