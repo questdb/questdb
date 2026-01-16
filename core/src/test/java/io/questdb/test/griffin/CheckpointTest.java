@@ -2260,13 +2260,12 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
-    private static void corruptIndexKeyEntry(String dbRoot, String tableDirName,
-                                             String partitionName, String columnName) {
+    private static void corruptIndexKeyEntry(String dbRoot, String tableDirName) {
         File tableDir = new File(dbRoot, "db/" + tableDirName);
-        File partDir = new File(tableDir, partitionName);
-        File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith(columnName + ".k"));
+        File partDir = new File(tableDir, "1970");
+        File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith("sym" + ".k"));
         if (keyFiles == null || keyFiles.length == 0) {
-            throw new IllegalStateException("No key file found for column: " + columnName);
+            throw new IllegalStateException("No key file found for column: " + "sym");
         }
         File keyFile = keyFiles[0];
 
@@ -2554,17 +2553,17 @@ public class CheckpointTest extends AbstractCairoTest {
             }
 
             // Verify index is valid before corruption
-            IndexSnapshot beforeCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
-            Assert.assertEquals("Index should have 10 entries", 10, beforeCorruption.getRowIds(1).size());
-            TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), beforeCorruption.getRowIds(1));
+            IndexSnapshot beforeCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
+            Assert.assertEquals("Index should have 10 entries", 10, beforeCorruption.getRowIds().size());
+            TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), beforeCorruption.getRowIds());
 
             // Corrupt the index in dir2: make valueCount != countCheck
-            corruptIndexKeyEntry(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+            corruptIndexKeyEntry(dir2.getAbsolutePath(), tableDirName);
 
             // Verify corruption was applied - IndexSnapshot reads valueCount, which we incremented to 11
-            IndexSnapshot afterCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+            IndexSnapshot afterCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
             Assert.assertEquals("Corrupted index should show 11 entries (valueCount)", 11,
-                    afterCorruption.getRowIds(1).size());
+                    afterCorruption.getRowIds().size());
 
             // Create trigger file to force checkpoint recovery
             try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
@@ -2576,12 +2575,12 @@ public class CheckpointTest extends AbstractCairoTest {
                     dir2.getAbsolutePath(),
                     CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES.getEnvVarName(), String.valueOf(rebuildColumnIndexes)
             )) {
-                IndexSnapshot afterRecovery = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+                IndexSnapshot afterRecovery = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
 
                 if (rebuildColumnIndexes) {
                     // With rebuild=true, index is rebuilt from data files, corruption fixed
-                    Assert.assertEquals("Rebuilt index should have 10 entries", 10, afterRecovery.getRowIds(1).size());
-                    TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecovery.getRowIds(1));
+                    Assert.assertEquals("Rebuilt index should have 10 entries", 10, afterRecovery.getRowIds().size());
+                    TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecovery.getRowIds());
 
                     // Queries should work correctly
                     server2.assertSql(
@@ -2592,7 +2591,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     // With rebuild=false, corrupted index is preserved
                     // valueCount=11 but countCheck=10 - the index file still has the corruption
                     Assert.assertEquals("Corrupted index should still show 11 entries", 11,
-                            afterRecovery.getRowIds(1).size());
+                            afterRecovery.getRowIds().size());
 
                     // Query using the corrupted index throws CairoException due to consistency check
                     try {
@@ -2701,10 +2700,10 @@ public class CheckpointTest extends AbstractCairoTest {
 
         // Verify the STALE index state before server2 starts
         // Key 0 is null symbol, Key 1 is OLD_SYM
-        IndexSnapshot staleIndex = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+        IndexSnapshot staleIndex = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
         Assert.assertEquals("Stale index should have maxValue=14 (row IDs 0-14)", 14, staleIndex.maxValue);
         Assert.assertEquals("Stale index should have 2 keys", 2, staleIndex.keyCount);
-        TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), staleIndex.getRowIds(1));
+        TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), staleIndex.getRowIds());
 
         // Create the trigger file in dir2 to force checkpoint recovery on startup
         try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
@@ -2718,18 +2717,18 @@ public class CheckpointTest extends AbstractCairoTest {
         )) {
             // Read the index AFTER checkpoint recovery but BEFORE any writes.
             // This shows the difference between rebuild=true and rebuild=false.
-            IndexSnapshot afterRecoveryIndex = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName, "1970", "sym");
+            IndexSnapshot afterRecoveryIndex = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
 
             if (rebuildColumnIndexes) {
                 // With rebuild=true, checkpoint recovery rebuilt the index from scratch.
                 // It should have exactly 10 entries (matching the checkpoint row count) and maxValue=9.
                 Assert.assertEquals("With rebuild=true, maxValue should be 9", 9, afterRecoveryIndex.maxValue);
-                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecoveryIndex.getRowIds(1));
+                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecoveryIndex.getRowIds());
             } else {
                 // With rebuild=false, the index file on disk STILL has the stale 15 entries.
                 // They will be cleaned up by TableWriter.rollbackIndexes() on first write.
                 Assert.assertEquals("With rebuild=false, maxValue still stale at 14", 14, afterRecoveryIndex.maxValue);
-                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), afterRecoveryIndex.getRowIds(1));
+                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), afterRecoveryIndex.getRowIds());
             }
         }
     }
@@ -2873,14 +2872,14 @@ public class CheckpointTest extends AbstractCairoTest {
         /**
          * Reads index from the standard location in a QuestDB data directory.
          */
-        static IndexSnapshot read(String dbRoot, String tableDirName, String partitionName, String columnName) {
+        static IndexSnapshot read(String dbRoot, String tableDirName) {
             File tableDir = new File(dbRoot, "db/" + tableDirName);
-            File partDir = new File(tableDir, partitionName);
+            File partDir = new File(tableDir, "1970");
 
             // Find .k file (may have txn suffix)
-            File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith(columnName + ".k"));
+            File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith("sym" + ".k"));
             if (keyFiles == null || keyFiles.length == 0) {
-                throw new IllegalStateException("No key file found for column: " + columnName + " in " + partDir);
+                throw new IllegalStateException("No key file found for column: " + "sym" + " in " + partDir);
             }
             File keyFile = keyFiles[0];
             String vFileName = keyFile.getName().replace(".k", ".v");
@@ -2941,8 +2940,8 @@ public class CheckpointTest extends AbstractCairoTest {
             }
         }
 
-        LongList getRowIds(int key) {
-            return entries.get(key);
+        LongList getRowIds() {
+            return entries.get(1);
         }
     }
 

@@ -79,20 +79,4 @@ public class CurrentDataIDFunctionFactoryTest extends AbstractBootstrapTest {
             }
         });
     }
-
-//    @Test
-//    public void testSetDataID() throws Exception {
-//        final java.io.File tmpDbRoot = new java.io.File(temp.newFolder(".testOpenDataID.installRoot"), "db");
-//        Assert.assertTrue(tmpDbRoot.mkdirs());
-//        final CairoConfiguration config = new DefaultTestCairoConfiguration(tmpDbRoot.getAbsolutePath());
-//        final Uuid newID = new Uuid();
-//        final Rnd rnd = config.getRandom();
-//        newID.of(rnd.nextLong(), rnd.nextLong());
-//        sink.clear();
-//        newID.toSink(sink);
-//        engine.getDataID().set(newID.getLo(), newID.getHi());
-//        final String id = sink.toString();
-//        assertSql("current_data_id\n" + id + "\n",
-//                "select current_data_id();");
-//    }
 }
