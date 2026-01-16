@@ -129,6 +129,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 frame.partitionIndex = reenterPartitionIndex;
                 frame.partitionLo = lo;
                 frame.partitionHi = hi;
+                frame.format = partitionFrame.getPartitionFormat();
+                if (frame.format == PartitionFormat.PARQUET) {
+                    frame.partitionDecoder = partitionFrame.getParquetDecoder();
+                }
+
                 return frame;
             }
             return nextSlow(partitionFrame, lo, hi);
@@ -281,6 +286,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reenterPartitionFrame = false;
         }
 
+        frame.partitionDecoder = reenterParquetDecoder;
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
         frame.format = PartitionFormat.PARQUET;
@@ -326,6 +332,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private class TableReaderPageFrame implements PageFrame {
         private byte format;
+        private PartitionDecoder partitionDecoder;
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
@@ -370,8 +377,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public PartitionDecoder getParquetPartitionDecoder() {
-            assert reenterParquetDecoder != null || format != PartitionFormat.PARQUET;
-            return reenterParquetDecoder;
+            assert partitionDecoder != null || format != PartitionFormat.PARQUET;
+            return partitionDecoder;
         }
 
         @Override

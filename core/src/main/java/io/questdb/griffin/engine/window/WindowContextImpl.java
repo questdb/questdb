@@ -215,6 +215,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.exclusionKind = exclusionKind;
         this.exclusionKindPos = exclusionKindPos;
         this.timestampIndex = timestampIndex;
+        this.timestampType = timestampType;
         this.ignoreNulls = ignoreNulls;
         this.nullsDescPos = nullsDescPos;
         this.timestampType = timestampType;
