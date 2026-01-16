@@ -63,11 +63,21 @@ get_protocol_from_args() {
 case "$1" in
     server)
         check_jars
+        shift  # remove 'server' from args
+
+        # Check for --debug flag
+        DEBUG_FLAG=""
+        for arg in "$@"; do
+            if [[ "$arg" == "--debug" ]]; then
+                DEBUG_FLAG="-Debug"
+            fi
+        done
+
         echo "Starting QuestDB server..."
         echo "Data directory: $QDB_ROOT"
         echo ""
         mkdir -p "$QDB_ROOT"
-        java -p "$MAIN_JAR" \
+        java -p "$MAIN_JAR" $DEBUG_FLAG \
              -m io.questdb/io.questdb.ServerMain \
              -d "$QDB_ROOT"
         ;;
