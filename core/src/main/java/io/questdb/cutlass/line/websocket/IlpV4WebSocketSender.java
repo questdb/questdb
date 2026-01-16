@@ -314,7 +314,7 @@ public class IlpV4WebSocketSender implements Sender {
                         WebSocketSendQueue.DEFAULT_SHUTDOWN_TIMEOUT_MS);
 
                 // Start response reader to process server ACKs asynchronously
-                responseReader = new ResponseReader(channel, inFlightWindow);
+                responseReader = new ResponseReader(channel, inFlightWindow, connectionSymbolState);
             }
             // Sync mode: no send queue or background reader - we read ACKs synchronously
 

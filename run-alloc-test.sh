@@ -75,10 +75,22 @@ case "$1" in
     client)
         check_jars
         shift  # remove 'client' from args
+
+        # Check for --debug flag
+        DEBUG_FLAG=""
+        CLIENT_ARGS=()
+        for arg in "$@"; do
+            if [[ "$arg" == "--debug" ]]; then
+                DEBUG_FLAG="-Debug"
+            else
+                CLIENT_ARGS+=("$arg")
+            fi
+        done
+
         echo "Running ILP test client..."
-        java -cp "$MAIN_JAR:$TEST_JAR" \
+        java -cp "$MAIN_JAR:$TEST_JAR" $DEBUG_FLAG \
              io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
-             "$@"
+             "${CLIENT_ARGS[@]}"
         ;;
 
     profile)
@@ -170,6 +182,7 @@ case "$1" in
         echo "  compare [options]   Run all 4 protocols and compare"
         echo ""
         echo "Options:"
+        echo "  --debug                  Enable debug logging"
         echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-http, ilpv4-websocket (default: ilpv4-http)"
         echo "  --host=HOST              Server host (default: localhost)"
         echo "  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP/WebSocket)"
