@@ -38,7 +38,7 @@ import java.nio.charset.StandardCharsets;
  * <p>
  * All multi-byte values are written in little-endian format unless otherwise specified.
  */
-public class NativeBufferWriter implements QuietCloseable {
+public class NativeBufferWriter implements IlpBufferWriter, QuietCloseable {
 
     private static final int DEFAULT_CAPACITY = 8192;
 
@@ -59,6 +59,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Returns the buffer pointer.
      */
+    @Override
     public long getBufferPtr() {
         return bufferPtr;
     }
@@ -66,6 +67,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Returns the current write position (number of bytes written).
      */
+    @Override
     public int getPosition() {
         return position;
     }
@@ -73,6 +75,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Resets the buffer for reuse.
      */
+    @Override
     public void reset() {
         position = 0;
     }
@@ -80,6 +83,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes a single byte.
      */
+    @Override
     public void putByte(byte value) {
         ensureCapacity(1);
         Unsafe.getUnsafe().putByte(bufferPtr + position, value);
@@ -89,6 +93,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes a short (2 bytes, little-endian).
      */
+    @Override
     public void putShort(short value) {
         ensureCapacity(2);
         Unsafe.getUnsafe().putShort(bufferPtr + position, value);
@@ -98,6 +103,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes an int (4 bytes, little-endian).
      */
+    @Override
     public void putInt(int value) {
         ensureCapacity(4);
         Unsafe.getUnsafe().putInt(bufferPtr + position, value);
@@ -107,6 +113,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes a long (8 bytes, little-endian).
      */
+    @Override
     public void putLong(long value) {
         ensureCapacity(8);
         Unsafe.getUnsafe().putLong(bufferPtr + position, value);
@@ -116,6 +123,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes a long in big-endian order.
      */
+    @Override
     public void putLongBE(long value) {
         ensureCapacity(8);
         Unsafe.getUnsafe().putLong(bufferPtr + position, Long.reverseBytes(value));
@@ -125,6 +133,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes a float (4 bytes, little-endian).
      */
+    @Override
     public void putFloat(float value) {
         ensureCapacity(4);
         Unsafe.getUnsafe().putFloat(bufferPtr + position, value);
@@ -134,6 +143,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes a double (8 bytes, little-endian).
      */
+    @Override
     public void putDouble(double value) {
         ensureCapacity(8);
         Unsafe.getUnsafe().putDouble(bufferPtr + position, value);
@@ -143,15 +153,17 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes a block of bytes from native memory.
      */
-    public void putBlockOfBytes(long from, int len) {
-        ensureCapacity(len);
+    @Override
+    public void putBlockOfBytes(long from, long len) {
+        ensureCapacity((int) len);
         Unsafe.getUnsafe().copyMemory(from, bufferPtr + position, len);
-        position += len;
+        position += (int) len;
     }
 
     /**
      * Writes a varint (unsigned LEB128).
      */
+    @Override
     public void putVarint(long value) {
         while (value > 0x7F) {
             putByte((byte) ((value & 0x7F) | 0x80));
@@ -163,6 +175,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes a length-prefixed UTF-8 string.
      */
+    @Override
     public void putString(String value) {
         if (value == null || value.isEmpty()) {
             putVarint(0);
@@ -179,6 +192,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Writes UTF-8 bytes directly without length prefix.
      */
+    @Override
     public void putUtf8(String value) {
         if (value == null || value.isEmpty()) {
             return;
@@ -231,6 +245,7 @@ public class NativeBufferWriter implements QuietCloseable {
      * Patches an int value at the specified offset.
      * Used for updating length fields after writing content.
      */
+    @Override
     public void patchInt(int offset, int value) {
         Unsafe.getUnsafe().putInt(bufferPtr + offset, value);
     }
@@ -238,6 +253,7 @@ public class NativeBufferWriter implements QuietCloseable {
     /**
      * Returns the current buffer capacity.
      */
+    @Override
     public int getCapacity() {
         return capacity;
     }
@@ -248,6 +264,7 @@ public class NativeBufferWriter implements QuietCloseable {
      *
      * @param bytes number of bytes to skip
      */
+    @Override
     public void skip(int bytes) {
         position += bytes;
     }
@@ -257,6 +274,7 @@ public class NativeBufferWriter implements QuietCloseable {
      *
      * @param needed additional bytes needed beyond current position
      */
+    @Override
     public void ensureCapacity(int needed) {
         if (position + needed > capacity) {
             int newCapacity = Math.max(capacity * 2, position + needed);

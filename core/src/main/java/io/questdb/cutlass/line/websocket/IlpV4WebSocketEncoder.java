@@ -35,37 +35,83 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
 /**
  * Encodes ILP v4 messages for WebSocket transport.
  * <p>
- * This encoder writes to a NativeBufferWriter which can then be sent
- * as a binary WebSocket frame.
+ * This encoder can write to either an internal {@link NativeBufferWriter} (default)
+ * or an external {@link IlpBufferWriter} such as {@link io.questdb.cutlass.http.client.WebSocketSendBuffer}.
+ * <p>
+ * When using an external buffer, the encoder writes directly to it without intermediate copies,
+ * enabling zero-copy WebSocket frame construction.
+ * <p>
+ * Usage with external buffer (zero-copy):
+ * <pre>
+ * WebSocketSendBuffer buf = client.getSendBuffer();
+ * buf.beginBinaryFrame();
+ * encoder.setBuffer(buf);
+ * encoder.encode(tableData, false);
+ * FrameInfo frame = buf.endBinaryFrame();
+ * client.sendFrame(frame);
+ * </pre>
  */
 public class IlpV4WebSocketEncoder implements QuietCloseable {
 
-    private final NativeBufferWriter buffer;
+    private NativeBufferWriter ownedBuffer;
+    private IlpBufferWriter buffer;
     private final IlpV4GorillaEncoder gorillaEncoder = new IlpV4GorillaEncoder();
     private byte flags;
 
     public IlpV4WebSocketEncoder() {
-        this.buffer = new NativeBufferWriter();
+        this.ownedBuffer = new NativeBufferWriter();
+        this.buffer = ownedBuffer;
         this.flags = 0;
     }
 
     public IlpV4WebSocketEncoder(int bufferSize) {
-        this.buffer = new NativeBufferWriter(bufferSize);
+        this.ownedBuffer = new NativeBufferWriter(bufferSize);
+        this.buffer = ownedBuffer;
         this.flags = 0;
     }
 
     /**
      * Returns the underlying buffer.
+     * <p>
+     * If an external buffer was set via {@link #setBuffer(IlpBufferWriter)},
+     * that buffer is returned. Otherwise, returns the internal buffer.
      */
-    public NativeBufferWriter getBuffer() {
+    public IlpBufferWriter getBuffer() {
         return buffer;
     }
 
     /**
+     * Sets an external buffer for encoding.
+     * <p>
+     * When set, the encoder writes directly to this buffer instead of its internal buffer.
+     * The caller is responsible for managing the external buffer's lifecycle.
+     * <p>
+     * Pass {@code null} to revert to using the internal buffer.
+     *
+     * @param externalBuffer the external buffer to use, or null to use internal buffer
+     */
+    public void setBuffer(IlpBufferWriter externalBuffer) {
+        this.buffer = externalBuffer != null ? externalBuffer : ownedBuffer;
+    }
+
+    /**
+     * Returns true if currently using an external buffer.
+     */
+    public boolean isUsingExternalBuffer() {
+        return buffer != ownedBuffer;
+    }
+
+    /**
      * Resets the encoder for a new message.
+     * <p>
+     * If using an external buffer, this only resets the internal state (flags).
+     * The external buffer's reset is the caller's responsibility.
+     * If using the internal buffer, resets both the buffer and internal state.
      */
     public void reset() {
-        buffer.reset();
+        if (!isUsingExternalBuffer()) {
+            buffer.reset();
+        }
     }
 
     /**
@@ -571,7 +617,7 @@ public class IlpV4WebSocketEncoder implements QuietCloseable {
         int totalDataLen = 0;
         for (int i = 0; i < count; i++) {
             if (strings[i] != null) {
-                totalDataLen += NativeBufferWriter.utf8Length(strings[i]);
+                totalDataLen += IlpBufferWriter.utf8Length(strings[i]);
             }
         }
 
@@ -580,7 +626,7 @@ public class IlpV4WebSocketEncoder implements QuietCloseable {
         buffer.putInt(0);
         for (int i = 0; i < count; i++) {
             if (strings[i] != null) {
-                runningOffset += NativeBufferWriter.utf8Length(strings[i]);
+                runningOffset += IlpBufferWriter.utf8Length(strings[i]);
             }
             buffer.putInt(runningOffset);
         }
@@ -730,6 +776,9 @@ public class IlpV4WebSocketEncoder implements QuietCloseable {
 
     @Override
     public void close() {
-        buffer.close();
+        if (ownedBuffer != null) {
+            ownedBuffer.close();
+            ownedBuffer = null;
+        }
     }
 }

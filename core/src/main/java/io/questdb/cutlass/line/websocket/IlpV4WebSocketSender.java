@@ -25,6 +25,9 @@
 package io.questdb.cutlass.line.websocket;
 
 import io.questdb.client.Sender;
+import io.questdb.cutlass.http.client.WebSocketClient;
+import io.questdb.cutlass.http.client.WebSocketClientFactory;
+import io.questdb.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.cutlass.http.ilpv4.IlpV4TableBuffer;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
@@ -102,8 +105,8 @@ public class IlpV4WebSocketSender implements Sender {
     // Encoder for ILP v4 messages
     private final IlpV4WebSocketEncoder encoder;
 
-    // WebSocket channel
-    private WebSocketChannel channel;
+    // WebSocket client (zero-GC native implementation)
+    private WebSocketClient client;
     private boolean connected;
     private boolean closed;
 
@@ -113,9 +116,8 @@ public class IlpV4WebSocketSender implements Sender {
     private MicrobatchBuffer activeBuffer;
     private WebSocketSendQueue sendQueue;
 
-    // Flow control and response handling
+    // Flow control
     private InFlightWindow inFlightWindow;
-    private ResponseReader responseReader;
 
     // Auto-flush configuration
     private final int autoFlushRows;
@@ -299,26 +301,35 @@ public class IlpV4WebSocketSender implements Sender {
             throw new LineSenderException("Sender is closed");
         }
         if (!connected) {
-            String scheme = tlsEnabled ? "wss" : "ws";
-            String url = scheme + "://" + host + ":" + port + WRITE_PATH;
-            channel = new WebSocketChannel(url, tlsEnabled);
-            channel.connect();
+            // Create WebSocket client using factory (zero-GC native implementation)
+            if (tlsEnabled) {
+                client = WebSocketClientFactory.newInsecureTlsInstance();
+            } else {
+                client = WebSocketClientFactory.newPlainTextInstance();
+            }
+
+            // Connect and upgrade to WebSocket
+            try {
+                client.connect(host, port);
+                client.upgrade(WRITE_PATH);
+            } catch (Exception e) {
+                client.close();
+                client = null;
+                throw new LineSenderException("Failed to connect to " + host + ":" + port, e);
+            }
 
             // Create InFlightWindow for tracking batches awaiting ACK (both modes)
             inFlightWindow = new InFlightWindow(inFlightWindowSize, InFlightWindow.DEFAULT_TIMEOUT_MS);
 
-            // Initialize send queue and background response reader only for async mode
+            // Initialize send queue for async mode
+            // The send queue handles both sending AND receiving (single I/O thread)
             if (asyncMode) {
-                // Create send queue with InFlightWindow
-                sendQueue = new WebSocketSendQueue(channel, inFlightWindow,
+                sendQueue = new WebSocketSendQueue(client, inFlightWindow,
                         sendQueueCapacity,
                         WebSocketSendQueue.DEFAULT_ENQUEUE_TIMEOUT_MS,
                         WebSocketSendQueue.DEFAULT_SHUTDOWN_TIMEOUT_MS);
-
-                // Start response reader to process server ACKs asynchronously
-                responseReader = new ResponseReader(channel, inFlightWindow);
             }
-            // Sync mode: no send queue or background reader - we read ACKs synchronously
+            // Sync mode: no send queue - we send and read ACKs synchronously
 
             connected = true;
             LOG.info().$("Connected to WebSocket [host=").$(host)
@@ -596,7 +607,7 @@ public class IlpV4WebSocketSender implements Sender {
                         currentBatchMaxSymbolId,
                         false
                 );
-                NativeBufferWriter buffer = encoder.getBuffer();
+                IlpBufferWriter buffer = encoder.getBuffer();
 
                 // Copy to microbatch buffer and seal immediately
                 // Each ILP v4 message must be in its own WebSocket frame
@@ -792,7 +803,7 @@ public class IlpV4WebSocketSender implements Sender {
                     false
             );
             if (messageSize > 0) {
-                NativeBufferWriter buffer = encoder.getBuffer();
+                IlpBufferWriter buffer = encoder.getBuffer();
 
                 // Track batch in InFlightWindow before sending
                 long batchSequence = nextBatchSequence++;
@@ -807,7 +818,7 @@ public class IlpV4WebSocketSender implements Sender {
                         .$(", maxSentSymbolId=").$(maxSentSymbolId).I$();
 
                 // Send over WebSocket
-                channel.sendBinary(buffer.getBufferPtr(), messageSize);
+                client.sendBinary(buffer.getBufferPtr(), messageSize);
 
                 // Wait for ACK synchronously
                 waitForAck(batchSequence);
@@ -836,11 +847,11 @@ public class IlpV4WebSocketSender implements Sender {
 
         while (System.currentTimeMillis() < deadline) {
             try {
-                boolean received = channel.receiveFrame(new WebSocketChannel.ResponseHandler() {
+                boolean received = client.receiveFrame(new WebSocketFrameHandler() {
                     @Override
-                    public void onBinaryMessage(long payload, int length) {
-                        if (length >= WebSocketResponse.MIN_RESPONSE_SIZE) {
-                            response.readFrom(payload, length);
+                    public void onBinaryMessage(long payloadPtr, int payloadLen) {
+                        if (payloadLen >= WebSocketResponse.MIN_RESPONSE_SIZE) {
+                            response.readFrom(payloadPtr, payloadLen);
                         }
                     }
 
@@ -1085,17 +1096,12 @@ public class IlpV4WebSocketSender implements Sender {
                     }
                 } else {
                     // Sync mode: flush pending rows synchronously
-                    if (pendingRowCount > 0 && channel != null && channel.isConnected()) {
+                    if (pendingRowCount > 0 && client != null && client.isConnected()) {
                         flushSync();
                     }
                 }
             } catch (Exception e) {
                 LOG.error().$("Error during close: ").$(e).I$();
-            }
-
-            // Close response reader (async mode only)
-            if (responseReader != null) {
-                responseReader.close();
             }
 
             // Close buffers (async mode only)
@@ -1106,9 +1112,9 @@ public class IlpV4WebSocketSender implements Sender {
                 buffer1.close();
             }
 
-            if (channel != null) {
-                channel.close();
-                channel = null;
+            if (client != null) {
+                client.close();
+                client = null;
             }
             encoder.close();
             tableBuffers.clear();

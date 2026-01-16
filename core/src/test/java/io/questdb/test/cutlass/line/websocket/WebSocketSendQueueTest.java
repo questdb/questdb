@@ -24,10 +24,14 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
+import io.questdb.HttpClientConfiguration;
+import io.questdb.cutlass.http.client.WebSocketClient;
+import io.questdb.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.websocket.MicrobatchBuffer;
-import io.questdb.cutlass.line.websocket.WebSocketChannel;
 import io.questdb.cutlass.line.websocket.WebSocketSendQueue;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
@@ -51,7 +55,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testConstructionWithDefaultParameters() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel)) {
             Assert.assertTrue(queue.isRunning());
             Assert.assertTrue(queue.isEmpty());
@@ -64,7 +68,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testConstructionWithCustomParameters() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 8, 5000, 2000)) {
             Assert.assertTrue(queue.isRunning());
             Assert.assertTrue(queue.isEmpty());
@@ -78,7 +82,7 @@ public class WebSocketSendQueueTest {
 
     @Test(expected = IllegalArgumentException.class)
     public void testConstructionWithZeroCapacity() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue ignored = new WebSocketSendQueue(channel, null, 0, 1000, 1000)) {
             Assert.fail("Should throw");
         }
@@ -86,7 +90,7 @@ public class WebSocketSendQueueTest {
 
     @Test(expected = IllegalArgumentException.class)
     public void testConstructionWithNegativeCapacity() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue ignored = new WebSocketSendQueue(channel, null, -1, 1000, 1000)) {
             Assert.fail("Should throw");
         }
@@ -96,7 +100,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testEnqueueSingleBuffer() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel)) {
             MicrobatchBuffer buffer = createSealedBuffer(100);
             try {
@@ -116,7 +120,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testEnqueueMultipleBuffers() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel)) {
             List<MicrobatchBuffer> buffers = new ArrayList<>();
             try {
@@ -142,7 +146,7 @@ public class WebSocketSendQueueTest {
 
     @Test(expected = IllegalArgumentException.class)
     public void testEnqueueNullBuffer() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel)) {
             queue.enqueue(null);
         }
@@ -150,7 +154,7 @@ public class WebSocketSendQueueTest {
 
     @Test(expected = LineSenderException.class)
     public void testEnqueueUnsealedBuffer() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel)) {
             MicrobatchBuffer buffer = new MicrobatchBuffer(1024);
             try {
@@ -164,7 +168,7 @@ public class WebSocketSendQueueTest {
 
     @Test(expected = LineSenderException.class)
     public void testEnqueueAfterClose() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         WebSocketSendQueue queue = new WebSocketSendQueue(channel);
         queue.close();
 
@@ -180,7 +184,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testFlushEmptyQueue() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel)) {
             // Should return immediately
             queue.flush();
@@ -190,7 +194,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testFlushWaitsForPendingBatches() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         // Add delay to simulate slow sending
         channel.setSendDelayMs(50);
 
@@ -224,7 +228,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testCloseEmptyQueue() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         WebSocketSendQueue queue = new WebSocketSendQueue(channel);
 
         queue.close();
@@ -234,7 +238,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testCloseWithPendingBatches() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         channel.setSendDelayMs(10);
 
         WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 8, 1000, 5000);
@@ -262,7 +266,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testCloseIdempotent() {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         WebSocketSendQueue queue = new WebSocketSendQueue(channel);
 
         // Multiple closes should be safe
@@ -277,7 +281,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testStatisticsAccumulate() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel)) {
             List<MicrobatchBuffer> buffers = new ArrayList<>();
             int totalBytes = 0;
@@ -304,7 +308,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testPendingCountUpdates() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         // Add delay to let batches accumulate
         channel.setSendDelayMs(100);
 
@@ -338,7 +342,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testBufferStateTransitionsToRecycled() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel)) {
             MicrobatchBuffer buffer = createSealedBuffer(100);
             try {
@@ -359,7 +363,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testBufferAwaitRecycled() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         channel.setSendDelayMs(50);
 
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel)) {
@@ -381,7 +385,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testConcurrentEnqueue() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         int numThreads = 4;
         int batchesPerThread = 25;
 
@@ -432,7 +436,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testProducerConsumerWithBackpressure() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         // Slow sending to create backpressure
         channel.setSendDelayMs(20);
 
@@ -482,7 +486,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testSendErrorRecorded() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         channel.setFailAfterSends(2);
         channel.setFailException(new RuntimeException("Simulated send error"));
 
@@ -510,7 +514,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testBufferRecycledOnError() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         channel.setFailAfterSends(0); // Fail immediately
         channel.setFailException(new RuntimeException("Simulated send error"));
 
@@ -543,7 +547,7 @@ public class WebSocketSendQueueTest {
         return buffer;
     }
 
-    private void waitForSend(MockWebSocketChannel channel, int expectedCount, long timeoutMs) throws InterruptedException {
+    private void waitForSend(MockWebSocketClient channel, int expectedCount, long timeoutMs) throws InterruptedException {
         long startTime = System.currentTimeMillis();
         while (channel.getSendCount() < expectedCount) {
             if (System.currentTimeMillis() - startTime > timeoutMs) {
@@ -558,7 +562,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testHighThroughputSending() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         int numBatches = 1000;
 
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 64, 30000, 30000)) {
@@ -590,7 +594,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testBurstThenSteadySending() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         channel.setSendDelayMs(5);
 
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 16, 10000, 10000)) {
@@ -625,7 +629,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testQueueDrainDuringHighContention() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         channel.setSendDelayMs(2);
 
         int numThreads = 8;
@@ -675,7 +679,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testVariableBufferSizes() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
 
         try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 16, 10000, 10000)) {
             List<MicrobatchBuffer> buffers = new ArrayList<>();
@@ -705,7 +709,7 @@ public class WebSocketSendQueueTest {
 
     @Test
     public void testInterruptedEnqueue() throws Exception {
-        MockWebSocketChannel channel = new MockWebSocketChannel();
+        MockWebSocketClient channel = new MockWebSocketClient();
         channel.setSendDelayMs(50); // Moderate delay
 
         // Note: We cannot close buffers while the send thread might still be using them.
@@ -744,26 +748,52 @@ public class WebSocketSendQueueTest {
         }
     }
 
-    // ==================== MOCK WEBSOCKET CHANNEL ====================
+    // ==================== MOCK WEBSOCKET CLIENT ====================
 
     /**
-     * Mock WebSocket channel for testing.
+     * Mock WebSocket client for testing.
      */
-    private static class MockWebSocketChannel extends WebSocketChannel {
+    private static class MockWebSocketClient extends WebSocketClient {
         private final AtomicInteger sendCount = new AtomicInteger(0);
         private final AtomicLong totalBytes = new AtomicLong(0);
         private volatile int sendDelayMs = 0;
         private volatile int failAfterSends = -1;
         private volatile RuntimeException failException = null;
         private final List<byte[]> sentData = Collections.synchronizedList(new ArrayList<>());
+        private volatile boolean connected = true;
 
-        public MockWebSocketChannel() {
-            super("ws://localhost:9000/test", false);
-        }
+        public MockWebSocketClient() {
+            super(new HttpClientConfiguration() {
+                @Override
+                public int getTimeout() {
+                    return 30000;
+                }
 
-        @Override
-        public void connect() {
-            // No-op for mock
+                @Override
+                public int getInitialRequestBufferSize() {
+                    return 8192;
+                }
+
+                @Override
+                public int getMaximumRequestBufferSize() {
+                    return 65536;
+                }
+
+                @Override
+                public int getResponseBufferSize() {
+                    return 65536;
+                }
+
+                @Override
+                public io.questdb.network.NetworkFacade getNetworkFacade() {
+                    return NetworkFacadeImpl.INSTANCE;
+                }
+
+                @Override
+                public io.questdb.cutlass.http.client.HttpClientCookieHandlerFactory getCookieHandlerFactory() {
+                    return null;
+                }
+            }, PlainSocketFactory.INSTANCE);
         }
 
         @Override
@@ -794,12 +824,34 @@ public class WebSocketSendQueueTest {
 
         @Override
         public void close() {
-            // No-op for mock
+            connected = false;
         }
 
         @Override
         public boolean isConnected() {
-            return true;
+            return connected;
+        }
+
+        @Override
+        public boolean receiveFrame(WebSocketFrameHandler handler, int timeout) {
+            // Mock: no frames to receive
+            return false;
+        }
+
+        @Override
+        public boolean tryReceiveFrame(WebSocketFrameHandler handler) {
+            // Mock: no frames to receive (non-blocking)
+            return false;
+        }
+
+        @Override
+        protected void ioWait(int timeout, int op) {
+            // No-op for mock
+        }
+
+        @Override
+        protected void setupIoWait() {
+            // No-op for mock
         }
 
         public int getSendCount() {

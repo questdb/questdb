@@ -29,8 +29,8 @@ import io.questdb.cutlass.http.ilpv4.IlpV4GorillaEncoder;
 import io.questdb.cutlass.http.ilpv4.IlpV4TableBuffer;
 import io.questdb.cutlass.http.ilpv4.IlpV4TimestampDecoder;
 import io.questdb.cutlass.line.websocket.GlobalSymbolDictionary;
+import io.questdb.cutlass.line.websocket.IlpBufferWriter;
 import io.questdb.cutlass.line.websocket.IlpV4WebSocketEncoder;
-import io.questdb.cutlass.line.websocket.NativeBufferWriter;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -55,7 +55,7 @@ public class IlpV4WebSocketEncoderTest {
             int size = encoder.encode(buffer, false);
             Assert.assertTrue(size > 12); // At least header size
 
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             long ptr = buf.getBufferPtr();
 
             // Verify header magic
@@ -150,7 +150,7 @@ public class IlpV4WebSocketEncoderTest {
             Assert.assertTrue(size > 12);
 
             // Verify header
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             long ptr = buf.getBufferPtr();
             Assert.assertEquals((byte) 'I', Unsafe.getUnsafe().getByte(ptr));
             Assert.assertEquals((byte) 'L', Unsafe.getUnsafe().getByte(ptr + 1));
@@ -197,7 +197,7 @@ public class IlpV4WebSocketEncoderTest {
             encoder.encode(buffer, false);
 
             // Check flags byte has Gorilla bit set
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + 5);
             Assert.assertEquals(FLAG_GORILLA, (byte) (flags & FLAG_GORILLA));
         }
@@ -217,7 +217,7 @@ public class IlpV4WebSocketEncoderTest {
             encoder.encode(buffer, false);
 
             // Check flags byte doesn't have Gorilla bit set
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + 5);
             Assert.assertEquals(0, flags & FLAG_GORILLA);
         }
@@ -306,7 +306,7 @@ public class IlpV4WebSocketEncoderTest {
             int size = encoder.encode(buffer, false);
 
             // Payload length is at offset 8 (4 magic + 1 version + 1 flags + 2 tablecount)
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             int payloadLength = Unsafe.getUnsafe().getInt(buf.getBufferPtr() + 8);
 
             // Payload length should be total size minus header (12 bytes)
@@ -927,7 +927,7 @@ public class IlpV4WebSocketEncoderTest {
             int size = encoder.encodeWithDeltaDict(buffer, globalDict, confirmedMaxId, batchMaxId, false);
             Assert.assertTrue(size > 12);
 
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             long ptr = buf.getBufferPtr();
 
             // Verify header flag has FLAG_DELTA_SYMBOL_DICT set
@@ -963,7 +963,7 @@ public class IlpV4WebSocketEncoderTest {
             int size = encoder.encodeWithDeltaDict(buffer, globalDict, confirmedMaxId, batchMaxId, false);
             Assert.assertTrue(size > 12);
 
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             long ptr = buf.getBufferPtr();
 
             // Verify delta flag is set
@@ -1003,7 +1003,7 @@ public class IlpV4WebSocketEncoderTest {
             int size = encoder.encodeWithDeltaDict(buffer, globalDict, confirmedMaxId, batchMaxId, false);
             Assert.assertTrue(size > 12);
 
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             long ptr = buf.getBufferPtr();
 
             // Verify delta flag is set
@@ -1099,7 +1099,7 @@ public class IlpV4WebSocketEncoderTest {
             Assert.assertTrue(size > 12);
 
             // Verify header has Gorilla flag set
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + HEADER_OFFSET_FLAGS);
             Assert.assertEquals(FLAG_GORILLA, (byte) (flags & FLAG_GORILLA));
         }
@@ -1190,7 +1190,7 @@ public class IlpV4WebSocketEncoderTest {
             Assert.assertTrue(size > 12);
 
             // Verify header has Gorilla flag
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + HEADER_OFFSET_FLAGS);
             Assert.assertEquals(FLAG_GORILLA, (byte) (flags & FLAG_GORILLA));
         }
@@ -1214,7 +1214,7 @@ public class IlpV4WebSocketEncoderTest {
             Assert.assertTrue(size > 12);
 
             // Verify header has Gorilla flag
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + HEADER_OFFSET_FLAGS);
             Assert.assertEquals(FLAG_GORILLA, (byte) (flags & FLAG_GORILLA));
         }

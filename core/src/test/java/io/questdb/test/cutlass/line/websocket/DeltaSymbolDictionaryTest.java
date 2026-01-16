@@ -26,8 +26,8 @@ package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.cutlass.http.ilpv4.*;
 import io.questdb.cutlass.line.websocket.GlobalSymbolDictionary;
+import io.questdb.cutlass.line.websocket.IlpBufferWriter;
 import io.questdb.cutlass.line.websocket.IlpV4WebSocketEncoder;
-import io.questdb.cutlass.line.websocket.NativeBufferWriter;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -106,7 +106,7 @@ public class DeltaSymbolDictionaryTest {
             Assert.assertTrue(size > 0);
 
             // Verify delta section contains all 3 symbols
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             long ptr = buf.getBufferPtr();
 
             byte flags = Unsafe.getUnsafe().getByte(ptr + HEADER_OFFSET_FLAGS);
@@ -223,7 +223,7 @@ public class DeltaSymbolDictionaryTest {
             maxSentSymbolId = batch1MaxId;
 
             // Decode on server side
-            NativeBufferWriter buf1 = encoder.getBuffer();
+            IlpBufferWriter buf1 = encoder.getBuffer();
             decodeAndAccumulateDict(buf1.getBufferPtr(), size1, serverDict);
 
             // Verify server dictionary
@@ -247,7 +247,7 @@ public class DeltaSymbolDictionaryTest {
             maxSentSymbolId = batch2MaxId;
 
             // Decode batch 2
-            NativeBufferWriter buf2 = encoder.getBuffer();
+            IlpBufferWriter buf2 = encoder.getBuffer();
             decodeAndAccumulateDict(buf2.getBufferPtr(), size2, serverDict);
 
             // Server dictionary should now have 3 symbols
@@ -326,7 +326,7 @@ public class DeltaSymbolDictionaryTest {
             Assert.assertTrue(size > 0);
 
             // Verify deltaStart is 0
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             long pos = buf.getBufferPtr() + HEADER_SIZE;
             int deltaStart = readVarint(pos);
             Assert.assertEquals(0, deltaStart);
@@ -373,7 +373,7 @@ public class DeltaSymbolDictionaryTest {
             Assert.assertTrue(size > 0);
 
             // Verify flag is set
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + HEADER_OFFSET_FLAGS);
             Assert.assertTrue((flags & FLAG_DELTA_SYMBOL_DICT) != 0);
         }
@@ -614,7 +614,7 @@ public class DeltaSymbolDictionaryTest {
             int size = encoder.encodeWithDeltaDict(batch, clientDict, -1, 1, false);
 
             // Decode
-            NativeBufferWriter buf = encoder.getBuffer();
+            IlpBufferWriter buf = encoder.getBuffer();
             IlpV4StreamingDecoder decoder = new IlpV4StreamingDecoder();
             IlpV4MessageCursor cursor = decoder.decode(buf.getBufferPtr(), size, serverDict);
 

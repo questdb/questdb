@@ -99,6 +99,42 @@ public class InFlightWindow {
     }
 
     /**
+     * Checks if there's space in the window for another batch.
+     * Non-blocking check.
+     *
+     * @return true if there's space, false if window is full
+     */
+    public boolean hasWindowSpace() {
+        lock.lock();
+        try {
+            return inFlightBatches.size() < maxWindowSize;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Tries to add a batch to the in-flight window without blocking.
+     *
+     * @param batchId the batch ID to track
+     * @return true if added, false if window is full
+     */
+    public boolean tryAddInFlight(long batchId) {
+        lock.lock();
+        try {
+            if (inFlightBatches.size() >= maxWindowSize) {
+                return false;
+            }
+            inFlightBatches.add(batchId);
+            LOG.debug().$("Added to window [batchId=").$(batchId)
+                    .$(", windowSize=").$(inFlightBatches.size()).I$();
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
      * Adds a batch to the in-flight window.
      * <p>
      * Blocks if the window is full until space becomes available or timeout.
