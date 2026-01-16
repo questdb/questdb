@@ -38,13 +38,12 @@ import io.questdb.std.LongList;
  * has definitively received. Subsequent batches only need to send symbols with
  * IDs greater than confirmedMaxId.
  * <p>
- * Thread safety: This class is NOT thread-safe. External synchronization is required
- * if accessed from multiple threads.
+ * Thread safety: This class is thread-safe. All methods are synchronized.
  */
 public class ConnectionSymbolState {
 
     // Highest symbol ID that the server has confirmed it received
-    private int confirmedMaxId = -1;
+    private volatile int confirmedMaxId = -1;
 
     // Parallel lists: pendingSequences[i] has maxId of pendingMaxIds[i]
     // Sequences are stored in insertion order (typically ascending)
@@ -74,7 +73,7 @@ public class ConnectionSymbolState {
      * @param batchSequence the sequence number of the batch
      * @param maxIdUsed     the highest symbol ID used in this batch, or -1 if no symbols
      */
-    public void onBatchSent(long batchSequence, int maxIdUsed) {
+    public synchronized void onBatchSent(long batchSequence, int maxIdUsed) {
         pendingSequences.add(batchSequence);
         pendingMaxIds.add(maxIdUsed);
     }
@@ -85,7 +84,7 @@ public class ConnectionSymbolState {
      *
      * @param ackedSequence the cumulative ACK sequence (all batches <= this are acknowledged)
      */
-    public void onBatchesAcked(long ackedSequence) {
+    public synchronized void onBatchesAcked(long ackedSequence) {
         int n = pendingSequences.size();
         if (n == 0) {
             return;
@@ -126,7 +125,7 @@ public class ConnectionSymbolState {
      *
      * @param failedSequence the sequence number of the failed batch
      */
-    public void onBatchFailed(long failedSequence) {
+    public synchronized void onBatchFailed(long failedSequence) {
         int n = pendingSequences.size();
         for (int i = 0; i < n; i++) {
             if (pendingSequences.getQuick(i) == failedSequence) {
@@ -147,7 +146,7 @@ public class ConnectionSymbolState {
      * Resets the state for a new connection.
      * Call this when establishing a new connection.
      */
-    public void reset() {
+    public synchronized void reset() {
         confirmedMaxId = -1;
         pendingSequences.clear();
         pendingMaxIds.clear();
@@ -156,14 +155,14 @@ public class ConnectionSymbolState {
     /**
      * Returns the number of batches pending acknowledgment.
      */
-    public int getPendingBatchCount() {
+    public synchronized int getPendingBatchCount() {
         return pendingSequences.size();
     }
 
     /**
      * Checks if there are any pending batches.
      */
-    public boolean isEmpty() {
+    public synchronized boolean isEmpty() {
         return pendingSequences.size() == 0;
     }
 
@@ -173,7 +172,7 @@ public class ConnectionSymbolState {
      * @param batchSequence the batch sequence
      * @return the max symbol ID for that batch, or -1 if not found
      */
-    public int getMaxIdForBatch(long batchSequence) {
+    public synchronized int getMaxIdForBatch(long batchSequence) {
         int n = pendingSequences.size();
         for (int i = 0; i < n; i++) {
             if (pendingSequences.getQuick(i) == batchSequence) {
