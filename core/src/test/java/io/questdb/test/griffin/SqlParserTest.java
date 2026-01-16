@@ -12894,6 +12894,29 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionNestedWithColumnAliases() throws Exception {
+        // Nested window functions with column aliases in the same SELECT clause
+        // sum(a) OVER () and sum(b) OVER () are inner window functions on columns a and b from table
+        // The outer sum() OVER () aggregates their sum
+        // Should be split into two select-window models:
+        // 1. Inner: computes sum(a) OVER () and sum(b) OVER ()
+        // 2. Outer: computes sum(sum + sum1) OVER () and projects x as a, x as b
+        assertQuery(
+                "select-window a, a b, sum(sum + sum1) sum over () from (" +
+                        "select-window [a, sum(b1) sum1 over (), sum(a1) sum over ()] " +
+                        "sum(a1) sum over (), sum(b1) sum1 over (), a, a b from (" +
+                        "select-choose [x a, b b1, a a1] x a, a a1, b, b b1 from (" +
+                        "select [x, b, a] from x timestamp (ts))))",
+                "SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x",
+                modelOf("x")
+                        .col("x", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWindowFunctionNestingDepthLimit() throws Exception {
         // 9 levels of nesting exceeds the limit of 8
         assertSyntaxError(

@@ -7626,6 +7626,24 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        // When innerVirtualModel is not used but we have innerWindowModels,
+        // copy renamed aliases from innerVirtualModel to translatingModel.
+        // This ensures window function arguments (which may use renamed aliases like "b1")
+        // can be resolved directly from translatingModel.
+        if (innerWindowModels.size() > 0 && (rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) == 0) {
+            ObjList<QueryColumn> innerCols = innerVirtualModel.getBottomUpColumns();
+            for (int i = 0, n = innerCols.size(); i < n; i++) {
+                QueryColumn col = innerCols.getQuick(i);
+                CharSequence alias = col.getAlias();
+                CharSequence token = col.getAst().token;
+                // Only copy renamed columns (where alias differs from token)
+                // These are columns where emitLiterals created a new alias due to conflicts
+                if (!Chars.equalsIgnoreCase(alias, token) && translatingModel.getAliasToColumnMap().excludes(alias)) {
+                    translatingModel.addBottomUpColumn(queryColumnPool.next().of(alias, col.getAst()));
+                }
+            }
+        }
+
         boolean translationIsRedundant = checkIfTranslatingModelIsRedundant(
                 (rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) != 0,
                 (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0,
@@ -7752,6 +7770,25 @@ public class SqlOptimiser implements Mutable {
 
             root = innerVirtualModel;
             limitSource = innerVirtualModel;
+        }
+
+        // Add pass-through columns to innerWindowModels for non-window columns from windowModel.
+        // This ensures that when propagateTopDownColumns runs, non-window columns (like "x as a")
+        // can be resolved through the inner window model chain down to the translating model.
+        if (innerWindowModels.size() > 0) {
+            ObjList<QueryColumn> windowCols = windowModel.getBottomUpColumns();
+            for (int i = 0, n = windowCols.size(); i < n; i++) {
+                QueryColumn col = windowCols.getQuick(i);
+                if (!col.isWindowColumn()) {
+                    // Add this non-window column to each inner window model as pass-through
+                    for (int j = 0, m = innerWindowModels.size(); j < m; j++) {
+                        QueryModel innerWm = innerWindowModels.getQuick(j);
+                        if (innerWm.getAliasToColumnMap().excludes(col.getAlias())) {
+                            innerWm.addBottomUpColumn(col);
+                        }
+                    }
+                }
+            }
         }
 
         // Chain any inner window models (for nested window functions in either window or group-by expressions)
