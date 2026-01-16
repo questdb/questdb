@@ -32,12 +32,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PartitionFormat;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
-import io.questdb.cutlass.text.CopyExportResult;
-import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -57,27 +53,21 @@ import io.questdb.std.str.Utf8StringSink;
 import java.io.Closeable;
 import java.io.File;
 
-public class SerialParquetExporter implements Closeable {
-    private static final Log LOG = LogFactory.getLog(SerialParquetExporter.class);
+public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implements Closeable {
+    private static final Log LOG = LogFactory.getLog(SQLSerialParquetExporter.class);
     private final CairoConfiguration configuration;
-    private final CopyExportContext copyExportContext;
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
     private final Path fromParquet;
-    private final ProgressReporter insertSelectReporter = new ProgressReporter();
     private final Utf8StringSink nameSink = new Utf8StringSink();
-    private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path tempPath;
     private final Path toParquet;
-    private SqlExecutionCircuitBreaker circuitBreaker;
     private CharSequence copyExportRoot;
     private int numOfFiles;
-    private CopyExportRequestTask task;
 
-    public SerialParquetExporter(CairoEngine engine) {
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+    public SQLSerialParquetExporter(CairoEngine engine) {
+        super(engine);
         this.configuration = engine.getConfiguration();
-        this.copyExportContext = engine.getCopyExportContext();
         this.ff = this.configuration.getFilesFacade();
         this.toParquet = new Path();
         this.fromParquet = new Path();
@@ -91,15 +81,15 @@ public class SerialParquetExporter implements Closeable {
         Misc.free(tempPath);
     }
 
+    @Override
     public void of(CopyExportRequestTask task) {
+        super.of(task);
         this.copyExportRoot = configuration.getSqlCopyExportRoot();
-        this.task = task;
-        this.circuitBreaker = task.getCircuitBreaker();
         this.exportPath.clear();
         numOfFiles = 0;
-        sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);
     }
 
+    @Override
     public CopyExportRequestTask.Phase process() {
         if (copyExportRoot == null) {
             throw CairoException.nonCritical().put("parquet export is disabled ['cairo.sql.copy.export.root' is not set]");
@@ -109,7 +99,6 @@ public class SerialParquetExporter implements Closeable {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         TableToken tableToken = null;
         int tempBaseDirLen = 0;
-        CopyExportResult exportResult = task.getResult();
         CopyExportContext.ExportTaskEntry entry = task.getEntry();
         final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
         CreateTableOperation createOp = task.getCreateOp();
@@ -121,18 +110,17 @@ public class SerialParquetExporter implements Closeable {
                 createOp.setCopyDataProgressReporter(insertSelectReporter);
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
                 entry.setPhase(phase);
-                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
+                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 LOG.info().$("starting to create temporary table and populate with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(task.getTableName()).$(']').$();
                 createOp.execute(sqlExecutionContext, null);
-
                 tableToken = cairoEngine.verifyTableName(task.getTableName());
                 LOG.info().$("completed creating temporary table and populating with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
-                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
+                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
             }
 
             phase = CopyExportRequestTask.Phase.CONVERTING_PARTITIONS;
             entry.setPhase(phase);
-            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
             final String tableName = task.getTableName();
             // we can lift file name from the task as CharSequence (without materializing it) because this task was
             // and always is assigned to this instance of the exporter
@@ -169,6 +157,7 @@ public class SerialParquetExporter implements Closeable {
                             }
                             final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
                             boolean emptyPartition = reader.openPartition(partitionIndex) <= 0;
+
                             // skip parquet conversion if the partition is already in parquet format
                             if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
                                 numOfFiles++;
@@ -181,12 +170,6 @@ public class SerialParquetExporter implements Closeable {
                                 fromParquet.concat(tableToken.getDirName());
                                 TableUtils.setPathForParquetPartition(
                                         fromParquet, timestampType, partitionBy, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(partitionIndex));
-                                if (exportResult != null) {
-                                    exportResult.addFilePath(fromParquet, false, 0);
-                                    entry.setFinishedPartitionCount(partitionIndex + 1);
-                                    continue;
-                                }
-
                                 tempPath.trimTo(tempBaseDirLen);
                                 nameSink.clear();
                                 PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
@@ -211,7 +194,7 @@ public class SerialParquetExporter implements Closeable {
                             // native partition - convert to parquet
                             numOfFiles++;
                             if (emptyPartition) {
-                                PartitionEncoder.populateEmptyPartition(reader, partitionDescriptor, partitionIndex);
+                                PartitionEncoder.populateEmptyPartition(reader, partitionDescriptor);
                             } else {
                                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                             }
@@ -239,23 +222,18 @@ public class SerialParquetExporter implements Closeable {
                                     .$(", partition=").$(nameSink)
                                     .$(", size=").$(parquetFileSize).$(']')
                                     .$();
-                            if (exportResult != null) {
-                                exportResult.addFilePath(tempPath, true, tempBaseDirLen);
-                            }
                             entry.setFinishedPartitionCount(partitionIndex + 1);
                         }
                     }
                 }
             }
 
-            copyExportContext.updateStatus(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
-            if (exportResult == null) {
-                phase = CopyExportRequestTask.Phase.MOVE_FILES;
-                entry.setPhase(phase);
-                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
-                moveExportFiles(tempBaseDirLen, fileName);
-                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
-            }
+            copyExportContext.updateStatus(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+            phase = CopyExportRequestTask.Phase.MOVE_FILES;
+            entry.setPhase(phase);
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+            moveExportFiles(tempBaseDirLen, fileName);
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
             LOG.info().$("finished parquet conversion to temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
             success = true;
         } catch (CopyExportException e) {
@@ -274,21 +252,21 @@ public class SerialParquetExporter implements Closeable {
             if (tableToken != null && createOp != null) {
                 phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
                 entry.setPhase(phase);
-                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
+                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 try {
                     fromParquet.trimTo(0);
                     cairoEngine.dropTableOrViewOrMatView(fromParquet, tableToken);
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
+                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 } catch (CairoException e) {
                     // drop failure doesn't affect task continuation - log and proceed
                     LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
+                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 } catch (Throwable e) {
                     LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getMessage()).$(']').$();
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
+                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 }
             }
-            if (exportResult == null || numOfFiles == 0 || !success) {
+            if (numOfFiles == 0 || !success) {
                 tempPath.trimTo(tempBaseDirLen);
                 TableUtils.cleanupDirQuiet(ff, tempPath, LOG);
             }
@@ -297,7 +275,7 @@ public class SerialParquetExporter implements Closeable {
     }
 
     private static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
-        synchronized (SerialParquetExporter.class) {
+        synchronized (SQLSerialParquetExporter.class) {
             if (ff.mkdirs(path, mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
             }
@@ -400,43 +378,5 @@ public class SerialParquetExporter implements Closeable {
 
     int getNumOfFiles() {
         return numOfFiles;
-    }
-
-    private static class ProgressReporter implements CopyDataProgressReporter {
-        private final StringSink copyIdHex = new StringSink();
-        private SqlExecutionCircuitBreaker circuitBreaker;
-        private CopyExportContext.ExportTaskEntry entry;
-        private CharSequence tableName;
-
-        public void of(SqlExecutionCircuitBreaker circuitBreaker, CopyExportContext.ExportTaskEntry entry, long copyId, CharSequence name) {
-            this.circuitBreaker = circuitBreaker;
-            this.entry = entry;
-            this.copyIdHex.clear();
-            Numbers.appendHex(copyIdHex, copyId, true);
-            this.tableName = name;
-        }
-
-        @Override
-        public void onProgress(CopyDataProgressReporter.Stage stage, long rows) {
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            switch (stage) {
-                case Start:
-                    entry.setTotalRowCount(rows);
-                    break;
-                case Inserting:
-                    entry.setPopulatedRowCount(rows);
-                    LOG.info().$("populating temporary table progress [id=")
-                            .$(copyIdHex)
-                            .$(", table=")
-                            .$(tableName)
-                            .$(", rows=")
-                            .$(rows).$(']')
-                            .$();
-                    break;
-                case Finish:
-                    entry.setPopulatedRowCount(rows);
-                    break;
-            }
-        }
     }
 }

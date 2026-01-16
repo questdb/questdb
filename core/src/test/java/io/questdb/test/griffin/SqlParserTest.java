@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
@@ -113,7 +113,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between current row and 4+3 preceding) from xyz",
                 85,
-                "start row is CURRENT, end row must not be PRECEDING"
+                "frame starting from CURRENT ROW must end with CURRENT ROW or FOLLOWING"
         );
     }
 
@@ -145,7 +145,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between current row and unbounded preceding) from xyz",
                 91,
-                "'following' expected"
+                "frame end cannot be UNBOUNDED PRECEDING, use UNBOUNDED FOLLOWING"
         );
     }
 
@@ -181,7 +181,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 2 following and unbounded preceding) from xyz",
                 91,
-                "'following' expected",
+                "frame end cannot be UNBOUNDED PRECEDING, use UNBOUNDED FOLLOWING",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -195,7 +195,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between current row and 2 preceding) from xyz",
                 83,
-                "start row is CURRENT, end row must not be PRECEDING",
+                "frame starting from CURRENT ROW must end with CURRENT ROW or FOLLOWING",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -209,7 +209,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 2 following and 2 preceding) from xyz",
                 83,
-                "start row is FOLLOWING, end row must not be PRECEDING",
+                "frame starting from FOLLOWING must end with FOLLOWING",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -223,7 +223,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded following and 3 preceding) from xyz",
                 75,
-                "'preceding' expected",
+                "frame start cannot be UNBOUNDED FOLLOWING, use UNBOUNDED PRECEDING",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -294,7 +294,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
                             QueryColumn ac = columns.getQuick(2);
                             Assert.assertTrue(ac.isWindowColumn());
-                            WindowColumn ac2 = (WindowColumn) ac;
+                            WindowExpression ac2 = (WindowExpression) ac;
 
                             // start of window expr position
                             Assert.assertEquals(65, ac2.getRowsLoExprPos());
@@ -436,7 +436,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between -1 preceding and unbounded following exclude other) from xyz",
                 110,
-                "'current', 'group', 'ties' or 'no other' expected"
+                "'current row', 'group', 'ties' or 'no others' expected after 'exclude'"
         );
     }
 
@@ -445,7 +445,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between -1 preceding and unbounded following exclude) from xyz",
                 109,
-                "'current', 'group', 'ties' or 'no other' expected"
+                "'current row', 'group', 'ties' or 'no others' expected after 'exclude'"
         );
     }
 
@@ -491,7 +491,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between -1 preceding and unbounded preceding) from xyz",
                 92,
-                "'following' expected"
+                "frame end cannot be UNBOUNDED PRECEDING, use UNBOUNDED FOLLOWING"
         );
     }
 
@@ -500,13 +500,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b order by a groups 10 day preceding) from xyz",
                 59,
-                "'preceding' expected"
+                "time units are only valid with RANGE frames, not ROWS or GROUPS"
         );
 
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b order by a groups between unbounded preceding and 10 day following) from xyz",
                 91,
-                "'preceding' or 'following' expected"
+                "time units are only valid with RANGE frames, not ROWS or GROUPS"
         );
     }
 
@@ -569,19 +569,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testACRangeRequiredOrderByOnNonDefaultFrameBoundaries() throws Exception {
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b range 1 preceding ) from xyz",
-                46,
+                38,
                 "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column"
         );
 
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b range between 1 preceding and 1 following ) from xyz",
-                54,
+                38,
                 "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column"
         );
 
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b range between unbounded preceding and 1 following ) from xyz",
-                78,
+                38,
                 "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column"
         );
     }
@@ -591,7 +591,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, avg(c) over (partition by b order by ts #FRAME UNBOUNDED PRECEDING EXCLUDE WHAT) from xyz",
                 87,
-                "'current', 'group', 'ties' or 'no other' expected",
+                "'current row', 'group', 'ties' or 'no others' expected after 'exclude'",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -641,13 +641,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b rows 10 day preceding) from xyz",
                 46,
-                "'preceding' expected"
+                "time units are only valid with RANGE frames, not ROWS or GROUPS"
         );
 
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b rows between unbounded preceding and 10 day following) from xyz",
                 78,
-                "'preceding' or 'following' expected"
+                "time units are only valid with RANGE frames, not ROWS or GROUPS"
         );
     }
 
@@ -670,7 +670,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME 12 following) from xyz",
                 60,
-                "'preceding' expected",
+                "single-bound frame specification requires PRECEDING, use BETWEEN for FOLLOWING",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -698,7 +698,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME unbounded following) from xyz",
                 67,
-                "'preceding' expected"
+                "frame start cannot be UNBOUNDED FOLLOWING, use UNBOUNDED PRECEDING"
         );
     }
 
@@ -743,7 +743,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded following and unbounded preceding) from xyz",
                 75,
-                "'preceding' expected"
+                "frame start cannot be UNBOUNDED FOLLOWING, use UNBOUNDED PRECEDING"
         );
     }
 
@@ -798,15 +798,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testACUnboundedPrecedingExprPrecedingClause() throws Exception {
-        assertWindowSyntaxError(
-                "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded preceding and unbounded preceding) from xyz",
-                99,
-                "'following' expected"
-        );
-    }
-
-    @Test
     public void testACUnboundedPrecedingUnboundedFollowingClause() throws Exception {
         assertWindowQuery(
                 "select-window a, b, f(c) f over (partition by b order by ts #FRAME between unbounded preceding and unbounded following exclude no others) " +
@@ -825,7 +816,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded preceding and unbounded preceding) from xyz",
                 99,
-                "'following' expected"
+                "frame end cannot be UNBOUNDED PRECEDING, use UNBOUNDED FOLLOWING"
         );
     }
 
@@ -834,7 +825,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts rangez ) from xyz",
                 50,
-                "'rows', 'groups', 'range' or ')' expected"
+                "'rows', 'range', 'groups', 'cumulative' or ')' expected"
         );
     }
 
@@ -5256,15 +5247,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExtraCommaPartitionByInWindowFunction() throws Exception {
-        assertQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+        assertSyntaxError(
                 "select a,b, f(c) over (partition by b, order by ts) from xyz",
-                modelOf("xyz")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .timestamp("ts")
-
+                39,
+                "column name expected"
         );
     }
 
@@ -7947,23 +7933,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testNestedWindowFunctionNotSupported() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSyntaxError(
-                    "select a,b, 1 + f(c) over (partition by b order by a groups between unbounded preceding and 10 day following) from xyz",
-                    21,
-                    "Nested window functions' context are not currently supported."
-            );
-
-            assertSyntaxError(
-                    "select a,b,cast(f(c) over (order by a) as int) from xyz",
-                    21,
-                    "Nested window functions' context are not currently supported."
-            );
-        });
-    }
-
-    @Test
     public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
         assertQuery(
                 "select-virtual day(ts) day, isin, last from (select-group-by [ts, isin, last(start_price) last] ts, isin, last(start_price) last from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4') sample by 1d)",
@@ -7996,7 +7965,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testNonWindowFunctionInWindowContext() throws Exception {
         assertException(
-                "select ksum(price) over (partition by symbol) from trades",
+                "select nsum(price) over (partition by symbol) from trades",
                 "create table trades " +
                         "(" +
                         " price double," +
@@ -8141,6 +8110,70 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionSimple() throws Exception {
+        // Basic window function without cast - should work
+        assertQuery(
+                "select-window row_number() row_number over (order by ts) from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts) FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionCastNoParen() throws Exception {
+        // Window function with cast - the window function is extracted to select-window,
+        // and the cast operation references it by alias in select-virtual
+        assertQuery(
+                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts)::string FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionCastToString() throws Exception {
+        // Window function with cast AND outer parentheses - same structure as without parentheses
+        assertQuery(
+                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT (row_number() OVER (ORDER BY ts))::string FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionArithmeticTwoWindows() throws Exception {
+        // Two window functions in arithmetic operation - sum() is both aggregate and window function name,
+        // but with OVER clause it should be treated as window function, not GROUP BY aggregate
+        assertQuery(
+                "select-virtual sum - lag id_diff from (select-window [lag(id) lag over (order by ts), sum(id) sum over (order by ts)] lag(id) lag over (order by ts), sum(id) sum over (order by ts) from (select [id, ts] from x timestamp (ts)))",
+                "SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x",
+                modelOf("x")
+                        .col("id", ColumnType.LONG)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInCaseExpression() throws Exception {
+        // Window function directly inside CASE WHEN condition (two WHEN clauses with same window function)
+        // Both window functions are extracted to select-window layer with different aliases
+        assertQuery(
+                "select-virtual case when row_number = 1 then 'first' when row_number1 = 3 then 'last' else 'middle' end category from (select-window [row_number() row_number over (order by ts), row_number() row_number1 over (order by ts)] row_number() row_number over (order by ts), row_number() row_number1 over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT CASE " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
+                        "  ELSE 'middle' " +
+                        "END AS category " +
+                        "FROM x",
+                modelOf("x")
                         .timestamp("ts")
         );
     }
@@ -12345,7 +12378,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testUnderTerminatedOver2() throws Exception {
-        assertSyntaxError("select a,b, f(c) over (partition by b order by ts", 49, "'asc' or 'desc' expected");
+        assertSyntaxError("select a,b, f(c) over (partition by b order by ts", 47, "')' expected to close OVER clause");
     }
 
     @Test
@@ -12586,6 +12619,39 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testVWAP() throws SqlException {
+        // Window functions with OVER clause should be preserved as window functions, not converted to GROUP BY
+        assertQuery(
+                "select-virtual" +
+                        " timestamp," +
+                        " symbol," +
+                        " sum1 / sum vwap_daily" +
+                        " from (" +
+                        "select-window [timestamp, symbol, sum(volume) sum over (partition by symbol, timestamp order by timestamp), sum(price * volume) sum1 over (partition by symbol, timestamp order by timestamp)] timestamp, symbol, sum(volume) sum over (partition by symbol, timestamp order by timestamp), sum(price * volume) sum1 over (partition by symbol, timestamp order by timestamp)" +
+                        " from (select [timestamp, symbol, volume, price] from trades timestamp (timestamp) where timestamp > dateadd('d', -(1), now())))",
+                """
+                        SELECT
+                                timestamp,
+                                symbol,
+                                sum(price * volume) OVER (
+                                    PARTITION BY symbol, timestamp
+                                    ORDER BY timestamp
+                                ) / sum(volume) OVER (
+                                    PARTITION BY symbol, timestamp
+                                    ORDER BY timestamp
+                                ) AS vwap_daily
+                            FROM trades
+                            WHERE timestamp > dateadd('d', -1, now())
+                        """,
+                modelOf("trades")
+                        .col("price", ColumnType.DOUBLE)
+                        .col("volume", ColumnType.DOUBLE)
+                        .col("symbol", ColumnType.SYMBOL)
+                        .timestamp("timestamp")
+        );
+    }
+
+    @Test
     public void testWhereClause() throws Exception {
         assertQuery(
                 "select-virtual x, sum + 25 ohoh from (select-group-by [a + b * c x, sum(z) sum] a + b * c x, sum(z) sum from (select [a, c, b, z] from zyzy where a in (0, 10) and b = 10))",
@@ -12641,6 +12707,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("customerId", ColumnType.INT)
                         .col("x", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToFunctionNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            // Window function as argument to cast() - not allowed
+            assertSyntaxError(
+                    "select a,b,cast(f(c) over (order by a) as int) from xyz",
+                    21,
+                    "window function is not allowed as an argument to another function"
+            );
+
+            // Window function as argument to abs() - not allowed
+            assertSyntaxError(
+                    "select a,b, abs(f(c) over (order by a)) from xyz",
+                    21,
+                    "window function is not allowed as an argument to another function"
+            );
+        });
     }
 
     @Test
@@ -12935,7 +13020,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 () -> {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         for (String frameType : frameTypes) {
-                            ExecutionModel model = compiler.generateExecutionModel(query.replace("#FRAME", frameType), sqlExecutionContext);
+                            String s = query.replace("#FRAME", frameType);
+                            System.out.println(s);
+                            ExecutionModel model = compiler.generateExecutionModel(s, sqlExecutionContext);
                             Assert.assertEquals(ExecutionModel.QUERY, model.getModelType());
                             sink.clear();
                             ((Sinkable) model).toSink(sink);

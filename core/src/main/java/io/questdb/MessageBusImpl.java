@@ -274,6 +274,7 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public void close() {
         // We need to close only queues with native backing memory.
+        Misc.free(copyExportRequestQueue);
         Misc.free(tableWriterEventQueue);
         Misc.free(pageFrameReduceQueue);
         Misc.free(latestByQueue);

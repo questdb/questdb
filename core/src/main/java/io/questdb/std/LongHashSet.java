@@ -85,40 +85,12 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
         return keyIndex(key) < 0;
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        LongHashSet that = (LongHashSet) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (int i = 0, n = list.size(); i < n; i++) {
-            long key = list.getQuick(i);
-            if (key != noEntryKeyValue && that.excludes(key)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     public long get(int index) {
         return list.getQuick(index);
     }
 
     public long getLast() {
         return list.getLast();
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKeyValue) {
-                hashCode += (int) keys[i];
-            }
-        }
-        return hashCode;
     }
 
     public void removeAt(int index) {
