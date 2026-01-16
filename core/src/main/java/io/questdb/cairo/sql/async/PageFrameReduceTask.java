@@ -29,9 +29,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -98,6 +100,13 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
         Misc.free(frameMemoryPool);
+    }
+
+    public boolean fillFrameMemory(IntHashSet excludeColumns, DirectLongList list) {
+        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET) {
+            return frameMemory.fillOtherColumns(excludeColumns, list);
+        }
+        return false;
     }
 
     /**
@@ -198,6 +207,12 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public PageFrameMemory populateFrameMemory() {
         assert taskType != TYPE_TOP_K;
         frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        return frameMemory;
+    }
+
+    public PageFrameMemory populateFrameMemory(IntHashSet columnIndexes) {
+        assert taskType != TYPE_TOP_K;
+        frameMemory = frameMemoryPool.navigateTo(frameIndex, columnIndexes);
         return frameMemory;
     }
 

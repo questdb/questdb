@@ -32,6 +32,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -103,6 +104,33 @@ public class PartitionDecoder implements QuietCloseable {
                 rowGroupIndex,
                 rowLo,
                 rowHi
+        );
+    }
+
+    public int decodeRowGroup(
+            RowGroupBuffers rowGroupBuffers,
+            DirectIntList columns, // contains [parquet_column_index, column_type] pairs
+            int rowGroupIndex,
+            int rowLo, // low row index within the row group, inclusive
+            int rowHi, // high row index within the row group, exclusive
+            DirectLongList rows
+    ) {
+        assert ptr != 0;
+        if (decodeContextPtr == 0) {
+            // lazy init
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
+        }
+        return decodeRowGroup1(
+                ptr,
+                decodeContextPtr,
+                rowGroupBuffers.ptr(),
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex,
+                rowLo,
+                rowHi,
+                rows.getAddress(),
+                rows.size()
         );
     }
 
@@ -235,6 +263,19 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroup,
             int rowLo,
             int rowHi
+    ) throws CairoException;
+
+    private static native int decodeRowGroup1(
+            long decoderPtr,
+            long decodeContextPtr,
+            long rowGroupBuffersPtr,
+            long columnsPtr,
+            int columnCount,
+            int rowGroup,
+            int rowLo,
+            int rowHi,
+            long rowsFilterPtr,
+            long rowsFilterSize
     ) throws CairoException;
 
     private static native void destroy(long impl);

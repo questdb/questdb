@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 
 /**
  * Represents page frame as a set of per column contiguous memory.
@@ -32,6 +33,8 @@ import io.questdb.std.DirectLongList;
  * For Parquet partitions, it's a deserialized in-memory native format.
  */
 public interface PageFrameMemory {
+
+    boolean fillOtherColumns(IntHashSet excludedColumnIndexes, DirectLongList rows);
 
     /**
      * Returns aux (index) vector address for a var-size column.

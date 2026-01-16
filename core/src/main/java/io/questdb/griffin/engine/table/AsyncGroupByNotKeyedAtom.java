@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -59,6 +60,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
+    private final IntHashSet filterUsedColumnIndexes;
     private final GroupByAllocator ownerAllocator;
     private final Function ownerFilter;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
@@ -80,6 +82,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerFilter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
@@ -92,6 +95,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
             this.ownerFilter = ownerFilter;
+            this.filterUsedColumnIndexes = filterUsedColumnIndexes;
             this.perWorkerFilters = perWorkerFilters;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
@@ -190,6 +194,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             return ownerFilter;
         }
         return perWorkerFilters.getQuick(slotId);
+    }
+
+    public IntHashSet getFilterUsedColumnIndexes() {
+        return filterUsedColumnIndexes;
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {

@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -169,6 +170,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.pageSizes = addressCache.getPageSizes();
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
             frameMemory.columnOffset = columnOffset;
+            frameMemory.currentRowGroupBuffer = null;
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
@@ -179,6 +181,44 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
             }
 
+            frameMemory.currentRowGroupBuffer = parquetBuffers;
+            frameMemory.pageAddresses = parquetBuffers.pageAddresses;
+            frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
+            frameMemory.pageSizes = parquetBuffers.pageSizes;
+            frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
+            frameMemory.columnOffset = 0; // parquet buffers use 0 offset
+        }
+
+        frameMemory.frameIndex = frameIndex;
+        frameMemory.frameFormat = format;
+        return frameMemory;
+    }
+
+    public PageFrameMemory navigateTo(int frameIndex, IntHashSet columnIndexes) {
+        if (frameMemory.frameIndex == frameIndex) {
+            return frameMemory;
+        }
+
+        final byte format = addressCache.getFrameFormat(frameIndex);
+        final int columnOffset = addressCache.toColumnOffset(frameIndex);
+        if (format == PartitionFormat.NATIVE) {
+            frameMemory.pageAddresses = addressCache.getPageAddresses();
+            frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
+            frameMemory.pageSizes = addressCache.getPageSizes();
+            frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
+            frameMemory.columnOffset = columnOffset;
+            frameMemory.currentRowGroupBuffer = null;
+        } else if (format == PartitionFormat.PARQUET) {
+            openParquet(frameIndex, columnIndexes, true);
+            final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
+            if (!parquetBuffers.cacheHit) {
+                final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+                final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+                final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+                parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            }
+
+            frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
@@ -292,10 +332,39 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
     }
 
+    private void openParquet(int frameIndex, IntHashSet columnIndexes, boolean include) {
+        final PartitionDecoder frameDecoder = addressCache.getParquetPartitionDecoder(frameIndex);
+        if (parquetDecoder.getFileAddr() != frameDecoder.getFileAddr() || parquetDecoder.getFileSize() != frameDecoder.getFileSize()) {
+            parquetDecoder.of(frameDecoder);
+        }
+        final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+        if (parquetMetadata.getColumnCount() < addressCache.getColumnCount()) {
+            throw CairoException.nonCritical().put("parquet column count is less than number of queried table columns [parquetColumnCount=")
+                    .put(parquetMetadata.getColumnCount())
+                    .put(", columnCount=")
+                    .put(addressCache.getColumnCount());
+        }
+
+        parquetColumns.reopen();
+        parquetColumns.clear();
+        fromParquetColumnIndexes.clear();
+        fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
+        for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
+            if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
+                final int parquetColumnIndex = addressCache.getColumnIndexes().getQuick(i);
+                final int columnType = addressCache.getColumnTypes().getQuick(i);
+                parquetColumns.add(parquetColumnIndex);
+                fromParquetColumnIndexes.setQuick(parquetColumnIndex, i);
+                parquetColumns.add(columnType);
+            }
+        }
+    }
+
     private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {
         private DirectLongList auxPageAddresses;
         private DirectLongList auxPageSizes;
         private int columnOffset;
+        private ParquetBuffers currentRowGroupBuffer;
         private byte frameFormat = -1;
         private int frameIndex = -1;
         private DirectLongList pageAddresses;
@@ -310,6 +379,25 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             auxPageAddresses = null;
             pageSizes = null;
             auxPageSizes = null;
+            currentRowGroupBuffer = null;
+        }
+
+        @Override
+        public boolean fillOtherColumns(IntHashSet excludedColumnIndexes, DirectLongList rows) {
+            assert frameFormat == PartitionFormat.PARQUET;
+            if (excludedColumnIndexes.size() == addressCache.getColumnCount()) {
+                return false;
+            }
+
+            openParquet(frameIndex, excludedColumnIndexes, false);
+            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+            if (rows.size() != 0) {
+                currentRowGroupBuffer.decodeOtherColumns(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi, rows);
+                return true;
+            }
+            return false;
         }
 
         @Override
@@ -429,6 +517,24 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 ensureCapacityAndZero(auxPageAddresses, columnCount);
                 ensureCapacityAndZero(auxPageSizes, columnCount);
 
+                for (int i = 0, n = (int) (parquetColumns.size() / 2); i < n; i++) {
+                    final int parquetColumnIndex = parquetColumns.get(2L * i);
+                    final int columnIndex = fromParquetColumnIndexes.getQuick(parquetColumnIndex);
+                    final int columnType = parquetColumns.get(2L * i + 1);
+                    pageAddresses.set(columnIndex, rowGroupBuffers.getChunkDataPtr(i));
+                    pageSizes.set(columnIndex, rowGroupBuffers.getChunkDataSize(i));
+                    if (ColumnType.isVarSize(columnType)) {
+                        auxPageAddresses.set(columnIndex, rowGroupBuffers.getChunkAuxPtr(i));
+                        auxPageSizes.set(columnIndex, rowGroupBuffers.getChunkAuxSize(i));
+                    }
+                }
+            }
+        }
+
+        public void decodeOtherColumns(PartitionDecoder parquetDecoder, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi, DirectLongList columnOffsets) {
+            if (parquetColumns.size() > 0) {
+                // Decode the requested columns from the row group.
+                parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi, columnOffsets);
                 for (int i = 0, n = (int) (parquetColumns.size() / 2); i < n; i++) {
                     final int parquetColumnIndex = parquetColumns.get(2L * i);
                     final int columnIndex = fromParquetColumnIndexes.getQuick(parquetColumnIndex);

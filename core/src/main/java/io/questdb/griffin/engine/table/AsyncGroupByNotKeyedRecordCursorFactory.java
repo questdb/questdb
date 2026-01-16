@@ -50,6 +50,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -84,6 +85,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
+            @NotNull IntHashSet filterUsedColumnIndexes,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
@@ -102,6 +104,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     bindVarMemory,
                     bindVarFunctions,
                     filter,
+                    filterUsedColumnIndexes,
                     perWorkerFilters,
                     workerCount
             );
@@ -250,7 +253,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class);
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
 
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        final PageFrameMemory frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
         record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
@@ -272,7 +275,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             } else {
                 AsyncFilterUtils.applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
-
+            if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows)) {
+                record.init(frameMemory);
+            }
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
             aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
