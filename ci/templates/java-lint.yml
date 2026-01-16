@@ -18,13 +18,21 @@ steps:
     displayName: "List of required changes"
   - bash: |
       mkdir -p $(Agent.TempDirectory)/inspection-results
-      /opt/intellij/idea/bin/idea.sh inspect . .idea/inspectionProfiles/Project_Default.xml $(Agent.TempDirectory)/inspection-results -v2 -d core/src/main/java
+      /opt/intellij/idea/bin/idea.sh inspect . .idea/inspectionProfiles/Project_Default.xml $(Agent.TempDirectory)/inspection-results -v2
     displayName: "Run IntelliJ inspections"
   - bash: |
-      # Check inspection results for errors
-      if find $(Agent.TempDirectory)/inspection-results -name "*.xml" -type f | head -1 | xargs -r grep -l "<problem" > /dev/null 2>&1; then
+      echo "Inspection results directory contents:"
+      ls -la $(Agent.TempDirectory)/inspection-results/ || true
+      echo "---"
+      # Check inspection results for problems
+      if find $(Agent.TempDirectory)/inspection-results -name "*.xml" -type f 2>/dev/null | xargs -r grep -l "<problem" > /dev/null 2>&1; then
         echo "Inspection found problems:"
-        cat $(Agent.TempDirectory)/inspection-results/*.xml
+        for f in $(Agent.TempDirectory)/inspection-results/*.xml; do
+          if grep -q "<problem" "$f" 2>/dev/null; then
+            echo "=== $f ==="
+            cat "$f"
+          fi
+        done
         exit 1
       else
         echo "No inspection problems found"
