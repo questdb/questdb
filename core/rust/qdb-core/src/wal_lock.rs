@@ -22,8 +22,8 @@
 //! WAL writer behavior:
 //! When a WAL writer starts, it acquires a new WalId, locks the WAL for
 //! writing and starts writing to segments starting from segment id 0.
-//! When the writer advances to a new segment, it updates the minSegmentId in
-//! the lock manager.
+//! When the writer advances to a new segment, it updates the `min_segment_id`
+//! in the lock manager.
 //!
 //! WAL purge job behavior:
 //! When a WAL purge job starts, it iterates over all WAL directories.
@@ -37,6 +37,22 @@
 //! to work properly. As we do not know whether a WAL writer is closed on the
 //! primary node, the replica locks the WAL when it needs to update a table,
 //! downloads the WAL segments, finish its work and then unlocks the WAL.
+//!
+//! Implementation details:
+//! The lock manager maintains a mapping of (table_dir_name, wal_id) to the wal
+//! state.
+//! The wal state can be one of the following:
+//! - PurgeExclusive: A purge job has exclusive access to the WAL. No writer is
+//! active and if a writer tries to acquire a lock, it will block until the
+//! purge is done.
+//! - WriterShared: A writer has shared access to the WAL. It has exclusive
+//! access to all segments with id greater than or equal to `min_segment_id`.
+//! A purge job may try to acquire a lock, in which case the state will be
+//! upgraded to WriterAndPurge.
+//! - WriterAndPurge: Both a writer and a purge job have access to the WAL.
+//! The writer has exclusive access to all segments with id greater than or
+//! equal to `min_segment_id` and the purge job has exclusive access to all
+//! other segments.
 
 use std::{
     error::Error,
