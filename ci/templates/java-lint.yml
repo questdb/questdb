@@ -16,4 +16,18 @@ steps:
     displayName: "List of affected files"
   - bash: git diff --exit-code
     displayName: "List of required changes"
+  - bash: |
+      mkdir -p $(Agent.TempDirectory)/inspection-results
+      /opt/intellij/idea/bin/idea.sh inspect . .idea/inspectionProfiles/Project_Default.xml $(Agent.TempDirectory)/inspection-results -v2 -d core/src/main/java
+    displayName: "Run IntelliJ inspections"
+  - bash: |
+      # Check inspection results for errors
+      if find $(Agent.TempDirectory)/inspection-results -name "*.xml" -type f | head -1 | xargs -r grep -l "<problem" > /dev/null 2>&1; then
+        echo "Inspection found problems:"
+        cat $(Agent.TempDirectory)/inspection-results/*.xml
+        exit 1
+      else
+        echo "No inspection problems found"
+      fi
+    displayName: "Check inspection results"
 
