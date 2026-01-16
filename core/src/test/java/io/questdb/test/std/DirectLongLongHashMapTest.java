@@ -167,7 +167,7 @@ public class DirectLongLongHashMapTest {
             putAll(map, a0, a1, a2, a3);
             assertKeysOrder(map, new long[]{a3, NO_KEY, NO_KEY, NO_KEY, NO_KEY, a0, a1, a2});
 
-            map.removeAtV2(map.keyIndex(a0));
+            map.removeAt(map.keyIndex(a0));
             assertKeysOrder(map, new long[]{NO_KEY, NO_KEY, NO_KEY, NO_KEY, NO_KEY, a1, a2, a3});
         }
     }
@@ -184,9 +184,9 @@ public class DirectLongLongHashMapTest {
             putAll(map, a0, b0, c0, b1, b2);
             assertKeysOrder(map, new long[]{b2, NO_KEY, NO_KEY, NO_KEY, a0, b0, c0, b1});
 
-            map.removeAtV2(map.keyIndex(b0));
+            map.removeAt(map.keyIndex(b0));
             assertKeysOrder(map, new long[]{NO_KEY, NO_KEY, NO_KEY, NO_KEY, a0, b1, c0, b2});
-            map.removeAtV2(map.keyIndex(a0));
+            map.removeAt(map.keyIndex(a0));
             assertKeysOrder(map, new long[]{NO_KEY, NO_KEY, NO_KEY, NO_KEY, NO_KEY, b1, c0, b2});
         }
     }
@@ -203,10 +203,10 @@ public class DirectLongLongHashMapTest {
             putAll(map, a0, b0, c0, c1, c2);
             assertKeysOrder(map, new long[]{c1, c2, NO_KEY, NO_KEY, NO_KEY, a0, b0, c0});
 
-            map.removeAtV2(map.keyIndex(c1));
+            map.removeAt(map.keyIndex(c1));
             assertKeysOrder(map, new long[]{c2, NO_KEY, NO_KEY, NO_KEY, NO_KEY, a0, b0, c0});
 
-            map.removeAtV2(map.keyIndex(c0));
+            map.removeAt(map.keyIndex(c0));
             assertKeysOrder(map, new long[]{NO_KEY, NO_KEY, NO_KEY, NO_KEY, NO_KEY, a0, b0, c2});
         }
     }
@@ -221,7 +221,7 @@ public class DirectLongLongHashMapTest {
             putAll(map, a, b, c);
             assertKeysOrder(map, new long[]{a, b, c, NO_KEY, NO_KEY, NO_KEY, NO_KEY, NO_KEY});
 
-            map.removeAtV2(map.keyIndex(a));
+            map.removeAt(map.keyIndex(a));
             // Element C is displaced from its ideal position (1),
             // and after deleting A it shouldn’t move to the new gap,
             // because it is farther from the ideal position.
@@ -241,7 +241,7 @@ public class DirectLongLongHashMapTest {
             putAll(map, a, b, c, d, e);
             assertKeysOrder(map, new long[]{a, b, c, NO_KEY, NO_KEY, NO_KEY, d, e});
 
-            map.removeAtV2(map.keyIndex(d));
+            map.removeAt(map.keyIndex(d));
             // Element C is displaced from its ideal position (0),
             // and after deleting D it shouldn’t move to the new gap,
             // because it is farther from the ideal position.

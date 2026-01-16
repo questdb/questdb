@@ -27,6 +27,8 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 
+import static io.questdb.std.MapUtil.shouldMoveToFillGap;
+
 
 public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenable {
     private static final int MIN_INITIAL_CAPACITY = 4;
@@ -134,42 +136,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
             erase(from);
             free++;
             size--;
-
-            // After we have freed up a slot, consider non-empty keys directly below.
-            // They may have been a direct hit but because directly hit slot wasn't
-            // empty these keys would have moved.
-            // After slot is freed these keys require re-hash.
-            from = (from + 1) & mask;
-            for (
-                    long key = keyAtRaw(from);
-                    key != noEntryKey;
-                    from = (from + 1) & mask, key = keyAtRaw(from)
-            ) {
-                long hashCode = Hash.fastHashLong64(key);
-                long idealHit = hashCode & mask;
-                if (idealHit != from) {
-                    long to;
-                    if (keyAtRaw(idealHit) != noEntryKey) {
-                        to = probe(key, idealHit);
-                    } else {
-                        to = idealHit;
-                    }
-
-                    if (to > -1) {
-                        move(from, to);
-                    }
-                }
-            }
-        }
-    }
-
-    public void removeAtV2(long index) {
-        if (index < 0) {
-            long deletedPosition = -index - 1;
-            erase(deletedPosition);
-            free++;
-            size--;
-            compactProbeSequence(deletedPosition);
+            compactProbeSequence(from);
         }
     }
 
@@ -235,6 +202,12 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         throw CairoException.critical(0).put("corrupt long-long hash table");
     }
 
+    /**
+     * When a slot is freed, we examine the non-empty entries that follow it.
+     * Some of them may have originally hashed to this slot but were displaced
+     * because it was occupied. Once the slot becomes free, such entries
+     * may need to be moved backward to preserve correct lookup semantics.
+     */
     private void compactProbeSequence(long deletedPosition) {
         long gapPos = deletedPosition;
         long scanPos = (gapPos + 1) & mask;
@@ -250,19 +223,6 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
                 move(scanPos, gapPos);
                 gapPos = scanPos;
             }
-        }
-    }
-
-    private static boolean shouldMoveToFillGap(long elementPos, long idealPos, long gapPos) {
-        if (elementPos < idealPos) {
-            // Entry displaced from its ideal position and wrapped around table boundary
-            // Move if ideal position is before the gap, OR gap is before current position
-            // [ ELEMENT, IDEAL_POS, GAP ] OR [ GAP, ELEMENT, IDEAL_POS ]
-            return idealPos <= gapPos || gapPos <= elementPos;
-        } else {
-            // Move only if ideal, gap, and element are in linear order
-            // [ IDEAL_POS, GAP, ELEMENT ]
-            return idealPos <= gapPos && gapPos <= elementPos;
         }
     }
 

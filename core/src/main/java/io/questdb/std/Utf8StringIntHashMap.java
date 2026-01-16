@@ -31,6 +31,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
+import static io.questdb.std.MapUtil.shouldMoveToFillGap;
+
 public class Utf8StringIntHashMap implements Mutable {
 
     public static final int NO_ENTRY_VALUE = -1;
@@ -149,35 +151,7 @@ public class Utf8StringIntHashMap implements Mutable {
             int from = -index - 1;
             erase(from);
             free++;
-
-            // after we have freed up a slot
-            // consider non-empty keys directly below
-            // they may have been a direct hit but because
-            // directly hit slot wasn't empty these keys would
-            // have moved.
-            //
-            // After slot if freed these keys require re-hash
-            from = (from + 1) & mask;
-            for (
-                    Utf8String key = keys[from];
-                    key != null;
-                    from = (from + 1) & mask, key = keys[from]
-            ) {
-                int hashCode = Hash.hashUtf8(key);
-                int idealHit = Hash.spread(hashCode) & mask;
-                if (idealHit != from) {
-                    int to;
-                    if (keys[idealHit] != null) {
-                        to = probe(key, hashCode, idealHit);
-                    } else {
-                        to = idealHit;
-                    }
-
-                    if (to > -1) {
-                        move(from, to);
-                    }
-                }
-            }
+            compactProbeSequence(from);
         }
     }
 
@@ -268,6 +242,31 @@ public class Utf8StringIntHashMap implements Mutable {
                 keys[index] = key;
                 hashCodes[index] = oldHashCodes[i];
                 values[index] = oldValues[i];
+            }
+        }
+    }
+
+    /**
+     * When a slot is freed, we examine the non-empty entries that follow it.
+     * Some of them may have originally hashed to this slot but were displaced
+     * because it was occupied. Once the slot becomes free, such entries
+     * may need to be moved backward to preserve correct lookup semantics.
+     */
+    private void compactProbeSequence(int deletedPosition) {
+        int gapPos = deletedPosition;
+        int scanPos = (gapPos + 1) & mask;
+
+        // Scan forward until we hit an empty slot (end of probe sequence)
+        for (Utf8String key = keys[scanPos];
+             key != null;
+             scanPos = (scanPos + 1) & mask, key = keys[scanPos]) {
+
+            int hashCode = Hash.hashUtf8(key);
+            int idealPos = Hash.spread(hashCode) & mask;
+
+            if (shouldMoveToFillGap(scanPos, idealPos, gapPos)) {
+                move(scanPos, gapPos);
+                gapPos = scanPos;
             }
         }
     }

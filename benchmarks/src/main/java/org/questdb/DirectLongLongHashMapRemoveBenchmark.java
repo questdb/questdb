@@ -134,15 +134,4 @@ public class DirectLongLongHashMapRemoveBenchmark {
         // Cycle through keys
         removeIndex = (removeIndex + 1) & (mapSize - 1);
     }
-    @Benchmark
-    public void testRemoveAtV2() {
-        long key = keysToRemove[removeIndex];
-        long index = map.keyIndex(key);
-
-        // Remove the key and re-insert it back to maintain map size for consistent benchmarking
-        map.removeAtV2(index);
-        map.put(key, removeIndex);
-        // Cycle through keys
-        removeIndex = (removeIndex + 1) & (mapSize - 1);
-    }
 }
