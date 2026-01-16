@@ -5720,11 +5720,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    @Ignore
-    // todo: this is not parsed correctly. Parser/Optimiser removes group by clause.
     public void testGroupBySansSelect() throws Exception {
         assertQuery(
-                "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1 latest by x))",
+                "select-choose ts, x from (select-virtual [ts, x] ts, x from (select-group-by [ts, x] x, ts from (select [ts, x] from t1)))",
                 "(t1 group by x)",
                 modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
         );

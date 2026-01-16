@@ -10189,6 +10189,105 @@ public class WindowFunctionTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testNestedWindowFunctionWithColumnAliasReference() throws Exception {
+        // Test nested window function where inner function references an output column alias.
+        // SELECT x as x0, sum(sum(x0) OVER ()) OVER () FROM x
+        // x0 is an alias for column x, and sum(x0) OVER () should resolve x0 to the original column x.
+        // sum(x) OVER () = 1+2+3 = 6 for each row
+        // sum(6) OVER () = 6+6+6 = 18 for each row
+        assertQuery(
+                """
+                        x0\tsum
+                        1\t18.0
+                        2\t18.0
+                        3\t18.0
+                        """,
+                "SELECT x as x0, sum(sum(x0) OVER ()) OVER () as sum FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionWithTwoAliasesForSameColumn() throws Exception {
+        // Test nested window function where two output aliases reference the same column.
+        // SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x
+        // The table only has column x. Aliases 'a' and 'b' are output aliases for x.
+        // The inner sum(a) and sum(b) should fail to resolve because a and b are not table columns.
+        // The validation triggers for alias 'b' first because when there are multiple aliases
+        // for the same column (x as a, x as b), the second alias 'b' references the first alias 'a'
+        // in innerVirtualModel, and 'a' is not a table column.
+        assertException(
+                "SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                48,
+                "Invalid column: b"
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionArithmeticWithColumnAndAlias() throws Exception {
+        // Test arithmetic of two nested window functions where one uses column and other uses alias.
+        // SELECT x as a, sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () FROM x
+        // a is an alias for column x.
+        // sum(x) OVER () = 1+2+3 = 6 for each row
+        // sum(6) OVER () = 18 for each row
+        // sum(a) OVER () = sum(x) OVER () = 6 for each row
+        // sum(6) OVER () = 18 for each row
+        // 18 + 18 = 36 for each row
+        assertQuery(
+                """
+                        a\tcolumn
+                        1\t36.0
+                        2\t36.0
+                        3\t36.0
+                        """,
+                "SELECT x as a, sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionInCaseWhenWithColumnAlias() throws Exception {
+        // Test nested window function inside CASE WHEN where inner function references an output column alias.
+        // SELECT x as a, CASE WHEN sum(sum(a) OVER ()) OVER () > 5 THEN 1 ELSE 0 END FROM x
+        // a is an alias for column x, and sum(a) OVER () should resolve a to the original column x.
+        // sum(x) OVER () = 1+2+3 = 6 for each row
+        // sum(6) OVER () = 6+6+6 = 18 for each row
+        // 18 > 5 is true, so CASE returns 1 for each row
+        assertQuery(
+                """
+                        a\tcase
+                        1\t1
+                        2\t1
+                        3\t1
+                        """,
+                "SELECT x as a, CASE WHEN sum(sum(a) OVER ()) OVER () > 5 THEN 1 ELSE 0 END FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
     static {
         FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "ksum(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",
