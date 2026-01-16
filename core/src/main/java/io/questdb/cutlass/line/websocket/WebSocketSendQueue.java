@@ -75,10 +75,6 @@ public class WebSocketSendQueue implements QuietCloseable {
     @Nullable
     private final InFlightWindow inFlightWindow;
 
-    // Optional ConnectionSymbolState for delta symbol dictionary tracking
-    @Nullable
-    private final ConnectionSymbolState connectionSymbolState;
-
     // The I/O thread for async sending
     private final Thread sendThread;
 
@@ -113,7 +109,7 @@ public class WebSocketSendQueue implements QuietCloseable {
      * @param channel the WebSocket channel to send on
      */
     public WebSocketSendQueue(WebSocketChannel channel) {
-        this(channel, null, null, DEFAULT_QUEUE_CAPACITY, DEFAULT_ENQUEUE_TIMEOUT_MS, DEFAULT_SHUTDOWN_TIMEOUT_MS);
+        this(channel, null, DEFAULT_QUEUE_CAPACITY, DEFAULT_ENQUEUE_TIMEOUT_MS, DEFAULT_SHUTDOWN_TIMEOUT_MS);
     }
 
     /**
@@ -123,33 +119,19 @@ public class WebSocketSendQueue implements QuietCloseable {
      * @param inFlightWindow the window to track sent batches awaiting ACK (may be null)
      */
     public WebSocketSendQueue(WebSocketChannel channel, @Nullable InFlightWindow inFlightWindow) {
-        this(channel, inFlightWindow, null, DEFAULT_QUEUE_CAPACITY, DEFAULT_ENQUEUE_TIMEOUT_MS, DEFAULT_SHUTDOWN_TIMEOUT_MS);
-    }
-
-    /**
-     * Creates a new send queue with InFlightWindow and ConnectionSymbolState.
-     *
-     * @param channel               the WebSocket channel to send on
-     * @param inFlightWindow        the window to track sent batches awaiting ACK (may be null)
-     * @param connectionSymbolState the state for delta symbol dictionary tracking (may be null)
-     */
-    public WebSocketSendQueue(WebSocketChannel channel, @Nullable InFlightWindow inFlightWindow,
-                              @Nullable ConnectionSymbolState connectionSymbolState) {
-        this(channel, inFlightWindow, connectionSymbolState, DEFAULT_QUEUE_CAPACITY, DEFAULT_ENQUEUE_TIMEOUT_MS, DEFAULT_SHUTDOWN_TIMEOUT_MS);
+        this(channel, inFlightWindow, DEFAULT_QUEUE_CAPACITY, DEFAULT_ENQUEUE_TIMEOUT_MS, DEFAULT_SHUTDOWN_TIMEOUT_MS);
     }
 
     /**
      * Creates a new send queue with custom configuration.
      *
-     * @param channel               the WebSocket channel to send on
-     * @param inFlightWindow        the window to track sent batches awaiting ACK (may be null)
-     * @param connectionSymbolState the state for delta symbol dictionary tracking (may be null)
-     * @param queueCapacity         maximum number of pending batches
-     * @param enqueueTimeoutMs      timeout for enqueue operations (ms)
-     * @param shutdownTimeoutMs     timeout for graceful shutdown (ms)
+     * @param channel           the WebSocket channel to send on
+     * @param inFlightWindow    the window to track sent batches awaiting ACK (may be null)
+     * @param queueCapacity     maximum number of pending batches
+     * @param enqueueTimeoutMs  timeout for enqueue operations (ms)
+     * @param shutdownTimeoutMs timeout for graceful shutdown (ms)
      */
     public WebSocketSendQueue(WebSocketChannel channel, @Nullable InFlightWindow inFlightWindow,
-                              @Nullable ConnectionSymbolState connectionSymbolState,
                               int queueCapacity, long enqueueTimeoutMs, long shutdownTimeoutMs) {
         if (channel == null) {
             throw new IllegalArgumentException("channel cannot be null");
@@ -160,7 +142,6 @@ public class WebSocketSendQueue implements QuietCloseable {
 
         this.channel = channel;
         this.inFlightWindow = inFlightWindow;
-        this.connectionSymbolState = connectionSymbolState;
         this.sendQueue = new ArrayBlockingQueue<>(queueCapacity);
         this.enqueueTimeoutMs = enqueueTimeoutMs;
         this.shutdownTimeoutMs = shutdownTimeoutMs;
@@ -427,14 +408,6 @@ public class WebSocketSendQueue implements QuietCloseable {
                     .$(", max=").$(inFlightWindow.getMaxWindowSize()).I$();
             inFlightWindow.addInFlight(batchSequence);
             LOG.debug().$("Added to in-flight window [seq=").$(batchSequence).I$();
-        }
-
-        // Track symbol state for delta encoding
-        if (connectionSymbolState != null) {
-            int maxSymbolId = batch.getMaxSymbolId();
-            connectionSymbolState.onBatchSent(batchSequence, maxSymbolId);
-            LOG.debug().$("Tracked symbol state [seq=").$(batchSequence)
-                    .$(", maxSymbolId=").$(maxSymbolId).I$();
         }
 
         // Send over WebSocket

@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.cutlass.http.ilpv4.*;
-import io.questdb.cutlass.line.websocket.ConnectionSymbolState;
 import io.questdb.cutlass.line.websocket.GlobalSymbolDictionary;
 import io.questdb.cutlass.line.websocket.IlpV4WebSocketEncoder;
 import io.questdb.cutlass.line.websocket.NativeBufferWriter;
@@ -54,7 +53,6 @@ public class DeltaSymbolDictionaryTest {
     @Test
     public void testMultipleTables_sharedGlobalDictionary() {
         GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
-        ConnectionSymbolState connState = new ConnectionSymbolState();
 
         // Table 1 uses symbols AAPL, GOOG
         int aaplId = globalDict.getOrAddSymbol("AAPL");
@@ -166,19 +164,14 @@ public class DeltaSymbolDictionaryTest {
     @Test
     public void testMultipleBatches_progressiveSymbolAccumulation() {
         GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
-        ConnectionSymbolState connState = new ConnectionSymbolState();
 
         // Batch 1: AAPL, GOOG
         int aaplId = globalDict.getOrAddSymbol("AAPL");
         int googId = globalDict.getOrAddSymbol("GOOG");
         int batch1MaxId = Math.max(aaplId, googId);
 
-        connState.onBatchSent(0, batch1MaxId);
-        Assert.assertEquals(-1, connState.getConfirmedMaxId());  // Not yet ACKed
-
-        // Simulate ACK
-        connState.onBatchesAcked(0);
-        Assert.assertEquals(1, connState.getConfirmedMaxId());  // GOOG(1) confirmed
+        // Simulate sending batch 1 - maxSentSymbolId = 1 after send
+        int maxSentSymbolId = batch1MaxId;  // 1
 
         // Batch 2: AAPL (existing), MSFT (new), TSLA (new)
         globalDict.getOrAddSymbol("AAPL");  // Returns 0, already exists
@@ -187,22 +180,21 @@ public class DeltaSymbolDictionaryTest {
         int batch2MaxId = Math.max(msftId, tslaId);
 
         // Delta for batch 2 should be [2, 3] (MSFT, TSLA)
-        int deltaStart = connState.getConfirmedMaxId() + 1;
-        int deltaCount = batch2MaxId - connState.getConfirmedMaxId();
+        int deltaStart = maxSentSymbolId + 1;
+        int deltaCount = batch2MaxId - maxSentSymbolId;
         Assert.assertEquals(2, deltaStart);
         Assert.assertEquals(2, deltaCount);
 
-        connState.onBatchSent(1, batch2MaxId);
-        connState.onBatchesAcked(1);
-        Assert.assertEquals(3, connState.getConfirmedMaxId());
+        // Simulate sending batch 2
+        maxSentSymbolId = batch2MaxId;  // 3
 
         // Batch 3: All existing symbols (no delta needed)
         globalDict.getOrAddSymbol("AAPL");
         globalDict.getOrAddSymbol("GOOG");
         int batch3MaxId = 1;  // Max used is GOOG(1)
 
-        deltaStart = connState.getConfirmedMaxId() + 1;
-        deltaCount = Math.max(0, batch3MaxId - connState.getConfirmedMaxId());
+        deltaStart = maxSentSymbolId + 1;
+        deltaCount = Math.max(0, batch3MaxId - maxSentSymbolId);
         Assert.assertEquals(4, deltaStart);
         Assert.assertEquals(0, deltaCount);  // No new symbols
     }
@@ -211,8 +203,8 @@ public class DeltaSymbolDictionaryTest {
     public void testMultipleBatches_encodeAndDecode() throws IlpV4ParseException {
         try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
             GlobalSymbolDictionary clientDict = new GlobalSymbolDictionary();
-            ConnectionSymbolState connState = new ConnectionSymbolState();
             ObjList<String> serverDict = new ObjList<>();
+            int maxSentSymbolId = -1;
 
             // === Batch 1 ===
             IlpV4TableBuffer batch1 = new IlpV4TableBuffer("test");
@@ -226,8 +218,9 @@ public class DeltaSymbolDictionaryTest {
             batch1.nextRow();
 
             int batch1MaxId = 1;
-            int size1 = encoder.encodeWithDeltaDict(batch1, clientDict, -1, batch1MaxId, false);
+            int size1 = encoder.encodeWithDeltaDict(batch1, clientDict, maxSentSymbolId, batch1MaxId, false);
             Assert.assertTrue(size1 > 0);
+            maxSentSymbolId = batch1MaxId;
 
             // Decode on server side
             NativeBufferWriter buf1 = encoder.getBuffer();
@@ -237,10 +230,6 @@ public class DeltaSymbolDictionaryTest {
             Assert.assertEquals(2, serverDict.size());
             Assert.assertEquals("AAPL", serverDict.get(0));
             Assert.assertEquals("GOOG", serverDict.get(1));
-
-            // Simulate ACK
-            connState.onBatchSent(0, batch1MaxId);
-            connState.onBatchesAcked(0);
 
             // === Batch 2 ===
             IlpV4TableBuffer batch2 = new IlpV4TableBuffer("test");
@@ -253,8 +242,9 @@ public class DeltaSymbolDictionaryTest {
             batch2.nextRow();
 
             int batch2MaxId = 2;
-            int size2 = encoder.encodeWithDeltaDict(batch2, clientDict, connState.getConfirmedMaxId(), batch2MaxId, false);
+            int size2 = encoder.encodeWithDeltaDict(batch2, clientDict, maxSentSymbolId, batch2MaxId, false);
             Assert.assertTrue(size2 > 0);
+            maxSentSymbolId = batch2MaxId;
 
             // Decode batch 2
             NativeBufferWriter buf2 = encoder.getBuffer();
@@ -266,81 +256,28 @@ public class DeltaSymbolDictionaryTest {
         }
     }
 
-    @Test
-    public void testMultipleBatches_outOfOrderAcks() {
-        ConnectionSymbolState connState = new ConnectionSymbolState();
-
-        // Send batches with different max IDs
-        connState.onBatchSent(0, 5);   // Batch 0: symbols up to ID 5
-        connState.onBatchSent(1, 10);  // Batch 1: symbols up to ID 10
-        connState.onBatchSent(2, 7);   // Batch 2: symbols up to ID 7
-        connState.onBatchSent(3, 15);  // Batch 3: symbols up to ID 15
-
-        Assert.assertEquals(-1, connState.getConfirmedMaxId());
-        Assert.assertEquals(4, connState.getPendingBatchCount());
-
-        // ACK up to batch 2 (cumulative: batches 0, 1, 2)
-        connState.onBatchesAcked(2);
-
-        // Confirmed should be max(5, 10, 7) = 10
-        Assert.assertEquals(10, connState.getConfirmedMaxId());
-        Assert.assertEquals(1, connState.getPendingBatchCount());  // Only batch 3 pending
-
-        // ACK batch 3
-        connState.onBatchesAcked(3);
-        Assert.assertEquals(15, connState.getConfirmedMaxId());
-        Assert.assertTrue(connState.isEmpty());
-    }
-
-    @Test
-    public void testMultipleBatches_batchFailure() {
-        ConnectionSymbolState connState = new ConnectionSymbolState();
-
-        // Send 3 batches
-        connState.onBatchSent(0, 5);
-        connState.onBatchSent(1, 10);
-        connState.onBatchSent(2, 15);
-
-        // Batch 1 fails - should NOT advance watermark
-        connState.onBatchFailed(1);
-        Assert.assertEquals(-1, connState.getConfirmedMaxId());
-        Assert.assertEquals(2, connState.getPendingBatchCount());
-
-        // ACK batch 0
-        connState.onBatchesAcked(0);
-        Assert.assertEquals(5, connState.getConfirmedMaxId());
-
-        // ACK batch 2 (batch 1 was removed)
-        connState.onBatchesAcked(2);
-        Assert.assertEquals(15, connState.getConfirmedMaxId());
-    }
-
     // ==================== Reconnection Tests ====================
 
     @Test
     public void testReconnection_resetsWatermark() {
         GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
-        ConnectionSymbolState connState = new ConnectionSymbolState();
 
-        // Build up dictionary and confirm some symbols
+        // Build up dictionary and "send" some symbols
         globalDict.getOrAddSymbol("AAPL");
         globalDict.getOrAddSymbol("GOOG");
         globalDict.getOrAddSymbol("MSFT");
 
-        connState.onBatchSent(0, 2);
-        connState.onBatchesAcked(0);
-        Assert.assertEquals(2, connState.getConfirmedMaxId());
+        int maxSentSymbolId = 2;
 
-        // Simulate reconnection
-        connState.reset();
-        Assert.assertEquals(-1, connState.getConfirmedMaxId());
-        Assert.assertTrue(connState.isEmpty());
+        // Simulate reconnection - reset maxSentSymbolId
+        maxSentSymbolId = -1;
+        Assert.assertEquals(-1, maxSentSymbolId);
 
         // Global dictionary is NOT cleared (it's client-side)
         Assert.assertEquals(3, globalDict.size());
 
         // Next batch must send full delta from 0
-        int deltaStart = connState.getConfirmedMaxId() + 1;
+        int deltaStart = maxSentSymbolId + 1;
         Assert.assertEquals(0, deltaStart);
     }
 
@@ -367,20 +304,16 @@ public class DeltaSymbolDictionaryTest {
     public void testReconnection_fullDeltaAfterReconnect() {
         try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
             GlobalSymbolDictionary clientDict = new GlobalSymbolDictionary();
-            ConnectionSymbolState connState = new ConnectionSymbolState();
 
             // First connection: add symbols
             int aaplId = clientDict.getOrAddSymbol("AAPL");
-            int googId = clientDict.getOrAddSymbol("GOOG");
+            clientDict.getOrAddSymbol("GOOG");
 
-            // Send and ACK batch
-            connState.onBatchSent(0, 1);
-            connState.onBatchesAcked(0);
-            Assert.assertEquals(1, connState.getConfirmedMaxId());
+            // Send batch - maxSentSymbolId = 1
+            int maxSentSymbolId = 1;
 
-            // Reconnect
-            connState.reset();
-            Assert.assertEquals(-1, connState.getConfirmedMaxId());
+            // Reconnect - reset maxSentSymbolId
+            maxSentSymbolId = -1;
 
             // Create new batch using existing symbols
             IlpV4TableBuffer batch = new IlpV4TableBuffer("test");
@@ -389,7 +322,7 @@ public class DeltaSymbolDictionaryTest {
             batch.nextRow();
 
             // Encode - should send full delta (all symbols from 0)
-            int size = encoder.encodeWithDeltaDict(batch, clientDict, connState.getConfirmedMaxId(), 1, false);
+            int size = encoder.encodeWithDeltaDict(batch, clientDict, maxSentSymbolId, 1, false);
             Assert.assertTrue(size > 0);
 
             // Verify deltaStart is 0
@@ -405,19 +338,17 @@ public class DeltaSymbolDictionaryTest {
     @Test
     public void testEdgeCase_emptyBatch() {
         GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
-        ConnectionSymbolState connState = new ConnectionSymbolState();
 
-        // Pre-populate dictionary
+        // Pre-populate dictionary and send
         globalDict.getOrAddSymbol("AAPL");
-        connState.onBatchSent(0, 0);
-        connState.onBatchesAcked(0);
+        int maxSentSymbolId = 0;
 
         // Empty batch (no rows, no symbols used)
         IlpV4TableBuffer emptyBatch = new IlpV4TableBuffer("test");
         Assert.assertEquals(0, emptyBatch.getRowCount());
 
         // Delta should still work (deltaCount = 0)
-        int deltaStart = connState.getConfirmedMaxId() + 1;
+        int deltaStart = maxSentSymbolId + 1;
         int deltaCount = 0;
         Assert.assertEquals(1, deltaStart);
         Assert.assertEquals(0, deltaCount);
@@ -473,7 +404,6 @@ public class DeltaSymbolDictionaryTest {
     @Test
     public void testEdgeCase_largeSymbolDictionary() {
         GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
-        ConnectionSymbolState connState = new ConnectionSymbolState();
 
         // Add 1000 unique symbols
         for (int i = 0; i < 1000; i++) {
@@ -484,13 +414,11 @@ public class DeltaSymbolDictionaryTest {
         Assert.assertEquals(1000, globalDict.size());
 
         // Send first batch with symbols 0-99
-        connState.onBatchSent(0, 99);
-        connState.onBatchesAcked(0);
-        Assert.assertEquals(99, connState.getConfirmedMaxId());
+        int maxSentSymbolId = 99;
 
         // Next batch uses symbols 0-199, delta is 100-199
-        int deltaStart = connState.getConfirmedMaxId() + 1;
-        int deltaCount = 199 - connState.getConfirmedMaxId();
+        int deltaStart = maxSentSymbolId + 1;
+        int deltaCount = 199 - maxSentSymbolId;
         Assert.assertEquals(100, deltaStart);
         Assert.assertEquals(100, deltaCount);
     }
@@ -504,15 +432,13 @@ public class DeltaSymbolDictionaryTest {
         globalDict.getOrAddSymbol("MSFT");
         globalDict.getOrAddSymbol("TSLA");
 
-        ConnectionSymbolState connState = new ConnectionSymbolState();
-
         // Batch uses AAPL(0) and TSLA(3), skipping GOOG(1) and MSFT(2)
-        // Delta must include gap-fill: send all symbols from confirmedMaxId+1 to batchMaxId
-        int confirmedMaxId = -1;
+        // Delta must include gap-fill: send all symbols from maxSentSymbolId+1 to batchMaxId
+        int maxSentSymbolId = -1;
         int batchMaxId = 3;  // TSLA
 
-        int deltaStart = confirmedMaxId + 1;
-        int deltaCount = batchMaxId - confirmedMaxId;
+        int deltaStart = maxSentSymbolId + 1;
+        int deltaCount = batchMaxId - maxSentSymbolId;
 
         // Must send symbols 0, 1, 2, 3 (even though 1, 2 aren't used in this batch)
         Assert.assertEquals(0, deltaStart);
@@ -706,9 +632,9 @@ public class DeltaSymbolDictionaryTest {
     public void testRoundTrip_multipleBatches() throws IlpV4ParseException {
         try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
             GlobalSymbolDictionary clientDict = new GlobalSymbolDictionary();
-            ConnectionSymbolState connState = new ConnectionSymbolState();
             ObjList<String> serverDict = new ObjList<>();
             IlpV4StreamingDecoder decoder = new IlpV4StreamingDecoder();
+            int maxSentSymbolId = -1;
 
             // === Batch 1 ===
             IlpV4TableBuffer batch1 = new IlpV4TableBuffer("test");
@@ -718,11 +644,9 @@ public class DeltaSymbolDictionaryTest {
             col1.addSymbolWithGlobalId("AAPL", aaplId);
             batch1.nextRow();
 
-            int size1 = encoder.encodeWithDeltaDict(batch1, clientDict, connState.getConfirmedMaxId(), 0, false);
+            int size1 = encoder.encodeWithDeltaDict(batch1, clientDict, maxSentSymbolId, 0, false);
             decoder.decode(encoder.getBuffer().getBufferPtr(), size1, serverDict);
-
-            connState.onBatchSent(0, 0);
-            connState.onBatchesAcked(0);
+            maxSentSymbolId = 0;
 
             Assert.assertEquals(1, serverDict.size());
 
@@ -737,7 +661,7 @@ public class DeltaSymbolDictionaryTest {
             col2.addSymbolWithGlobalId("MSFT", msftId);
             batch2.nextRow();
 
-            int size2 = encoder.encodeWithDeltaDict(batch2, clientDict, connState.getConfirmedMaxId(), 2, false);
+            int size2 = encoder.encodeWithDeltaDict(batch2, clientDict, maxSentSymbolId, 2, false);
             decoder.decode(encoder.getBuffer().getBufferPtr(), size2, serverDict);
 
             Assert.assertEquals(3, serverDict.size());

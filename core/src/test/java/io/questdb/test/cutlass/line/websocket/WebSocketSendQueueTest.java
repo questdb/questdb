@@ -65,7 +65,7 @@ public class WebSocketSendQueueTest {
     @Test
     public void testConstructionWithCustomParameters() {
         MockWebSocketChannel channel = new MockWebSocketChannel();
-        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, 8, 5000, 2000)) {
+        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 8, 5000, 2000)) {
             Assert.assertTrue(queue.isRunning());
             Assert.assertTrue(queue.isEmpty());
         }
@@ -79,7 +79,7 @@ public class WebSocketSendQueueTest {
     @Test(expected = IllegalArgumentException.class)
     public void testConstructionWithZeroCapacity() {
         MockWebSocketChannel channel = new MockWebSocketChannel();
-        try (WebSocketSendQueue ignored = new WebSocketSendQueue(channel, null, null, 0, 1000, 1000)) {
+        try (WebSocketSendQueue ignored = new WebSocketSendQueue(channel, null, 0, 1000, 1000)) {
             Assert.fail("Should throw");
         }
     }
@@ -87,7 +87,7 @@ public class WebSocketSendQueueTest {
     @Test(expected = IllegalArgumentException.class)
     public void testConstructionWithNegativeCapacity() {
         MockWebSocketChannel channel = new MockWebSocketChannel();
-        try (WebSocketSendQueue ignored = new WebSocketSendQueue(channel, null, null, -1, 1000, 1000)) {
+        try (WebSocketSendQueue ignored = new WebSocketSendQueue(channel, null, -1, 1000, 1000)) {
             Assert.fail("Should throw");
         }
     }
@@ -237,7 +237,7 @@ public class WebSocketSendQueueTest {
         MockWebSocketChannel channel = new MockWebSocketChannel();
         channel.setSendDelayMs(10);
 
-        WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, 8, 1000, 5000);
+        WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 8, 1000, 5000);
 
         List<MicrobatchBuffer> buffers = new ArrayList<>();
         try {
@@ -308,7 +308,7 @@ public class WebSocketSendQueueTest {
         // Add delay to let batches accumulate
         channel.setSendDelayMs(100);
 
-        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, 16, 1000, 1000)) {
+        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 16, 1000, 1000)) {
             List<MicrobatchBuffer> buffers = new ArrayList<>();
             try {
                 // Enqueue several batches quickly
@@ -385,7 +385,7 @@ public class WebSocketSendQueueTest {
         int numThreads = 4;
         int batchesPerThread = 25;
 
-        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, 64, 5000, 5000)) {
+        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 64, 5000, 5000)) {
             List<MicrobatchBuffer> allBuffers = Collections.synchronizedList(new ArrayList<>());
             CountDownLatch startLatch = new CountDownLatch(1);
             CountDownLatch doneLatch = new CountDownLatch(numThreads);
@@ -437,7 +437,7 @@ public class WebSocketSendQueueTest {
         channel.setSendDelayMs(20);
 
         int queueCapacity = 4;
-        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, queueCapacity, 5000, 5000)) {
+        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, queueCapacity, 5000, 5000)) {
             List<MicrobatchBuffer> buffers = Collections.synchronizedList(new ArrayList<>());
             int totalBatches = 20;
             CountDownLatch doneLatch = new CountDownLatch(1);
@@ -561,7 +561,7 @@ public class WebSocketSendQueueTest {
         MockWebSocketChannel channel = new MockWebSocketChannel();
         int numBatches = 1000;
 
-        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, 64, 30000, 30000)) {
+        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 64, 30000, 30000)) {
             List<MicrobatchBuffer> buffers = new ArrayList<>();
             try {
                 long startTime = System.currentTimeMillis();
@@ -593,7 +593,7 @@ public class WebSocketSendQueueTest {
         MockWebSocketChannel channel = new MockWebSocketChannel();
         channel.setSendDelayMs(5);
 
-        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, 16, 10000, 10000)) {
+        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 16, 10000, 10000)) {
             List<MicrobatchBuffer> buffers = new ArrayList<>();
             try {
                 // Burst: enqueue many quickly
@@ -631,7 +631,7 @@ public class WebSocketSendQueueTest {
         int numThreads = 8;
         int batchesPerThread = 50;
 
-        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, 32, 30000, 30000)) {
+        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 32, 30000, 30000)) {
             List<MicrobatchBuffer> allBuffers = Collections.synchronizedList(new ArrayList<>());
             CountDownLatch startLatch = new CountDownLatch(1);
             CountDownLatch doneLatch = new CountDownLatch(numThreads);
@@ -677,7 +677,7 @@ public class WebSocketSendQueueTest {
     public void testVariableBufferSizes() throws Exception {
         MockWebSocketChannel channel = new MockWebSocketChannel();
 
-        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, 16, 10000, 10000)) {
+        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 16, 10000, 10000)) {
             List<MicrobatchBuffer> buffers = new ArrayList<>();
             int totalExpectedBytes = 0;
             try {
@@ -711,7 +711,7 @@ public class WebSocketSendQueueTest {
         // Note: We cannot close buffers while the send thread might still be using them.
         // The queue will recycle buffers after sending, so we only need to track buffers
         // that were never successfully enqueued.
-        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, null, 2, 5000, 5000)) {
+        try (WebSocketSendQueue queue = new WebSocketSendQueue(channel, null, 2, 5000, 5000)) {
             AtomicBoolean interrupted = new AtomicBoolean(false);
             CountDownLatch started = new CountDownLatch(1);
 

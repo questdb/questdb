@@ -43,7 +43,6 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>Reads WebSocket frames from the server</li>
  *   <li>Parses binary responses containing ACK/error status</li>
  *   <li>Updates the InFlightWindow with acknowledgments or failures</li>
- *   <li>Updates the ConnectionSymbolState for delta symbol dictionary tracking</li>
  * </ul>
  * <p>
  * Thread safety: This class is thread-safe. The reader thread processes
@@ -58,7 +57,6 @@ public class ResponseReader implements QuietCloseable {
 
     private final WebSocketChannel channel;
     private final InFlightWindow inFlightWindow;
-    private final ConnectionSymbolState connectionSymbolState;
     private final Thread readerThread;
     private final CountDownLatch shutdownLatch;
     private final WebSocketResponse response;
@@ -76,14 +74,12 @@ public class ResponseReader implements QuietCloseable {
     private final AtomicLong totalErrors = new AtomicLong(0);
 
     /**
-     * Creates a new response reader with symbol state tracking.
+     * Creates a new response reader.
      *
-     * @param channel               the WebSocket channel to read from
-     * @param inFlightWindow        the window to update with acknowledgments
-     * @param connectionSymbolState the state for delta symbol dictionary tracking
+     * @param channel        the WebSocket channel to read from
+     * @param inFlightWindow the window to update with acknowledgments
      */
-    public ResponseReader(WebSocketChannel channel, InFlightWindow inFlightWindow,
-                          ConnectionSymbolState connectionSymbolState) {
+    public ResponseReader(WebSocketChannel channel, InFlightWindow inFlightWindow) {
         if (channel == null) {
             throw new IllegalArgumentException("channel cannot be null");
         }
@@ -93,7 +89,6 @@ public class ResponseReader implements QuietCloseable {
 
         this.channel = channel;
         this.inFlightWindow = inFlightWindow;
-        this.connectionSymbolState = connectionSymbolState;
         this.response = new WebSocketResponse();
 
         // Allocate parse buffer (enough for max response)
@@ -225,8 +220,6 @@ public class ResponseReader implements QuietCloseable {
             if (response.isSuccess()) {
                 // Cumulative ACK - acknowledge all batches up to this sequence
                 int acked = inFlightWindow.acknowledgeUpTo(sequence);
-                // Update symbol watermark for delta encoding
-                connectionSymbolState.onBatchesAcked(sequence);
                 if (acked > 0) {
                     totalAcks.addAndGet(acked);
                     LOG.debug().$("Cumulative ACK received [upTo=").$(sequence)

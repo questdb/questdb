@@ -141,10 +141,13 @@ public class IlpV4WebSocketSender implements Sender {
 
     // Global symbol dictionary for delta encoding
     private final GlobalSymbolDictionary globalSymbolDictionary;
-    private final ConnectionSymbolState connectionSymbolState;
 
     // Track max global symbol ID used in current batch (for delta calculation)
     private int currentBatchMaxSymbolId = -1;
+
+    // Track highest symbol ID sent to server (for delta encoding)
+    // Once sent over TCP, server is guaranteed to receive it (or connection dies)
+    private volatile int maxSentSymbolId = -1;
 
     private IlpV4WebSocketSender(String host, int port, boolean tlsEnabled, int bufferSize,
                                  int autoFlushRows, int autoFlushBytes, long autoFlushIntervalNanos,
@@ -168,7 +171,6 @@ public class IlpV4WebSocketSender implements Sender {
 
         // Initialize global symbol dictionary for delta encoding
         this.globalSymbolDictionary = new GlobalSymbolDictionary();
-        this.connectionSymbolState = new ConnectionSymbolState();
 
         // Initialize double-buffering if async mode
         if (asyncMode) {
@@ -307,14 +309,14 @@ public class IlpV4WebSocketSender implements Sender {
 
             // Initialize send queue and background response reader only for async mode
             if (asyncMode) {
-                // Create send queue with InFlightWindow and ConnectionSymbolState
-                sendQueue = new WebSocketSendQueue(channel, inFlightWindow, connectionSymbolState,
+                // Create send queue with InFlightWindow
+                sendQueue = new WebSocketSendQueue(channel, inFlightWindow,
                         sendQueueCapacity,
                         WebSocketSendQueue.DEFAULT_ENQUEUE_TIMEOUT_MS,
                         WebSocketSendQueue.DEFAULT_SHUTDOWN_TIMEOUT_MS);
 
                 // Start response reader to process server ACKs asynchronously
-                responseReader = new ResponseReader(channel, inFlightWindow, connectionSymbolState);
+                responseReader = new ResponseReader(channel, inFlightWindow);
             }
             // Sync mode: no send queue or background reader - we read ACKs synchronously
 
@@ -357,19 +359,11 @@ public class IlpV4WebSocketSender implements Sender {
     }
 
     /**
-     * Returns the connection symbol state.
-     * For testing and encoder integration.
+     * Returns the max symbol ID sent to the server.
+     * Once sent over TCP, server is guaranteed to receive it (or connection dies).
      */
-    public ConnectionSymbolState getConnectionSymbolState() {
-        return connectionSymbolState;
-    }
-
-    /**
-     * Returns the confirmed max symbol ID from the connection state.
-     * This is the highest symbol ID the server has confirmed receiving.
-     */
-    public int getConfirmedMaxSymbolId() {
-        return connectionSymbolState.getConfirmedMaxId();
+    public int getMaxSentSymbolId() {
+        return maxSentSymbolId;
     }
 
     // ==================== Sender interface implementation ====================
@@ -591,14 +585,14 @@ public class IlpV4WebSocketSender implements Sender {
             if (rowCount > 0) {
                 LOG.debug().$("Encoding table [name=").$(tableName)
                         .$(", rows=").$(rowCount)
-                        .$(", confirmedMaxId=").$(connectionSymbolState.getConfirmedMaxId())
+                        .$(", maxSentSymbolId=").$(maxSentSymbolId)
                         .$(", batchMaxId=").$(currentBatchMaxSymbolId).I$();
 
                 // Encode this table's rows with delta symbol dictionary
                 int messageSize = encoder.encodeWithDeltaDict(
                         tableBuffer,
                         globalSymbolDictionary,
-                        connectionSymbolState.getConfirmedMaxId(),
+                        maxSentSymbolId,
                         currentBatchMaxSymbolId,
                         false
                 );
@@ -610,6 +604,9 @@ public class IlpV4WebSocketSender implements Sender {
                 activeBuffer.write(buffer.getBufferPtr(), messageSize);
                 activeBuffer.incrementRowCount();
                 activeBuffer.setMaxSymbolId(currentBatchMaxSymbolId);
+
+                // Update maxSentSymbolId - once sent over TCP, server will receive it
+                maxSentSymbolId = currentBatchMaxSymbolId;
 
                 // Seal and enqueue for sending
                 sealAndSwapBuffer();
@@ -790,7 +787,7 @@ public class IlpV4WebSocketSender implements Sender {
             int messageSize = encoder.encodeWithDeltaDict(
                     tableBuffer,
                     globalSymbolDictionary,
-                    connectionSymbolState.getConfirmedMaxId(),
+                    maxSentSymbolId,
                     currentBatchMaxSymbolId,
                     false
             );
@@ -801,19 +798,18 @@ public class IlpV4WebSocketSender implements Sender {
                 long batchSequence = nextBatchSequence++;
                 inFlightWindow.addInFlight(batchSequence);
 
-                // Track symbol state for delta encoding
-                connectionSymbolState.onBatchSent(batchSequence, currentBatchMaxSymbolId);
+                // Update maxSentSymbolId - once sent over TCP, server will receive it
+                maxSentSymbolId = currentBatchMaxSymbolId;
 
                 LOG.debug().$("Sending sync batch [seq=").$(batchSequence)
                         .$(", bytes=").$(messageSize)
                         .$(", rows=").$(tableBuffer.getRowCount())
-                        .$(", confirmedMaxId=").$(connectionSymbolState.getConfirmedMaxId())
-                        .$(", maxSymbolId=").$(currentBatchMaxSymbolId).I$();
+                        .$(", maxSentSymbolId=").$(maxSentSymbolId).I$();
 
                 // Send over WebSocket
                 channel.sendBinary(buffer.getBufferPtr(), messageSize);
 
-                // Wait for ACK synchronously (this also updates connectionSymbolState)
+                // Wait for ACK synchronously
                 waitForAck(batchSequence);
             }
 
@@ -859,8 +855,6 @@ public class IlpV4WebSocketSender implements Sender {
                     if (response.isSuccess()) {
                         // Cumulative ACK - acknowledge all batches up to this sequence
                         inFlightWindow.acknowledgeUpTo(sequence);
-                        // Update symbol watermark for delta encoding
-                        connectionSymbolState.onBatchesAcked(sequence);
                         if (sequence >= expectedSequence) {
                             return; // Our batch was acknowledged (cumulative)
                         }
@@ -871,8 +865,6 @@ public class IlpV4WebSocketSender implements Sender {
                                 "Server error for batch " + sequence + ": " +
                                         response.getStatusName() + " - " + errorMessage);
                         inFlightWindow.fail(sequence, error);
-                        // Update symbol state for failed batch
-                        connectionSymbolState.onBatchFailed(sequence);
                         if (sequence == expectedSequence) {
                             throw error;
                         }
