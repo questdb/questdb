@@ -118,8 +118,6 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
-    // Maximum size of windowColumnListPool to prevent unbounded growth across queries
-    private static final int MAX_WINDOW_COLUMN_LIST_POOL_SIZE = 16;
     // Maximum depth of nested window functions (e.g., sum(sum(row_number() OVER ()) OVER ()) OVER () is 3 levels)
     private static final int MAX_WINDOW_FUNCTION_NESTING_DEPTH = 8;
     private static final int NOT_OP_AND = 2;
@@ -200,7 +198,7 @@ public class SqlOptimiser implements Mutable {
     private final TrivialExpressionVisitor trivialExpressionVisitor = new TrivialExpressionVisitor();
     private final LowerCaseCharSequenceIntHashMap trivialExpressions = new LowerCaseCharSequenceIntHashMap();
     // Pool of ObjList<QueryColumn> for windowFunctionHashMap values (to avoid allocations)
-    private final ObjList<ObjList<QueryColumn>> windowColumnListPool = new ObjList<>();
+    private final ObjectPool<ObjList<QueryColumn>> windowColumnListPool = new ObjectPool<>(ObjList::new, 16);
     // Hash map for O(1) window function deduplication lookup: hash -> list of QueryColumns with that hash
     private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
     // Second stack for emitWindowFunctions, separate from sqlNodeStack because
@@ -215,7 +213,6 @@ public class SqlOptimiser implements Mutable {
     private OperatorExpression opLt;
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
-    private int windowColumnListPoolPos = 0;
 
     public SqlOptimiser(
             CairoConfiguration configuration,
@@ -1850,19 +1847,10 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Clears the window function hash map and resets the column list pool.
-     * Trims the pool if it exceeds the maximum size to prevent unbounded growth.
      */
     private void clearWindowFunctionHashMap() {
         windowFunctionHashMap.clear();
-        // Clear lists to release references to QueryColumn objects
-        for (int i = 0, n = windowColumnListPoolPos; i < n; i++) {
-            windowColumnListPool.getQuick(i).clear();
-        }
-        // Trim pool if it grew too large
-        if (windowColumnListPool.size() > MAX_WINDOW_COLUMN_LIST_POOL_SIZE) {
-            windowColumnListPool.setPos(MAX_WINDOW_COLUMN_LIST_POOL_SIZE);
-        }
-        windowColumnListPoolPos = 0;
+        windowColumnListPool.clear();
     }
 
     /**
@@ -3236,15 +3224,7 @@ public class SqlOptimiser implements Mutable {
     private ObjList<QueryColumn> getOrCreateColumnListForHash(int hash) {
         ObjList<QueryColumn> list = windowFunctionHashMap.get(hash);
         if (list == null) {
-            // Get from pool or create new
-            if (windowColumnListPoolPos < windowColumnListPool.size()) {
-                list = windowColumnListPool.getQuick(windowColumnListPoolPos);
-                list.clear();
-            } else {
-                list = new ObjList<>();
-                windowColumnListPool.add(list);
-            }
-            windowColumnListPoolPos++;
+            list = windowColumnListPool.next();
             windowFunctionHashMap.put(hash, list);
         }
         return list;

@@ -12917,6 +12917,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    @Ignore
+    public void testWindowFunctionNestedWithColumnAliasAndArithmetic() throws Exception {
+        // Nested window functions with column alias and arithmetic between outer window functions.
+        // x as a creates an alias that conflicts with table column a.
+        // The expression sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () adds two outer windows.
+        assertQuery(
+                "???",
+                "SELECT x as a, sum( sum(x) OVER () ) OVER () + sum( sum(a) OVER () ) OVER () FROM x",
+                // sum(x) over() s1, sum(a) over() s2 -> sum(s1) over() s11, sum(s2) over() s21 -> s11 + s21
+                modelOf("x")
+                        .col("x", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWindowFunctionNestingDepthLimit() throws Exception {
         // 9 levels of nesting exceeds the limit of 8
         assertSyntaxError(
