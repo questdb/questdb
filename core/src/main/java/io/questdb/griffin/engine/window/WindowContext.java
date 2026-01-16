@@ -70,6 +70,4 @@ public interface WindowContext {
     boolean isOrderedByDesignatedTimestamp();
 
     void validate(int position, boolean supportTNullsDesc) throws SqlException;
-
-    int getTimestampType();
 }
