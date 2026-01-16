@@ -179,6 +179,8 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    // Reusable hash set for collecting referenced column aliases during pass-through optimization
+    private final LowerCaseCharSequenceHashSet referencedAliasesSet = new LowerCaseCharSequenceHashSet();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
@@ -1851,6 +1853,7 @@ public class SqlOptimiser implements Mutable {
     private void clearWindowFunctionHashMap() {
         windowFunctionHashMap.clear();
         windowColumnListPool.clear();
+        referencedAliasesSet.clear();
     }
 
     /**
@@ -1911,6 +1914,30 @@ public class SqlOptimiser implements Mutable {
         // it's only a duplicate if its being applied to a different model.
         if (parent != model) {
             throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
+        }
+    }
+
+    /**
+     * Collects all literal (column reference) aliases from an expression tree.
+     * This is used to determine which columns from inner window models are
+     * actually referenced by outer models, for pass-through optimization.
+     */
+    private void collectReferencedAliases(ExpressionNode node, LowerCaseCharSequenceHashSet aliases) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == LITERAL) {
+            aliases.add(node.token);
+            return;
+        }
+        // Traverse children
+        if (node.paramCount < 3) {
+            collectReferencedAliases(node.lhs, aliases);
+            collectReferencedAliases(node.rhs, aliases);
+        } else {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                collectReferencedAliases(node.args.getQuick(i), aliases);
+            }
         }
     }
 
@@ -7782,20 +7809,34 @@ public class SqlOptimiser implements Mutable {
                 }
             }
 
-            // Also propagate columns from earlier inner window models to later ones.
-            // When multiple inner window models are created (e.g., from nested windows in arithmetic),
-            // each model needs to pass through columns from previous models so outer models can access them.
-            for (int i = 1, n = innerWindowModels.size(); i < n; i++) {
-                QueryModel laterModel = innerWindowModels.getQuick(i);
-                // Add columns from all earlier models
-                for (int j = 0; j < i; j++) {
-                    QueryModel earlierModel = innerWindowModels.getQuick(j);
-                    ObjList<QueryColumn> earlierCols = earlierModel.getBottomUpColumns();
-                    for (int k = 0, m = earlierCols.size(); k < m; k++) {
-                        QueryColumn col = earlierCols.getQuick(k);
-                        if (laterModel.getAliasToColumnMap().excludes(col.getAlias())) {
-                            // Create a pass-through reference to the column
-                            laterModel.addBottomUpColumn(nextColumn(col.getAlias()));
+            // Propagate columns from earlier inner window models to later ones,
+            // but ONLY columns that are actually referenced by the outer window model.
+            // This avoids adding unnecessary pass-through columns.
+            if (innerWindowModels.size() > 1) {
+                // Collect all column aliases referenced by windowModel's window functions
+                referencedAliasesSet.clear();
+                for (int i = 0, n = windowCols.size(); i < n; i++) {
+                    QueryColumn col = windowCols.getQuick(i);
+                    if (col.isWindowColumn()) {
+                        collectReferencedAliases(col.getAst(), referencedAliasesSet);
+                    }
+                }
+
+                // Only propagate columns that are actually needed by the outer model
+                for (int i = 1, n = innerWindowModels.size(); i < n; i++) {
+                    QueryModel laterModel = innerWindowModels.getQuick(i);
+                    for (int j = 0; j < i; j++) {
+                        QueryModel earlierModel = innerWindowModels.getQuick(j);
+                        ObjList<QueryColumn> earlierCols = earlierModel.getBottomUpColumns();
+                        for (int k = 0, m = earlierCols.size(); k < m; k++) {
+                            QueryColumn col = earlierCols.getQuick(k);
+                            CharSequence alias = col.getAlias();
+                            // Only add pass-through if the alias is referenced by outer model
+                            // and not already present in the later model
+                            if (referencedAliasesSet.contains(alias) &&
+                                    laterModel.getAliasToColumnMap().excludes(alias)) {
+                                laterModel.addBottomUpColumn(nextColumn(alias));
+                            }
                         }
                     }
                 }

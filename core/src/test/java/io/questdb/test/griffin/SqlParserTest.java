@@ -13043,11 +13043,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
         // Three levels of nesting: sum(sum(row_number() OVER ()) OVER ()) OVER ()
         // Each level is extracted to its own select-window layer:
         // 1. Innermost: row_number() over () from base table
-        // 2. Middle: sum(row_number) over () referencing the literal from inner layer, plus pass-through of row_number
+        // 2. Middle: sum(row_number) over () referencing the literal from inner layer
         // 3. Outer: sum(sum) over () referencing the literal from middle layer
+        // Note: pass-through columns are only added when referenced by outer window functions
         assertQuery(
                 "select-window sum(sum) sum over () from (" +
-                        "select-window [sum(row_number) sum over ()] sum(row_number) sum over (), row_number from (" +
+                        "select-window [sum(row_number) sum over ()] sum(row_number) sum over () from (" +
                         "select-window [row_number() row_number over ()] row_number() row_number over () from (" +
                         "x timestamp (ts))))",
                 "SELECT sum(sum(row_number() OVER ()) OVER ()) OVER () FROM x",
