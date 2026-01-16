@@ -39,7 +39,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.WalLockManager;
+import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.AbstractLineTcpSender;
@@ -61,14 +61,14 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8s;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
@@ -476,7 +476,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
-        var walSegmentLockManager = new WalLockManager(new WalLocker()) {
+        final WalLocker walLocker = new QdbrWalLocker() {
             private int count = 1;
 
             @Override
@@ -493,7 +493,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
         };
 
-        runInContext(walSegmentLockManager, (receiver) -> {
+        runInContext(walLocker, (receiver) -> {
             String lineData = weather + ",location=us-midwest temperature=82 1465839830100400200\n" +
                     weather + ",location=us-midwest temperature=83 1465839830100500200\n" +
                     weather + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
@@ -856,7 +856,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        var walSegmentLockManager = new WalLockManager(new WalLocker()) {
+        var walLocker = new QdbrWalLocker() {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
@@ -869,7 +869,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
         };
 
-        runInContext(walSegmentLockManager, (receiver) -> {
+        runInContext(walLocker, (receiver) -> {
             final String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
@@ -914,7 +914,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        var walSegmentLockManager = new WalLockManager(new WalLocker()) {
+        var walLocker = new QdbrWalLocker() {
             private int count = 1;
 
             @Override
@@ -926,7 +926,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
         };
 
-        runInContext(walSegmentLockManager, (receiver) -> {
+        runInContext(walLocker, (receiver) -> {
             String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +

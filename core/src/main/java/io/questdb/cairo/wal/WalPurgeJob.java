@@ -76,7 +76,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final TxReader txReader;
     private final WalDirectoryPolicy walDirectoryPolicy;
-    private final WalLockManager walLockManager;
+    private final WalLocker walLocker;
     private final DirectUtf8StringZ walName = new DirectUtf8StringZ();
     private long last = 0;
     private TableToken tableToken;
@@ -85,7 +85,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         this.engine = engine;
         this.ff = ff;
         this.clock = clock;
-        this.walLockManager = engine.getWalLockManager();
+        this.walLocker = engine.getWalLocker();
         this.checkInterval = engine.getConfiguration().getWalPurgeInterval() * 1000;
         this.millisecondClock = engine.getConfiguration().getMillisecondClock();
         this.spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
@@ -228,7 +228,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         // wait for them to be closed before fully removing the token from name registry
                         // and marking table as fully deleted.
                         if (fullyDeleted) {
-                            walLockManager.dropTable(tableToken.getDirNameUtf8());
+                            walLocker.purgeTable(tableToken.getDirNameUtf8());
                             engine.removeTableToken(tableToken);
                             LOG.info().$("table is fully dropped [tableDir=").$(pathToDelete).I$();
                             TableUtils.lockName(pathToDelete);
@@ -297,7 +297,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         try {
                             final int walId = Numbers.parseInt(walName, 3, walName.size());
                             onDiskWalIDSet.add(walId);
-                            int maxSegmentLocked = walLockManager.lockPurge(tableToken.getDirNameUtf8(), walId);
+                            int maxSegmentLocked = walLocker.lockPurge(tableToken.getDirNameUtf8(), walId);
 
                             int trackerIdx = logic.trackDiscoveredWal(walId);
                             boolean walLocked = maxSegmentLocked == WalUtils.SEG_NONE_ID;
@@ -785,7 +785,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void unlock(int walId) {
-            walLockManager.unlockPurge(tableToken.getDirNameUtf8(), walId);
+            walLocker.unlockPurge(tableToken.getDirNameUtf8(), walId);
             LOG.debug().$("unlocked WAL [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .I$();

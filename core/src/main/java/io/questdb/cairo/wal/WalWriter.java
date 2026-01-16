@@ -162,10 +162,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
             WalDirectoryPolicy walDirectoryPolicy,
-            WalLockManager walLockManager,
+            WalLocker walLocker,
             RecentWriteTracker recentWriteTracker
     ) {
-        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLockManager);
+        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker);
 
         LOG.info().$("open [table=").$(tableToken).I$();
         this.ddlListener = ddlListener;

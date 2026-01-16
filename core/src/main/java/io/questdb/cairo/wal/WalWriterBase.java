@@ -50,7 +50,7 @@ abstract class WalWriterBase implements AutoCloseable {
     final TableSequencerAPI sequencer;
     final WalDirectoryPolicy walDirectoryPolicy;
     final int walId;
-    final WalLockManager walLockManager;
+    final WalLocker walLocker;
     final String walName;
     boolean distressed;
     int lastSegmentTxn = -1;
@@ -66,13 +66,13 @@ abstract class WalWriterBase implements AutoCloseable {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             WalDirectoryPolicy walDirectoryPolicy,
-            WalLockManager walLockManager
+            WalLocker walLocker
     ) {
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
         this.walDirectoryPolicy = walDirectoryPolicy;
         this.tableToken = tableToken;
-        this.walLockManager = walLockManager;
+        this.walLocker = walLocker;
 
         mkDirMode = configuration.getMkDirMode();
         ff = configuration.getFilesFacade();
@@ -121,7 +121,7 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     void lockWal() {
-        walLockManager.lockWriter(tableToken.getDirNameUtf8(), walId, 0);
+        walLocker.lockWriter(tableToken.getDirNameUtf8(), walId, 0);
         LOG.debug().$("locked WAL [walId=").$(walId).I$();
     }
 
@@ -135,7 +135,7 @@ abstract class WalWriterBase implements AutoCloseable {
 
     void releaseSegmentLock(int segmentId, long segmentTxn, int newSegmentId) {
         if (newSegmentId > -1) {
-            walLockManager.setWalSegmentMinId(tableToken.getDirNameUtf8(), walId, newSegmentId);
+            walLocker.setWalSegmentMinId(tableToken.getDirNameUtf8(), walId, newSegmentId);
         }
         // if events file has some transactions
         if (segmentTxn >= 0) {
@@ -151,7 +151,7 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     void releaseWalLock() {
-        walLockManager.unlockWriter(tableToken.getDirNameUtf8(), walId);
+        walLocker.unlockWriter(tableToken.getDirNameUtf8(), walId);
         LOG.debug().$("released WAL lock [walId=").$(walId).I$();
     }
 }

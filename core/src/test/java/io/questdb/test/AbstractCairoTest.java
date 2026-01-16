@@ -59,7 +59,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalLockManager;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.PlanSink;
@@ -2112,8 +2112,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertSegmentLocked(TableToken tableToken, int walId, int segmentId) {
-        final WalLockManager lockManager = engine.getWalLockManager();
-        Assert.assertTrue(lockManager.isSegmentLocked(tableToken.getDirNameUtf8(), walId, segmentId));
+        final WalLocker locker = engine.getWalLocker();
+        Assert.assertTrue(locker.isSegmentLocked(tableToken.getDirNameUtf8(), walId, segmentId));
     }
 
     protected void assertSegmentLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
@@ -2209,8 +2209,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertWalLocked(TableToken tableToken, int walId) {
-        final WalLockManager lockManager = engine.getWalLockManager();
-        Assert.assertTrue(lockManager.isWalLocked(tableToken.getDirNameUtf8(), walId));
+        final WalLocker locker = engine.getWalLocker();
+        Assert.assertTrue(locker.isWalLocked(tableToken.getDirNameUtf8(), walId));
     }
 
     protected void assertWalNotLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId) {
@@ -2219,8 +2219,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertWalNotLocked(TableToken tableToken, int walId) {
-        final WalLockManager lockManager = engine.getWalLockManager();
-        Assert.assertFalse(lockManager.isWalLocked(tableToken.getDirNameUtf8(), walId));
+        final WalLocker locker = engine.getWalLocker();
+        Assert.assertFalse(locker.isWalLocked(tableToken.getDirNameUtf8(), walId));
     }
 
     protected void configureForBackups() throws IOException {

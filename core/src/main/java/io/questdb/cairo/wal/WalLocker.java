@@ -24,104 +24,113 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sequence;
-import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
 
-public class WalLocker implements WalLockManager.WalLocker, Closeable {
-    private long ptr;
+/**
+ * Manages in-memory locks for WAL directories and segments.
+ * <p>
+ * WAL directories are created per wal writer and contain multiple segments with each segment
+ * representing a batch of writes.
+ * Regularly, the Wal purge job will try to delete older segments to free disk space. To avoid
+ * conflicts between writers and the purge job, this lock manager provides a way to coordinate
+ * access to WAL directories and segments.
+ * It is assumed that no 2 writers will write to the same WAL directory and no 2 purge jobs
+ * will purge the same WAL directory concurrently.
+ * <p>
+ * Thread safety: All methods are thread-safe and can be called concurrently.
+ * It is the caller's responsibility to ensure that the same WAL directory is not
+ * locked by multiple writers or purge jobs concurrently.
+ */
+public interface WalLocker extends QuietCloseable {
+    /**
+     * Clears all the existing locks and gives up all held resources.
+     * <p>
+     * This method should only be used during testing or shutdown scenarios.
+     * Calling this while locks are held may lead to inconsistent state.
+     */
+    void clear();
 
-    public WalLocker() {
-        this.ptr = create();
-    }
+    /**
+     * Checks if a specific WAL segment is currently locked.
+     *
+     * @param tableDirName the table directory name identifying the table
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId    the segment identifier within the WAL
+     * @return {@code true} if the segment is locked, {@code false} otherwise
+     */
+    boolean isSegmentLocked(DirectUtf8Sequence tableDirName, int walId, int segmentId);
 
-    @Override
-    public void clear() {
-        clear0(ptr);
-    }
+    /**
+     * Checks if a WAL directory is currently locked.
+     *
+     * @param tableDirName the table directory name identifying the table
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @return {@code true} if the WAL is locked, {@code false} otherwise
+     */
+    boolean isWalLocked(DirectUtf8Sequence tableDirName, int walId);
 
-    @Override
-    public void close() {
-        destroy(ptr);
-        ptr = 0;
-    }
+    /**
+     * Locks the purge lock on the specified WAL directory.
+     * This will try to take an exclusive lock on the WAL, blocking any writers and returning {@link WalUtils#SEG_NONE_ID}.
+     * If an active writer is present, this method will take a shared lock with the writer and return the maximum segment ID
+     * that can be safely purged.
+     *
+     * @param tableDirName the table directory name identifying the table
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @return the maximum segment ID that can be safely purged, or {@link WalUtils#SEG_NONE_ID} if exclusive lock is held
+     * and the whole WAL can be purged.
+     */
+    int lockPurge(DirectUtf8Sequence tableDirName, int walId);
 
-    @Override
-    public boolean isSegmentLocked(@NotNull DirectUtf8Sequence tableDirName, int walId, int segmentId) {
-        return isSegmentLocked0(ptr, tableDirName.ptr(), tableDirName.size(), walId, segmentId);
-    }
+    /**
+     * Locks the writer lock on the specified WAL directory.
+     * This will block if a purge job is currently holding an exclusive lock on the WAL.
+     * The caller must ensure to call {@link #unlockWriter(DirectUtf8Sequence, int)} to release the lock.
+     *
+     * @param tableDirName the table directory name identifying the table
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param minSegmentId the minimum segment ID that the writer will be working with
+     */
+    void lockWriter(DirectUtf8Sequence tableDirName, int walId, int minSegmentId);
 
-    @Override
-    public boolean isWalLocked(@NotNull DirectUtf8Sequence tableDirName, int walId) {
-        return isWalLocked0(ptr, tableDirName.ptr(), tableDirName.size(), walId);
-    }
+    /**
+     * Drop a table ID mapping. Should be called when a table is dropped and no more writers/purge jobs
+     * will access its WAL directories.
+     *
+     * @param tableDirName the table directory name identifying the table
+     */
+    void purgeTable(DirectUtf8Sequence tableDirName);
 
-    @Override
-    public int lockPurge(@NotNull DirectUtf8Sequence tableDirName, int walId) {
-        return lockPurge0(ptr, tableDirName.ptr(), tableDirName.size(), walId);
-    }
+    /**
+     * Sets the minimum segment ID for the specified WAL directory.
+     * As the purge job may also hold the lock, the new minimum segment ID must be
+     * greater than or equal to the current minimum segment ID.
+     *
+     * @param tableDirName    the table directory name identifying the table
+     * @param walId           the WAL identifier (e.g., 1 for wal1)
+     * @param newMinSegmentId the new minimum segment ID to set
+     */
+    void setWalSegmentMinId(DirectUtf8Sequence tableDirName, int walId, int newMinSegmentId);
 
-    @Override
-    public void lockWriter(@NotNull DirectUtf8Sequence tableDirName, int walId, int minSegmentId) {
-        lockWriter0(ptr, tableDirName.ptr(), tableDirName.size(), walId, minSegmentId);
-    }
+    /**
+     * Unlock the purge lock on the specified WAL directory.
+     * This will either release the lock if no writers are active,
+     * or downgrade the lock to active writer if a writer is active/waiting.
+     *
+     * @param tableDirName the table directory name identifying the table
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     */
+    void unlockPurge(DirectUtf8Sequence tableDirName, int walId);
 
-    @Override
-    public void purgeTable(@NotNull DirectUtf8Sequence tableDirName) {
-        purgeTable0(ptr, tableDirName.ptr(), tableDirName.size());
-    }
-
-    @Override
-    public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int newMinSegmentId) {
-        setWalSegmentMinId0(ptr, tableDirName.ptr(), tableDirName.size(), walId, newMinSegmentId);
-    }
-
-    @Override
-    public void unlockPurge(@NotNull DirectUtf8Sequence tableDirName, int walId) {
-        unlockPurge0(ptr, tableDirName.ptr(), tableDirName.size(), walId);
-    }
-
-    @Override
-    public void unlockWriter(@NotNull DirectUtf8Sequence tableDirName, int walId) {
-        unlockWriter0(ptr, tableDirName.ptr(), tableDirName.size(), walId);
-    }
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_clear0
-    private static native void clear0(long ptr);
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_create
-    private static native long create();
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_destroy
-    private static native void destroy(long ptr);
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_isSegmentLocked0
-    private static native boolean isSegmentLocked0(long ptr, long tableDirNamePtr, int tableDirNameSize, int walId, int segmentId);
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_isWalLocked0
-    private static native boolean isWalLocked0(long ptr, long tableDirNamePtr, int tableDirNameSize, int walId);
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_lockPurge0
-    private static native int lockPurge0(long ptr, long tableDirNamePtr, int tableDirNameSize, int walId);
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_lockWriter0
-    private static native void lockWriter0(long ptr, long tableDirNamePtr, int tableDirNameSize, int walId, int minSegmentId);
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_purgeTable0
-    private static native void purgeTable0(long ptr, long tableDirNamePtr, int tableDirNameSize);
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_setWalSegmentMinId0
-    private static native void setWalSegmentMinId0(long ptr, long tableDirNamePtr, int tableDirNameSize, int walId, int newMinSegmentId);
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_unlockPurge0
-    private static native void unlockPurge0(long ptr, long tableDirNamePtr, int tableDirNameSize, int walId);
-
-    // Java_io_questdb_std_cairo_wal_WalLocker_unlockWriter0
-    private static native void unlockWriter0(long ptr, long tableDirNamePtr, int tableDirNameSize, int walId);
-
-    static {
-        Os.init();
-    }
+    /**
+     * Unlock the writer lock on the specified WAL directory.
+     * This will either release the lock if no purge is active,
+     * or downgrade the lock to purge exclusive if a purge is also active.
+     *
+     * @param tableDirName the table directory name identifying the table
+     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     */
+    void unlockWriter(DirectUtf8Sequence tableDirName, int walId);
 }

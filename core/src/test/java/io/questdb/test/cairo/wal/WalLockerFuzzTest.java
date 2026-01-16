@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
-import io.questdb.cairo.wal.WalLockManager;
+import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Rnd;
@@ -40,21 +40,21 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class WalLockManagerFuzzTest {
+public class WalLockerFuzzTest {
 
-    private WalLockManager lockManager;
     private DirectUtf8Sink concurrentTestTable;
+    private WalLocker locker;
 
     @Before
     public void setUp() {
-        lockManager = new WalLockManager(new WalLocker());
+        locker = new QdbrWalLocker();
         concurrentTestTable = new DirectUtf8Sink(32);
         concurrentTestTable.putAscii("concurrent_test");
     }
 
     @After
     public void tearDown() {
-        lockManager.close();
+        locker.close();
         concurrentTestTable.close();
     }
 
@@ -109,67 +109,67 @@ public class WalLockManagerFuzzTest {
                                     if (threadRnd.nextBoolean()) {
                                         // Lock writer
                                         int minSeg = threadRnd.nextInt(100);
-                                        lockManager.lockWriter(tableName, walId, minSeg);
+                                        locker.lockWriter(tableName, walId, minSeg);
                                         walStates[tableIdx][walId] = 1;
                                         minSegmentIds[tableIdx][walId] = minSeg;
 
                                         // Verify segment locking
                                         Assert.assertTrue("Thread " + threadId + ": Segment " + minSeg + " should be locked",
-                                                lockManager.isSegmentLocked(tableName, walId, minSeg));
+                                                locker.isSegmentLocked(tableName, walId, minSeg));
                                         if (minSeg > 0) {
                                             Assert.assertFalse("Thread " + threadId + ": Segment " + (minSeg - 1) + " should not be locked",
-                                                    lockManager.isSegmentLocked(tableName, walId, minSeg - 1));
+                                                    locker.isSegmentLocked(tableName, walId, minSeg - 1));
                                         }
                                     } else {
                                         // Lock purge
-                                        int maxPurgeable = lockManager.lockPurge(tableName, walId);
+                                        int maxPurgeable = locker.lockPurge(tableName, walId);
                                         Assert.assertEquals(WalUtils.SEG_NONE_ID, maxPurgeable);
                                         walStates[tableIdx][walId] = 2;
                                     }
-                                    Assert.assertTrue(lockManager.isWalLocked(tableName, walId));
+                                    Assert.assertTrue(locker.isWalLocked(tableName, walId));
                                     break;
 
                                 case 1: // Writer locked - can unlock writer, attach purge, or advance segment
                                     int action1 = threadRnd.nextInt(3);
                                     if (action1 == 0) {
                                         // Unlock writer
-                                        lockManager.unlockWriter(tableName, walId);
+                                        locker.unlockWriter(tableName, walId);
                                         walStates[tableIdx][walId] = 0;
-                                        Assert.assertFalse(lockManager.isWalLocked(tableName, walId));
+                                        Assert.assertFalse(locker.isWalLocked(tableName, walId));
                                     } else if (action1 == 1) {
                                         // Attach purge
-                                        int maxPurgeable = lockManager.lockPurge(tableName, walId);
+                                        int maxPurgeable = locker.lockPurge(tableName, walId);
                                         Assert.assertEquals(minSegmentIds[tableIdx][walId] - 1, maxPurgeable);
                                         walStates[tableIdx][walId] = 3;
                                     } else {
                                         // Advance segment
                                         int currentMin = minSegmentIds[tableIdx][walId];
                                         int newMin = currentMin + threadRnd.nextInt(10) + 1;
-                                        lockManager.setWalSegmentMinId(tableName, walId, newMin);
+                                        locker.setWalSegmentMinId(tableName, walId, newMin);
                                         minSegmentIds[tableIdx][walId] = newMin;
 
-                                        Assert.assertTrue(lockManager.isSegmentLocked(tableName, walId, newMin));
-                                        Assert.assertFalse(lockManager.isSegmentLocked(tableName, walId, currentMin));
+                                        Assert.assertTrue(locker.isSegmentLocked(tableName, walId, newMin));
+                                        Assert.assertFalse(locker.isSegmentLocked(tableName, walId, currentMin));
                                     }
                                     break;
 
                                 case 2: // Purge locked - can only unlock purge
-                                    lockManager.unlockPurge(tableName, walId);
+                                    locker.unlockPurge(tableName, walId);
                                     walStates[tableIdx][walId] = 0;
-                                    Assert.assertFalse(lockManager.isWalLocked(tableName, walId));
+                                    Assert.assertFalse(locker.isWalLocked(tableName, walId));
                                     break;
 
                                 case 3: // Both writer and purge - can unlock either
                                     if (threadRnd.nextBoolean()) {
                                         // Unlock writer first
-                                        lockManager.unlockWriter(tableName, walId);
+                                        locker.unlockWriter(tableName, walId);
                                         walStates[tableIdx][walId] = 2;
-                                        Assert.assertTrue(lockManager.isWalLocked(tableName, walId));
+                                        Assert.assertTrue(locker.isWalLocked(tableName, walId));
                                     } else {
                                         // Unlock purge first
-                                        lockManager.unlockPurge(tableName, walId);
+                                        locker.unlockPurge(tableName, walId);
                                         walStates[tableIdx][walId] = 1;
-                                        Assert.assertTrue(lockManager.isWalLocked(tableName, walId));
+                                        Assert.assertTrue(locker.isWalLocked(tableName, walId));
                                     }
                                     break;
                             }
@@ -205,12 +205,12 @@ public class WalLockManagerFuzzTest {
                 synchronized (walLocks[t][w]) {
                     int state = walStates[t][w];
                     if (state == 3) {
-                        lockManager.unlockPurge(tableNames[t], w);
-                        lockManager.unlockWriter(tableNames[t], w);
+                        locker.unlockPurge(tableNames[t], w);
+                        locker.unlockWriter(tableNames[t], w);
                     } else if (state == 2) {
-                        lockManager.unlockPurge(tableNames[t], w);
+                        locker.unlockPurge(tableNames[t], w);
                     } else if (state == 1) {
-                        lockManager.unlockWriter(tableNames[t], w);
+                        locker.unlockWriter(tableNames[t], w);
                     }
                 }
             }
@@ -220,7 +220,7 @@ public class WalLockManagerFuzzTest {
         for (int t = 0; t < numTables; t++) {
             for (int w = 0; w < numWalsPerTable; w++) {
                 Assert.assertFalse("Lock should be released for " + tableNames[t] + " wal " + w,
-                        lockManager.isWalLocked(tableNames[t], w));
+                        locker.isWalLocked(tableNames[t], w));
             }
         }
 
@@ -250,14 +250,14 @@ public class WalLockManagerFuzzTest {
                     ready.countDown();
                     barrier.await();
 
-                    lockManager.lockWriter(concurrentTestTable, 1, minSegment);
+                    locker.lockWriter(concurrentTestTable, 1, minSegment);
 
                     // Random work
                     for (int i = 0; i < 5; i++) {
                         Thread.yield();
                     }
 
-                    lockManager.unlockWriter(concurrentTestTable, 1);
+                    locker.unlockWriter(concurrentTestTable, 1);
                 } catch (Throwable t) {
                     error.compareAndSet(null, t);
                 } finally {
@@ -271,7 +271,7 @@ public class WalLockManagerFuzzTest {
                     ready.countDown();
                     barrier.await();
 
-                    int maxPurgeable = lockManager.lockPurge(concurrentTestTable, 1);
+                    int maxPurgeable = locker.lockPurge(concurrentTestTable, 1);
                     // Should be either SEG_NONE_ID (exclusive) or minSegment-1 (shared with writer)
                     Assert.assertTrue("maxPurgeable should be valid",
                             maxPurgeable == WalUtils.SEG_NONE_ID || maxPurgeable == minSegment - 1);
@@ -281,7 +281,7 @@ public class WalLockManagerFuzzTest {
                         Thread.yield();
                     }
 
-                    lockManager.unlockPurge(concurrentTestTable, 1);
+                    locker.unlockPurge(concurrentTestTable, 1);
                 } catch (Throwable t) {
                     error.compareAndSet(null, t);
                 } finally {
@@ -301,7 +301,7 @@ public class WalLockManagerFuzzTest {
             }
 
             Assert.assertFalse("WAL should be unlocked after iteration " + iter,
-                    lockManager.isWalLocked(concurrentTestTable, 1));
+                    locker.isWalLocked(concurrentTestTable, 1));
         }
     }
 }

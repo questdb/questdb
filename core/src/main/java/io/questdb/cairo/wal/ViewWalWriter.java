@@ -59,9 +59,9 @@ public class ViewWalWriter extends WalWriterBase {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             WalDirectoryPolicy walDirectoryPolicy,
-            WalLockManager walLockManager
+            WalLocker walLocker
     ) {
-        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLockManager);
+        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker);
 
         LOG.info().$("open [table=").$(tableToken).I$();
 

@@ -33,7 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.wal.WalLockManager;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -344,13 +344,13 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
     }
 
-    protected void runInContext(WalLockManager walLockManager, LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
-        WalLockManager originalWalLockManager = engine.getWalLockManager();
-        engine.setWalLockManager(walLockManager);
+    protected void runInContext(WalLocker walLocker, LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
+        final WalLocker originalWalLocker = engine.getWalLocker();
+        engine.setWalLocker(walLocker);
         try {
             runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
         } finally {
-            engine.setWalLockManager(originalWalLockManager);
+            engine.setWalLocker(originalWalLocker);
         }
     }
 

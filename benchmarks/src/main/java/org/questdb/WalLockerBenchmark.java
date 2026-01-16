@@ -25,7 +25,7 @@
 package org.questdb;
 
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.wal.WalLockManager;
+import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -60,18 +60,18 @@ import java.util.concurrent.TimeUnit;
  * The goal is to verify that steady-state lock/unlock operations do not allocate
  * because WalEntry objects are reused from an internal pool.
  * <p>
- * Run with: java -jar benchmarks/target/benchmarks.jar WalLockManagerBenchmark
+ * Run with: java -jar benchmarks/target/benchmarks.jar WalLockerBenchmark
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
-public class WalLockManagerBenchmark {
+public class WalLockerBenchmark {
     private static final int NUM_TABLES = 10;
     private static final int NUM_WALS = 5;
     private FilesFacade filesFacade;
-    private WalLockManager lockManager;
+    private WalLocker locker;
     private Path path;
     private int pathLen;
     private int segmentId;
@@ -82,7 +82,7 @@ public class WalLockManagerBenchmark {
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(WalLockManagerBenchmark.class.getSimpleName())
+                .include(WalLockerBenchmark.class.getSimpleName())
                 .addProfiler(GCProfiler.class)
                 .build();
 
@@ -107,7 +107,7 @@ public class WalLockManagerBenchmark {
 
     @Setup(Level.Trial)
     public void setupTrial() {
-        lockManager = new WalLockManager(new WalLocker());
+        locker = new QdbrWalLocker();
         tableNames = new DirectUtf8Sink[NUM_TABLES];
         for (int i = 0; i < NUM_TABLES; i++) {
             tableNames[i] = new DirectUtf8Sink(32);
@@ -125,7 +125,7 @@ public class WalLockManagerBenchmark {
 
     @TearDown(Level.Trial)
     public void tearDownTrial() {
-        lockManager.reset();
+        locker.clear();
         path.close();
         for (int i = 0; i < NUM_TABLES; i++) {
             tableNames[i].close();
@@ -140,13 +140,12 @@ public class WalLockManagerBenchmark {
         long fd = TableUtils.lock(filesFacade, lpsz);
         bh.consume(fd);
         filesFacade.close(fd);
-        Thread.sleep(100);
     }
 
     @Benchmark
     public void testWriterLockUnlock() {
         DirectUtf8Sink tableName = tableNames[tableIndex];
-        lockManager.lockWriter(tableName, walIndex, segmentId);
-        lockManager.unlockWriter(tableName, walIndex);
+        locker.lockWriter(tableName, walIndex, segmentId);
+        locker.unlockWriter(tableName, walIndex);
     }
 }

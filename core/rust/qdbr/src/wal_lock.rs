@@ -18,7 +18,7 @@ macro_rules! get_wal_lock {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_create(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_create(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
 ) -> *mut Arc<wal_lock::WalLock> {
@@ -28,7 +28,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_create(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_destroy(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_destroy(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -43,7 +43,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_destroy(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_isSegmentLocked0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_isSegmentLocked0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -70,7 +70,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_isSegmentLocked0(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_isWalLocked0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_isWalLocked0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -95,7 +95,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_isWalLocked0(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_lockPurge0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_lockPurge0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -120,7 +120,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_lockPurge0(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_unlockPurge0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_unlockPurge0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -142,7 +142,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_unlockPurge0(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_lockWriter0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_lockWriter0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -166,7 +166,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_lockWriter0(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_unlockWriter0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_unlockWriter0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -188,7 +188,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_unlockWriter0(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_setWalSegmentMinId0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_setWalSegmentMinId0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -212,7 +212,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_setWalSegmentMinId0(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_purgeTable0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_purgeTable0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -230,7 +230,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_purgeTable0(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_WalLocker_clear0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_clear0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
