@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PluginInfo;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
@@ -394,6 +395,41 @@ public class PluginFunctionTest extends AbstractCairoTest {
                     "SELECT name FROM functions() WHERE name LIKE '" + PLUGIN_NAME + "%' ORDER BY name"
             );
         });
+    }
+
+    @Test
+    public void testPluginUnloadAndReload() throws Exception {
+        // Test that plugins can be unloaded and reloaded
+        assertMemoryLeak(() -> {
+            // Load
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+            assertSql("example_square\n9.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".example_square(3.0)");
+
+            // Unload
+            execute("UNLOAD PLUGIN '" + PLUGIN_NAME + "'");
+            Assert.assertFalse(engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME));
+
+            // Reload
+            execute("LOAD PLUGIN '" + PLUGIN_NAME + "'");
+            Assert.assertTrue(engine.getFunctionFactoryCache().isPluginLoaded(PLUGIN_NAME));
+
+            // Verify function works again
+            assertSql("example_square\n16.0\n",
+                    "SELECT \"" + PLUGIN_NAME + "\".example_square(4.0)");
+        });
+    }
+
+    @Test
+    public void testPluginInfoVersionComparison() {
+        // Test PluginInfo.compareVersions()
+        Assert.assertEquals(0, PluginInfo.compareVersions("1.0.0", "1.0.0"));
+        Assert.assertTrue(PluginInfo.compareVersions("1.0.1", "1.0.0") > 0);
+        Assert.assertTrue(PluginInfo.compareVersions("1.0.0", "1.0.1") < 0);
+        Assert.assertTrue(PluginInfo.compareVersions("2.0.0", "1.9.9") > 0);
+        Assert.assertTrue(PluginInfo.compareVersions("1.10.0", "1.9.0") > 0);
+        Assert.assertEquals(0, PluginInfo.compareVersions("1.0", "1.0.0"));
+        Assert.assertEquals(0, PluginInfo.compareVersions("1.0.0-SNAPSHOT", "1.0.0")); // SNAPSHOT suffix is stripped
     }
 
     private static boolean containsIgnoreCase(io.questdb.std.ObjList<CharSequence> list, String value) {
