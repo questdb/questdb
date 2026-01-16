@@ -261,7 +261,7 @@ steps:
       export PATH=$LLVM_TOOLS_PATH:$PATH
       # List profraw files for debugging purposes
       find . -name \*.profraw
-      CANDIDATE_FILES="core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"
+      CANDIDATE_FILES="core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw core/rust/qdb-core/qdb-core-cargo-test.profraw"
       PROFRAW_FILES=$(for f in $CANDIDATE_FILES; do [ -f "$f" ] && echo -n "$f "; done)
       PROFRAW_FILES=${PROFRAW_FILES% }
       if [ -z "$PROFRAW_FILES" ]; then
@@ -290,9 +290,11 @@ steps:
   - bash: |
       set -eux
       QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
+      QDB_CORE_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdb-core/debug/deps/qdb_core-* -type f -executable)
       mkdir rust-coverage-binaries
       mv core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so rust-coverage-binaries/
       mv $QUESTDBR_TEST_BIN rust-coverage-binaries/questdbr-test-binary
+      mv $QDB_CORE_TEST_BIN rust-coverage-binaries/qdb-core-test-binary
     displayName: "Prepare Rust binaries for upload"
     condition: |
       and(

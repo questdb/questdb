@@ -235,7 +235,7 @@ stages:
               llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
 
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
-              OBJECTS="--object $COVERAGE_DIR/libquestdbr.so --object $COVERAGE_DIR/questdbr-test-binary"
+              OBJECTS="--object $COVERAGE_DIR/libquestdbr.so --object $COVERAGE_DIR/questdbr-test-binary --object $COVERAGE_DIR/qdb-core-test-binary"
               ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '/azp/_work/[0-9]+/s' | head -n 1 || true)
               PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
               echo "Objects args: $OBJECTS"
