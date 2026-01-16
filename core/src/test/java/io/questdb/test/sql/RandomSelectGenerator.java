@@ -195,42 +195,42 @@ public class RandomSelectGenerator {
 
     public void registerTable(String tableName) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        String alias = "t" + tables.size();
+        String alias = (tableToken.isView() ? "v" : "t") + tables.size();
         tables.add(new TableInfo(tableName, tableToken, alias));
     }
 
     public RandomSelectGenerator setAggregationProbability(double probability) {
-        this.aggregationProbability = probability;
+        aggregationProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setGenerateLiteralProbability(double probability) {
-        this.generateLiteralProbability = probability;
+        generateLiteralProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setJoinProbability(double probability) {
-        this.joinProbability = probability;
+        joinProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setLimitProbability(double probability) {
-        this.limitProbability = probability;
+        limitProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setOrderByProbability(double probability) {
-        this.orderByProbability = probability;
+        orderByProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setSampleByProbability(double probability) {
-        this.sampleByProbability = probability;
+        sampleByProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setWhereClauseProbability(double probability) {
-        this.whereClauseProbability = probability;
+        whereClauseProbability = probability;
         return this;
     }
 
@@ -377,6 +377,9 @@ public class RandomSelectGenerator {
         ObjList<int[]> matchingColumns = new ObjList<>();
         for (int i = 0; i < meta1.getColumnCount(); i++) {
             int type1 = meta1.getColumnType(i);
+            if (type1 == ColumnType.BOOLEAN) {
+                continue;
+            }
             for (int j = 0; j < meta2.getColumnCount(); j++) {
                 int type2 = meta2.getColumnType(j);
                 if (areTypesCompatibleForJoin(type1, type2)) {
