@@ -22,52 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.window;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface WindowContext {
+public class ArgMinTimestampDoubleGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "arg_min(ND)";
+    }
 
-    int getExclusionKind();
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-    int getExclusionKindPos();
-
-    int getFramingMode();
-
-    int getNullsDescPos();
-
-    int getOrderByPos();
-
-    ColumnTypes getPartitionByKeyTypes();
-
-    VirtualRecord getPartitionByRecord();
-
-    RecordSink getPartitionBySink();
-
-    long getRowsHi();
-
-    int getRowsHiKindPos();
-
-    long getRowsLo();
-
-    int getRowsLoKindPos();
-
-    int getTimestampIndex();
-
-    int getTimestampType();
-
-    boolean isDefaultFrame();
-
-    boolean isEmpty();
-
-    boolean isIgnoreNulls();
-
-    boolean isOrdered();
-
-    boolean isOrderedByDesignatedTimestamp();
-
-    void validate(int position, boolean supportTNullsDesc) throws SqlException;
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new ArgMinTimestampDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
+    }
 }

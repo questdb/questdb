@@ -59,7 +59,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -115,7 +114,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testAggregateFunctionInPartitionByFails() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertException(
                 """
                         SELECT pickup_datetime, avg(total_amount) OVER (PARTITION BY avg(total_amount)
@@ -2331,7 +2329,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testFrameFunctionResolvesSymbolTables() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("create table  cpu ( hostname symbol, usage_system double )");
             execute("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
@@ -2372,7 +2369,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testFrameFunctionResolvesSymbolTablesInPartitionByCachedWindow() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("create table x (sym symbol, i int);");
             execute("insert into x values ('aaa', NULL);");
@@ -5075,7 +5071,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testLeadLagTimestampMixedDefaultValue() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() ->
                 {
                     execute("create table x as (" +
@@ -5104,7 +5099,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for max(double)
             // This tests boundary conditions with large ranges that trigger buffer growth
@@ -5170,7 +5164,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxDoubleOverPartitionedRangeWithLargeFrameNanos() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.NANO);
         assertMemoryLeak(() -> {
             // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for max(double)
             // This tests boundary conditions with large ranges that trigger buffer growth
@@ -5239,7 +5232,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxNonDesignatedTimestampWithManyNulls() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, other_ts timestamp, val long, grp symbol) timestamp(ts)");
 
@@ -5286,7 +5278,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxNonDesignatedTimestampWithManyNullsNanos() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.NANO);
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp_ns, other_ts timestamp_ns, val long, grp symbol) timestamp(ts)");
 
@@ -5422,7 +5413,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxTimestampOverPartitionedRangeWithLargeFrame() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             // Test similar to testFrameFunctionOverPartitionedRangeWithLargeFrame but for max(timestamp)
             // This tests boundary conditions with large ranges that trigger buffer growth
@@ -5491,7 +5481,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxTimestampOverPartitionedRangeWithLargeFrameNanos() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.NANO);
         assertMemoryLeak(() -> {
             // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for timestamp_ns type
             // This tests boundary conditions with large ranges that trigger buffer growth
@@ -7071,7 +7060,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         // https://github.com/questdb/questdb/issues/4748
         assertMemoryLeak(() -> assertQuery("""
                         x\trow_number
@@ -8053,7 +8041,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndDifferentOrder() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertQuery(
                 """
                         x\ty\trn
@@ -9487,7 +9474,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowFunctionFailsInNonWindowContext() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             Class<?>[] factories = new Class<?>[]{
                     RankFunctionFactory.class,
