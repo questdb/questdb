@@ -208,19 +208,17 @@ public class FunctionFactoryCache {
     }
 
     /**
-     * Returns the map of plugin functions for iteration.
+     * Returns the map of plugin functions for iteration (used by functions() catalog query).
      * Structure: pluginName -> functionName -> List<FunctionFactoryDescriptor>
-     * Thread-safe with read lock held during iteration.
+     * <p>
+     * Note: This returns a reference to the internal map. The caller should be aware that
+     * if plugins are loaded/unloaded during iteration, results may be inconsistent.
+     * This is acceptable for catalog queries which are not performance-critical.
      *
      * @return the plugin functions map
      */
     public LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>>> getPluginFunctions() {
-        pluginLock.readLock().lock();
-        try {
-            return pluginFunctions;
-        } finally {
-            pluginLock.readLock().unlock();
-        }
+        return pluginFunctions;
     }
 
     public int getFunctionCount() {
@@ -259,9 +257,18 @@ public class FunctionFactoryCache {
         if (name == null) {
             return false;
         }
+        // Fast path: built-in functions (no lock - immutable after construction)
+        if (cursorFunctionNames.contains(name)) {
+            return true;
+        }
+        // No dot means it can't be a plugin function
+        if (Chars.indexOf(name, 0, name.length(), '.') < 0) {
+            return false;
+        }
+        // Slow path: qualified plugin name - need lock for unquoting
         pluginLock.readLock().lock();
         try {
-            return cursorFunctionNames.contains(name);
+            return cursorFunctionNames.contains(unquotePluginFunctionName(name));
         } finally {
             pluginLock.readLock().unlock();
         }
@@ -271,23 +278,18 @@ public class FunctionFactoryCache {
         if (name == null) {
             return false;
         }
+        // Fast path: built-in functions (no lock - immutable after construction)
+        if (groupByFunctionNames.contains(name)) {
+            return true;
+        }
+        // No dot means it can't be a plugin function
+        if (Chars.indexOf(name, 0, name.length(), '.') < 0) {
+            return false;
+        }
+        // Slow path: qualified plugin name - need lock for unquoting
         pluginLock.readLock().lock();
         try {
-            if (groupByFunctionNames.contains(name)) {
-                return true;
-            }
-            // For qualified plugin function names, try unquoting the plugin name part
-            final int lastDot = Chars.lastIndexOf(name, 0, name.length(), '.');
-            if (lastDot > 0 && lastDot < name.length() - 1) {
-                String pluginName = name.subSequence(0, lastDot).toString();
-                if (pluginName.startsWith("\"") && pluginName.endsWith("\"")) {
-                    pluginName = pluginName.substring(1, pluginName.length() - 1);
-                }
-                final String functionName = name.subSequence(lastDot + 1, name.length()).toString();
-                final String qualifiedName = pluginName + "." + functionName;
-                return groupByFunctionNames.contains(qualifiedName);
-            }
-            return false;
+            return groupByFunctionNames.contains(unquotePluginFunctionName(name));
         } finally {
             pluginLock.readLock().unlock();
         }
@@ -313,9 +315,18 @@ public class FunctionFactoryCache {
         if (name == null) {
             return false;
         }
+        // Fast path: built-in functions (no lock - immutable after construction)
+        if (runtimeConstantFunctionNames.contains(name)) {
+            return true;
+        }
+        // No dot means it can't be a plugin function
+        if (Chars.indexOf(name, 0, name.length(), '.') < 0) {
+            return false;
+        }
+        // Slow path: qualified plugin name - need lock for unquoting
         pluginLock.readLock().lock();
         try {
-            return runtimeConstantFunctionNames.contains(name);
+            return runtimeConstantFunctionNames.contains(unquotePluginFunctionName(name));
         } finally {
             pluginLock.readLock().unlock();
         }
@@ -341,9 +352,18 @@ public class FunctionFactoryCache {
         if (name == null) {
             return false;
         }
+        // Fast path: built-in functions (no lock - immutable after construction)
+        if (windowFunctionNames.contains(name)) {
+            return true;
+        }
+        // No dot means it can't be a plugin function
+        if (Chars.indexOf(name, 0, name.length(), '.') < 0) {
+            return false;
+        }
+        // Slow path: qualified plugin name - need lock for unquoting
         pluginLock.readLock().lock();
         try {
-            return windowFunctionNames.contains(name);
+            return windowFunctionNames.contains(unquotePluginFunctionName(name));
         } finally {
             pluginLock.readLock().unlock();
         }
@@ -423,5 +443,25 @@ public class FunctionFactoryCache {
 
     private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
         return new ArgSwappingFunctionFactory(name, factory);
+    }
+
+    /**
+     * Unquotes a qualified plugin function name like "plugin-name".function to plugin-name.function.
+     * Used for looking up plugin functions in the type sets (groupBy, cursor, window, runtimeConstant).
+     *
+     * @param name the potentially quoted qualified function name
+     * @return the unquoted qualified name, or the original name if not a valid qualified name
+     */
+    private static String unquotePluginFunctionName(CharSequence name) {
+        final int lastDot = Chars.lastIndexOf(name, 0, name.length(), '.');
+        if (lastDot > 0 && lastDot < name.length() - 1) {
+            String pluginName = name.subSequence(0, lastDot).toString();
+            if (pluginName.startsWith("\"") && pluginName.endsWith("\"")) {
+                pluginName = pluginName.substring(1, pluginName.length() - 1);
+            }
+            final String functionName = name.subSequence(lastDot + 1, name.length()).toString();
+            return pluginName + "." + functionName;
+        }
+        return name.toString();
     }
 }
