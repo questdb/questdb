@@ -37,6 +37,8 @@ public class SqlKeywords {
     protected static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
     private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
 
+    // Used to abort enterprise backups
+    @SuppressWarnings("unused")
     public static boolean isAbortKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'a'
@@ -383,6 +385,8 @@ public class SqlKeywords {
                 ;
     }
 
+    // Used in enterprise backups
+    @SuppressWarnings("unused")
     public static boolean isDatabaseKeyword(CharSequence tok) {
         return tok.length() == 8
                 && (tok.charAt(0) | 32) == 'd'

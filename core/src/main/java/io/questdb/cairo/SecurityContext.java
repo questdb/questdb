@@ -29,6 +29,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
+@SuppressWarnings("unused")
 public interface SecurityContext extends Mutable {
     // Implementations are free to define unique authentication types.
     // The user authenticated with credentials.

@@ -471,8 +471,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", fromTxn=").$(lastRefreshTxn)
                     .$(", toTxn=").$(refreshContext.toBaseTxn)
                     .$(", periodHi=").$ts(driver, refreshContext.periodHi)
-                    .$(", iteratorMinTs=[").$ts(driver, iteratorMinTs)
-                    .$(", ").$ts(driver, iteratorMaxTs)
+                    .$(", iteratorMinTs=").$ts(driver, iteratorMinTs)
+                    .$(", iteratorMaxTs=").$ts(driver, iteratorMaxTs)
                     .$("), iteratorStep=").$(step)
                     .I$();
 

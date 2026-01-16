@@ -186,6 +186,8 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
+    // Used in enterprise edition
+    @SuppressWarnings("unused")
     public MemoryMARW getMemFile() {
         return memFile;
     }
@@ -194,6 +196,8 @@ public class TableSnapshotRestore implements QuietCloseable {
         return tableMetadata;
     }
 
+    // Used in enterprise edition
+    @SuppressWarnings("unused")
     public TxReader getTableTxReader() {
         return txWriter;
     }

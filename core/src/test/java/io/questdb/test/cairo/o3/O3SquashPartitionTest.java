@@ -244,11 +244,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 long squashFileFd = configuration.getFilesFacade().openRO(path.$());
                 Assert.assertTrue("Expected .squash_ts file to exist after squash counter overflow", squashFileFd != -1);
 
-                if (squashFileFd != -1) {
-                    long squashTimestamp = configuration.getFilesFacade().readNonNegativeLong(squashFileFd, 0);
-                    Assert.assertTrue("Expected valid squash timestamp, got: " + squashTimestamp, squashTimestamp > 0);
-                    configuration.getFilesFacade().close(squashFileFd);
-                }
+                long squashTimestamp = configuration.getFilesFacade().readNonNegativeLong(squashFileFd, 0);
+                Assert.assertTrue("Expected valid squash timestamp, got: " + squashTimestamp, squashTimestamp > 0);
+                configuration.getFilesFacade().close(squashFileFd);
 
                 path.trimTo(plen);
             }

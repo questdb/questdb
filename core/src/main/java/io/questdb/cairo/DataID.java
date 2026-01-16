@@ -112,7 +112,7 @@ public final class DataID implements Sinkable {
      * @return true if the value was initialized, or false if it could not be initialized
      * because it was already set.
      */
-    public synchronized boolean initialize(long lo, long hi) {
+    public boolean initialize(long lo, long hi) {
         if (isInitialized()) {
             return false;
         }

@@ -161,8 +161,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     /**
-     * Creates sequencer metadata files from Table Structure object
+     * Creates sequencer metadata files from Table Structure object, needed for enterprise incremental backup/restore.
      */
+    @SuppressWarnings("unused")
     public void createMetaFile(TableStructure tableStruct, Path path, int pathLen, int tableId, int structureVersion) {
         copyFrom(tableStruct, tableId);
         this.structureVersion.set(structureVersion);
