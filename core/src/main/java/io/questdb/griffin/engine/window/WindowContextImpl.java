@@ -36,7 +36,6 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class WindowContextImpl implements WindowContext, Mutable {
-    private boolean baseSupportsRandomAccess;
     private boolean empty = true;
     private int exclusionKind;
     private int exclusionKindPos;
@@ -54,11 +53,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private long rowsLo;
     private int rowsLoKindPos;
     private int timestampIndex;
-
-    @Override
-    public boolean baseSupportsRandomAccess() {
-        return baseSupportsRandomAccess;
-    }
+    private int timestampType;
 
     @Override
     public void clear() {
@@ -69,7 +64,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.ordered = false;
         this.orderByDirection = RecordCursorFactory.SCAN_DIRECTION_OTHER;
         this.orderByPos = 0;
-        this.baseSupportsRandomAccess = false;
         this.framingMode = WindowExpression.FRAMING_ROWS;
         this.rowsLo = Long.MIN_VALUE;
         this.rowsHi = Long.MAX_VALUE;
@@ -78,6 +72,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.rowsHiKindPos = 0;
         this.exclusionKindPos = 0;
         this.timestampIndex = -1;
+        this.timestampType = ColumnType.UNDEFINED;
         this.ignoreNulls = false;
         this.nullsDescPos = 0;
     }
@@ -146,6 +141,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
     }
 
     @Override
+    public int getTimestampType() {
+        return timestampType;
+    }
+
+    @Override
     public boolean isDefaultFrame() {
         // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
         // anything other than that is custom
@@ -180,7 +180,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
             boolean ordered,
             int orderByDirection,
             int orderByPos,
-            boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
             char rowsLoUint,
@@ -202,7 +201,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.ordered = ordered;
         this.orderByDirection = orderByDirection;
         this.orderByPos = orderByPos;
-        this.baseSupportsRandomAccess = baseSupportsRandomAccess;
         this.framingMode = framingMode;
         this.rowsLo = rowsLo;
         if (rowsLoUint != 0 && ColumnType.isTimestamp(timestampType)) {
@@ -217,8 +215,10 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.exclusionKind = exclusionKind;
         this.exclusionKindPos = exclusionKindPos;
         this.timestampIndex = timestampIndex;
+        this.timestampType = timestampType;
         this.ignoreNulls = ignoreNulls;
         this.nullsDescPos = nullsDescPos;
+        this.timestampType = timestampType;
     }
 
     @Override
