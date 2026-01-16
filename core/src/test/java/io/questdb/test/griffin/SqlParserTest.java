@@ -12917,15 +12917,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    @Ignore
     public void testWindowFunctionNestedWithColumnAliasAndArithmetic() throws Exception {
         // Nested window functions with column alias and arithmetic between outer window functions.
         // x as a creates an alias that conflicts with table column a.
         // The expression sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () adds two outer windows.
+        // The model chain correctly extracts inner windows to separate models:
+        // - Inner window 1: sum(a1) over () -> alias "sum" (sum of original column a, renamed to a1)
+        // - Inner window 2: sum(a) over () -> alias "sum1" (sum of x, aliased as a), plus pass-through of "sum"
+        // - Outer windows: sum(sum) and sum(sum1) referencing the inner window aliases
+        // - Final: arithmetic sum1 + sum
         assertQuery(
-                "???",
+                "select-virtual a, sum1 + sum column from (select-window [a, sum(sum) sum over (), sum(sum1) sum1 over ()] a, sum(sum) sum over (), sum(sum1) sum1 over () from (select-window [a, sum, sum(a) sum1 over ()] sum(a) sum1 over (), a, sum from (select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a from (select-choose [x a, a a1] x a, a a1 from (select [x, a] from x timestamp (ts))))))",
                 "SELECT x as a, sum( sum(x) OVER () ) OVER () + sum( sum(a) OVER () ) OVER () FROM x",
-                // sum(x) over() s1, sum(a) over() s2 -> sum(s1) over() s11, sum(s2) over() s21 -> s11 + s21
                 modelOf("x")
                         .col("x", ColumnType.INT)
                         .col("a", ColumnType.INT)
@@ -13040,11 +13043,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
         // Three levels of nesting: sum(sum(row_number() OVER ()) OVER ()) OVER ()
         // Each level is extracted to its own select-window layer:
         // 1. Innermost: row_number() over () from base table
-        // 2. Middle: sum(row_number) over () referencing the literal from inner layer
+        // 2. Middle: sum(row_number) over () referencing the literal from inner layer, plus pass-through of row_number
         // 3. Outer: sum(sum) over () referencing the literal from middle layer
         assertQuery(
                 "select-window sum(sum) sum over () from (" +
-                        "select-window [sum(row_number) sum over ()] sum(row_number) sum over () from (" +
+                        "select-window [sum(row_number) sum over ()] sum(row_number) sum over (), row_number from (" +
                         "select-window [row_number() row_number over ()] row_number() row_number over () from (" +
                         "x timestamp (ts))))",
                 "SELECT sum(sum(row_number() OVER ()) OVER ()) OVER () FROM x",

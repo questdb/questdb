@@ -10167,6 +10167,42 @@ public class WindowFunctionTest extends AbstractCairoTest {
         );
     }
 
+    //
+    // Tests for window functions with actual data execution.
+    // These tests verify that window functions work correctly end-to-end,
+    // including cases where window functions are nested inside operations.
+    //
+
+    @Test
+    public void testNestedWindowFunctionsWithColumnAliases() throws Exception {
+        // Test nested window functions where output column aliases conflict with table column names.
+        // The query aliases column 'id' as 'a' and 'b', but the table also has columns 'a' and 'b'.
+        // The inner window functions sum(a) OVER () and sum(b) OVER () should reference the
+        // actual table columns 'a' and 'b', not the output aliases.
+        // sum(a) OVER () = 10 + 20 + 30 = 60 for each row
+        // sum(b) OVER () = 100 + 200 + 300 = 600 for each row
+        // sum(60 + 600) OVER () = 660 * 3 = 1980 for each row
+        assertQuery(
+                """
+                        a\tb\tsum
+                        1\t1\t1980.0
+                        2\t2\t1980.0
+                        3\t3\t1980.0
+                        """,
+                "SELECT id as a, id as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () as sum FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, " +
+                        "  x * 10 AS a, " +
+                        "  x * 100 AS b, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
     static {
         FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "ksum(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",

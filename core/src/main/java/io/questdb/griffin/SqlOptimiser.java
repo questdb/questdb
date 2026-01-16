@@ -3041,8 +3041,12 @@ public class SqlOptimiser implements Mutable {
             WindowExpression wc = node.windowExpression;
             CharSequence alias = wc.getAlias();
             if (alias == null) {
-                alias = createColumnAlias(node, innerWindowModel);
+                // Use translatingModel for alias uniqueness to ensure inner window columns
+                // get unique aliases across multiple inner window models
+                alias = createColumnAlias(node, translatingModel);
                 wc.of(alias, node);
+                // Register the alias immediately so subsequent calls see it for uniqueness
+                translatingModel.getAliasToColumnMap().putIfAbsent(alias, wc);
             }
             innerWindowModel.addBottomUpColumn(wc);
             // Register in hash map for future deduplication
@@ -5192,7 +5196,15 @@ public class SqlOptimiser implements Mutable {
             QueryModel baseModel
     ) throws SqlException {
         if (node != null && node.windowExpression != null) {
+            // Extract any nested window functions from arguments to inner window model.
+            // This modifies the AST in-place, replacing nested windows with literal references.
+            extractAndRegisterNestedWindowFunctions(node, translatingModel, innerVirtualModel, baseModel, 0);
+
+            // Validate that PARTITION BY and ORDER BY don't contain window functions
+            validateNoWindowFunctionsInWindowSpec(node.windowExpression);
+
             // Check if an identical window function already exists in the model
+            // (must be done AFTER extraction so we compare the modified AST)
             ObjList<QueryColumn> existingColumns = windowModel.getBottomUpColumns();
             for (int i = 0, n = existingColumns.size(); i < n; i++) {
                 QueryColumn existing = existingColumns.getQuick(i);
@@ -7765,6 +7777,25 @@ public class SqlOptimiser implements Mutable {
                         QueryModel innerWm = innerWindowModels.getQuick(j);
                         if (innerWm.getAliasToColumnMap().excludes(col.getAlias())) {
                             innerWm.addBottomUpColumn(col);
+                        }
+                    }
+                }
+            }
+
+            // Also propagate columns from earlier inner window models to later ones.
+            // When multiple inner window models are created (e.g., from nested windows in arithmetic),
+            // each model needs to pass through columns from previous models so outer models can access them.
+            for (int i = 1, n = innerWindowModels.size(); i < n; i++) {
+                QueryModel laterModel = innerWindowModels.getQuick(i);
+                // Add columns from all earlier models
+                for (int j = 0; j < i; j++) {
+                    QueryModel earlierModel = innerWindowModels.getQuick(j);
+                    ObjList<QueryColumn> earlierCols = earlierModel.getBottomUpColumns();
+                    for (int k = 0, m = earlierCols.size(); k < m; k++) {
+                        QueryColumn col = earlierCols.getQuick(k);
+                        if (laterModel.getAliasToColumnMap().excludes(col.getAlias())) {
+                            // Create a pass-through reference to the column
+                            laterModel.addBottomUpColumn(nextColumn(col.getAlias()));
                         }
                     }
                 }
