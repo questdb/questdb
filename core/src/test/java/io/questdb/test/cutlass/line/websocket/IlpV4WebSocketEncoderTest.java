@@ -24,7 +24,10 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
+import io.questdb.cutlass.http.ilpv4.IlpV4GorillaDecoder;
+import io.questdb.cutlass.http.ilpv4.IlpV4GorillaEncoder;
 import io.questdb.cutlass.http.ilpv4.IlpV4TableBuffer;
+import io.questdb.cutlass.http.ilpv4.IlpV4TimestampDecoder;
 import io.questdb.cutlass.line.websocket.GlobalSymbolDictionary;
 import io.questdb.cutlass.line.websocket.IlpV4WebSocketEncoder;
 import io.questdb.cutlass.line.websocket.NativeBufferWriter;
@@ -1041,5 +1044,219 @@ public class IlpV4WebSocketEncoderTest {
 
         // Test size
         Assert.assertEquals(3, dict.size());
+    }
+
+    // ==================== GORILLA TIMESTAMP ENCODING TESTS ====================
+
+    @Test
+    public void testGorillaEncoding_multipleTimestamps_usesGorillaEncoding() {
+        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+            encoder.setGorillaEnabled(true);
+
+            IlpV4TableBuffer buffer = new IlpV4TableBuffer("test");
+
+            // Add multiple timestamps with constant delta (best compression)
+            IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+            for (int i = 0; i < 100; i++) {
+                col.addLong(1000000000L + i * 1000L);
+                buffer.nextRow();
+            }
+
+            int sizeWithGorilla = encoder.encode(buffer, false);
+
+            // Now encode without Gorilla
+            encoder.setGorillaEnabled(false);
+            buffer.reset();
+            col = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+            for (int i = 0; i < 100; i++) {
+                col.addLong(1000000000L + i * 1000L);
+                buffer.nextRow();
+            }
+
+            int sizeWithoutGorilla = encoder.encode(buffer, false);
+
+            // Gorilla should produce smaller output for constant-delta timestamps
+            Assert.assertTrue("Gorilla encoding should be smaller",
+                    sizeWithGorilla < sizeWithoutGorilla);
+        }
+    }
+
+    @Test
+    public void testGorillaEncoding_twoTimestamps_usesUncompressed() {
+        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+            encoder.setGorillaEnabled(true);
+
+            IlpV4TableBuffer buffer = new IlpV4TableBuffer("test");
+
+            // Only 2 timestamps - should use uncompressed (Gorilla needs 3+)
+            IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+            col.addLong(1000000L);
+            buffer.nextRow();
+            col.addLong(2000000L);
+            buffer.nextRow();
+
+            int size = encoder.encode(buffer, false);
+            Assert.assertTrue(size > 12);
+
+            // Verify header has Gorilla flag set
+            NativeBufferWriter buf = encoder.getBuffer();
+            byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + HEADER_OFFSET_FLAGS);
+            Assert.assertEquals(FLAG_GORILLA, (byte) (flags & FLAG_GORILLA));
+        }
+    }
+
+    @Test
+    public void testGorillaEncoding_singleTimestamp_usesUncompressed() {
+        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+            encoder.setGorillaEnabled(true);
+
+            IlpV4TableBuffer buffer = new IlpV4TableBuffer("test");
+
+            // Single timestamp - should use uncompressed
+            IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+            col.addLong(1000000L);
+            buffer.nextRow();
+
+            int size = encoder.encode(buffer, false);
+            Assert.assertTrue(size > 12);
+        }
+    }
+
+    @Test
+    public void testGorillaEncoding_compressionRatio() {
+        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+            encoder.setGorillaEnabled(true);
+
+            IlpV4TableBuffer buffer = new IlpV4TableBuffer("metrics");
+
+            // Add many timestamps with constant delta - best case for Gorilla
+            IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("ts", TYPE_TIMESTAMP, true);
+            for (int i = 0; i < 1000; i++) {
+                col.addLong(1000000000L + i * 1000L);
+                buffer.nextRow();
+            }
+
+            int sizeWithGorilla = encoder.encode(buffer, false);
+
+            // Calculate theoretical minimum size for Gorilla:
+            // - Header: 12 bytes
+            // - Table header, column schema, etc.
+            // - First timestamp: 8 bytes
+            // - Second timestamp: 8 bytes
+            // - Remaining 998 timestamps: 998 bits (1 bit each for DoD=0) = ~125 bytes
+
+            // Calculate size without Gorilla (1000 * 8 = 8000 bytes just for timestamps)
+            encoder.setGorillaEnabled(false);
+            buffer.reset();
+            col = buffer.getOrCreateColumn("ts", TYPE_TIMESTAMP, true);
+            for (int i = 0; i < 1000; i++) {
+                col.addLong(1000000000L + i * 1000L);
+                buffer.nextRow();
+            }
+
+            int sizeWithoutGorilla = encoder.encode(buffer, false);
+
+            // For constant delta, Gorilla should achieve significant compression
+            double compressionRatio = (double) sizeWithGorilla / sizeWithoutGorilla;
+            Assert.assertTrue("Compression ratio should be < 0.2 for constant delta",
+                    compressionRatio < 0.2);
+        }
+    }
+
+    @Test
+    public void testGorillaEncoding_varyingDelta() {
+        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+            encoder.setGorillaEnabled(true);
+
+            IlpV4TableBuffer buffer = new IlpV4TableBuffer("test");
+
+            // Varying deltas that exercise different buckets
+            IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("ts", TYPE_TIMESTAMP, true);
+            long[] timestamps = {
+                    1000000000L,
+                    1000001000L,  // delta=1000
+                    1000002000L,  // DoD=0
+                    1000003050L,  // DoD=50
+                    1000004200L,  // DoD=100
+                    1000006200L,  // DoD=850
+            };
+
+            for (long ts : timestamps) {
+                col.addLong(ts);
+                buffer.nextRow();
+            }
+
+            int size = encoder.encode(buffer, false);
+            Assert.assertTrue(size > 12);
+
+            // Verify header has Gorilla flag
+            NativeBufferWriter buf = encoder.getBuffer();
+            byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + HEADER_OFFSET_FLAGS);
+            Assert.assertEquals(FLAG_GORILLA, (byte) (flags & FLAG_GORILLA));
+        }
+    }
+
+    @Test
+    public void testGorillaEncoding_nanosTimestamps() {
+        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+            encoder.setGorillaEnabled(true);
+
+            IlpV4TableBuffer buffer = new IlpV4TableBuffer("test");
+
+            // Use TYPE_TIMESTAMP_NANOS
+            IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("ts", TYPE_TIMESTAMP_NANOS, true);
+            for (int i = 0; i < 100; i++) {
+                col.addLong(1000000000000000000L + i * 1000000L); // Nanos with millisecond intervals
+                buffer.nextRow();
+            }
+
+            int size = encoder.encode(buffer, false);
+            Assert.assertTrue(size > 12);
+
+            // Verify header has Gorilla flag
+            NativeBufferWriter buf = encoder.getBuffer();
+            byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + HEADER_OFFSET_FLAGS);
+            Assert.assertEquals(FLAG_GORILLA, (byte) (flags & FLAG_GORILLA));
+        }
+    }
+
+    @Test
+    public void testGorillaEncoding_multipleTimestampColumns() {
+        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+            encoder.setGorillaEnabled(true);
+
+            IlpV4TableBuffer buffer = new IlpV4TableBuffer("test");
+
+            // Add multiple timestamp columns
+            for (int i = 0; i < 50; i++) {
+                IlpV4TableBuffer.ColumnBuffer ts1Col = buffer.getOrCreateColumn("ts1", TYPE_TIMESTAMP, true);
+                ts1Col.addLong(1000000000L + i * 1000L);
+
+                IlpV4TableBuffer.ColumnBuffer ts2Col = buffer.getOrCreateColumn("ts2", TYPE_TIMESTAMP, true);
+                ts2Col.addLong(2000000000L + i * 2000L);
+
+                buffer.nextRow();
+            }
+
+            int sizeWithGorilla = encoder.encode(buffer, false);
+
+            // Compare with uncompressed
+            encoder.setGorillaEnabled(false);
+            buffer.reset();
+            for (int i = 0; i < 50; i++) {
+                IlpV4TableBuffer.ColumnBuffer ts1Col = buffer.getOrCreateColumn("ts1", TYPE_TIMESTAMP, true);
+                ts1Col.addLong(1000000000L + i * 1000L);
+
+                IlpV4TableBuffer.ColumnBuffer ts2Col = buffer.getOrCreateColumn("ts2", TYPE_TIMESTAMP, true);
+                ts2Col.addLong(2000000000L + i * 2000L);
+
+                buffer.nextRow();
+            }
+
+            int sizeWithoutGorilla = encoder.encode(buffer, false);
+
+            Assert.assertTrue("Gorilla should compress multiple timestamp columns",
+                    sizeWithGorilla < sizeWithoutGorilla);
+        }
     }
 }

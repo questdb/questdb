@@ -25,9 +25,9 @@
 package io.questdb.cutlass.line.websocket;
 
 import io.questdb.cutlass.http.ilpv4.IlpV4ColumnDef;
+import io.questdb.cutlass.http.ilpv4.IlpV4GorillaEncoder;
 import io.questdb.cutlass.http.ilpv4.IlpV4TableBuffer;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.cutlass.http.ilpv4.IlpV4TimestampDecoder;
 import io.questdb.std.QuietCloseable;
 
 import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
@@ -41,6 +41,7 @@ import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
 public class IlpV4WebSocketEncoder implements QuietCloseable {
 
     private final NativeBufferWriter buffer;
+    private final IlpV4GorillaEncoder gorillaEncoder = new IlpV4GorillaEncoder();
     private byte flags;
 
     public IlpV4WebSocketEncoder() {
@@ -530,16 +531,36 @@ public class IlpV4WebSocketEncoder implements QuietCloseable {
     }
 
     /**
-     * Writes a timestamp column.
-     * For now, always uses uncompressed encoding.
-     * TODO: Implement Gorilla encoding
+     * Writes a timestamp column with optional Gorilla compression.
+     * <p>
+     * When Gorilla encoding is enabled and applicable (3+ timestamps with
+     * delta-of-deltas fitting in 32-bit range), uses delta-of-delta compression.
+     * Otherwise, falls back to uncompressed encoding.
      */
     private void writeTimestampColumn(long[] values, int count, boolean useGorilla) {
-        // For simplicity, always use uncompressed for now
-        if (useGorilla) {
-            buffer.putByte((byte) 0x00); // ENCODING_UNCOMPRESSED
+        if (useGorilla && count > 2 && IlpV4GorillaEncoder.canUseGorilla(values, count)) {
+            // Write Gorilla encoding flag
+            buffer.putByte(IlpV4TimestampDecoder.ENCODING_GORILLA);
+
+            // Calculate size needed and ensure buffer has capacity
+            int encodedSize = IlpV4GorillaEncoder.calculateEncodedSize(values, count);
+            buffer.ensureCapacity(encodedSize);
+
+            // Encode timestamps to buffer
+            int bytesWritten = gorillaEncoder.encodeTimestamps(
+                    buffer.getBufferPtr() + buffer.getPosition(),
+                    buffer.getCapacity() - buffer.getPosition(),
+                    values,
+                    count
+            );
+            buffer.skip(bytesWritten);
+        } else {
+            // Write uncompressed
+            if (useGorilla) {
+                buffer.putByte(IlpV4TimestampDecoder.ENCODING_UNCOMPRESSED);
+            }
+            writeLongColumn(values, count);
         }
-        writeLongColumn(values, count);
     }
 
     /**

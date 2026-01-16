@@ -235,7 +235,29 @@ public class NativeBufferWriter implements QuietCloseable {
         Unsafe.getUnsafe().putInt(bufferPtr + offset, value);
     }
 
-    private void ensureCapacity(int needed) {
+    /**
+     * Returns the current buffer capacity.
+     */
+    public int getCapacity() {
+        return capacity;
+    }
+
+    /**
+     * Skips the specified number of bytes, advancing the position.
+     * Used when data has been written directly to the buffer via getBufferPtr().
+     *
+     * @param bytes number of bytes to skip
+     */
+    public void skip(int bytes) {
+        position += bytes;
+    }
+
+    /**
+     * Ensures the buffer has at least the specified additional capacity.
+     *
+     * @param needed additional bytes needed beyond current position
+     */
+    public void ensureCapacity(int needed) {
         if (position + needed > capacity) {
             int newCapacity = Math.max(capacity * 2, position + needed);
             bufferPtr = Unsafe.realloc(bufferPtr, capacity, newCapacity, MemoryTag.NATIVE_DEFAULT);
