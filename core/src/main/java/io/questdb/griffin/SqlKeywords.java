@@ -53,6 +53,13 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'n';
     }
 
+    public static boolean isAllKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'l';
+    }
+
     public static boolean isAlphaKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'a'
@@ -60,13 +67,6 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'p'
                 && (tok.charAt(3) | 32) == 'h'
                 && (tok.charAt(4) | 32) == 'a';
-    }
-
-    public static boolean isAllKeyword(CharSequence tok) {
-        return tok.length() == 3
-                && (tok.charAt(0) | 32) == 'a'
-                && (tok.charAt(1) | 32) == 'l'
-                && (tok.charAt(2) | 32) == 'l';
     }
 
     public static boolean isAlterKeyword(CharSequence tok) {

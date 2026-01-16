@@ -36,7 +36,6 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class WindowContextImpl implements WindowContext, Mutable {
-    private boolean baseSupportsRandomAccess;
     private boolean empty = true;
     private int exclusionKind;
     private int exclusionKindPos;
@@ -57,11 +56,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private int timestampType;
 
     @Override
-    public boolean baseSupportsRandomAccess() {
-        return baseSupportsRandomAccess;
-    }
-
-    @Override
     public void clear() {
         this.empty = true;
         this.partitionByRecord = null;
@@ -70,7 +64,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.ordered = false;
         this.orderByDirection = RecordCursorFactory.SCAN_DIRECTION_OTHER;
         this.orderByPos = 0;
-        this.baseSupportsRandomAccess = false;
         this.framingMode = WindowExpression.FRAMING_ROWS;
         this.rowsLo = Long.MIN_VALUE;
         this.rowsHi = Long.MAX_VALUE;
@@ -187,7 +180,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
             boolean ordered,
             int orderByDirection,
             int orderByPos,
-            boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
             char rowsLoUint,
@@ -209,7 +201,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.ordered = ordered;
         this.orderByDirection = orderByDirection;
         this.orderByPos = orderByPos;
-        this.baseSupportsRandomAccess = baseSupportsRandomAccess;
         this.framingMode = framingMode;
         this.rowsLo = rowsLo;
         if (rowsLoUint != 0 && ColumnType.isTimestamp(timestampType)) {
@@ -227,6 +218,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.timestampType = timestampType;
         this.ignoreNulls = ignoreNulls;
         this.nullsDescPos = nullsDescPos;
+        this.timestampType = timestampType;
     }
 
     @Override
