@@ -208,8 +208,6 @@ public class SqlOptimiser implements Mutable {
     private final ArrayDeque<ExpressionNode> windowNodeStack = new ArrayDeque<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
-    // Cached hash from findDuplicateWindowFunction for reuse in registerWindowFunction
-    private int lastWindowFunctionHash;
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
@@ -3057,8 +3055,11 @@ public class SqlOptimiser implements Mutable {
             // Validate that PARTITION BY and ORDER BY don't contain window functions
             validateNoWindowFunctionsInWindowSpec(node.windowExpression);
 
+            // Compute hash once for both duplicate check and registration
+            int hash = ExpressionNode.deepHashCode(node);
+
             // Check if an identical window function already exists (O(1) hash lookup + O(k) comparison where k is collision count)
-            CharSequence existingAlias = findDuplicateWindowFunction(node);
+            CharSequence existingAlias = findDuplicateWindowFunction(node, hash);
             if (existingAlias != null) {
                 return nextLiteral(existingAlias);
             }
@@ -3076,7 +3077,7 @@ public class SqlOptimiser implements Mutable {
             }
             innerWindowModel.addBottomUpColumn(wc);
             // Register in hash map for future deduplication
-            registerWindowFunction(wc);
+            registerWindowFunction(wc, hash);
             // Emit literals referenced by the window column to inner models
             emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
             return nextLiteral(alias);
@@ -3125,11 +3126,12 @@ public class SqlOptimiser implements Mutable {
     /**
      * Looks up a duplicate window function in the hash map.
      * Returns the alias of an existing identical window function, or null if none found.
-     * The hash is stored in lastWindowFunctionHash for reuse by registerWindowFunction.
+     *
+     * @param node The window function expression node to look up
+     * @param hash Pre-computed hash from ExpressionNode.deepHashCode(node)
+     * @return The alias of an existing identical window function, or null if none found
      */
-    private CharSequence findDuplicateWindowFunction(ExpressionNode node) {
-        int hash = ExpressionNode.deepHashCode(node);
-        lastWindowFunctionHash = hash;
+    private CharSequence findDuplicateWindowFunction(ExpressionNode node, int hash) {
         ObjList<QueryColumn> candidates = windowFunctionHashMap.get(hash);
         if (candidates != null) {
             for (int i = 0, n = candidates.size(); i < n; i++) {
@@ -4974,10 +4976,12 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Registers a window function in the hash map for future deduplication lookups.
-     * Must be called after findDuplicateWindowFunction() to reuse the computed hash.
+     *
+     * @param column The window column to register
+     * @param hash   Pre-computed hash from ExpressionNode.deepHashCode(column.getAst())
      */
-    private void registerWindowFunction(QueryColumn column) {
-        ObjList<QueryColumn> list = getOrCreateColumnListForHash(lastWindowFunctionHash);
+    private void registerWindowFunction(QueryColumn column, int hash) {
+        ObjList<QueryColumn> list = getOrCreateColumnListForHash(hash);
         list.add(column);
     }
 
@@ -6843,8 +6847,11 @@ public class SqlOptimiser implements Mutable {
             // Extract any nested window functions from arguments to inner window model
             extractAndRegisterNestedWindowFunctions(ast, translatingModel, innerVirtualModel, baseModel, 0);
 
+            // Compute hash once for both duplicate check and registration
+            int hash = ExpressionNode.deepHashCode(ast);
+
             // Check for duplicate window column using O(1) hash lookup
-            CharSequence existingAlias = findDuplicateWindowFunction(ast);
+            CharSequence existingAlias = findDuplicateWindowFunction(ast, hash);
 
             QueryColumn ref;
             if (existingAlias != null) {
@@ -6853,7 +6860,7 @@ public class SqlOptimiser implements Mutable {
             } else {
                 // Not a duplicate - add to window model and register in hash map
                 windowModel.addBottomUpColumn(qc);
-                registerWindowFunction(qc);
+                registerWindowFunction(qc, hash);
                 ref = nextColumn(qc.getAlias());
             }
             outerVirtualModel.addBottomUpColumn(ref);
