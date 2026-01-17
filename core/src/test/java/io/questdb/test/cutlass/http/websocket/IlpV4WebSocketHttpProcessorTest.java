@@ -25,8 +25,8 @@
 package io.questdb.test.cutlass.http.websocket;
 
 import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.websocket.IlpV4WebSocketHttpProcessor;
-import io.questdb.cutlass.http.websocket.WebSocketHandshake;
+import io.questdb.cutlass.ilpv4.server.IlpV4WebSocketHttpProcessor;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketHandshake;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;

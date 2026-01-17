@@ -24,18 +24,18 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.cutlass.http.ilpv4.IlpV4GorillaDecoder;
-import io.questdb.cutlass.http.ilpv4.IlpV4GorillaEncoder;
-import io.questdb.cutlass.http.ilpv4.IlpV4TableBuffer;
-import io.questdb.cutlass.http.ilpv4.IlpV4TimestampDecoder;
-import io.questdb.cutlass.line.websocket.GlobalSymbolDictionary;
-import io.questdb.cutlass.line.websocket.IlpBufferWriter;
-import io.questdb.cutlass.line.websocket.IlpV4WebSocketEncoder;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4GorillaDecoder;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4GorillaEncoder;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4TableBuffer;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4TimestampDecoder;
+import io.questdb.cutlass.ilpv4.client.GlobalSymbolDictionary;
+import io.questdb.cutlass.ilpv4.client.IlpBufferWriter;
+import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketEncoder;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
+import static io.questdb.cutlass.ilpv4.protocol.IlpV4Constants.*;
 
 /**
  * Unit tests for IlpV4WebSocketEncoder.

@@ -24,9 +24,9 @@
 
 package io.questdb.cutlass.http.client;
 
-import io.questdb.cutlass.http.websocket.WebSocketFrameWriter;
-import io.questdb.cutlass.http.websocket.WebSocketOpcode;
-import io.questdb.cutlass.line.websocket.IlpBufferWriter;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketFrameWriter;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketOpcode;
+import io.questdb.cutlass.ilpv4.client.IlpBufferWriter;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;

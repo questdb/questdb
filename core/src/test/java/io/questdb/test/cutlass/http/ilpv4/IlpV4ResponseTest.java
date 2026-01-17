@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.http.ilpv4;
 
-import io.questdb.cutlass.http.ilpv4.*;
+import io.questdb.cutlass.ilpv4.protocol.*;
 import io.questdb.std.ObjList;
 import org.junit.Test;
 

@@ -24,7 +24,9 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.http.websocket.*;
+import io.questdb.cutlass.ilpv4.server.IlpV4WebSocketProcessor;
+import io.questdb.cutlass.ilpv4.server.IlpV4WebSocketProcessorState;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketCloseCode;
 import io.questdb.std.Os;
 import org.junit.Assert;
 import org.junit.Test;

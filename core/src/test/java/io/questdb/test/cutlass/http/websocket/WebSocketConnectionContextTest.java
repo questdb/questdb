@@ -24,17 +24,15 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.http.websocket.WebSocketCloseCode;
-import io.questdb.cutlass.http.websocket.WebSocketConnectionContext;
-import io.questdb.cutlass.http.websocket.WebSocketOpcode;
-import io.questdb.cutlass.http.websocket.WebSocketProcessor;
-import io.questdb.std.MemoryTag;
+import io.questdb.cutlass.ilpv4.server.WebSocketConnectionContext;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketCloseCode;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketOpcode;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketProcessor;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**

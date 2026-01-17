@@ -24,15 +24,15 @@
 
 package io.questdb.test.cutlass.http.ilpv4;
 
-import io.questdb.cutlass.http.ilpv4.IlpV4Constants;
-import io.questdb.cutlass.http.ilpv4.IlpV4MessageHeader;
-import io.questdb.cutlass.http.ilpv4.IlpV4ParseException;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4Constants;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4MessageHeader;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4ParseException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
+import static io.questdb.cutlass.ilpv4.protocol.IlpV4Constants.*;
 
 public class IlpV4MessageHeaderTest {
 

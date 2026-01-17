@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.http.ilpv4;
 
-import io.questdb.cutlass.http.ilpv4.IlpV4NullBitmap;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4NullBitmap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;

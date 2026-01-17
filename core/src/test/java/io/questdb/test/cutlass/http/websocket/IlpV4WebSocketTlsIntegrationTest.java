@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
+import io.questdb.cutlass.ilpv4.websocket.WebSocketCloseCode;
 import io.questdb.std.Os;
 import org.junit.Assert;
 import org.junit.Test;
@@ -263,7 +264,7 @@ public class IlpV4WebSocketTlsIntegrationTest extends AbstractWebSocketTest {
             Assert.assertTrue("TLS connection should succeed", connectLatch.await(5, TimeUnit.SECONDS));
 
             // Close with normal code
-            ws.sendClose(io.questdb.cutlass.http.websocket.WebSocketCloseCode.NORMAL_CLOSURE, "Test close").join();
+            ws.sendClose(WebSocketCloseCode.NORMAL_CLOSURE, "Test close").join();
 
             Assert.assertTrue("Server should receive close over TLS", closeLatch.await(5, TimeUnit.SECONDS));
             Assert.assertTrue("Close should be recorded", closed.get());

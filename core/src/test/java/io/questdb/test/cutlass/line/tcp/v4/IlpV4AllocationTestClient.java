@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.line.tcp.v4;
 
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.websocket.IlpV4WebSocketSender;
+import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketSender;
 
 import java.io.IOException;
 import java.time.temporal.ChronoUnit;

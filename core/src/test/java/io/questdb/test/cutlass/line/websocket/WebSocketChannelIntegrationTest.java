@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.websocket.WebSocketChannel;
+import io.questdb.cutlass.ilpv4.client.WebSocketChannel;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;

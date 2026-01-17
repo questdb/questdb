@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.http.websocket.IlpV4WebSocketProcessorState;
+import io.questdb.cutlass.ilpv4.server.IlpV4WebSocketProcessorState;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;

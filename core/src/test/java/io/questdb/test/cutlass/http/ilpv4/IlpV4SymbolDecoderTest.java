@@ -24,10 +24,10 @@
 
 package io.questdb.test.cutlass.http.ilpv4;
 
-import io.questdb.cutlass.http.ilpv4.IlpV4ParseException;
-import io.questdb.cutlass.http.ilpv4.IlpV4SymbolDecoder;
-import io.questdb.cutlass.http.ilpv4.IlpV4Varint;
-import static io.questdb.cutlass.http.ilpv4.IlpV4SymbolDecoder.NULL_SYMBOL_INDEX;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4ParseException;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4SymbolDecoder;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4Varint;
+import static io.questdb.cutlass.ilpv4.protocol.IlpV4SymbolDecoder.NULL_SYMBOL_INDEX;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;

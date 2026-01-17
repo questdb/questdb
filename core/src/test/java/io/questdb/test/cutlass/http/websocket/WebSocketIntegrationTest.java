@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.http.websocket.WebSocketCloseCode;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketCloseCode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.junit.After;

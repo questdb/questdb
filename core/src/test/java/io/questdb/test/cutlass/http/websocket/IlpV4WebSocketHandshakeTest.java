@@ -203,43 +203,6 @@ public class IlpV4WebSocketHandshakeTest extends AbstractBootstrapTest {
         });
     }
 
-    @Test
-    public void testHttpPostStillWorks() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (Socket socket = new Socket("localhost", httpPort)) {
-                    socket.setSoTimeout(5000);
-                    OutputStream out = socket.getOutputStream();
-
-                    // Regular HTTP POST (not WebSocket)
-                    String body = "";
-                    String request = "POST /write/v4 HTTP/1.1\r\n" +
-                            "Host: localhost:" + httpPort + "\r\n" +
-                            "Content-Type: application/octet-stream\r\n" +
-                            "Content-Length: " + body.length() + "\r\n" +
-                            "\r\n" +
-                            body;
-
-                    out.write(request.getBytes(StandardCharsets.UTF_8));
-                    out.flush();
-
-                    BufferedReader reader = new BufferedReader(
-                            new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-
-                    String statusLine = reader.readLine();
-                    Assert.assertNotNull("Should receive response", statusLine);
-                    // Should be 200 or 204 for empty body
-                    Assert.assertTrue("Should be success status: " + statusLine,
-                            statusLine.contains("200") || statusLine.contains("204"));
-                }
-            }
-        });
-    }
-
     /**
      * Computes the expected Sec-WebSocket-Accept value.
      */

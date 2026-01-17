@@ -25,8 +25,8 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4Constants;
 import io.questdb.cutlass.line.tcp.IlpV4WalAppender;
-import io.questdb.cutlass.http.ilpv4.IlpV4Constants;
 import org.junit.Test;
 
 import static org.junit.Assert.*;

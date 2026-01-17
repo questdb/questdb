@@ -25,9 +25,9 @@
 package io.questdb.test.cutlass.http.ilpv4;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.http.ilpv4.IlpV4GeoHashDecoder;
-import io.questdb.cutlass.http.ilpv4.IlpV4ParseException;
-import io.questdb.cutlass.http.ilpv4.IlpV4Varint;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4GeoHashDecoder;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4ParseException;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4Varint;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;

@@ -24,9 +24,9 @@
 
 package io.questdb.test.cutlass.http.ilpv4;
 
-import io.questdb.cutlass.http.ilpv4.IlpV4BitReader;
-import io.questdb.cutlass.http.ilpv4.IlpV4BitWriter;
-import io.questdb.cutlass.http.ilpv4.IlpV4ParseException;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4BitReader;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4BitWriter;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4ParseException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;

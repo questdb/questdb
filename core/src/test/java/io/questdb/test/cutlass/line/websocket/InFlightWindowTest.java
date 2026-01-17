@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.websocket.InFlightWindow;
+import io.questdb.cutlass.ilpv4.client.InFlightWindow;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;

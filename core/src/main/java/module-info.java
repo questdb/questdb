@@ -42,16 +42,17 @@ open module io.questdb {
 
     exports io.questdb.cutlass;
     exports io.questdb.cutlass.http;
-    exports io.questdb.cutlass.http.websocket;
     exports io.questdb.cutlass.http.processors;
     exports io.questdb.cutlass.http.ex;
     exports io.questdb.cutlass.json;
     exports io.questdb.cutlass.line;
     exports io.questdb.cutlass.line.udp;
     exports io.questdb.cutlass.line.tcp;
-    exports io.questdb.cutlass.line.websocket;
-    exports io.questdb.cutlass.http.ilpv4;
     exports io.questdb.cutlass.line.http;
+    exports io.questdb.cutlass.ilpv4.protocol;
+    exports io.questdb.cutlass.ilpv4.client;
+    exports io.questdb.cutlass.ilpv4.server;
+    exports io.questdb.cutlass.ilpv4.websocket;
     exports io.questdb.cutlass.pgwire;
     exports io.questdb.cutlass.text;
     exports io.questdb.cutlass.text.types;

@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cutlass.http.ilpv4.*;
+import io.questdb.cutlass.ilpv4.protocol.*;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,7 +41,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 
-import static io.questdb.cutlass.http.ilpv4.IlpV4Constants.*;
+import static io.questdb.cutlass.ilpv4.protocol.IlpV4Constants.*;
 
 /**
  * Appends decoded ILP v4 table blocks to WAL.

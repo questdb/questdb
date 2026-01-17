@@ -24,8 +24,8 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.cutlass.line.websocket.IlpV4WebSocketSender;
-import io.questdb.cutlass.line.websocket.WebSocketResponse;
+import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketSender;
+import io.questdb.cutlass.ilpv4.client.WebSocketResponse;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;

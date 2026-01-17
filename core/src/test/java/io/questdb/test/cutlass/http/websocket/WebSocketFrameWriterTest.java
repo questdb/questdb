@@ -24,9 +24,9 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.http.websocket.WebSocketFrameParser;
-import io.questdb.cutlass.http.websocket.WebSocketFrameWriter;
-import io.questdb.cutlass.http.websocket.WebSocketOpcode;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketFrameParser;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketFrameWriter;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketOpcode;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;

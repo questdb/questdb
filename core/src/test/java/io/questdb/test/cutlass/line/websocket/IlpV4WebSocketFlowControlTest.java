@@ -24,9 +24,9 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.cutlass.line.websocket.IlpV4WebSocketSender;
-import io.questdb.cutlass.line.websocket.InFlightWindow;
-import io.questdb.cutlass.line.websocket.WebSocketSendQueue;
+import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketSender;
+import io.questdb.cutlass.ilpv4.client.InFlightWindow;
+import io.questdb.cutlass.ilpv4.client.WebSocketSendQueue;
 import org.junit.Assert;
 import org.junit.Test;
 

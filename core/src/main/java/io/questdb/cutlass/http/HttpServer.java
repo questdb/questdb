@@ -28,7 +28,7 @@ import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
-import io.questdb.cutlass.http.websocket.IlpV4WebSocketHttpProcessor;
+import io.questdb.cutlass.ilpv4.server.IlpV4WebSocketHttpProcessor;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.SettingsProcessor;

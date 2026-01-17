@@ -24,8 +24,8 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.http.websocket.IlpV4WebSocketUpgradeProcessor;
-import io.questdb.cutlass.http.websocket.WebSocketHandshake;
+import io.questdb.cutlass.ilpv4.server.IlpV4WebSocketUpgradeProcessor;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketHandshake;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;

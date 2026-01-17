@@ -27,7 +27,7 @@ package io.questdb.test.cutlass.line.websocket;
 import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.websocket.IlpV4WebSocketSender;
+import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketSender;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;

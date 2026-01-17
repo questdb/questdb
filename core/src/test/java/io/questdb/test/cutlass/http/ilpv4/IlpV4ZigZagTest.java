@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.http.ilpv4;
 
-import io.questdb.cutlass.http.ilpv4.IlpV4ZigZag;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4ZigZag;
 import org.junit.Assert;
 import org.junit.Test;
 

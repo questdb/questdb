@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.http.websocket.WebSocketHandshake;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketHandshake;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;

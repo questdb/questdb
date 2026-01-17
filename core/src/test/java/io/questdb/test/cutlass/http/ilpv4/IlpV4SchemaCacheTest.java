@@ -24,10 +24,10 @@
 
 package io.questdb.test.cutlass.http.ilpv4;
 
-import io.questdb.cutlass.http.ilpv4.IlpV4ColumnDef;
-import io.questdb.cutlass.http.ilpv4.IlpV4Constants;
-import io.questdb.cutlass.http.ilpv4.IlpV4Schema;
-import io.questdb.cutlass.http.ilpv4.IlpV4SchemaCache;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4ColumnDef;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4Constants;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4Schema;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4SchemaCache;
 import org.junit.Assert;
 import org.junit.Test;
 
