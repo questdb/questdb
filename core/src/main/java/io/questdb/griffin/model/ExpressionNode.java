@@ -146,13 +146,10 @@ public class ExpressionNode implements Mutable, Sinkable {
         }
         int hash = node.type;
         if (node.token != null) {
-            // Use case-insensitive hash for FUNCTION and LITERAL types (consistent with compareNodesExact
-            // which uses Chars.equalsIgnoreCase for these types)
-            if (node.type == FUNCTION || node.type == LITERAL) {
-                hash = 31 * hash + Chars.lowerCaseHashCode(node.token);
-            } else {
-                hash = 31 * hash + node.token.hashCode();
-            }
+            // Use content-based hash for CharSequence (Chars.lowerCaseHashCode handles both
+            // case-insensitive FUNCTION/LITERAL types and case-sensitive types correctly,
+            // since equal strings always have equal lowercase hashes)
+            hash = 31 * hash + Chars.lowerCaseHashCode(node.token);
         }
         // Hash children - must be consistent with compareArgsExact()
         // When args.size() < 3, comparison uses lhs/rhs; otherwise uses args
