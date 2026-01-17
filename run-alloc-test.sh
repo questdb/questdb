@@ -12,7 +12,7 @@
 #   ./run-alloc-test.sh compare [options]   - Compare all protocols
 #
 # Options (passed to client):
-#   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-http, ilpv4-websocket
+#   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-websocket
 #   --host=HOST              Server host (default: localhost)
 #   --port=PORT              Server port
 #   --rows=N                 Total rows to send
@@ -57,7 +57,7 @@ get_protocol_from_args() {
             return
         fi
     done
-    echo "ilpv4-http"  # default
+    echo "ilpv4-websocket"  # default
 }
 
 case "$1" in
@@ -168,7 +168,7 @@ case "$1" in
         echo "Make sure QuestDB server is running!"
         echo ""
 
-        for protocol in ilp-tcp ilp-http ilpv4-http ilpv4-websocket; do
+        for protocol in ilp-tcp ilp-http ilpv4-websocket; do
             echo "=========================================="
             echo "Testing: $protocol"
             echo "=========================================="
@@ -189,11 +189,11 @@ case "$1" in
         echo "  client [options]    Run test client"
         echo "  profile [options]   Run with async-profiler allocation tracking"
         echo "  jfr [options]       Run with Java Flight Recorder"
-        echo "  compare [options]   Run all 4 protocols and compare"
+        echo "  compare [options]   Run all 3 protocols and compare"
         echo ""
         echo "Options:"
         echo "  --debug                  Enable debug logging"
-        echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-http, ilpv4-websocket (default: ilpv4-http)"
+        echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-websocket (default: ilpv4-websocket)"
         echo "  --host=HOST              Server host (default: localhost)"
         echo "  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP/WebSocket)"
         echo "  --rows=N                 Total rows to send (default: 80000000)"
@@ -208,9 +208,9 @@ case "$1" in
         echo ""
         echo "Examples:"
         echo "  Terminal 1: $0 server"
-        echo "  Terminal 2: $0 client --protocol=ilpv4-http --rows=1000000 --batch=5000"
+        echo "  Terminal 2: $0 client --protocol=ilpv4-websocket --rows=1000000 --batch=5000"
         echo "  Terminal 2: $0 client --protocol=ilpv4-websocket --rows=100000 --no-warmup"
-        echo "  Terminal 2: $0 jfr --protocol=ilpv4-http --rows=10000000"
+        echo "  Terminal 2: $0 jfr --protocol=ilpv4-websocket --rows=10000000"
         echo "  Terminal 2: $0 compare --rows=1000000 --batch=10000"
         ;;
 esac

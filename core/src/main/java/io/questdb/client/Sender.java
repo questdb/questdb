@@ -36,7 +36,6 @@ import io.questdb.cutlass.line.LineTcpSenderV1;
 import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.cutlass.line.LineTcpSenderV3;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
-import io.questdb.cutlass.line.http.IlpV4HttpSender;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
@@ -572,7 +571,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private char[] trustStorePassword;
         private String trustStorePath;
         private String username;
-        private boolean binaryTransfer;
 
         private LineSenderBuilder() {
 
@@ -779,38 +777,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
                 int actualAutoFlushRows = autoFlushRows == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_ROWS : autoFlushRows;
-
-                if (binaryTransfer) {
-                    // ILP v4 binary protocol
-                    ClientTlsConfiguration tlsConfig = null;
-                    if (tlsEnabled) {
-                        assert (trustStorePath == null) == (trustStorePassword == null);
-                        tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
-                    }
-                    long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
-                    long actualAutoFlushIntervalNanos;
-                    if (autoFlushIntervalMillis == Integer.MAX_VALUE) {
-                        actualAutoFlushIntervalNanos = Long.MAX_VALUE;
-                    } else {
-                        actualAutoFlushIntervalNanos = TimeUnit.MILLISECONDS.toNanos(autoFlushIntervalMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS : autoFlushIntervalMillis);
-                    }
-                    int actualMaxNameLength = maxNameLength == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_NAME_LEN : maxNameLength;
-                    return IlpV4HttpSender.create(
-                            hosts,
-                            ports,
-                            httpClientConfiguration,
-                            tlsConfig,
-                            actualAutoFlushRows,
-                            httpToken,
-                            username,
-                            password,
-                            actualMaxRetriesNanos,
-                            DEFAULT_MAX_BACKOFF_MILLIS,
-                            actualAutoFlushIntervalNanos,
-                            actualMaxNameLength
-                    );
-                }
-
                 // Text-based ILP protocol (v1, v2, v3)
                 long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
                 long actualMinRequestThroughput = minRequestThroughput == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MIN_REQUEST_THROUGHPUT : minRequestThroughput;
@@ -1224,38 +1190,11 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 throw new LineSenderException("protocol version was already configured ")
                         .put("[protocolVersion=").put(this.protocolVersion).put("]");
             }
-            if (this.binaryTransfer) {
-                throw new LineSenderException("cannot set protocolVersion() when binary transfer is enabled. " +
-                        "Binary transfer uses ILP v4, protocolVersion() controls text-based ILP versions (v1-v3)");
-            }
             if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V3) {
                 throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes), " +
                         "2(binary format for part datatypes), 3(decimal datatype) or explicitly unset");
             }
             this.protocolVersion = protocolVersion;
-            return this;
-        }
-
-        /**
-         * Use binary transfer mode (ILP v4 protocol).
-         * <p>
-         * Binary transfer mode uses a columnar binary protocol that is more
-         * efficient for large batches. It is mutually exclusive with
-         * {@link #protocolVersion(int)} which controls text-based ILP versions.
-         * <p>
-         * Binary transfer is only available for HTTP transport.
-         *
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder binaryTransfer() {
-            if (this.binaryTransfer) {
-                throw new LineSenderException("binary transfer was already enabled");
-            }
-            if (this.protocolVersion != PARAMETER_NOT_SET_EXPLICITLY) {
-                throw new LineSenderException("cannot use binary transfer with protocolVersion(). " +
-                        "Binary transfer uses ILP v4, protocolVersion() controls text-based ILP versions (v1-v3)");
-            }
-            this.binaryTransfer = true;
             return this;
         }
 
@@ -1562,14 +1501,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                         int protocolVersion = parseIntValue(sink, "protocol_version");
                         protocolVersion(protocolVersion);
                     }
-                } else if (Chars.equals("binary_transfer", sink)) {
-                    pos = getValue(configurationString, pos, sink, "binary_transfer");
-                    if (Chars.equalsIgnoreCase("on", sink)) {
-                        binaryTransfer();
-                    } else if (!Chars.equalsIgnoreCase("off", sink)) {
-                        throw new LineSenderException("invalid binary_transfer [value=")
-                                .put(sink).put(", allowed-values=[on, off]]");
-                    }
                 } else {
                     // ignore unknown keys, unless they are malformed
                     if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
@@ -1637,9 +1568,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             }
             if (!tlsEnabled && tlsValidationMode != TlsValidationMode.DEFAULT) {
                 throw new LineSenderException("TLS validation disabled, but TLS was not enabled");
-            }
-            if (binaryTransfer && protocol != PROTOCOL_HTTP) {
-                throw new LineSenderException("binary transfer is only supported for HTTP protocol");
             }
             if (keyId != null && bufferCapacity < MIN_BUFFER_SIZE) {
                 throw new LineSenderException("Requested buffer too small ")

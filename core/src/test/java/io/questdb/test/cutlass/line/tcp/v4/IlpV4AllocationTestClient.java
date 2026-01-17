@@ -34,11 +34,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * Test client for ILP allocation profiling.
  * <p>
- * Supports 4 protocol modes:
+ * Supports 3 protocol modes:
  * <ul>
  *   <li>ilp-tcp: Old ILP text protocol over TCP (port 9009)</li>
  *   <li>ilp-http: Old ILP text protocol over HTTP (port 9000)</li>
- *   <li>ilpv4-http: New ILPv4 binary protocol over HTTP (port 9000)</li>
  *   <li>ilpv4-websocket: New ILPv4 binary protocol over WebSocket (port 9000)</li>
  * </ul>
  * <p>
@@ -50,7 +49,7 @@ import java.util.concurrent.TimeUnit;
  * java -cp ... IlpV4AllocationTestClient [options]
  *
  * Options:
- *   --protocol=PROTOCOL   Protocol: ilp-tcp, ilp-http, ilpv4-http (default: ilpv4-http)
+ *   --protocol=PROTOCOL   Protocol: ilp-tcp, ilp-http, ilpv4-websocket (default: ilpv4-websocket)
  *   --host=HOST           Server host (default: localhost)
  *   --port=PORT           Server port (default: 9009 for TCP, 9000 for HTTP)
  *   --rows=N              Total rows to send (default: 10000000)
@@ -61,7 +60,7 @@ import java.util.concurrent.TimeUnit;
  *   --help                Show this help
  *
  * Examples:
- *   IlpV4AllocationTestClient --protocol=ilpv4-http --rows=1000000 --batch=5000
+ *   IlpV4AllocationTestClient --protocol=ilpv4-websocket --rows=1000000 --batch=5000
  *   IlpV4AllocationTestClient --protocol=ilp-tcp --host=remote-server --port=9009
  * </pre>
  */
@@ -70,7 +69,6 @@ public class IlpV4AllocationTestClient {
     // Protocol modes
     private static final String PROTOCOL_ILP_TCP = "ilp-tcp";
     private static final String PROTOCOL_ILP_HTTP = "ilp-http";
-    private static final String PROTOCOL_ILPV4_HTTP = "ilpv4-http";
     private static final String PROTOCOL_ILPV4_WEBSOCKET = "ilpv4-websocket";
 
 
@@ -99,7 +97,7 @@ public class IlpV4AllocationTestClient {
 
     public static void main(String[] args) {
         // Parse command-line options
-        String protocol = PROTOCOL_ILPV4_HTTP;
+        String protocol = PROTOCOL_ILPV4_WEBSOCKET;
         String host = DEFAULT_HOST;
         int port = -1; // -1 means use default for protocol
         int totalRows = DEFAULT_ROWS;
@@ -185,9 +183,9 @@ public class IlpV4AllocationTestClient {
         System.out.println("Usage: IlpV4AllocationTestClient [options]");
         System.out.println();
         System.out.println("Options:");
-        System.out.println("  --protocol=PROTOCOL      Protocol to use (default: ilpv4-http)");
+        System.out.println("  --protocol=PROTOCOL      Protocol to use (default: ilpv4-websocket)");
         System.out.println("  --host=HOST              Server host (default: localhost)");
-        System.out.println("  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP)");
+        System.out.println("  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP/WebSocket)");
         System.out.println("  --rows=N                 Total rows to send (default: 80000000)");
         System.out.println("  --batch=N                Auto-flush after N rows (default: 10000)");
         System.out.println("  --flush-bytes=N          Auto-flush after N bytes (default: protocol default)");
@@ -202,11 +200,10 @@ public class IlpV4AllocationTestClient {
         System.out.println("Protocols:");
         System.out.println("  ilp-tcp          Old ILP text protocol over TCP (default port: 9009)");
         System.out.println("  ilp-http         Old ILP text protocol over HTTP (default port: 9000)");
-        System.out.println("  ilpv4-http       New ILPv4 binary protocol over HTTP (default port: 9000)");
         System.out.println("  ilpv4-websocket  New ILPv4 binary protocol over WebSocket (default port: 9000)");
         System.out.println();
         System.out.println("Examples:");
-        System.out.println("  IlpV4AllocationTestClient --protocol=ilpv4-http --rows=1000000 --batch=5000");
+        System.out.println("  IlpV4AllocationTestClient --protocol=ilpv4-websocket --rows=1000000 --batch=5000");
         System.out.println("  IlpV4AllocationTestClient --protocol=ilp-tcp --host=remote-server");
         System.out.println("  IlpV4AllocationTestClient --protocol=ilp-tcp --rows=100000 --no-warmup");
     }
@@ -214,7 +211,6 @@ public class IlpV4AllocationTestClient {
     private static int getDefaultPort(String protocol) {
         switch (protocol) {
             case PROTOCOL_ILP_HTTP:
-            case PROTOCOL_ILPV4_HTTP:
             case PROTOCOL_ILPV4_WEBSOCKET:
                 return 9000;
             case PROTOCOL_ILP_TCP:
@@ -326,14 +322,6 @@ public class IlpV4AllocationTestClient {
                         .autoFlushRows(batchSize)
                         .build();
 
-            case PROTOCOL_ILPV4_HTTP:
-                return Sender.builder(Sender.Transport.HTTP)
-                        .address(host)
-                        .port(port)
-                        .binaryTransfer()
-                        .autoFlushRows(batchSize)
-                        .build();
-
             case PROTOCOL_ILPV4_WEBSOCKET:
                 // Use defaults if not specified (0 = default)
                 int windowSize = inFlightWindow > 0 ? inFlightWindow : 8;
@@ -344,7 +332,7 @@ public class IlpV4AllocationTestClient {
 
             default:
                 throw new IllegalArgumentException("Unknown protocol: " + protocol +
-                        ". Use one of: ilp-tcp, ilp-http, ilpv4-http, ilpv4-websocket");
+                        ". Use one of: ilp-tcp, ilp-http, ilpv4-websocket");
         }
     }
 

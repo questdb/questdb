@@ -30,7 +30,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
-import io.questdb.cutlass.http.processors.IlpV4HttpProcessorState;
+import io.questdb.cutlass.http.processors.IlpV4ProcessorState;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
@@ -55,7 +55,7 @@ import java.nio.charset.StandardCharsets;
  */
 public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     private static final Log LOG = LogFactory.getLog(IlpV4WebSocketUpgradeProcessor.class);
-    private static final LocalValue<IlpV4HttpProcessorState> LV = new LocalValue<>();
+    private static final LocalValue<IlpV4ProcessorState> LV = new LocalValue<>();
 
     // HTTP response templates
     private static final byte[] BAD_REQUEST_PREFIX =
@@ -89,7 +89,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     // State
     private boolean handshakeSent = false;
     private int recvBufferLen = 0;
-    private IlpV4HttpProcessorState state;
+    private IlpV4ProcessorState state;
 
     // Sequence number for response correlation
     private long messageSequence = 0;
@@ -142,7 +142,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         // Initialize or get the ILP processor state for this connection
         state = LV.get(context);
         if (state == null) {
-            state = new IlpV4HttpProcessorState(
+            state = new IlpV4ProcessorState(
                     recvBufferSize,
                     maxResponseContentLength,
                     engine,

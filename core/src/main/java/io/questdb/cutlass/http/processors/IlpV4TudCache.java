@@ -46,9 +46,9 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 
 /**
- * Cache for table update details in ILP v4 HTTP processing.
+ * Cache for table update details in ILP v4 processing.
  */
-public class IlpV4HttpTudCache implements QuietCloseable {
+public class IlpV4TudCache implements QuietCloseable {
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final MemoryMARW ddlMem = Vm.getCMARWInstance();
@@ -62,7 +62,7 @@ public class IlpV4HttpTudCache implements QuietCloseable {
     private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
     private boolean distressed = false;
 
-    public IlpV4HttpTudCache(
+    public IlpV4TudCache(
             CairoEngine engine,
             boolean autoCreateNewColumns,
             boolean autoCreateNewTables,

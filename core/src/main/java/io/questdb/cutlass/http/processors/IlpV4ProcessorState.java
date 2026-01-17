@@ -34,7 +34,6 @@ import io.questdb.cutlass.http.ilpv4.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
@@ -42,17 +41,17 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * State management for ILP v4 HTTP processing.
+ * State management for ILP v4 processing.
  */
-public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware {
+public class IlpV4ProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
-    private static final Log LOG = LogFactory.getLog(IlpV4HttpProcessorState.class);
+    private static final Log LOG = LogFactory.getLog(IlpV4ProcessorState.class);
 
     private final IlpV4StreamingDecoder streamingDecoder;
     private final IlpV4WalAppender walAppender;
     private final StringSink error = new StringSink();
-    private final IlpV4HttpTudCache tudCache;
+    private final IlpV4TudCache tudCache;
     private final int maxResponseErrorMessageLength;
     private final IlpV4SchemaCache schemaCache;
 
@@ -73,7 +72,7 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
 
-    public IlpV4HttpProcessorState(
+    public IlpV4ProcessorState(
             int initBufferSize,
             int maxResponseContentLength,
             CairoEngine engine,
@@ -90,7 +89,7 @@ public class IlpV4HttpProcessorState implements QuietCloseable, ConnectionAware 
         this.walAppender.setSymbolCache(symbolCache);
 
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
-        this.tudCache = new IlpV4HttpTudCache(
+        this.tudCache = new IlpV4TudCache(
                 engine,
                 configuration.autoCreateNewColumns(),
                 configuration.autoCreateNewTables(),
