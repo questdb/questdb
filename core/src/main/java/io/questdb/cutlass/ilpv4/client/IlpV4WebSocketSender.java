@@ -41,7 +41,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
-import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectByteSlice;
 import org.jetbrains.annotations.NotNull;
 
@@ -90,11 +89,11 @@ public class IlpV4WebSocketSender implements Sender {
 
     private static final int DEFAULT_BUFFER_SIZE = 8192;
     private static final int DEFAULT_MICROBATCH_BUFFER_SIZE = 1024 * 1024; // 1MB
-    private static final int DEFAULT_AUTO_FLUSH_ROWS = 500;
-    private static final int DEFAULT_AUTO_FLUSH_BYTES = 1024 * 1024; // 1MB
-    private static final long DEFAULT_AUTO_FLUSH_INTERVAL_NANOS = 100_000_000L; // 100ms
-    private static final int DEFAULT_IN_FLIGHT_WINDOW_SIZE = InFlightWindow.DEFAULT_WINDOW_SIZE; // 8
-    private static final int DEFAULT_SEND_QUEUE_CAPACITY = WebSocketSendQueue.DEFAULT_QUEUE_CAPACITY; // 16
+    public static final int DEFAULT_AUTO_FLUSH_ROWS = 500;
+    public static final int DEFAULT_AUTO_FLUSH_BYTES = 1024 * 1024; // 1MB
+    public static final long DEFAULT_AUTO_FLUSH_INTERVAL_NANOS = 100_000_000L; // 100ms
+    public static final int DEFAULT_IN_FLIGHT_WINDOW_SIZE = InFlightWindow.DEFAULT_WINDOW_SIZE; // 8
+    public static final int DEFAULT_SEND_QUEUE_CAPACITY = WebSocketSendQueue.DEFAULT_QUEUE_CAPACITY; // 16
     private static final String WRITE_PATH = "/write/v4";
 
     private final String host;
@@ -133,9 +132,6 @@ public class IlpV4WebSocketSender implements Sender {
     // Configuration
     private boolean gorillaEnabled = true;
 
-    // Async mode flag
-    private final boolean asyncMode;
-
     // Async mode: pending row tracking
     private int pendingRowCount;
     private long firstPendingRowTimeNanos;
@@ -155,8 +151,7 @@ public class IlpV4WebSocketSender implements Sender {
 
     private IlpV4WebSocketSender(String host, int port, boolean tlsEnabled, int bufferSize,
                                  int autoFlushRows, int autoFlushBytes, long autoFlushIntervalNanos,
-                                 int inFlightWindowSize, int sendQueueCapacity,
-                                 boolean asyncMode) {
+                                 int inFlightWindowSize, int sendQueueCapacity) {
         this.host = host;
         this.port = port;
         this.tlsEnabled = tlsEnabled;
@@ -171,13 +166,12 @@ public class IlpV4WebSocketSender implements Sender {
         this.autoFlushIntervalNanos = autoFlushIntervalNanos;
         this.inFlightWindowSize = inFlightWindowSize;
         this.sendQueueCapacity = sendQueueCapacity;
-        this.asyncMode = asyncMode;
 
         // Initialize global symbol dictionary for delta encoding
         this.globalSymbolDictionary = new GlobalSymbolDictionary();
 
-        // Initialize double-buffering if async mode
-        if (asyncMode) {
+        // Initialize double-buffering if async mode (window > 1)
+        if (inFlightWindowSize > 1) {
             int microbatchBufferSize = Math.max(DEFAULT_MICROBATCH_BUFFER_SIZE, autoFlushBytes * 2);
             this.buffer0 = new MicrobatchBuffer(microbatchBufferSize, autoFlushRows, autoFlushBytes, autoFlushIntervalNanos);
             this.buffer1 = new MicrobatchBuffer(microbatchBufferSize, autoFlushRows, autoFlushBytes, autoFlushIntervalNanos);
@@ -210,8 +204,7 @@ public class IlpV4WebSocketSender implements Sender {
         IlpV4WebSocketSender sender = new IlpV4WebSocketSender(
                 host, port, tlsEnabled, DEFAULT_BUFFER_SIZE,
                 0, 0, 0, // No auto-flush in sync mode
-                DEFAULT_IN_FLIGHT_WINDOW_SIZE, DEFAULT_SEND_QUEUE_CAPACITY,
-                false // Sync mode for backward compatibility
+                1, 1    // window=1 for sync behavior, queue=1 (not used)
         );
         sender.ensureConnected();
         return sender;
@@ -255,8 +248,7 @@ public class IlpV4WebSocketSender implements Sender {
         IlpV4WebSocketSender sender = new IlpV4WebSocketSender(
                 host, port, tlsEnabled, DEFAULT_BUFFER_SIZE,
                 autoFlushRows, autoFlushBytes, autoFlushIntervalNanos,
-                inFlightWindowSize, sendQueueCapacity,
-                true // Async mode
+                inFlightWindowSize, sendQueueCapacity
         );
         sender.ensureConnected();
         return sender;
@@ -290,12 +282,54 @@ public class IlpV4WebSocketSender implements Sender {
         IlpV4WebSocketSender sender = new IlpV4WebSocketSender(
                 host, port, tlsEnabled, bufferSize,
                 0, 0, 0,
-                DEFAULT_IN_FLIGHT_WINDOW_SIZE, DEFAULT_SEND_QUEUE_CAPACITY,
-                false
+                1, 1    // window=1 for sync behavior
         );
         // TODO: Store auth credentials for connection
         sender.ensureConnected();
         return sender;
+    }
+
+    /**
+     * Creates a sender without connecting. For testing only.
+     * <p>
+     * This allows unit tests to test sender logic without requiring a real server.
+     *
+     * @param host              server host (not connected)
+     * @param port              server port (not connected)
+     * @param inFlightWindowSize window size: 1 for sync behavior, >1 for async
+     * @return unconnected sender
+     */
+    public static IlpV4WebSocketSender createForTesting(String host, int port, int inFlightWindowSize) {
+        return new IlpV4WebSocketSender(
+                host, port, false, DEFAULT_BUFFER_SIZE,
+                0, 0, 0,
+                inFlightWindowSize, DEFAULT_SEND_QUEUE_CAPACITY
+        );
+        // Note: does NOT call ensureConnected()
+    }
+
+    /**
+     * Creates a sender with custom flow control settings without connecting. For testing only.
+     *
+     * @param host                   server host (not connected)
+     * @param port                   server port (not connected)
+     * @param autoFlushRows          rows per batch (0 = no limit)
+     * @param autoFlushBytes         bytes per batch (0 = no limit)
+     * @param autoFlushIntervalNanos age before flush in nanos (0 = no limit)
+     * @param inFlightWindowSize     window size: 1 for sync behavior, >1 for async
+     * @param sendQueueCapacity      max batches waiting to send
+     * @return unconnected sender
+     */
+    public static IlpV4WebSocketSender createForTesting(
+            String host, int port,
+            int autoFlushRows, int autoFlushBytes, long autoFlushIntervalNanos,
+            int inFlightWindowSize, int sendQueueCapacity) {
+        return new IlpV4WebSocketSender(
+                host, port, false, DEFAULT_BUFFER_SIZE,
+                autoFlushRows, autoFlushBytes, autoFlushIntervalNanos,
+                inFlightWindowSize, sendQueueCapacity
+        );
+        // Note: does NOT call ensureConnected()
     }
 
     private void ensureConnected() {
@@ -323,20 +357,20 @@ public class IlpV4WebSocketSender implements Sender {
             // Create InFlightWindow for tracking batches awaiting ACK (both modes)
             inFlightWindow = new InFlightWindow(inFlightWindowSize, InFlightWindow.DEFAULT_TIMEOUT_MS);
 
-            // Initialize send queue for async mode
+            // Initialize send queue for async mode (window > 1)
             // The send queue handles both sending AND receiving (single I/O thread)
-            if (asyncMode) {
+            if (inFlightWindowSize > 1) {
                 sendQueue = new WebSocketSendQueue(client, inFlightWindow,
                         sendQueueCapacity,
                         WebSocketSendQueue.DEFAULT_ENQUEUE_TIMEOUT_MS,
                         WebSocketSendQueue.DEFAULT_SHUTDOWN_TIMEOUT_MS);
             }
-            // Sync mode: no send queue - we send and read ACKs synchronously
+            // Sync mode (window=1): no send queue - we send and read ACKs synchronously
 
             connected = true;
             LOG.info().$("Connected to WebSocket [host=").$(host)
                     .$(", port=").$(port)
-                    .$(", async=").$(asyncMode).I$();
+                    .$(", windowSize=").$(inFlightWindowSize).I$();
         }
     }
 
@@ -357,10 +391,46 @@ public class IlpV4WebSocketSender implements Sender {
     }
 
     /**
-     * Returns whether async mode is enabled.
+     * Returns whether async mode is enabled (window size > 1).
      */
     public boolean isAsyncMode() {
-        return asyncMode;
+        return inFlightWindowSize > 1;
+    }
+
+    /**
+     * Returns the in-flight window size.
+     * Window=1 means sync mode, window>1 means async mode.
+     */
+    public int getInFlightWindowSize() {
+        return inFlightWindowSize;
+    }
+
+    /**
+     * Returns the send queue capacity.
+     */
+    public int getSendQueueCapacity() {
+        return sendQueueCapacity;
+    }
+
+    /**
+     * Returns the auto-flush row threshold.
+     */
+    public int getAutoFlushRows() {
+        return autoFlushRows;
+    }
+
+    /**
+     * Returns the auto-flush byte threshold.
+     */
+    public int getAutoFlushBytes() {
+        return autoFlushBytes;
+    }
+
+    /**
+     * Returns the auto-flush interval in nanoseconds.
+     */
+    public long getAutoFlushIntervalNanos() {
+        return autoFlushIntervalNanos;
     }
 
     /**
@@ -535,10 +605,10 @@ public class IlpV4WebSocketSender implements Sender {
 
         // Check if any flush threshold is exceeded
         if (shouldAutoFlush()) {
-            if (asyncMode) {
+            if (inFlightWindowSize > 1) {
                 flushPendingRows();
             } else {
-                // Sync mode: flush directly with ACK wait
+                // Sync mode (window=1): flush directly with ACK wait
                 flushSync();
             }
         }
@@ -748,8 +818,8 @@ public class IlpV4WebSocketSender implements Sender {
         checkNotClosed();
         ensureConnected();
 
-        if (asyncMode) {
-            // Async mode: flush pending rows and wait for ACKs
+        if (inFlightWindowSize > 1) {
+            // Async mode (window > 1): flush pending rows and wait for ACKs
             flushPendingRows();
 
             // Flush any remaining data in the active microbatch buffer
@@ -767,7 +837,7 @@ public class IlpV4WebSocketSender implements Sender {
                     .$(", totalBytes=").$(sendQueue.getTotalBytesSent())
                     .$(", totalAcked=").$(inFlightWindow.getTotalAcked()).I$();
         } else {
-            // Sync mode: flush pending rows and wait for ACKs synchronously
+            // Sync mode (window=1): flush pending rows and wait for ACKs synchronously
             flushSync();
         }
     }
@@ -1086,8 +1156,8 @@ public class IlpV4WebSocketSender implements Sender {
 
             // Flush any remaining data
             try {
-                if (asyncMode) {
-                    // Async mode: flush accumulated rows in table buffers first
+                if (inFlightWindowSize > 1) {
+                    // Async mode (window > 1): flush accumulated rows in table buffers first
                     flushPendingRows();
 
                     if (activeBuffer != null && activeBuffer.hasData()) {
@@ -1097,7 +1167,7 @@ public class IlpV4WebSocketSender implements Sender {
                         sendQueue.close();
                     }
                 } else {
-                    // Sync mode: flush pending rows synchronously
+                    // Sync mode (window=1): flush pending rows synchronously
                     if (pendingRowCount > 0 && client != null && client.isConnected()) {
                         flushSync();
                     }
@@ -1106,7 +1176,7 @@ public class IlpV4WebSocketSender implements Sender {
                 LOG.error().$("Error during close: ").$(e).I$();
             }
 
-            // Close buffers (async mode only)
+            // Close buffers (async mode only, window > 1)
             if (buffer0 != null) {
                 buffer0.close();
             }

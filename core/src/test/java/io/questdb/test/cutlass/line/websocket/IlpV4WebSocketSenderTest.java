@@ -334,44 +334,19 @@ public class IlpV4WebSocketSenderTest {
 
     /**
      * Creates a sender without connecting.
-     * This uses reflection to create the sender without triggering connect().
      * For unit tests that don't need actual connectivity.
      */
     private IlpV4WebSocketSender createUnconnectedSender() {
-        try {
-            java.lang.reflect.Constructor<IlpV4WebSocketSender> constructor =
-                    IlpV4WebSocketSender.class.getDeclaredConstructor(
-                            String.class, int.class, boolean.class, int.class,
-                            int.class, int.class, long.class,
-                            int.class, int.class, // inFlightWindowSize, sendQueueCapacity
-                            boolean.class
-                    );
-            constructor.setAccessible(true);
-            // Parameters: host, port, tlsEnabled, bufferSize, autoFlushRows, autoFlushBytes, autoFlushIntervalNanos,
-            //             inFlightWindowSize, sendQueueCapacity, asyncMode
-            return constructor.newInstance("localhost", 9000, false, 8192, 0, 0, 0L, 8, 16, false);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to create unconnected sender", e);
-        }
+        return IlpV4WebSocketSender.createForTesting("localhost", 9000, 1);  // window=1 for sync
     }
 
     /**
      * Creates an async sender without connecting.
      */
     private IlpV4WebSocketSender createUnconnectedAsyncSender() {
-        try {
-            java.lang.reflect.Constructor<IlpV4WebSocketSender> constructor =
-                    IlpV4WebSocketSender.class.getDeclaredConstructor(
-                            String.class, int.class, boolean.class, int.class,
-                            int.class, int.class, long.class,
-                            int.class, int.class,
-                            boolean.class
-                    );
-            constructor.setAccessible(true);
-            return constructor.newInstance("localhost", 9000, false, 8192, 500, 0, 0L, 8, 16, true);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to create unconnected sender", e);
-        }
+        return IlpV4WebSocketSender.createForTesting("localhost", 9000,
+                500, 0, 0L,  // autoFlushRows, autoFlushBytes, autoFlushIntervalNanos
+                8, 16);      // inFlightWindowSize, sendQueueCapacity
     }
 
     /**
@@ -380,20 +355,8 @@ public class IlpV4WebSocketSenderTest {
     private IlpV4WebSocketSender createUnconnectedAsyncSenderWithFlowControl(
             int autoFlushRows, int autoFlushBytes, long autoFlushIntervalNanos,
             int inFlightWindowSize, int sendQueueCapacity) {
-        try {
-            java.lang.reflect.Constructor<IlpV4WebSocketSender> constructor =
-                    IlpV4WebSocketSender.class.getDeclaredConstructor(
-                            String.class, int.class, boolean.class, int.class,
-                            int.class, int.class, long.class,
-                            int.class, int.class,
-                            boolean.class
-                    );
-            constructor.setAccessible(true);
-            return constructor.newInstance("localhost", 9000, false, 8192,
-                    autoFlushRows, autoFlushBytes, autoFlushIntervalNanos,
-                    inFlightWindowSize, sendQueueCapacity, true);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to create unconnected sender", e);
-        }
+        return IlpV4WebSocketSender.createForTesting("localhost", 9000,
+                autoFlushRows, autoFlushBytes, autoFlushIntervalNanos,
+                inFlightWindowSize, sendQueueCapacity);
     }
 }

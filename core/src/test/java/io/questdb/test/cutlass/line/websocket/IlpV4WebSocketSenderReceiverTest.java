@@ -53,33 +53,41 @@ import java.util.concurrent.TimeUnit;
  * Tests verify that data sent via IlpV4WebSocketSender over WebSocket is correctly
  * written to QuestDB tables and can be queried.
  * <p>
- * Tests are parametrized to run in both sync and async modes.
+ * Tests are parametrized to run with different window sizes:
+ * - windowSize=1 for sync behavior (no I/O thread, direct send + waitForAck)
+ * - windowSize=8 for async behavior (I/O thread, sendQueue, double buffers)
  */
 @RunWith(Parameterized.class)
 public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
-    @Parameterized.Parameters(name = "asyncMode={0}")
+    @Parameterized.Parameters(name = "windowSize={0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {false},  // sync mode
-                {true}    // async mode
+                {1},   // window=1 (sync behavior)
+                {8}    // window=8 (async behavior)
         });
     }
 
-    private final boolean asyncMode;
+    private final int windowSize;
 
-    public IlpV4WebSocketSenderReceiverTest(boolean asyncMode) {
-        this.asyncMode = asyncMode;
+    public IlpV4WebSocketSenderReceiverTest(int windowSize) {
+        this.windowSize = windowSize;
     }
 
     /**
-     * Creates a sender with the appropriate mode (sync or async).
+     * Creates a sender with the appropriate window size.
+     * Window=1 gives sync behavior, window>1 gives async behavior.
      */
     private IlpV4WebSocketSender createSender(int port) {
-        if (asyncMode) {
-            return IlpV4WebSocketSender.connectAsync("localhost", port, false);
-        } else {
+        if (windowSize == 1) {
             return IlpV4WebSocketSender.connect("localhost", port);
+        } else {
+            return IlpV4WebSocketSender.connectAsync("localhost", port, false,
+                    IlpV4WebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
+                    IlpV4WebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
+                    IlpV4WebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
+                    windowSize,
+                    IlpV4WebSocketSender.DEFAULT_SEND_QUEUE_CAPACITY);
         }
     }
 
@@ -1428,7 +1436,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     @Test
     public void testHighInFlightWindowWithCumulativeAcks() throws Exception {
         // This test is specific to async mode where cumulative ACKs are most important
-        Assume.assumeTrue(asyncMode);
+        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
 
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -1460,6 +1468,52 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("ws_ack_test");
                 serverMain.assertSql("select count() from ws_ack_test", "count\n" + totalRows + "\n");
+            }
+        });
+    }
+
+    /**
+     * Tests that errors are propagated immediately in window=1 (sync) mode.
+     * <p>
+     * In sync mode (window=1), errors should be thrown immediately on flush()
+     * rather than being delayed until a later operation.
+     */
+    @Test
+    public void testImmediateErrorPropagationWindow1() throws Exception {
+        // Only run for window=1 (sync mode)
+        Assume.assumeTrue("Window=1 only", windowSize == 1);
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // First sender: create table with long column
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_error_propagation_test")
+                            .longColumn("value", 42)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                // Wait for table to be created
+                serverMain.awaitTable("ws_error_propagation_test");
+
+                // Second sender: fresh connection, no client-side column cache
+                // Send with type mismatch - error should propagate immediately
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_error_propagation_test")
+                            .stringColumn("value", "not a number")
+                            .at(1000000000001L, ChronoUnit.MICROS);
+                    sender.flush();
+                    Assert.fail("Expected LineSenderException");
+                } catch (LineSenderException e) {
+                    // Expected: immediate error in window=1 mode
+                    // Server returns WRITE_ERROR with "Processing failed" message
+                    Assert.assertTrue("Error message should indicate server error: " + e.getMessage(),
+                            e.getMessage().contains("WRITE_ERROR") ||
+                            e.getMessage().contains("Processing failed") ||
+                            e.getMessage().contains("Server error"));
+                }
             }
         });
     }
@@ -2052,7 +2106,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
      */
     @Test
     public void testDeltaSymbolDict_asyncMode_watermarkUpdate() throws Exception {
-        Assume.assumeTrue(asyncMode);
+        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
 
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -2265,7 +2319,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     public void testSymbolCache_reconnect_clearsCache() throws Exception {
         // Tests that disconnecting and reconnecting clears the symbol cache.
         // The new connection should still work correctly with fresh symbols.
-        Assume.assumeFalse("Skip in async mode - reconnection behavior differs", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - reconnection behavior differs", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
@@ -2341,7 +2395,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     public void testSymbol_walApplyBetweenBatches() throws Exception {
         // Tests symbol handling when WAL is applied between sender batches.
         // This exercises the watermark change detection in the cache.
-        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
@@ -2397,7 +2451,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     @Test
     public void testSymbol_interleavedTablesWithWalApply() throws Exception {
         // Tests interleaved writes to multiple tables with WAL apply between batches.
-        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
@@ -2453,7 +2507,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     public void testSymbol_sameConnectionMultipleBatchesWithWalApply() throws Exception {
         // Tests multiple batches on the same connection with WAL apply between them.
         // This is the most realistic scenario for long-lived connections.
-        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
@@ -2505,7 +2559,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     @Test
     public void testSymbol_rapidFlushWithWalApply() throws Exception {
         // Stress test: rapid small flushes with periodic WAL apply.
-        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
@@ -2547,7 +2601,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     @Test
     public void testSymbol_newSymbolsAfterWalApply() throws Exception {
         // Tests that new symbols can be added after WAL apply has committed previous symbols.
-        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
@@ -2622,7 +2676,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     public void testSymbol_manySymbolsWithPeriodicWalApply() throws Exception {
         // Tests a large number of distinct symbols with periodic WAL apply.
         // This exercises symbol table growth and cache behavior.
-        Assume.assumeFalse("Skip in async mode - timing-dependent", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144",
@@ -2747,7 +2801,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     @Test
     public void testSymbol_connectionDropAndReconnectMidBatch() throws Exception {
         // Tests behavior when connection drops and reconnects in the middle of data ingestion.
-        Assume.assumeFalse("Skip in async mode - connection behavior differs", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - connection behavior differs", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
@@ -3032,7 +3086,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         // After WAL apply and cache warmup:
         // - Existing symbols should hit cache (fast path)
         // - New symbols should miss cache (slow path via putSym)
-        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - requires same connection", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
@@ -3136,7 +3190,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     public void testSymbolCache_fastPath_multipleColumnsIndependentCaches() throws Exception {
         // Tests that each symbol column has its own independent cache.
         // Cache for column A should not affect cache for column B.
-        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - requires same connection", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
@@ -3204,7 +3258,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     public void testSymbolCache_fastPath_highVolumeReuse() throws Exception {
         // High-volume test: many rows reusing the same small set of symbols.
         // After warmup, the vast majority should be cache hits.
-        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - requires same connection", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144",
@@ -3265,7 +3319,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
     public void testSymbolCache_fastPath_cacheInvalidationOnWalApply() throws Exception {
         // Tests that cache is properly invalidated when watermark changes.
         // The cache uses checkAndInvalidate(watermark) to detect changes.
-        Assume.assumeFalse("Skip in async mode - requires same connection", asyncMode);
+        Assume.assumeTrue("Sync mode only (window=1) - requires same connection", windowSize == 1);
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
