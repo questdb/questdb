@@ -516,12 +516,8 @@ public class MicrobatchBufferTest {
 
                 Thread waiter = new Thread(() -> {
                     started.countDown();
-                    try {
-                        buffer.awaitRecycled();
-                        recycled.set(true);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
+                    buffer.awaitRecycled();
+                    recycled.set(true);
                 });
                 waiter.start();
 

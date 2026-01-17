@@ -252,13 +252,6 @@ public final class WebSocketFrameWriter {
      * @param maskKey the 4-byte mask key
      */
     public static void maskPayload(long buf, long len, int maskKey) {
-        // Extract mask bytes
-        byte[] mask = new byte[4];
-        mask[0] = (byte) (maskKey & 0xFF);
-        mask[1] = (byte) ((maskKey >> 8) & 0xFF);
-        mask[2] = (byte) ((maskKey >> 16) & 0xFF);
-        mask[3] = (byte) ((maskKey >> 24) & 0xFF);
-
         // Process 8 bytes at a time when possible
         long i = 0;
         long longMask = ((long) maskKey << 32) | (maskKey & 0xFFFFFFFFL);
@@ -277,10 +270,11 @@ public final class WebSocketFrameWriter {
             i += 4;
         }
 
-        // Process remaining bytes
+        // Process remaining bytes (0-3 bytes) - extract mask byte inline to avoid allocation
         while (i < len) {
             byte b = Unsafe.getUnsafe().getByte(buf + i);
-            Unsafe.getUnsafe().putByte(buf + i, (byte) (b ^ mask[(int) (i % 4)]));
+            int maskByte = (maskKey >> (((int) i & 3) << 3)) & 0xFF;
+            Unsafe.getUnsafe().putByte(buf + i, (byte) (b ^ maskByte));
             i++;
         }
     }

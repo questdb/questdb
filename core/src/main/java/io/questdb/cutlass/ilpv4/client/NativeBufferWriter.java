@@ -28,8 +28,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
-import java.nio.charset.StandardCharsets;
-
 /**
  * A simple native memory buffer writer for encoding ILP v4 messages.
  * <p>
@@ -182,11 +180,9 @@ public class NativeBufferWriter implements IlpBufferWriter, QuietCloseable {
             return;
         }
 
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-        putVarint(bytes.length);
-        for (byte b : bytes) {
-            putByte(b);
-        }
+        int utf8Len = utf8Length(value);
+        putVarint(utf8Len);
+        putUtf8(value);
     }
 
     /**

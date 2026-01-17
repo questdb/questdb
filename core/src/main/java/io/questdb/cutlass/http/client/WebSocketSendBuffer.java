@@ -70,6 +70,7 @@ public class WebSocketSendBuffer implements IlpBufferWriter, QuietCloseable {
 
     private final Rnd rnd;
     private final int maxBufferSize;
+    private final FrameInfo frameInfo = new FrameInfo();
 
     /**
      * Creates a new WebSocket send buffer with default initial capacity.
@@ -400,7 +401,7 @@ public class WebSocketSendBuffer implements IlpBufferWriter, QuietCloseable {
             WebSocketFrameWriter.maskPayload(bufPtr + payloadStartOffset, payloadLen, maskKey);
         }
 
-        return new FrameInfo(actualFrameStart, actualHeaderSize + payloadLen);
+        return frameInfo.set(actualFrameStart, actualHeaderSize + payloadLen);
     }
 
     /**
@@ -439,7 +440,7 @@ public class WebSocketSendBuffer implements IlpBufferWriter, QuietCloseable {
             writePos += payloadLen;
         }
 
-        return new FrameInfo(frameStart, headerSize + payloadLen);
+        return frameInfo.set(frameStart, headerSize + payloadLen);
     }
 
     /**
@@ -468,7 +469,7 @@ public class WebSocketSendBuffer implements IlpBufferWriter, QuietCloseable {
             writePos += payloadLen;
         }
 
-        return new FrameInfo(frameStart, headerSize + payloadLen);
+        return frameInfo.set(frameStart, headerSize + payloadLen);
     }
 
     /**
@@ -514,7 +515,7 @@ public class WebSocketSendBuffer implements IlpBufferWriter, QuietCloseable {
         // Mask the payload (including status code and reason)
         WebSocketFrameWriter.maskPayload(payloadStart, payloadLen, maskKey);
 
-        return new FrameInfo(frameStart, headerSize + payloadLen);
+        return frameInfo.set(frameStart, headerSize + payloadLen);
     }
 
     // === Buffer State ===
@@ -558,21 +559,24 @@ public class WebSocketSendBuffer implements IlpBufferWriter, QuietCloseable {
 
     /**
      * Information about a completed WebSocket frame's location in the buffer.
+     * This class is mutable and reused to avoid allocations. Callers must
+     * extract values before calling any end*Frame() method again.
      */
     public static final class FrameInfo {
         /**
          * Offset from buffer start where the frame begins.
          */
-        public final int offset;
+        public int offset;
 
         /**
          * Total length of the frame (header + payload).
          */
-        public final int length;
+        public int length;
 
-        public FrameInfo(int offset, int length) {
+        FrameInfo set(int offset, int length) {
             this.offset = offset;
             this.length = length;
+            return this;
         }
     }
 }

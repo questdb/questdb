@@ -24,11 +24,11 @@
 
 package io.questdb.cutlass.ilpv4.client;
 
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -85,8 +85,8 @@ public class MicrobatchBuffer implements QuietCloseable {
     private volatile int state = STATE_FILLING;
 
     // For waiting on recycle (user thread waits for I/O thread to finish)
-    // Volatile to ensure visibility when the latch is replaced in reset()
-    private volatile CountDownLatch recycleLatch;
+    // SOCountDownLatch is resettable via setCount(), avoiding per-microbatch allocation
+    private final SOCountDownLatch recycleLatch = new SOCountDownLatch(1);
 
     /**
      * Creates a new MicrobatchBuffer with specified flush thresholds.
@@ -109,7 +109,6 @@ public class MicrobatchBuffer implements QuietCloseable {
         this.maxBytes = maxBytes;
         this.maxAgeNanos = maxAgeNanos;
         this.batchId = nextBatchId++;
-        this.recycleLatch = new CountDownLatch(1);
     }
 
     /**
@@ -398,10 +397,8 @@ public class MicrobatchBuffer implements QuietCloseable {
     /**
      * Waits for the buffer to be recycled (transition to RECYCLED state).
      * Only the user thread should call this.
-     *
-     * @throws InterruptedException if interrupted while waiting
      */
-    public void awaitRecycled() throws InterruptedException {
+    public void awaitRecycled() {
         recycleLatch.await();
     }
 
@@ -411,10 +408,9 @@ public class MicrobatchBuffer implements QuietCloseable {
      * @param timeout the maximum time to wait
      * @param unit    the time unit
      * @return true if recycled, false if timeout elapsed
-     * @throws InterruptedException if interrupted while waiting
      */
-    public boolean awaitRecycled(long timeout, TimeUnit unit) throws InterruptedException {
-        return recycleLatch.await(timeout, unit);
+    public boolean awaitRecycled(long timeout, TimeUnit unit) {
+        return recycleLatch.await(unit.toNanos(timeout));
     }
 
     /**
@@ -434,7 +430,7 @@ public class MicrobatchBuffer implements QuietCloseable {
         maxSymbolId = -1;
         batchId = nextBatchId++;
         state = STATE_FILLING;
-        recycleLatch = new CountDownLatch(1);
+        recycleLatch.setCount(1);
     }
 
     // ==================== LIFECYCLE ====================

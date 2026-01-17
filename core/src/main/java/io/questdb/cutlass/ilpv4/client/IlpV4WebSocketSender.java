@@ -36,7 +36,9 @@ import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -102,6 +104,9 @@ public class IlpV4WebSocketSender implements Sender {
     private final CharSequenceObjHashMap<IlpV4TableBuffer> tableBuffers;
     private IlpV4TableBuffer currentTableBuffer;
     private String currentTableName;
+    // Cached column references to avoid repeated hashmap lookups
+    private IlpV4TableBuffer.ColumnBuffer cachedTimestampColumn;
+    private IlpV4TableBuffer.ColumnBuffer cachedTimestampNanosColumn;
 
     // Encoder for ILP v4 messages
     private final IlpV4WebSocketEncoder encoder;
@@ -148,6 +153,11 @@ public class IlpV4WebSocketSender implements Sender {
     // Track highest symbol ID sent to server (for delta encoding)
     // Once sent over TCP, server is guaranteed to receive it (or connection dies)
     private volatile int maxSentSymbolId = -1;
+
+    // Track schema hashes that have been sent to the server (for schema reference mode)
+    // First time we send a schema: full schema. Subsequent times: 8-byte hash reference.
+    // Combined key = schemaHash XOR (tableNameHash << 32) to include table name in lookup.
+    private final LongHashSet sentSchemaHashes = new LongHashSet();
 
     private IlpV4WebSocketSender(String host, int port, boolean tlsEnabled, int bufferSize,
                                  int autoFlushRows, int autoFlushBytes, long autoFlushIntervalNanos,
@@ -367,6 +377,9 @@ public class IlpV4WebSocketSender implements Sender {
             }
             // Sync mode (window=1): no send queue - we send and read ACKs synchronously
 
+            // Clear sent schema hashes - server starts fresh on each connection
+            sentSchemaHashes.clear();
+
             connected = true;
             LOG.info().$("Connected to WebSocket [host=").$(host)
                     .$(", port=").$(port)
@@ -454,6 +467,13 @@ public class IlpV4WebSocketSender implements Sender {
     @Override
     public IlpV4WebSocketSender table(CharSequence tableName) {
         checkNotClosed();
+        // Fast path: if table name matches current, skip hashmap lookup
+        if (currentTableName != null && currentTableBuffer != null && Chars.equals(tableName, currentTableName)) {
+            return this;
+        }
+        // Table changed - invalidate cached column references
+        cachedTimestampColumn = null;
+        cachedTimestampNanosColumn = null;
         currentTableName = tableName.toString();
         currentTableBuffer = tableBuffers.get(currentTableName);
         if (currentTableBuffer == null) {
@@ -568,15 +588,21 @@ public class IlpV4WebSocketSender implements Sender {
 
     private void atMicros(long timestampMicros) {
         // Add designated timestamp column (empty name for designated timestamp)
-        IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
-        col.addLong(timestampMicros);
+        // Use cached reference to avoid hashmap lookup per row
+        if (cachedTimestampColumn == null) {
+            cachedTimestampColumn = currentTableBuffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+        }
+        cachedTimestampColumn.addLong(timestampMicros);
         sendRow();
     }
 
     private void atNanos(long timestampNanos) {
         // Add designated timestamp column (empty name for designated timestamp)
-        IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn("", TYPE_TIMESTAMP_NANOS, true);
-        col.addLong(timestampNanos);
+        // Use cached reference to avoid hashmap lookup per row
+        if (cachedTimestampNanosColumn == null) {
+            cachedTimestampNanosColumn = currentTableBuffer.getOrCreateColumn("", TYPE_TIMESTAMP_NANOS, true);
+        }
+        cachedTimestampNanosColumn.addLong(timestampNanos);
         sendRow();
     }
 
@@ -666,10 +692,17 @@ public class IlpV4WebSocketSender implements Sender {
             }
             int rowCount = tableBuffer.getRowCount();
             if (rowCount > 0) {
+                // Check if this schema has been sent before (use schema reference mode if so)
+                // Combined key includes table name since server caches by (tableName, schemaHash)
+                long schemaHash = tableBuffer.getSchemaHash();
+                long schemaKey = schemaHash ^ ((long) tableBuffer.getTableName().hashCode() << 32);
+                boolean useSchemaRef = sentSchemaHashes.contains(schemaKey);
+
                 LOG.debug().$("Encoding table [name=").$(tableName)
                         .$(", rows=").$(rowCount)
                         .$(", maxSentSymbolId=").$(maxSentSymbolId)
-                        .$(", batchMaxId=").$(currentBatchMaxSymbolId).I$();
+                        .$(", batchMaxId=").$(currentBatchMaxSymbolId)
+                        .$(", useSchemaRef=").$(useSchemaRef).I$();
 
                 // Encode this table's rows with delta symbol dictionary
                 int messageSize = encoder.encodeWithDeltaDict(
@@ -677,8 +710,13 @@ public class IlpV4WebSocketSender implements Sender {
                         globalSymbolDictionary,
                         maxSentSymbolId,
                         currentBatchMaxSymbolId,
-                        false
+                        useSchemaRef
                 );
+
+                // Track schema key if this was the first time sending this schema
+                if (!useSchemaRef) {
+                    sentSchemaHashes.add(schemaKey);
+                }
                 IlpBufferWriter buffer = encoder.getBuffer();
 
                 // Copy to microbatch buffer and seal immediately
@@ -723,16 +761,11 @@ public class IlpV4WebSocketSender implements Sender {
         // Buffer is in use (SEALED or SENDING) - wait for it
         // Use a while loop to handle spurious wakeups and race conditions with the latch
         while (activeBuffer.isInUse()) {
-            try {
-                LOG.debug().$("Waiting for active buffer [id=").$(activeBuffer.getBatchId())
-                        .$(", state=").$(MicrobatchBuffer.stateName(activeBuffer.getState())).I$();
-                boolean recycled = activeBuffer.awaitRecycled(30, TimeUnit.SECONDS);
-                if (!recycled) {
-                    throw new LineSenderException("Timeout waiting for active buffer to be recycled");
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new LineSenderException("Interrupted while waiting for active buffer", e);
+            LOG.debug().$("Waiting for active buffer [id=").$(activeBuffer.getBatchId())
+                    .$(", state=").$(MicrobatchBuffer.stateName(activeBuffer.getState())).I$();
+            boolean recycled = activeBuffer.awaitRecycled(30, TimeUnit.SECONDS);
+            if (!recycled) {
+                throw new LineSenderException("Timeout waiting for active buffer to be recycled");
             }
         }
 
@@ -786,19 +819,14 @@ public class IlpV4WebSocketSender implements Sender {
         // If the other buffer is still being sent, wait for it
         // Use a while loop to handle spurious wakeups and race conditions with the latch
         while (activeBuffer.isInUse()) {
-            try {
-                LOG.debug().$("Waiting for buffer recycle [id=").$(activeBuffer.getBatchId())
-                        .$(", state=").$(MicrobatchBuffer.stateName(activeBuffer.getState())).I$();
-                boolean recycled = activeBuffer.awaitRecycled(30, TimeUnit.SECONDS);
-                if (!recycled) {
-                    throw new LineSenderException("Timeout waiting for buffer to be recycled");
-                }
-                LOG.debug().$("Buffer recycled [id=").$(activeBuffer.getBatchId())
-                        .$(", state=").$(MicrobatchBuffer.stateName(activeBuffer.getState())).I$();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new LineSenderException("Interrupted while waiting for buffer recycle", e);
+            LOG.debug().$("Waiting for buffer recycle [id=").$(activeBuffer.getBatchId())
+                    .$(", state=").$(MicrobatchBuffer.stateName(activeBuffer.getState())).I$();
+            boolean recycled = activeBuffer.awaitRecycled(30, TimeUnit.SECONDS);
+            if (!recycled) {
+                throw new LineSenderException("Timeout waiting for buffer to be recycled");
             }
+            LOG.debug().$("Buffer recycled [id=").$(activeBuffer.getBatchId())
+                    .$(", state=").$(MicrobatchBuffer.stateName(activeBuffer.getState())).I$();
         }
 
         // Reset the new active buffer
@@ -866,14 +894,26 @@ public class IlpV4WebSocketSender implements Sender {
                 continue;
             }
 
+            // Check if this schema has been sent before (use schema reference mode if so)
+            // Combined key includes table name since server caches by (tableName, schemaHash)
+            long schemaHash = tableBuffer.getSchemaHash();
+            long schemaKey = schemaHash ^ ((long) tableBuffer.getTableName().hashCode() << 32);
+            boolean useSchemaRef = sentSchemaHashes.contains(schemaKey);
+
             // Encode this table's rows with delta symbol dictionary
             int messageSize = encoder.encodeWithDeltaDict(
                     tableBuffer,
                     globalSymbolDictionary,
                     maxSentSymbolId,
                     currentBatchMaxSymbolId,
-                    false
+                    useSchemaRef
             );
+
+            // Track schema key if this was the first time sending this schema
+            if (!useSchemaRef) {
+                sentSchemaHashes.add(schemaKey);
+            }
+
             if (messageSize > 0) {
                 IlpBufferWriter buffer = encoder.getBuffer();
 
@@ -887,7 +927,8 @@ public class IlpV4WebSocketSender implements Sender {
                 LOG.debug().$("Sending sync batch [seq=").$(batchSequence)
                         .$(", bytes=").$(messageSize)
                         .$(", rows=").$(tableBuffer.getRowCount())
-                        .$(", maxSentSymbolId=").$(maxSentSymbolId).I$();
+                        .$(", maxSentSymbolId=").$(maxSentSymbolId)
+                        .$(", useSchemaRef=").$(useSchemaRef).I$();
 
                 // Send over WebSocket
                 client.sendBinary(buffer.getBufferPtr(), messageSize);

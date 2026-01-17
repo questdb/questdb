@@ -541,9 +541,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int PROTOCOL_TCP = 0;
         private static final int PROTOCOL_WEBSOCKET = 2;
         private static final int DEFAULT_WEBSOCKET_PORT = 9000;
-        private static final int DEFAULT_IN_FLIGHT_WINDOW_SIZE = 8;
+        private static final int DEFAULT_IN_FLIGHT_WINDOW_SIZE = 32;
         private static final int DEFAULT_SEND_QUEUE_CAPACITY = 16;
-        private static final int DEFAULT_WS_AUTO_FLUSH_ROWS = 500;
+        private static final int DEFAULT_WS_AUTO_FLUSH_ROWS = 2_000;
         private static final int DEFAULT_WS_AUTO_FLUSH_BYTES = 1024 * 1024; // 1MB
         private static final long DEFAULT_WS_AUTO_FLUSH_INTERVAL_NANOS = 100_000_000L; // 100ms
         private final ObjList<String> hosts = new ObjList<>();

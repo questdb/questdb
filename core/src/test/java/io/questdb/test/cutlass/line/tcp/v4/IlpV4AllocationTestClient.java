@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.line.tcp.v4;
 
 import io.questdb.client.Sender;
-import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketSender;
 
 import java.io.IOException;
 import java.time.temporal.ChronoUnit;
@@ -304,36 +303,32 @@ public class IlpV4AllocationTestClient {
 
     private static Sender createSender(String protocol, String host, int port,
                                          int batchSize, int flushBytes, long flushIntervalMs,
-                                         int inFlightWindow, int sendQueue) throws IOException {
-        // Convert interval from ms to nanos for WebSocket sender
-        long flushIntervalNanos = flushIntervalMs * 1_000_000L;
-
-        switch (protocol) {
-            case PROTOCOL_ILP_TCP:
-                return Sender.builder(Sender.Transport.TCP)
+                                         int inFlightWindow, int sendQueue) {
+        return switch (protocol) {
+            case PROTOCOL_ILP_TCP -> Sender.builder(Sender.Transport.TCP)
+                    .address(host)
+                    .port(port)
+                    .build();
+            case PROTOCOL_ILP_HTTP -> Sender.builder(Sender.Transport.HTTP)
+                    .address(host)
+                    .port(port)
+                    .autoFlushRows(batchSize)
+                    .build();
+            case PROTOCOL_ILPV4_WEBSOCKET -> {
+                Sender.LineSenderBuilder b = Sender.builder(Sender.Transport.WEBSOCKET)
                         .address(host)
                         .port(port)
-                        .build();
-
-            case PROTOCOL_ILP_HTTP:
-                return Sender.builder(Sender.Transport.HTTP)
-                        .address(host)
-                        .port(port)
-                        .autoFlushRows(batchSize)
-                        .build();
-
-            case PROTOCOL_ILPV4_WEBSOCKET:
-                // Use defaults if not specified (0 = default)
-                int windowSize = inFlightWindow > 0 ? inFlightWindow : 8;
-                int queueCapacity = sendQueue > 0 ? sendQueue : 16;
-                return IlpV4WebSocketSender.connectAsync(host, port, false,
-                        batchSize, flushBytes, flushIntervalNanos,
-                        windowSize, queueCapacity);
-
-            default:
-                throw new IllegalArgumentException("Unknown protocol: " + protocol +
-                        ". Use one of: ilp-tcp, ilp-http, ilpv4-websocket");
-        }
+                        .asyncMode(true);
+                if (batchSize > 0) b.autoFlushRows(batchSize);
+                if (flushBytes > 0) b.autoFlushBytes(flushBytes);
+                if (flushIntervalMs > 0) b.autoFlushIntervalMillis((int) flushIntervalMs);
+                if (inFlightWindow > 0) b.inFlightWindowSize(inFlightWindow);
+                if (sendQueue > 0) b.sendQueueCapacity(sendQueue);
+                yield b.build();
+            }
+            default -> throw new IllegalArgumentException("Unknown protocol: " + protocol +
+                    ". Use one of: ilp-tcp, ilp-http, ilpv4-websocket");
+        };
     }
 
     private static void sendRow(Sender sender, int rowIndex) {

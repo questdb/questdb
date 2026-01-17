@@ -32,7 +32,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -70,8 +69,9 @@ public class WebSocketSendQueue implements QuietCloseable {
     public static final long DEFAULT_ENQUEUE_TIMEOUT_MS = 30_000;
     public static final long DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
-    // The queue for pending batches (unbounded, backpressure via in-flight window)
-    private final ConcurrentLinkedQueue<MicrobatchBuffer> sendQueue;
+    // Single pending buffer slot (double-buffering means at most 1 item in queue)
+    // Zero allocation - just a volatile reference handoff
+    private volatile MicrobatchBuffer pendingBuffer;
 
     // The WebSocket client for I/O (single-threaded access only)
     private final WebSocketClient client;
@@ -121,6 +121,32 @@ public class WebSocketSendQueue implements QuietCloseable {
     private final long enqueueTimeoutMs;
     private final long shutdownTimeoutMs;
 
+    // ==================== Pending Buffer Operations (zero allocation) ====================
+
+    private boolean offerPending(MicrobatchBuffer buffer) {
+        if (pendingBuffer != null) {
+            return false; // slot occupied
+        }
+        pendingBuffer = buffer;
+        return true;
+    }
+
+    private MicrobatchBuffer pollPending() {
+        MicrobatchBuffer buffer = pendingBuffer;
+        if (buffer != null) {
+            pendingBuffer = null;
+        }
+        return buffer;
+    }
+
+    private boolean isPendingEmpty() {
+        return pendingBuffer == null;
+    }
+
+    private int getPendingSize() {
+        return pendingBuffer == null ? 0 : 1;
+    }
+
     /**
      * Creates a new send queue with default configuration.
      *
@@ -160,7 +186,6 @@ public class WebSocketSendQueue implements QuietCloseable {
 
         this.client = client;
         this.inFlightWindow = inFlightWindow;
-        this.sendQueue = new ConcurrentLinkedQueue<>();
         this.enqueueTimeoutMs = enqueueTimeoutMs;
         this.shutdownTimeoutMs = shutdownTimeoutMs;
         this.running = true;
@@ -201,7 +226,7 @@ public class WebSocketSendQueue implements QuietCloseable {
         checkError();
 
         // Add to queue and wake I/O thread
-        sendQueue.offer(buffer);
+        offerPending(buffer);
         synchronized (processingLock) {
             processingLock.notifyAll();
         }
@@ -229,7 +254,7 @@ public class WebSocketSendQueue implements QuietCloseable {
         synchronized (processingLock) {
             while (running) {
                 // Atomically check: queue empty AND not processing
-                if (sendQueue.isEmpty() && processingCount.get() == 0) {
+                if (isPendingEmpty() && processingCount.get() == 0) {
                     break; // All done
                 }
 
@@ -243,7 +268,7 @@ public class WebSocketSendQueue implements QuietCloseable {
                 // Check timeout
                 if (System.currentTimeMillis() - startTime > enqueueTimeoutMs) {
                     throw new LineSenderException("Flush timeout after " + enqueueTimeoutMs + "ms, " +
-                            "queue=" + sendQueue.size() + ", processing=" + processingCount.get());
+                            "queue=" + getPendingSize() + ", processing=" + processingCount.get());
                 }
 
                 // Check for errors
@@ -258,14 +283,14 @@ public class WebSocketSendQueue implements QuietCloseable {
      * Returns the number of batches waiting to be sent.
      */
     public int getPendingCount() {
-        return sendQueue.size();
+        return getPendingSize();
     }
 
     /**
      * Returns true if the queue is empty.
      */
     public boolean isEmpty() {
-        return sendQueue.isEmpty();
+        return isPendingEmpty();
     }
 
     /**
@@ -312,16 +337,16 @@ public class WebSocketSendQueue implements QuietCloseable {
             return;
         }
 
-        LOG.info().$("Closing WebSocket send queue [pending=").$(sendQueue.size()).I$();
+        LOG.info().$("Closing WebSocket send queue [pending=").$(getPendingSize()).I$();
 
         // Signal shutdown
         shuttingDown = true;
 
         // Wait for pending batches to be sent
         long startTime = System.currentTimeMillis();
-        while (!sendQueue.isEmpty()) {
+        while (!isPendingEmpty()) {
             if (System.currentTimeMillis() - startTime > shutdownTimeoutMs) {
-                LOG.error().$("Shutdown timeout, ").$(sendQueue.size()).$(" batches not sent").I$();
+                LOG.error().$("Shutdown timeout, ").$(getPendingSize()).$(" batches not sent").I$();
                 break;
             }
             try {
@@ -380,7 +405,7 @@ public class WebSocketSendQueue implements QuietCloseable {
         LOG.info().$("I/O loop started").I$();
 
         try {
-            while (running || !sendQueue.isEmpty()) {
+            while (running || !isPendingEmpty()) {
                 MicrobatchBuffer batch = null;
                 boolean hasInFlight = (inFlightWindow != null && inFlightWindow.getInFlightCount() > 0);
                 IoState state = computeState(hasInFlight);
@@ -390,7 +415,7 @@ public class WebSocketSendQueue implements QuietCloseable {
                         // Nothing to do - wait for work under lock
                         synchronized (processingLock) {
                             // Re-check under lock to avoid missed wakeup
-                            if (sendQueue.isEmpty() && running) {
+                            if (isPendingEmpty() && running) {
                                 try {
                                     processingLock.wait(100);
                                 } catch (InterruptedException e) {
@@ -412,7 +437,7 @@ public class WebSocketSendQueue implements QuietCloseable {
                         if (hasWindowSpace) {
                             // Atomically: poll queue + increment processingCount
                             synchronized (processingLock) {
-                                batch = sendQueue.poll();
+                                batch = pollPending();
                                 if (batch != null) {
                                     processingCount.incrementAndGet();
                                 }
@@ -455,7 +480,7 @@ public class WebSocketSendQueue implements QuietCloseable {
      * Computes the current I/O state based on queue and in-flight status.
      */
     private IoState computeState(boolean hasInFlight) {
-        if (!sendQueue.isEmpty()) {
+        if (!isPendingEmpty()) {
             return IoState.ACTIVE;
         } else if (hasInFlight) {
             return IoState.DRAINING;
