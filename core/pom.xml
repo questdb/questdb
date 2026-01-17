@@ -663,6 +663,7 @@
                                 <goals>
                                     <goal>build</goal>
                                 </goals>
+                                <phase>compile</phase>
                                 <configuration>
                                     <path>rust/qdbr</path>
                                     <release>${qdbr.release}</release>

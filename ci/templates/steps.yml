@@ -189,6 +189,7 @@ steps:
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
       LD_PRELOAD: $(Build.SourcesDirectory)/core/src/main/bin/linux-x86-64/libjemalloc.so
+      LLVM_PROFILE_FILE: $(Build.SourcesDirectory)/core/questdbr-junit.profraw
     timeoutInMinutes: 55
     condition: |
       and(
