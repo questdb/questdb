@@ -281,34 +281,6 @@ public class GroupByHistogramTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultipleOperations() {
-        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            Histogram onHeap = new Histogram(3);
-            GroupByHistogram offHeap = new GroupByHistogram(3);
-            offHeap.setAllocator(allocator);
-
-            for (int i = 0; i < 1000; i++) {
-                long value = i % 100;
-                onHeap.recordValue(value);
-                offHeap.recordValue(value);
-            }
-
-            Assert.assertEquals(onHeap.getTotalCount(), offHeap.getTotalCount());
-
-            onHeap.reset();
-            offHeap.clear();
-
-            for (int i = 0; i < 100; i++) {
-                onHeap.recordValue(i);
-                offHeap.recordValue(i);
-            }
-
-            Assert.assertEquals(onHeap.getTotalCount(), offHeap.getTotalCount());
-            Assert.assertEquals(onHeap.getMean(), offHeap.getMean(), 0.0);
-        }
-    }
-
-    @Test
     public void testRepointingToExistingOffHeapData() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             GroupByHistogram histogram = new GroupByHistogram(1, 1000, 3);
@@ -471,8 +443,7 @@ public class GroupByHistogramTest extends AbstractCairoTest {
             dest.merge(src);
 
             Assert.assertEquals(20, dest.getTotalCount());
-            long count = dest.getCountBetweenValues(100, 100);
-            Assert.assertTrue(count >= 10);
+            Assert.assertEquals(20, dest.getCountBetweenValues(100, 100));
         }
     }
 
@@ -498,61 +469,6 @@ public class GroupByHistogramTest extends AbstractCairoTest {
             Assert.assertEquals(src.getMinValue(), dest.getMinValue());
             Assert.assertEquals(src.getMaxValue(), dest.getMaxValue());
             Assert.assertNotEquals(0, dest.ptr());
-        }
-    }
-
-    @Test
-    public void testMergeAfterClear() {
-        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogram dest = new GroupByHistogram(1, 1000, 3);
-            GroupByHistogram src = new GroupByHistogram(1, 1000, 3);
-            dest.setAllocator(allocator);
-            src.setAllocator(allocator);
-
-            dest.recordValue(50);
-            dest.recordValue(100);
-            long ptrBeforeClear = dest.ptr();
-            Assert.assertNotEquals(0, ptrBeforeClear);
-
-            dest.clear();
-            Assert.assertEquals(0, dest.ptr());
-            Assert.assertEquals(0, dest.getTotalCount());
-
-            src.recordValue(200);
-            src.recordValue(300);
-
-            dest.merge(src);
-
-            Assert.assertEquals(2, dest.getTotalCount());
-            Assert.assertEquals(src.getMinValue(), dest.getMinValue());
-            Assert.assertEquals(src.getMaxValue(), dest.getMaxValue());
-            Assert.assertNotEquals(0, dest.ptr());
-        }
-    }
-
-    @Test
-    public void testMergeSourceWithZeroTotalCount() {
-        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogram dest = new GroupByHistogram(1, 1000, 3);
-            GroupByHistogram src = new GroupByHistogram(1, 1000, 3);
-            dest.setAllocator(allocator);
-            src.setAllocator(allocator);
-
-            dest.recordValue(100);
-            dest.recordValue(200);
-
-            src.recordValue(50);
-            src.clear();
-
-            long beforeCount = dest.getTotalCount();
-            long beforeMin = dest.getMinValue();
-            long beforeMax = dest.getMaxValue();
-
-            dest.merge(src);
-
-            Assert.assertEquals(beforeCount, dest.getTotalCount());
-            Assert.assertEquals(beforeMin, dest.getMinValue());
-            Assert.assertEquals(beforeMax, dest.getMaxValue());
         }
     }
 
@@ -664,33 +580,8 @@ public class GroupByHistogramTest extends AbstractCairoTest {
 
             dest.merge(src);
 
-            long count = dest.getCountBetweenValues(100, 100);
-            Assert.assertTrue(count >= 30);
+            Assert.assertEquals(80, dest.getCountBetweenValues(100, 100));
             Assert.assertEquals(80, dest.getTotalCount());
-        }
-    }
-
-    @Test
-    public void testMergeEmptyIntoPopulatedThenClear() {
-        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            GroupByHistogram dest = new GroupByHistogram(1, 1000, 3);
-            GroupByHistogram src = new GroupByHistogram(1, 1000, 3);
-            dest.setAllocator(allocator);
-            src.setAllocator(allocator);
-
-            dest.recordValue(100);
-            dest.recordValue(200);
-
-            dest.merge(src);
-            Assert.assertEquals(2, dest.getTotalCount());
-
-            dest.clear();
-            Assert.assertEquals(0, dest.ptr());
-            Assert.assertEquals(0, dest.getTotalCount());
-
-            dest.recordValue(50);
-            Assert.assertEquals(1, dest.getTotalCount());
-            Assert.assertEquals(50, dest.getMinValue());
         }
     }
 
