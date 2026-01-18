@@ -226,6 +226,100 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    // ==================== Timestamp Precision Conversion Tests ====================
+
+    /**
+     * Tests that TIMESTAMP_NANOS data sent to a TIMESTAMP (micros) column is correctly
+     * converted by dividing by 1000.
+     * <p>
+     * This test verifies the fix for a bug where the columnar path did not apply
+     * precision conversion, resulting in values being 1000x too large.
+     */
+    @Test
+    public void testTimestampNanosToMicrosConversion() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Create table with TIMESTAMP (micros) column for non-designated timestamp
+                serverMain.execute("CREATE TABLE ws_ts_convert (" +
+                        "tag SYMBOL, " +
+                        "ts_field TIMESTAMP, " +  // micros precision
+                        "timestamp TIMESTAMP" +   // designated timestamp
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                // Send nanosecond timestamp to micros column
+                // 1704067200000000000 nanos = 1704067200000000 micros = 2024-01-01 00:00:00 UTC
+                long tsNanos = 1704067200000000000L;
+                long expectedMicros = tsNanos / 1000;  // 1704067200000000
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_ts_convert")
+                            .symbol("tag", "test")
+                            .timestampColumn("ts_field", tsNanos, ChronoUnit.NANOS)  // Send as nanos
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_ts_convert");
+
+                // Verify the timestamp was correctly converted to micros
+                // If bug exists: value will be 1704067200000000000 (nanos, ~year 55970)
+                // If fixed: value will be 1704067200000000 (micros, 2024-01-01)
+                serverMain.assertSql(
+                        "select ts_field from ws_ts_convert",
+                        "ts_field\n" +
+                                "2024-01-01T00:00:00.000000Z\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests that TIMESTAMP (micros) data sent to a TIMESTAMP_NANO column is correctly
+     * converted by multiplying by 1000.
+     */
+    @Test
+    public void testTimestampMicrosToNanosConversion() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Create table with TIMESTAMP_NANO column for non-designated timestamp
+                serverMain.execute("CREATE TABLE ws_ts_convert_nano (" +
+                        "tag SYMBOL, " +
+                        "ts_field TIMESTAMP_NS, " +
+                        "timestamp TIMESTAMP" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                // Send microsecond timestamp to nanos column
+                long tsMicros = 1704067200000000L;  // 2024-01-01 00:00:00 in micros
+                long expectedNanos = tsMicros * 1000;  // 1704067200000000000
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_ts_convert_nano")
+                            .symbol("tag", "test")
+                            .timestampColumn("ts_field", tsMicros, ChronoUnit.MICROS)  // Send as micros
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_ts_convert_nano");
+
+                // Verify the timestamp was correctly converted to nanos
+                serverMain.assertSql(
+                        "select ts_field from ws_ts_convert_nano",
+                        "ts_field\n" +
+                                "2024-01-01T00:00:00.000000000Z\n"
+                );
+            }
+        });
+    }
+
     // ==================== Timestamp Tests ====================
 
     @Test

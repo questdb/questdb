@@ -704,8 +704,18 @@ public class IlpV4WalAppender implements QuietCloseable {
                 return cursor instanceof IlpV4FixedWidthColumnCursor;
 
             case ColumnType.TIMESTAMP:
-                return cursor instanceof IlpV4TimestampColumnCursor
-                        || cursor instanceof IlpV4FixedWidthColumnCursor;
+                // Check for precision mismatch - columnar path cannot convert between nanos and micros
+                // Row-by-row path handles this conversion in writeValueFromCursor()
+                boolean isNanoColumn = columnType == ColumnType.TIMESTAMP_NANO;
+                boolean isNanoIlp = ilpType == TYPE_TIMESTAMP_NANOS;
+                if (isNanoColumn != isNanoIlp) {
+                    // Precision mismatch - force row-by-row path for conversion
+                    return false;
+                }
+                if (cursor instanceof IlpV4TimestampColumnCursor tsCursor) {
+                    return tsCursor.supportsDirectAccess();
+                }
+                return cursor instanceof IlpV4FixedWidthColumnCursor;
 
             case ColumnType.VARCHAR:
             case ColumnType.STRING:
