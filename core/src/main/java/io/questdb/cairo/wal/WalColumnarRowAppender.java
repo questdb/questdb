@@ -66,6 +66,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender {
         if (inColumnarWrite) {
             throw new IllegalStateException("Already in columnar write mode");
         }
+        // Handle pending segment roll, similar to what newRow() does.
+        // This is needed when columns are added while rollSegmentOnNextRow is true,
+        // since addColumn defers opening column files until the segment is rolled.
+        if (walWriter.rollSegmentOnNextRow) {
+            walWriter.rollSegment();
+            walWriter.rollSegmentOnNextRow = false;
+        }
         this.pendingRowCount = rowCount;
         this.startRowId = walWriter.getSegmentRowCount();
         this.inColumnarWrite = true;

@@ -1141,6 +1141,124 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Tests that auto-created columns are correctly mapped when writer index differs from column index.
+     * <p>
+     * This test exposes a bug in IlpV4WalAppender (lines 194 and 224) where:
+     * <ul>
+     *   <li>Line 194 converts column index to writer index:
+     *       {@code columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnName));}</li>
+     *   <li>Line 224 converts again, treating the writer index as a column index:
+     *       {@code columnIndexMap[i] = metadata.getWriterIndex(columnWriterIndex);}</li>
+     * </ul>
+     * <p>
+     * The fix is to change line 194 to just get the column index (not the writer index):
+     * {@code columnWriterIndex = metadata.getColumnIndexQuiet(columnName);}
+     * <p>
+     * This test fails with "Invalid column: col_c" because the double conversion causes
+     * the auto-created column to be incorrectly mapped, resulting in data loss.
+     */
+    @Test
+    public void testAutoCreateColumnAfterColumnDrop() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Step 1: Create table with columns and insert initial data
+                serverMain.execute("CREATE TABLE ws_drop_add_test (" +
+                        "tag SYMBOL, " +
+                        "col_a LONG, " +
+                        "col_b LONG, " +
+                        "timestamp TIMESTAMP" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                // Insert initial data to establish the table
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_drop_add_test")
+                            .symbol("tag", "initial")
+                            .longColumn("col_a", 100)
+                            .longColumn("col_b", 200)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainWalQueue(serverMain.getEngine());
+
+                // Step 2: Drop col_a - this creates a gap between writer index and column index
+                // After dropping, column indices are reordered but writer indices keep the gaps
+                serverMain.execute("ALTER TABLE ws_drop_add_test DROP COLUMN col_a");
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                // Step 3: Send ILP data with a NEW column (col_c) - this triggers auto-create
+                // The bug causes double getWriterIndex conversion when the new column is created
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_drop_add_test")
+                            .symbol("tag", "after_drop")
+                            .longColumn("col_b", 300)
+                            .longColumn("col_c", 999)  // New column - auto-created
+                            .at(1000000001000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                TestUtils.drainWalQueue(serverMain.getEngine());
+
+                // Step 4: Verify the new column value is correct
+                // If bug exists: col_c value will be wrong or in wrong column
+                // If fixed: col_c should be 999
+                serverMain.assertSql(
+                        "select tag, col_b, col_c from ws_drop_add_test where tag = 'after_drop'",
+                        "tag\tcol_b\tcol_c\nafter_drop\t300\t999\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests auto-creation of a new column on an existing pre-created table.
+     * This is a simpler version of testAutoCreateColumnAfterColumnDrop to verify
+     * basic auto-column creation works.
+     */
+    @Test
+    public void testAutoCreateColumnOnExistingTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Create a table with existing columns
+                serverMain.execute("CREATE TABLE ws_autocreate_test (" +
+                        "tag SYMBOL, " +
+                        "existing_col LONG, " +
+                        "timestamp TIMESTAMP" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                // Send ILP data with a NEW column (new_col) - this triggers auto-create
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_autocreate_test")
+                            .symbol("tag", "test")
+                            .longColumn("existing_col", 100)
+                            .longColumn("new_col", 42)  // New column - auto-created
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                drainWalQueue(serverMain.getEngine());
+
+                serverMain.awaitTable("ws_autocreate_test");
+
+                // Verify both columns have correct values
+                serverMain.assertSql(
+                        "select tag, existing_col, new_col from ws_autocreate_test",
+                        "tag\texisting_col\tnew_col\ntest\t100\t42\n"
+                );
+            }
+        });
+    }
+
     // ==================== Flush Patterns ====================
 
     @Test

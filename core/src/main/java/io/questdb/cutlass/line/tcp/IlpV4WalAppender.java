@@ -191,7 +191,7 @@ public class IlpV4WalAppender implements QuietCloseable {
                         try {
                             int newColumnType = mapIlpV4TypeToQuestDB(colDef.getTypeCode(), tableBlock, i);
                             writer.addColumn(columnName, newColumnType, securityContext);
-                            columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnName));
+                            columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
                         } catch (CairoException e) {
                             columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
                             if (columnWriterIndex < 0) {
@@ -221,7 +221,7 @@ public class IlpV4WalAppender implements QuietCloseable {
             }
 
             int columnType = metadata.getColumnType(columnWriterIndex);
-            columnIndexMap[i] = metadata.getWriterIndex(columnWriterIndex);
+            columnIndexMap[i] = columnWriterIndex;
             columnTypeMap[i] = columnType;
         }
 

@@ -2788,6 +2788,105 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== 11. Segment Handling Tests ====================
+
+    /**
+     * Tests that beginColumnarWrite() properly handles segment rolling when columns
+     * are added while rollSegmentOnNextRow is true.
+     * <p>
+     * This covers a bug where addColumn() would defer opening column files when
+     * rollSegmentOnNextRow was true, but the columnar write path didn't trigger
+     * segment rolling, causing writes to fail with AssertionError in TableUtils.mapRW().
+     * <p>
+     * The test uses a very low segment rollover row count (1) to trigger
+     * rollSegmentOnNextRow=true after the first commit.
+     */
+    @Test
+    public void testBeginColumnarWrite_RollsSegmentWhenPending() throws Exception {
+        // Set very low segment rollover threshold to trigger rollSegmentOnNextRow
+        node1.setProperty(io.questdb.PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+
+        assertMemoryLeak(() -> {
+            // Create table with initial column
+            TableToken tableToken = createTable(new TableModel(configuration, "test_segment_roll", PartitionBy.HOUR)
+                    .col("col_a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 10;
+            long baseTimestamp = 1000000000L;
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                // Write some data and commit - this will set rollSegmentOnNextRow=true
+                // because segmentRowCount (1) >= walSegmentRolloverRowCount (1)
+                TableWriter.Row row = walWriter.newRow(baseTimestamp);
+                row.putLong(0, 100L);
+                row.append();
+                walWriter.commit();
+
+                // Add a new column while rollSegmentOnNextRow is true
+                // This will configure the column memory but NOT open the file
+                // (because openColumnFiles is skipped when rollSegmentOnNextRow is true)
+                walWriter.addColumn("col_b", ColumnType.LONG, null);
+
+                // Now try columnar write - this should trigger segment roll in beginColumnarWrite()
+                // Before the fix, this would fail with AssertionError in TableUtils.mapRW()
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                long valuesAddrA = Unsafe.malloc((long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+                long valuesAddrB = Unsafe.malloc((long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putLong(valuesAddrA + (long) i * 8, 1000L + i);
+                        Unsafe.getUnsafe().putLong(valuesAddrB + (long) i * 8, 2000L + i);
+                    }
+
+                    long[] timestamps = new long[rowCount];
+                    for (int i = 0; i < rowCount; i++) {
+                        timestamps[i] = baseTimestamp + (i + 1) * 1000000L;
+                    }
+
+                    // This should not throw - beginColumnarWrite should roll the segment
+                    appender.beginColumnarWrite(rowCount);
+
+                    // Write col_a (index 0)
+                    appender.putFixedColumn(0, valuesAddrA, rowCount, 8, 0, rowCount);
+
+                    // Write col_b (index 2, after timestamp at index 1)
+                    appender.putFixedColumn(2, valuesAddrB, rowCount, 8, 0, rowCount);
+
+                    // Write timestamp
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                } finally {
+                    Unsafe.free(valuesAddrA, (long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(valuesAddrB, (long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+
+            // Verify data via SQL
+            drainWalQueue();
+            assertSql(
+                    "col_a\tcol_b\n" +
+                            "100\tnull\n" +  // First row (before col_b was added)
+                            "1000\t2000\n" +
+                            "1001\t2001\n" +
+                            "1002\t2002\n" +
+                            "1003\t2003\n" +
+                            "1004\t2004\n" +
+                            "1005\t2005\n" +
+                            "1006\t2006\n" +
+                            "1007\t2007\n" +
+                            "1008\t2008\n" +
+                            "1009\t2009\n",
+                    "select col_a, col_b from test_segment_roll order by ts"
+            );
+        });
+    }
+
     // ==================== Helper Methods ====================
 
     /**
