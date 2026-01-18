@@ -66,7 +66,6 @@ public class GroupByHistogram implements Mutable {
     private int countsArrayLength;
     private long highestTrackableValue;
     private int subBucketCount;
-    private int wordSizeInBytes;
     private int leadingZeroCountBase;
     private int subBucketHalfCount;
     private int subBucketHalfCountMagnitude;
@@ -75,8 +74,6 @@ public class GroupByHistogram implements Mutable {
     private long unitMagnitudeMask;
     private long lowestDiscernibleValue;
     private int numberOfSignificantValueDigits;
-    private long startTimeStampMsec = Long.MAX_VALUE;
-    private long endTimeStampMsec = 0;
 
     // AbstractHistogram(int) at lines 140-143
     public GroupByHistogram(int numberOfSignificantValueDigits) {
@@ -99,7 +96,6 @@ public class GroupByHistogram implements Mutable {
             throw new IllegalArgumentException("numberOfSignificantValueDigits must be between 0 and 5");
         }
 
-        this.wordSizeInBytes = 8;
         init(lowestDiscernibleValue, highestTrackableValue, numberOfSignificantValueDigits);
     }
 
@@ -668,8 +664,8 @@ public class GroupByHistogram implements Mutable {
                 }
             }
         }
-        setStartTimeStamp(Math.min(startTimeStampMsec, otherHistogram.startTimeStampMsec));
-        setEndTimeStamp(Math.max(endTimeStampMsec, otherHistogram.endTimeStampMsec));
+        setStartTimeStamp(Math.min(getStartTimeStamp(), otherHistogram.getStartTimeStamp()));
+        setEndTimeStamp(Math.max(getEndTimeStamp(), otherHistogram.getEndTimeStamp()));
     }
 
     // AbstractHistogram.getMinValue() at lines 687-692
