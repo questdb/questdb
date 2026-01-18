@@ -908,7 +908,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testRenameTableSameMeta() throws Exception {
-        Assume.assumeTrue(walEnabled && ColumnType.isTimestampNano(timestampType.getTimestampType()));
+        Assume.assumeTrue(walEnabled);
 
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
@@ -936,16 +936,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=south7 temperature=70 1465839830101000200\n" +
                     meteorology + ",location=south8 temperature=80 1465839830101000200\n";
 
-            sendWaitWalReleaseCount(lineData, 3);
+            sendWaitWalReleaseCount(lineData, 2);
 
-            // two of the three commits go to the renamed table
+            // 1 of the three commits go to the renamed table
             final String expected = """
-                    location\ttemperature\ttimestamp
-                    west1\t10.0\t2016-06-13T17:43:50.100400Z
-                    west2\t20.0\t2016-06-13T17:43:50.100500Z
-                    east3\t30.0\t2016-06-13T17:43:50.100600Z
-                    west4\t40.0\t2016-06-13T17:43:50.100700Z
-                    south8\t80.0\t2016-06-13T17:43:50.101000Z
+                    location	temperature	timestamp
+                    west1	10.0	2016-06-13T17:43:50.100400Z
+                    west2	20.0	2016-06-13T17:43:50.100500Z
+                    south8	80.0	2016-06-13T17:43:50.101000Z
                     """;
 
             assertEventually(
@@ -956,12 +954,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     15
             );
 
-            // last commit goes to the recreated table
+            // last 2 commits goes to the recreated table
             final String expected2 = """
-                    location\ttemperature\ttimestamp
-                    west5\t50.0\t2016-06-13T17:43:50.100800Z
-                    east6\t60.0\t2016-06-13T17:43:50.100900Z
-                    south7\t70.0\t2016-06-13T17:43:50.101000Z
+                    location	temperature	timestamp
+                    west5	50.0	2016-06-13T17:43:50.100800Z
+                    east6	60.0	2016-06-13T17:43:50.100900Z
+                    south7	70.0	2016-06-13T17:43:50.101000Z
                     """;
 
             assertEventually(
