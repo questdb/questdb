@@ -367,14 +367,15 @@ public class IlpV4AllocationTestClient {
      * Estimates the size of a single row in bytes for throughput calculation.
      */
     private static int estimatedRowSize() {
-        // Rough estimate:
-        // - 2 symbols: ~10 bytes each
-        // - 4 longs: 32 bytes
-        // - 4 doubles: 32 bytes
+        // Rough estimate (binary protocol):
+        // - 2 symbols: ~10 bytes each = 20 bytes
+        // - 3 longs: 8 bytes each = 24 bytes
+        // - 4 doubles: 8 bytes each = 32 bytes
         // - 1 string: ~10 bytes average
         // - 1 boolean: 1 byte
-        // - 1 timestamp: 8 bytes
+        // - 2 timestamps: 8 bytes each = 16 bytes
         // - Overhead: ~20 bytes
-        return 120;
+        // Total: ~123 bytes
+        return 123;
     }
 }
