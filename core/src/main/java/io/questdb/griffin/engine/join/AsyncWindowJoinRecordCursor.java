@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -88,7 +87,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private long valueSizeBytes;
 
     public AsyncWindowJoinRecordCursor(
-            @NotNull CairoConfiguration configuration,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull RecordMetadata slaveMetadata,
             @Nullable IntList columnIndex,
