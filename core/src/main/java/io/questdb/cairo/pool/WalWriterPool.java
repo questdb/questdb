@@ -154,8 +154,8 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         }
 
         @Override
-        public void updateTableToken(TableToken ignoredTableToken) {
-            // goActive() will update table token
+        public void updateTableToken(TableToken tableToken) {
+            super.updateTableToken(tableToken);
         }
     }
 }
