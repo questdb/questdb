@@ -5016,4 +5016,190 @@ public class WalWriterTest extends AbstractCairoTest {
 
         void insertRow();
     }
+
+    // ==================== Symbol Table Behavior on Row Cancel ====================
+    //
+    // NOTE: These tests validate CURRENT behavior, not prescribe it. They document how
+    // symbol tables behave when rows are cancelled. This behavior is consistent with
+    // other QuestDB scenarios like dropping partitions - symbols remain in the symbol
+    // table even when the data referencing them is removed.
+    //
+    // Symbol tables are append-only by design and never shrink. This is not a bug.
+    // These tests can be removed or modified if the behavior changes in the future.
+
+    /**
+     * Tests symbol table behavior when a row is cancelled after adding a new symbol.
+     * <p>
+     * Current behavior: cancelled symbols remain in the symbol table. This is consistent
+     * with how QuestDB handles symbols in other scenarios (e.g., dropping partitions).
+     * <p>
+     * Scenario:
+     * 1. Start row, add new symbol "sym_cancelled"
+     * 2. Cancel row
+     * 3. Start new row, add new symbol "sym_committed"
+     * 4. Commit and apply WAL
+     * 5. Verify both symbols exist in symbol table (even though only one has data)
+     */
+    @Test
+    public void testSymbolTableBehaviorOnRowCancel() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymbolCancel";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Row 1: Add symbol, then CANCEL
+                TableWriter.Row row1 = walWriter.newRow(1000000L);
+                row1.putSym(0, "sym_cancelled");  // This increments localSymbolIds
+                row1.putInt(1, 100);
+                row1.cancel();  // Data rolled back, but localSymbolIds NOT reset!
+
+                // Row 2: Add different symbol, then COMMIT
+                TableWriter.Row row2 = walWriter.newRow(2000000L);
+                row2.putSym(0, "sym_committed");  // Gets key 1 (key 0 was "used" by cancelled row)
+                row2.putInt(1, 200);
+                row2.append();
+
+                walWriter.commit();
+            }
+
+            // Apply WAL to main table
+            drainWalQueue();
+
+            // Query the data - what do we get?
+            assertSql(
+                    "s\tvalue\tts\n" +
+                            "sym_committed\t200\t1970-01-01T00:00:02.000000Z\n",
+                    "select * from " + tableName
+            );
+
+            // Check symbol table - both symbols should exist (cancelled + committed)
+            try (TableReader reader = getReader(tableName)) {
+                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
+                int symbolCount = symbolMapReader.getSymbolCount();
+
+                // Current behavior: both symbols are in the table
+                // This is consistent with partition drop behavior
+                assertEquals("Both symbols should exist in symbol table", 2, symbolCount);
+            }
+        });
+    }
+
+    /**
+     * Tests symbol table behavior with multiple cancelled rows.
+     * <p>
+     * Current behavior: all symbols (cancelled + committed) remain in the symbol table.
+     * This is consistent with append-only symbol table design.
+     */
+    @Test
+    public void testSymbolTableBehaviorMultipleCancels() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymbolMultiCancel";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Cancel 10 rows with unique symbols
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = walWriter.newRow((i + 1) * 1000000L);
+                    row.putSym(0, "cancelled_" + i);  // Each increments localSymbolIds
+                    row.putInt(1, i);
+                    row.cancel();  // localSymbolIds keeps incrementing!
+                }
+
+                // Now add one real row
+                TableWriter.Row realRow = walWriter.newRow(100000000L);
+                realRow.putSym(0, "real_symbol");  // Gets key 10 (keys 0-9 "wasted")
+                realRow.putInt(1, 999);
+                realRow.append();
+
+                walWriter.commit();
+            }
+
+            // Apply WAL
+            drainWalQueue();
+
+            // Verify data
+            assertSql(
+                    "s\tvalue\tts\n" +
+                            "real_symbol\t999\t1970-01-01T00:01:40.000000Z\n",
+                    "select * from " + tableName
+            );
+
+            // Check symbol table - all 11 symbols should exist (10 cancelled + 1 committed)
+            try (TableReader reader = getReader(tableName)) {
+                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
+                int symbolCount = symbolMapReader.getSymbolCount();
+
+                // Current behavior: all symbols remain in the table
+                // This is consistent with append-only symbol table design
+                assertEquals("All symbols (cancelled + committed) should exist", 11, symbolCount);
+
+                // The committed symbol should be at key 10
+                assertEquals("real_symbol", symbolMapReader.valueOf(10).toString());
+            }
+        });
+    }
+
+    /**
+     * Tests symbol table behavior when same symbol is reused after cancel.
+     * <p>
+     * Current behavior: the symbol is cached in symbolMaps, so reusing it
+     * returns the same key. Only one symbol entry is created.
+     */
+    @Test
+    public void testSymbolReusedAfterCancel() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymbolReuse";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Row 1: Add symbol, then CANCEL
+                TableWriter.Row row1 = walWriter.newRow(1000000L);
+                row1.putSym(0, "reused_symbol");
+                row1.putInt(1, 100);
+                row1.cancel();
+
+                // Row 2: Use SAME symbol, then COMMIT
+                // This should find it in symbolMaps cache and reuse the key
+                TableWriter.Row row2 = walWriter.newRow(2000000L);
+                row2.putSym(0, "reused_symbol");  // Should get same key from cache
+                row2.putInt(1, 200);
+                row2.append();
+
+                walWriter.commit();
+            }
+
+            // Apply WAL
+            drainWalQueue();
+
+            // Verify data
+            assertSql(
+                    "s\tvalue\tts\n" +
+                            "reused_symbol\t200\t1970-01-01T00:00:02.000000Z\n",
+                    "select * from " + tableName
+            );
+
+            // Check symbol table - only one symbol should exist (reused from cache)
+            try (TableReader reader = getReader(tableName)) {
+                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
+                // Current behavior: symbol is cached, so reuse doesn't create duplicates
+                assertEquals("Reused symbol should only appear once", 1, symbolMapReader.getSymbolCount());
+                assertEquals("reused_symbol", symbolMapReader.valueOf(0).toString());
+            }
+        });
+    }
 }
