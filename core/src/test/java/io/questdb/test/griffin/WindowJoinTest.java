@@ -4202,6 +4202,81 @@ public class WindowJoinTest extends AbstractCairoTest {
         }
     }
 
+    // Regression test for https://github.com/questdb/questdb/issues/6661
+    // SIGSEGV when using window join with prevailing on empty result set.
+    @Test
+    public void testWindowJoinWithPrevailingOnEmptyResultSetRegression() throws Exception {
+        // The crash happens when master table has rows but slave table timestamps
+        // are all BEFORE the master timestamp range. Uses large row counts to trigger async execution.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
+        assertMemoryLeak(() -> {
+            // Create trades table
+            execute(
+                    "CREATE TABLE trades (" +
+                            "    symbol SYMBOL CAPACITY 2048 CACHE," +
+                            "    side SYMBOL CAPACITY 4 CACHE," +
+                            "    price DOUBLE," +
+                            "    amount DOUBLE," +
+                            "    timestamp TIMESTAMP" +
+                            ") timestamp(timestamp) PARTITION BY HOUR"
+            );
+
+            // Insert trades for 2025-01-01 (these WILL be queried)
+            execute(
+                    "INSERT INTO trades SELECT " +
+                            "    rnd_symbol(1000, 4, 4, 0) AS symbol," +
+                            "    rnd_symbol('buy', 'sell') as side," +
+                            "    rnd_double() * 20 + 10 AS price," +
+                            "    rnd_double() * 20 + 10 AS amount," +
+                            "    timestamp_sequence('2025-01-01', 1720) as timestamp " +
+                            "FROM long_sequence(8400)"
+            );
+
+            // Create prices table
+            execute(
+                    "CREATE TABLE prices (" +
+                            "    ts TIMESTAMP," +
+                            "    sym SYMBOL CAPACITY 1024," +
+                            "    bid DOUBLE," +
+                            "    ask DOUBLE" +
+                            ") timestamp(ts) PARTITION BY HOUR BYPASS WAL"
+            );
+
+            // Insert prices for time BEFORE trades (2024-12-31T23 to ~2025-01-01T05:40)
+            // This creates a scenario where for the trade timestamps (2025-01-01),
+            // the slave data might be entirely before the time window for some rows
+            execute(
+                    "INSERT INTO prices " +
+                            "SELECT " +
+                            "    timestamp_sequence('2024-12-31T23', 600) as ts," +
+                            "    rnd_symbol(1000, 4, 4, 0)," +
+                            "    rnd_double() * 10.0 + 5.0," +
+                            "    rnd_double() * 10.0 + 5.0 " +
+                            "FROM long_sequence(40000000)"
+            );
+
+            // Query that matches trades - this will execute the window join
+            // The window is 1 second, so for trades at 2025-01-01T00:00:00+,
+            // the slave lookup might find data or need to use prevailing
+            String result = query(
+                    "SELECT t.*, avg(p.bid) avg_bid, avg(p.ask) avg_ask " +
+                            "FROM (trades WHERE timestamp BETWEEN '2025-01-01' AND '2025-01-01T04:00:00') t " +
+                            "WINDOW JOIN prices p ON p.sym = t.symbol " +
+                            "RANGE BETWEEN 1 second PRECEDING and 1 second FOLLOWING LIMIT 100"
+            );
+            // Just verify it doesn't crash - we don't check exact results
+            Assert.assertNotNull(result);
+        });
+    }
+
+    private String query(String sql) throws SqlException {
+        sink.clear();
+        printSql(sql, sink);
+        return sink.toString();
+    }
+
     private void prepareTable() throws SqlException {
         executeWithRewriteTimestamp(
                 "create table trades (" +
