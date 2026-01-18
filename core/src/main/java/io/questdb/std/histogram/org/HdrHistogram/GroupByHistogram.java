@@ -61,22 +61,22 @@ public class GroupByHistogram implements Mutable {
     private long ptr;
     private long allocatedSize;
 
-    protected boolean autoResize = false;
-    protected int bucketCount;
-    protected int countsArrayLength;
-    protected long highestTrackableValue;
-    protected int subBucketCount;
-    protected int wordSizeInBytes;
-    protected int leadingZeroCountBase;
-    protected int subBucketHalfCount;
-    protected int subBucketHalfCountMagnitude;
-    protected long subBucketMask;
-    protected int unitMagnitude;
-    protected long unitMagnitudeMask;
-    protected long lowestDiscernibleValue;
-    protected int numberOfSignificantValueDigits;
-    protected long startTimeStampMsec = Long.MAX_VALUE;
-    protected long endTimeStampMsec = 0;
+    private boolean autoResize = false;
+    private int bucketCount;
+    private int countsArrayLength;
+    private long highestTrackableValue;
+    private int subBucketCount;
+    private int wordSizeInBytes;
+    private int leadingZeroCountBase;
+    private int subBucketHalfCount;
+    private int subBucketHalfCountMagnitude;
+    private long subBucketMask;
+    private int unitMagnitude;
+    private long unitMagnitudeMask;
+    private long lowestDiscernibleValue;
+    private int numberOfSignificantValueDigits;
+    private long startTimeStampMsec = Long.MAX_VALUE;
+    private long endTimeStampMsec = 0;
 
     // AbstractHistogram(int) at lines 140-143
     public GroupByHistogram(int numberOfSignificantValueDigits) {
@@ -388,7 +388,7 @@ public class GroupByHistogram implements Mutable {
     }
 
     // See AbstractHistogram.updateMaxValue(long) at lines 2297-2299
-    protected void updateMaxValue(long value) {
+    private void updateMaxValue(long value) {
         if (ptr == 0) {
             return;
         }
@@ -398,7 +398,7 @@ public class GroupByHistogram implements Mutable {
     }
 
     // See AbstractHistogram.updateMinNonZeroValue(long) at lines 2320-2325
-    protected void updateMinNonZeroValue(long value) {
+    private void updateMinNonZeroValue(long value) {
         if (ptr == 0) {
             return;
         }
@@ -510,28 +510,28 @@ public class GroupByHistogram implements Mutable {
     }
 
     // AbstractHistogram.sizeOfEquivalentValueRange(long) at lines 1332-1335
-    protected long sizeOfEquivalentValueRange(final long value) {
+    private long sizeOfEquivalentValueRange(final long value) {
         int bucketIndex = getBucketIndex(value);
         return 1L << (unitMagnitude + bucketIndex);
     }
 
     // AbstractHistogram.getBucketIndex(long) at lines 533-538
-    protected int getBucketIndex(final long value) {
+    private int getBucketIndex(final long value) {
         return leadingZeroCountBase - Long.numberOfLeadingZeros(value | subBucketMask);
     }
 
     // AbstractHistogram.getSubBucketIndex(long, int) at lines 789-797
-    protected int getSubBucketIndex(final long value, final int bucketIndex) {
+    private int getSubBucketIndex(final long value, final int bucketIndex) {
         return (int) (value >>> (bucketIndex + unitMagnitude));
     }
 
     // AbstractHistogram.valueFromIndex(int, int) at lines 1870-1872
-    protected long valueFromIndex(final int bucketIndex, final int subBucketIndex) {
+    private long valueFromIndex(final int bucketIndex, final int subBucketIndex) {
         return ((long) subBucketIndex) << (bucketIndex + unitMagnitude);
     }
 
     // AbstractHistogram.normalizeIndex(int, int, int) at lines 2131-2151
-    protected int normalizeIndex(int index, int normalizingIndexOffset, int arrayLength) {
+    private int normalizeIndex(int index, int normalizingIndexOffset, int arrayLength) {
         if (normalizingIndexOffset == 0) {
             return index;
         }
@@ -548,7 +548,7 @@ public class GroupByHistogram implements Mutable {
     }
 
     // AbstractHistogram.valueFromIndex(int) at lines 1393-1401
-    protected long valueFromIndex(final int index) {
+    private long valueFromIndex(final int index) {
         int bucketIndex = (index >> subBucketHalfCountMagnitude) - 1;
         int subBucketIndex = (index & (subBucketHalfCount - 1)) + subBucketHalfCount;
         if (bucketIndex < 0) {
@@ -559,7 +559,7 @@ public class GroupByHistogram implements Mutable {
     }
 
     // AbstractHistogram.countsArrayIndex(long) at lines 354-361
-    protected int countsArrayIndex(final long value) {
+    private int countsArrayIndex(final long value) {
         if (value < 0) {
             throw CairoException.nonCritical().put("Histogram recorded value cannot be negative.");
         }
@@ -569,7 +569,7 @@ public class GroupByHistogram implements Mutable {
     }
 
     // AbstractHistogram.countsArrayIndex(int, int) at lines 1534-1546
-    protected int countsArrayIndex(final int bucketIndex, final int subBucketIndex) {
+    private int countsArrayIndex(final int bucketIndex, final int subBucketIndex) {
         assert(subBucketIndex < subBucketCount);
         assert(bucketIndex == 0 || (subBucketIndex >= subBucketHalfCount));
         int bucketBaseIndex = (bucketIndex + 1) << subBucketHalfCountMagnitude;
@@ -577,7 +577,7 @@ public class GroupByHistogram implements Mutable {
         return bucketBaseIndex + offsetInBucket;
     }
 
-    protected boolean isAutoResize() {
+    private boolean isAutoResize() {
         return autoResize;
     }
 
@@ -716,7 +716,7 @@ public class GroupByHistogram implements Mutable {
     }
 
     // AbstractHistogram.medianEquivalentValue(long) at lines 976-978
-    protected long medianEquivalentValue(final long value) {
+    private long medianEquivalentValue(final long value) {
         return (lowestEquivalentValue(value) + (sizeOfEquivalentValueRange(value) >> 1));
     }
 
