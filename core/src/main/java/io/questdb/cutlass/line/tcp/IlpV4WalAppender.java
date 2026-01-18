@@ -353,7 +353,8 @@ public class IlpV4WalAppender implements QuietCloseable {
                 }
                 tsCursor.resetRowPosition();
             } else {
-                // No designated timestamp in block - use current time
+                // No designated timestamp in block - use current time for min/max estimation.
+                // Actual timestamps are assigned per-row in putServerAssignedTimestamp().
                 long now = tud.getTimestampDriver().getTicks();
                 minTimestamp = maxTimestamp = now;
             }
@@ -451,8 +452,7 @@ public class IlpV4WalAppender implements QuietCloseable {
             if (timestampColumnInBlock < 0) {
                 int timestampIndex = walWriter.getMetadata().getTimestampIndex();
                 if (timestampIndex >= 0) {
-                    long now = minTimestamp; // Already set to tud.getTimestampDriver().getTicks()
-                    putServerAssignedTimestamp(walWriter, timestampIndex, now, rowCount);
+                    putServerAssignedTimestamp(walWriter, timestampIndex, tud, rowCount);
                 }
             }
 
@@ -467,13 +467,15 @@ public class IlpV4WalAppender implements QuietCloseable {
     /**
      * Writes server-assigned timestamp for all rows (atNow case).
      * The designated timestamp uses 128-bit format: (timestamp, rowId) pairs.
+     * Each row gets a fresh timestamp from getTicks() to match row-by-row behavior.
      */
     private void putServerAssignedTimestamp(WalWriter walWriter, int columnIndex,
-                                            long timestamp, int rowCount) {
+                                            TableUpdateDetails tud, int rowCount) {
         io.questdb.cairo.vm.api.MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         long startRowId = walWriter.getSegmentRowCount();
 
         for (int row = 0; row < rowCount; row++) {
+            long timestamp = tud.getTimestampDriver().getTicks();  // Per-row timestamp
             dataMem.putLong128(timestamp, startRowId + row);
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);

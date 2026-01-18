@@ -356,6 +356,54 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Tests that multiple rows sent with atNow() in the same batch get per-row timestamps.
+     * <p>
+     * The columnar path should call getTicks() per row (like the row-by-row path does),
+     * rather than using a single timestamp for all rows.
+     * <p>
+     * Note: We can't assert all timestamps are unique because multiple rows may be
+     * processed within the same microsecond. Instead, we verify that NOT all rows
+     * have identical timestamps (which would indicate the bug where a single getTicks()
+     * call was used for the entire batch).
+     */
+    @Test
+    public void testAtNowTimestampsAreUniquePerRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Send multiple rows with atNow() - timestamps should be assigned individually
+                // Use more rows to increase chance of timestamp variation
+                int rowCount = 20;
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("ws_unique_ts_test")
+                                .symbol("tag", "row" + i)
+                                .longColumn("value", i)
+                                .atNow();
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_unique_ts_test");
+                serverMain.assertSql("select count() from ws_unique_ts_test", "count\n" + rowCount + "\n");
+
+                // Verify that timestamps are NOT all identical.
+                // If bug exists: all rows have identical timestamps, so count_distinct = 1
+                // If fixed: rows have per-row timestamps, so count_distinct > 1
+                // (may not be exactly rowCount due to microsecond resolution)
+                // Use a query that returns 'true' if we have more than 1 distinct timestamp
+                serverMain.assertSql(
+                        "select count_distinct(timestamp) > 1 as has_multiple_timestamps from ws_unique_ts_test",
+                        "has_multiple_timestamps\ntrue\n"
+                );
+            }
+        });
+    }
+
     @Ignore("WebSocket transport doesn't support pre-created tables with custom timestamp columns yet - needs feature parity with HTTP")
     @Test
     public void testAtNowWithCustomTimestampColumnName() throws Exception {
