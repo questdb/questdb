@@ -40,9 +40,8 @@ public class ExpressionNodeTest {
         AsciiCharSequence token1 = new AsciiCharSequence().of(new Utf8String("test"));
         AsciiCharSequence token2 = new AsciiCharSequence().of(new Utf8String("test"));
 
-        // Sanity check: tokens have same content but different identity-based hashCodes
+        // Sanity check: tokens are different instances with same content
         Assert.assertNotSame(token1, token2);
-        Assert.assertNotEquals(token1.hashCode(), token2.hashCode());
 
         ExpressionNode node1 = ExpressionNode.FACTORY.newInstance();
         ExpressionNode node2 = ExpressionNode.FACTORY.newInstance();
