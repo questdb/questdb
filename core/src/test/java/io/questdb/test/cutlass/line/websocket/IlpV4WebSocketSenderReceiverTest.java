@@ -157,6 +157,75 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    // ==================== UUID and LONG256 Tests ====================
+
+    @Test
+    public void testUuidColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // UUID: 550e8400-e29b-41d4-a716-446655440000
+                // hi = 0x550e8400e29b41d4L, lo = 0xa716446655440000L
+                long uuidHi = 0x550e8400e29b41d4L;
+                long uuidLo = 0xa716446655440000L;
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_uuid_test")
+                            .symbol("tag", "test")
+                            .uuidColumn("uuid_col", uuidLo, uuidHi)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_uuid_test");
+                serverMain.assertSql("select count() from ws_uuid_test", "count\n1\n");
+
+                // Verify the UUID value is correct
+                serverMain.assertSql(
+                        "select uuid_col from ws_uuid_test",
+                        "uuid_col\n550e8400-e29b-41d4-a716-446655440000\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testLong256Column() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // LONG256 value with distinct components for easy verification
+                long l0 = 0x1111111111111111L;
+                long l1 = 0x2222222222222222L;
+                long l2 = 0x3333333333333333L;
+                long l3 = 0x4444444444444444L;
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_long256_test")
+                            .symbol("tag", "test")
+                            .long256Column("long256_col", l0, l1, l2, l3)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_long256_test");
+                serverMain.assertSql("select count() from ws_long256_test", "count\n1\n");
+
+                // Verify the LONG256 value is correct (displayed as hex string)
+                serverMain.assertSql(
+                        "select long256_col from ws_long256_test",
+                        "long256_col\n0x4444444444444444333333333333333322222222222222221111111111111111\n"
+                );
+            }
+        });
+    }
+
     // ==================== Timestamp Tests ====================
 
     @Test

@@ -268,4 +268,56 @@ public final class IlpV4TimestampColumnCursor implements IlpV4ColumnCursor {
     public long getTimestamp() {
         return currentTimestamp;
     }
+
+    // ==================== Columnar Access Methods ====================
+
+    /**
+     * Returns whether direct memory access is possible for this column.
+     * <p>
+     * Direct access is only possible when Gorilla encoding is disabled.
+     * When enabled, values must be accessed row-by-row through iteration.
+     *
+     * @return true if direct memory access is possible
+     */
+    public boolean supportsDirectAccess() {
+        return !gorillaEnabled;
+    }
+
+    /**
+     * Returns the address of the packed non-null values array.
+     * <p>
+     * Only valid when {@link #supportsDirectAccess()} returns true.
+     *
+     * @return the memory address of values array, or 0 if Gorilla-encoded
+     */
+    public long getValuesAddress() {
+        return gorillaEnabled ? 0 : valuesAddress;
+    }
+
+    /**
+     * Returns the address of the null bitmap, or 0 if not nullable.
+     *
+     * @return the memory address of null bitmap, or 0 if not nullable
+     */
+    public long getNullBitmapAddress() {
+        return nullBitmapAddress;
+    }
+
+    /**
+     * Returns the number of non-null values in this column.
+     *
+     * @return count of non-null values
+     */
+    public int getValueCount() {
+        return valueCount;
+    }
+
+    /**
+     * Returns the total row count (including nulls).
+     *
+     * @return total row count
+     */
+    public int getRowCount() {
+        return rowCount;
+    }
 }

@@ -541,6 +541,40 @@ public class IlpV4WebSocketSender implements Sender {
         return this;
     }
 
+    /**
+     * Adds a UUID column value to the current row.
+     *
+     * @param columnName the column name
+     * @param lo         the low 64 bits of the UUID
+     * @param hi         the high 64 bits of the UUID
+     * @return this sender for method chaining
+     */
+    public IlpV4WebSocketSender uuidColumn(CharSequence columnName, long lo, long hi) {
+        checkNotClosed();
+        checkTableSelected();
+        IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn(columnName.toString(), TYPE_UUID, true);
+        col.addUuid(hi, lo);
+        return this;
+    }
+
+    /**
+     * Adds a LONG256 column value to the current row.
+     *
+     * @param columnName the column name
+     * @param l0         the least significant 64 bits
+     * @param l1         the second 64 bits
+     * @param l2         the third 64 bits
+     * @param l3         the most significant 64 bits
+     * @return this sender for method chaining
+     */
+    public IlpV4WebSocketSender long256Column(CharSequence columnName, long l0, long l1, long l2, long l3) {
+        checkNotClosed();
+        checkTableSelected();
+        IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn(columnName.toString(), TYPE_LONG256, true);
+        col.addLong256(l0, l1, l2, l3);
+        return this;
+    }
+
     @Override
     public IlpV4WebSocketSender timestampColumn(CharSequence columnName, long value, ChronoUnit unit) {
         checkNotClosed();

@@ -690,16 +690,18 @@ public class IlpV4WebSocketEncoder implements QuietCloseable {
     }
 
     private void writeUuidColumn(long[] highBits, long[] lowBits, int count) {
+        // Little-endian: lo first, then hi
         for (int i = 0; i < count; i++) {
-            buffer.putLongBE(highBits[i]);
-            buffer.putLongBE(lowBits[i]);
+            buffer.putLong(lowBits[i]);
+            buffer.putLong(highBits[i]);
         }
     }
 
     private void writeLong256Column(long[] values, int count) {
-        // Flat array: 4 longs per value (big-endian)
+        // Flat array: 4 longs per value, little-endian (least significant first)
+        // values layout: [long0, long1, long2, long3] per row
         for (int i = 0; i < count * 4; i++) {
-            buffer.putLongBE(values[i]);
+            buffer.putLong(values[i]);
         }
     }
 

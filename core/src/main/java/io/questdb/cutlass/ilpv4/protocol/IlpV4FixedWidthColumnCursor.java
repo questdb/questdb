@@ -175,16 +175,16 @@ public final class IlpV4FixedWidthColumnCursor implements IlpV4ColumnCursor {
                 currentDouble = Unsafe.getUnsafe().getDouble(address);
                 break;
             case TYPE_UUID:
-                // UUID is stored big-endian: hi bytes first, then lo bytes
-                currentUuidHi = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
-                currentUuidLo = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 8));
+                // UUID is stored little-endian: lo bytes first, then hi bytes
+                currentUuidLo = Unsafe.getUnsafe().getLong(address);
+                currentUuidHi = Unsafe.getUnsafe().getLong(address + 8);
                 break;
             case TYPE_LONG256:
-                // LONG256 is stored big-endian: 4 longs, most significant first
-                currentLong256_3 = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
-                currentLong256_2 = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 8));
-                currentLong256_1 = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 16));
-                currentLong256_0 = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 24));
+                // LONG256 is stored little-endian: 4 longs, least significant first
+                currentLong256_0 = Unsafe.getUnsafe().getLong(address);
+                currentLong256_1 = Unsafe.getUnsafe().getLong(address + 8);
+                currentLong256_2 = Unsafe.getUnsafe().getLong(address + 16);
+                currentLong256_3 = Unsafe.getUnsafe().getLong(address + 24);
                 break;
         }
     }
@@ -311,5 +311,63 @@ public final class IlpV4FixedWidthColumnCursor implements IlpV4ColumnCursor {
      */
     public long getLong256_3() {
         return currentLong256_3;
+    }
+
+    // ==================== Columnar Access Methods ====================
+
+    /**
+     * Returns the address of the packed non-null values array.
+     * <p>
+     * Used for bulk columnar writes where values can be copied directly
+     * from wire format to storage.
+     *
+     * @return the memory address of values array
+     */
+    public long getValuesAddress() {
+        return valuesAddress;
+    }
+
+    /**
+     * Returns the address of the null bitmap, or 0 if not nullable.
+     * <p>
+     * Used for bulk columnar writes to determine which positions need
+     * null sentinel values.
+     *
+     * @return the memory address of null bitmap, or 0 if not nullable
+     */
+    public long getNullBitmapAddress() {
+        return nullBitmapAddress;
+    }
+
+    /**
+     * Returns the number of non-null values in this column.
+     * <p>
+     * This equals rowCount minus the number of null rows.
+     *
+     * @return count of non-null values
+     */
+    public int getValueCount() {
+        if (!nullable || nullBitmapAddress == 0) {
+            return rowCount;
+        }
+        return rowCount - IlpV4NullBitmap.countNulls(nullBitmapAddress, rowCount);
+    }
+
+    /**
+     * Returns the size of each value in bytes.
+     *
+     * @return value size in bytes
+     */
+    public int getValueSize() {
+        return valueSize;
+    }
+
+    /**
+     * Returns the total row count (including nulls).
+     *
+     * @return total row count
+     */
+    public int getRowCount() {
+        return rowCount;
     }
 }

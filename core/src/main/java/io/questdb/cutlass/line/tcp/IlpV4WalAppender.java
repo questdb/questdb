@@ -29,6 +29,7 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.ilpv4.protocol.*;
 import io.questdb.griffin.DecimalUtil;
@@ -224,7 +225,30 @@ public class IlpV4WalAppender implements QuietCloseable {
             columnTypeMap[i] = columnType;
         }
 
-        // Phase 2: Stream rows using cursors
+        // Phase 2: Write data - use columnar path for WalWriter, row-by-row for others
+        // Check if columnar path can be used:
+        // - No array columns (columnar path doesn't support arrays yet)
+        // - All ILP types are compatible with column types (type mismatches need row-by-row for proper error handling)
+        boolean canUseColumnarPath = true;
+        for (int i = 0; i < columnCount; i++) {
+            if (ColumnType.isArray(columnTypeMap[i])) {
+                canUseColumnarPath = false;
+                break;
+            }
+            // Check type compatibility - columnar path silently skips mismatched types
+            if (!isIlpTypeCompatibleWithColumn(ilpTypes[i], columnTypeMap[i], tableBlock.getColumn(i))) {
+                canUseColumnarPath = false;
+                break;
+            }
+        }
+
+        if (writer instanceof WalWriter walWriter && canUseColumnarPath) {
+            // Use optimized columnar path for WAL writers
+            appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud);
+            return;
+        }
+
+        // Fallback to row-by-row for non-WAL writers
         IlpV4ColumnCursor timestampCursor = timestampColumnInBlock >= 0 ?
                 tableBlock.getColumn(timestampColumnInBlock) : null;
 
@@ -281,6 +305,215 @@ public class IlpV4WalAppender implements QuietCloseable {
                 throw e;
             }
         }
+    }
+
+    /**
+     * Appends a table block using the columnar API for optimized bulk writes.
+     * <p>
+     * This method processes entire columns at once rather than row-by-row,
+     * enabling direct memory copies for compatible column types.
+     *
+     * @param tableBlock          streaming table block cursor
+     * @param walWriter           the WAL writer
+     * @param timestampColumnInBlock index of designated timestamp in block, or -1
+     * @param columnCount         number of columns
+     * @param rowCount            number of rows
+     * @param tud                 table update details
+     */
+    private void appendToWalColumnar(IlpV4TableBlockCursor tableBlock, WalWriter walWriter,
+                                     int timestampColumnInBlock, int columnCount, int rowCount,
+                                     TableUpdateDetails tud) throws IlpV4ParseException, CommitFailedException {
+        ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+        appender.beginColumnarWrite(rowCount);
+
+        try {
+            long minTimestamp = Long.MAX_VALUE;
+            long maxTimestamp = Long.MIN_VALUE;
+            boolean outOfOrder = false;
+            long prevTimestamp = Long.MIN_VALUE;
+
+            // First pass: determine min/max timestamps
+            if (timestampColumnInBlock >= 0) {
+                IlpV4ColumnCursor tsCursor = tableBlock.getColumn(timestampColumnInBlock);
+                tsCursor.resetRowPosition();
+                for (int row = 0; row < rowCount; row++) {
+                    tsCursor.advanceRow();
+                    if (!tsCursor.isNull()) {
+                        long ts;
+                        if (tsCursor instanceof IlpV4TimestampColumnCursor) {
+                            ts = ((IlpV4TimestampColumnCursor) tsCursor).getTimestamp();
+                        } else {
+                            ts = ((IlpV4FixedWidthColumnCursor) tsCursor).getTimestamp();
+                        }
+                        if (ts < minTimestamp) minTimestamp = ts;
+                        if (ts > maxTimestamp) maxTimestamp = ts;
+                        if (ts < prevTimestamp) outOfOrder = true;
+                        prevTimestamp = ts;
+                    }
+                }
+                tsCursor.resetRowPosition();
+            } else {
+                // No designated timestamp in block - use current time
+                long now = tud.getTimestampDriver().getTicks();
+                minTimestamp = maxTimestamp = now;
+            }
+
+            // Write each column
+            for (int col = 0; col < columnCount; col++) {
+                int columnIndex = columnIndexMap[col];
+                int columnType = columnTypeMap[col];
+                byte ilpType = ilpTypes[col];
+                IlpV4ColumnCursor cursor = tableBlock.getColumn(col);
+
+                if (col == timestampColumnInBlock) {
+                    // Designated timestamp column
+                    int timestampIndex = walWriter.getMetadata().getTimestampIndex();
+                    if (cursor instanceof IlpV4TimestampColumnCursor tsCursor) {
+                        if (tsCursor.supportsDirectAccess()) {
+                            appender.putTimestampColumn(columnIndex, tsCursor.getValuesAddress(),
+                                    tsCursor.getValueCount(), tsCursor.getNullBitmapAddress(),
+                                    rowCount, walWriter.getSegmentRowCount());
+                        } else {
+                            // Gorilla-encoded - must iterate
+                            putTimestampColumnIterative(appender, columnIndex, tsCursor, rowCount, walWriter);
+                        }
+                    } else if (cursor instanceof IlpV4FixedWidthColumnCursor fixedCursor) {
+                        appender.putTimestampColumn(columnIndex, fixedCursor.getValuesAddress(),
+                                fixedCursor.getValueCount(), fixedCursor.getNullBitmapAddress(),
+                                rowCount, walWriter.getSegmentRowCount());
+                    }
+                    continue;
+                }
+
+                // Regular columns
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.BOOLEAN:
+                        appender.putBooleanColumn(columnIndex, (IlpV4BooleanColumnCursor) cursor, rowCount);
+                        break;
+
+                    case ColumnType.BYTE:
+                    case ColumnType.SHORT:
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.FLOAT:
+                    case ColumnType.DOUBLE:
+                    case ColumnType.DATE:
+                    case ColumnType.UUID:
+                    case ColumnType.LONG256:
+                    case ColumnType.GEOBYTE:
+                    case ColumnType.GEOSHORT:
+                    case ColumnType.GEOINT:
+                    case ColumnType.GEOLONG:
+                        if (cursor instanceof IlpV4FixedWidthColumnCursor fixedCursor) {
+                            appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
+                                    fixedCursor.getValueCount(), fixedCursor.getValueSize(),
+                                    fixedCursor.getNullBitmapAddress(), rowCount);
+                        }
+                        break;
+
+                    case ColumnType.TIMESTAMP:
+                        // Non-designated timestamp
+                        if (cursor instanceof IlpV4TimestampColumnCursor tsCursor) {
+                            if (tsCursor.supportsDirectAccess()) {
+                                appender.putFixedColumn(columnIndex, tsCursor.getValuesAddress(),
+                                        tsCursor.getValueCount(), 8, tsCursor.getNullBitmapAddress(), rowCount);
+                            } else {
+                                // Gorilla-encoded - must iterate
+                                putTimestampColumnAsFixed(columnIndex, tsCursor, rowCount, walWriter);
+                            }
+                        } else if (cursor instanceof IlpV4FixedWidthColumnCursor fixedCursor) {
+                            appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
+                                    fixedCursor.getValueCount(), 8, fixedCursor.getNullBitmapAddress(), rowCount);
+                        }
+                        break;
+
+                    case ColumnType.VARCHAR:
+                        appender.putVarcharColumn(columnIndex, (IlpV4StringColumnCursor) cursor, rowCount);
+                        break;
+
+                    case ColumnType.STRING:
+                        appender.putStringColumn(columnIndex, (IlpV4StringColumnCursor) cursor, rowCount);
+                        break;
+
+                    case ColumnType.SYMBOL:
+                        appender.putSymbolColumn(columnIndex, (IlpV4SymbolColumnCursor) cursor, rowCount);
+                        break;
+
+                    default:
+                        // Unsupported column type for columnar path - this should not happen
+                        // as canUseColumnarPath should have detected this and fallen back to row-by-row
+                        throw new UnsupportedOperationException("Unsupported column type for columnar write: "
+                                + ColumnType.nameOf(columnType));
+                }
+            }
+
+            // Write server-assigned timestamp if not in block (atNow case)
+            if (timestampColumnInBlock < 0) {
+                int timestampIndex = walWriter.getMetadata().getTimestampIndex();
+                if (timestampIndex >= 0) {
+                    long now = minTimestamp; // Already set to tud.getTimestampDriver().getTicks()
+                    putServerAssignedTimestamp(walWriter, timestampIndex, now, rowCount);
+                }
+            }
+
+            appender.endColumnarWrite(minTimestamp, maxTimestamp, outOfOrder);
+            tud.commitIfMaxUncommittedRowsCountReached();
+        } catch (Throwable t) {
+            appender.cancelColumnarWrite();
+            throw t;
+        }
+    }
+
+    /**
+     * Writes server-assigned timestamp for all rows (atNow case).
+     * The designated timestamp uses 128-bit format: (timestamp, rowId) pairs.
+     */
+    private void putServerAssignedTimestamp(WalWriter walWriter, int columnIndex,
+                                            long timestamp, int rowCount) {
+        io.questdb.cairo.vm.api.MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        long startRowId = walWriter.getSegmentRowCount();
+
+        for (int row = 0; row < rowCount; row++) {
+            dataMem.putLong128(timestamp, startRowId + row);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    /**
+     * Writes a timestamp column iteratively (for Gorilla-encoded data).
+     */
+    private void putTimestampColumnIterative(ColumnarRowAppender appender, int columnIndex,
+                                              IlpV4TimestampColumnCursor cursor, int rowCount,
+                                              WalWriter walWriter) throws IlpV4ParseException {
+        // For Gorilla-encoded timestamps, we need to iterate
+        // This path delegates to the standard mechanism since we can't bulk copy
+        cursor.resetRowPosition();
+        io.questdb.cairo.vm.api.MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        long startRowId = walWriter.getSegmentRowCount();
+
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            long timestamp = cursor.isNull() ? io.questdb.std.Numbers.LONG_NULL : cursor.getTimestamp();
+            dataMem.putLong128(timestamp, startRowId + row);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    /**
+     * Writes a non-designated timestamp column iteratively (for Gorilla-encoded data).
+     * Non-designated timestamps are stored as simple 8-byte longs (not 128-bit like designated timestamps).
+     */
+    private void putTimestampColumnAsFixed(int columnIndex, IlpV4TimestampColumnCursor cursor,
+                                           int rowCount, WalWriter walWriter) throws IlpV4ParseException {
+        cursor.resetRowPosition();
+        io.questdb.cairo.vm.api.MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            long timestamp = cursor.isNull() ? io.questdb.std.Numbers.LONG_NULL : cursor.getTimestamp();
+            dataMem.putLong(timestamp);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, walWriter.getSegmentRowCount() + rowCount - 1);
     }
 
     /**
@@ -440,6 +673,50 @@ public class IlpV4WalAppender implements QuietCloseable {
                     LOG.error().$("unsupported column type [type=").$(columnType).$(']').$();
                 }
                 break;
+        }
+    }
+
+    /**
+     * Checks if the ILP type is compatible with the column type for the columnar path.
+     * The columnar path uses instanceof checks that silently skip mismatched types,
+     * so we need to detect mismatches upfront and fall back to row-by-row for proper error handling.
+     */
+    private boolean isIlpTypeCompatibleWithColumn(byte ilpType, int columnType, IlpV4ColumnCursor cursor) {
+        int columnTag = ColumnType.tagOf(columnType);
+
+        switch (columnTag) {
+            case ColumnType.BOOLEAN:
+                return cursor instanceof IlpV4BooleanColumnCursor;
+
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.DATE:
+            case ColumnType.UUID:
+            case ColumnType.LONG256:
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                return cursor instanceof IlpV4FixedWidthColumnCursor;
+
+            case ColumnType.TIMESTAMP:
+                return cursor instanceof IlpV4TimestampColumnCursor
+                        || cursor instanceof IlpV4FixedWidthColumnCursor;
+
+            case ColumnType.VARCHAR:
+            case ColumnType.STRING:
+                return cursor instanceof IlpV4StringColumnCursor;
+
+            case ColumnType.SYMBOL:
+                return cursor instanceof IlpV4SymbolColumnCursor;
+
+            default:
+                // Unknown types - let row-by-row path handle it
+                return false;
         }
     }
 

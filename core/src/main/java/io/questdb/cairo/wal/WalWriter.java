@@ -348,7 +348,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return metadata.getMetadataVersion();
     }
 
-    @TestOnly
+    /**
+     * Returns the current row count in this segment.
+     */
     public long getSegmentRowCount() {
         return segmentRowCount;
     }
@@ -571,6 +573,121 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             throw th;
         }
     }
+
+    // ==================== Columnar Appender Support ====================
+
+    private WalColumnarRowAppender columnarAppender;
+
+    /**
+     * Returns a columnar row appender for bulk column-oriented writes.
+     * <p>
+     * The columnar appender provides an alternative to the row-by-row API,
+     * allowing entire columns to be written at once for better performance
+     * when ingesting columnar data (like ILP v4).
+     *
+     * @return the columnar row appender for this writer
+     */
+    public ColumnarRowAppender getColumnarRowAppender() {
+        if (columnarAppender == null) {
+            columnarAppender = new WalColumnarRowAppender(this);
+        }
+        return columnarAppender;
+    }
+
+    /**
+     * Returns the data memory for a column. Used by columnar appender.
+     */
+    public MemoryMA getDataColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        return columns.getQuick(getDataColumnOffset(column));
+    }
+
+    /**
+     * Returns the aux memory for a column. Used by columnar appender.
+     */
+    public MemoryMA getAuxColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        return columns.getQuick(getAuxColumnOffset(column));
+    }
+
+    /**
+     * Marks a column as having been written up to the specified row.
+     * Used by columnar appender.
+     */
+    public void setRowValueNotNullColumnar(int columnIndex, long lastWrittenRow) {
+        rowValueIsNotNull.setQuick(columnIndex, lastWrittenRow);
+    }
+
+    /**
+     * Resolves a symbol value to its key. Package-private for columnar appender.
+     *
+     * @param columnIndex     the column index
+     * @param symbolValue     the symbol value to resolve
+     * @param symbolMapReader the symbol map reader
+     * @return the symbol key
+     */
+    int resolveSymbol(int columnIndex, CharSequence symbolValue, SymbolMapReader symbolMapReader) {
+        if (symbolValue == null) {
+            symbolMapNullFlags.set(columnIndex, true);
+            return SymbolTable.VALUE_IS_NULL;
+        }
+
+        final var utf16Map = symbolMaps.getQuick(columnIndex);
+        final int hashCode = Chars.hashCode(symbolValue);
+        final int index = utf16Map.keyIndex(symbolValue, hashCode);
+        if (index > -1) {
+            int key = symbolMapReader.keyOf(symbolValue);
+            if (key == SymbolTable.VALUE_NOT_FOUND) {
+                // Add it to in-memory symbol map
+                final int initialSymCount = initialSymbolCounts.get(columnIndex);
+                key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
+            }
+            utf16Map.putAt(index, symbolValue, key, hashCode);
+            return key;
+        } else {
+            return utf16Map.valueAt(index);
+        }
+    }
+
+    /**
+     * Finishes a columnar write operation. Package-private for columnar appender.
+     */
+    void finishColumnarWrite(int rowCount, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+        // Fill in nulls for any columns that weren't written
+        long lastExpectedRow = segmentRowCount + rowCount - 1;
+        for (int i = 0; i < columnCount; i++) {
+            long lastWrittenRow = rowValueIsNotNull.getQuick(i);
+            if (lastWrittenRow < lastExpectedRow) {
+                // Calculate how many nulls are needed
+                long nullsNeeded = lastExpectedRow - Math.max(lastWrittenRow, segmentRowCount - 1);
+                Runnable nullSetter = nullSetters.getQuick(i);
+                for (long r = 0; r < nullsNeeded; r++) {
+                    nullSetter.run();
+                }
+            }
+        }
+
+        // Update min/max timestamps
+        if (minTimestamp < txnMinTimestamp) {
+            txnMinTimestamp = minTimestamp;
+        }
+        if (maxTimestamp > txnMaxTimestamp) {
+            txnMaxTimestamp = maxTimestamp;
+        }
+        txnOutOfOrder |= outOfOrder;
+
+        // Update row count
+        segmentRowCount += rowCount;
+    }
+
+    /**
+     * Cancels a columnar write operation. Package-private for columnar appender.
+     */
+    void cancelColumnarWrite(long startRowId) {
+        setAppendPosition(startRowId);
+    }
+
+    // ==================== End Columnar Appender Support ====================
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA dataMem, MemoryMA auxMem) {
         int columnTag = ColumnType.tagOf(type);
@@ -1283,11 +1400,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         Misc.freeObjListIfCloseable(symbolMaps);
     }
 
-    private MemoryMA getAuxColumn(int column) {
-        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
-        return columns.getQuick(getAuxColumnOffset(column));
-    }
-
     private long getColumnStructureVersion() {
         // Sequencer metadata version is the same as column structure version of the table.
         return metadata.getMetadataVersion();
@@ -1311,11 +1423,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private long getDataAppendPageSize() {
         return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
-    }
-
-    private MemoryMA getDataColumn(int column) {
-        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
-        return columns.getQuick(getDataColumnOffset(column));
     }
 
     private long getSequencerTxn() {
