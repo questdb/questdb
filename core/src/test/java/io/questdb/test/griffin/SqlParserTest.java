@@ -7711,6 +7711,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testMissingExpressionInOrderByThrowsCorrectErrorMessage() throws Exception {
+        assertSyntaxError("SELECT a,b,c FROM t1 ORDER BY col1,,col2;", 35,
+                "literal or expression expected"
+        );
+
+        assertSyntaxError(
+                """
+                        SELECT  a,
+                          CASE\s
+                            WHEN col10 > '3975' THEN col7\s
+                            WHEN col5 < '4045' FILL -3754167527262084558\s
+                          END
+                        FROM t1\s
+                        ORDER BY col1,,col2;""", 133,
+                "literal or expression expected"
+        );
+    }
+
+    @Test
     public void testMissingTable() throws Exception {
         assertSyntaxError(
                 "select a from",
@@ -12295,6 +12314,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnbalancedBracketInSubQuery() throws Exception {
         assertSyntaxError("select x from (tab where x > 10 t1", 32, "expected");
+    }
+
+    @Test
+    public void testUnbalancedRightParenthesesThrowsCorrectErrorMessage() throws Exception {
+        assertSyntaxError("SELECT a,b+c) from t1;", 12,
+                "unexpected token [)]"
+        );
+        assertSyntaxError("SELECT ts, col6 AS a1, CASE WHEN col5 <> '192.168.150.217' THEN 754326 WHEN col1 = false THEN '' " +
+                        "WHEN ts <= ''''qocvwy'''' THEN col4 ELSE sym END, col4, -109639495026, '1986-05-10T21:39:17Z', '" +
+                        "2026-07-22T10:32:41.213795Z',) col2 AS a2, 'p', 0.0 AS a3 FROM t1 a4 LT JOIN t2 " +
+                        "a5 ON a4.timestamp = a5.timestamp LEFT OUTER JOIN t3 ON a4.col3 = t3.col3 LEFT col7 <= false " +
+                        "OR a4.sym <> col2 GROUP BY a5.col4, col4, a5.col7, col10 ORDER BY col7 ASC NULLS FIRST, a5.col10 DESC," +
+                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 222,
+                "unexpected token [)]"
+        );
+
+        // Verify ) in CREATE TABLE AS SELECT context is treated as closing the outer paren,
+        // not as an unbalanced paren - this confirms the createTableMode flag works correctly
+        assertSyntaxError("CREATE TABLE t2 AS (SELECT a,b+c) FROM t1)", 34,
+                "unexpected token [FROM]"
+        );
+
+        // Same test with nested parentheses inside expression
+        assertSyntaxError("CREATE TABLE t2 AS (SELECT a, (b+c)) FROM t1)", 37,
+                "unexpected token [FROM]"
+        );
+
+        // Verify ) in CREATE VIEW context is treated correctly - confirms createViewMode flag works
+        assertSyntaxError("CREATE VIEW v1 AS (SELECT a,b+c) FROM t1)", 33,
+                "unexpected token [FROM]"
+        );
+
+        // Verify ) in subquery context is treated correctly - confirms subQueryMode flag works
+        assertSyntaxError("SELECT * FROM (SELECT a,b+c) WHERE 1=1)", 38,
+                "unexpected token [)]"
+        );
     }
 
     @Test
