@@ -3208,18 +3208,21 @@ public class SqlOptimiser implements Mutable {
                 (node.type == FUNCTION && cache.isPureWindowFunction(node.token))) {
             return node.position;
         }
-        // Check children
-        if (node.lhs != null) {
-            int pos = findWindowFunctionOrNamePosition(node.lhs);
-            if (pos > 0) return pos;
-        }
-        if (node.rhs != null) {
-            int pos = findWindowFunctionOrNamePosition(node.rhs);
-            if (pos > 0) return pos;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            int pos = findWindowFunctionOrNamePosition(node.args.getQuick(i));
-            if (pos > 0) return pos;
+        // Check children using paramCount to distinguish binary nodes from variadic nodes
+        if (node.paramCount < 3) {
+            if (node.lhs != null) {
+                int pos = findWindowFunctionOrNamePosition(node.lhs);
+                if (pos > 0) return pos;
+            }
+            if (node.rhs != null) {
+                int pos = findWindowFunctionOrNamePosition(node.rhs);
+                if (pos > 0) return pos;
+            }
+        } else {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                int pos = findWindowFunctionOrNamePosition(node.args.getQuick(i));
+                if (pos > 0) return pos;
+            }
         }
         return 0;
     }
