@@ -18,10 +18,22 @@ steps:
     displayName: "List of required changes"
   - bash: |
       mkdir -p $(Agent.TempDirectory)/qodana-results
+
+      # Run full scan if lint config changed, otherwise incremental scan
+      if [ "$(LINT_CONFIG_CHANGED)" = "true" ]; then
+        echo "Lint config changed - running full inspection"
+        DIFF_ARG=""
+      else
+        echo "Running incremental inspection on changed files only"
+        git fetch origin $(System.PullRequest.TargetBranch) --depth=1 || true
+        DIFF_ARG="--diff-start=origin/$(System.PullRequest.TargetBranch)"
+      fi
+
       docker run --rm \
         -v "$(pwd):/data/project" \
         -v "$(Agent.TempDirectory)/qodana-results:/data/results" \
         jetbrains/qodana-jvm-community:latest \
+        $DIFF_ARG \
         --print-problems 2>&1 | tee $(Agent.TempDirectory)/qodana-results/qodana-output.txt
     displayName: "Run Qodana inspections"
     timeoutInMinutes: 30
