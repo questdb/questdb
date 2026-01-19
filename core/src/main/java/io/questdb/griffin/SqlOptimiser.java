@@ -7657,13 +7657,26 @@ public class SqlOptimiser implements Mutable {
         // can be resolved directly from translatingModel.
         if (innerWindowModels.size() > 0 && (rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) == 0) {
             ObjList<QueryColumn> innerCols = innerVirtualModel.getBottomUpColumns();
+            LowerCaseCharSequenceObjHashMap<QueryColumn> translatingAliasMap = translatingModel.getAliasToColumnMap();
             for (int i = 0, n = innerCols.size(); i < n; i++) {
                 QueryColumn col = innerCols.getQuick(i);
                 CharSequence alias = col.getAlias();
                 CharSequence token = col.getAst().token;
-                // Only copy renamed columns (where alias differs from token)
-                // These are columns where emitLiterals created a new alias due to conflicts
-                if (!Chars.equalsIgnoreCase(alias, token) && translatingModel.getAliasToColumnMap().excludes(alias)) {
+                // Only copy renamed table columns (where alias differs from token).
+                // Skip if: alias already exists in translatingModel, OR token is an alias
+                // for a DIFFERENT column (which means this is a projection alias like "a b"
+                // where "a" is an alias for column "x", not a table column reference).
+                // Allow if token is an alias for itself (e.g., table column "b" with alias "b").
+                boolean tokenIsAliasForDifferentColumn = false;
+                if (!translatingAliasMap.excludes(token)) {
+                    QueryColumn existing = translatingAliasMap.get(token);
+                    // If the existing column's AST token differs from 'token', then 'token'
+                    // is an alias for a different column, not a table column reference.
+                    tokenIsAliasForDifferentColumn = !Chars.equalsIgnoreCase(existing.getAst().token, token);
+                }
+                if (!Chars.equalsIgnoreCase(alias, token)
+                        && translatingAliasMap.excludes(alias)
+                        && !tokenIsAliasForDifferentColumn) {
                     translatingModel.addBottomUpColumn(queryColumnPool.next().of(alias, col.getAst()));
                 }
             }
