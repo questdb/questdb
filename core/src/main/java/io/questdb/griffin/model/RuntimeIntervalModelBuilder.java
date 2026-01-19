@@ -388,23 +388,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             throw new UnsupportedOperationException();
         }
 
-        // Parse the interval string into a temporary position in staticIntervals
+        // Parse and expand the interval string (may produce multiple pairs for periodic intervals)
         int size = staticIntervals.size();
         IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
         IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
 
-        // Extract the parsed lo/hi values (now at the end of staticIntervals)
-        int parsedIndex = staticIntervals.size() - 2;
-        long intervalLo = staticIntervals.getQuick(parsedIndex);
-        long intervalHi = staticIntervals.getQuick(parsedIndex + 1);
-
-        // Remove the temporarily added interval
-        staticIntervals.setPos(size);
-
-        // Now union it properly
-        staticIntervals.add(intervalLo, intervalHi);
+        // Union all newly added pairs with existing intervals
         if (intervalApplied) {
-            IntervalUtils.unionInPlace(staticIntervals, staticIntervals.size() - 2);
+            IntervalUtils.unionInPlace(staticIntervals, size);
         }
         intervalApplied = true;
     }

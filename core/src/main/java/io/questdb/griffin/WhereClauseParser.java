@@ -2167,7 +2167,7 @@ public final class WhereClauseParser implements Mutable {
             return true;
         }
 
-        // Handle timestamp = 'value'
+        // Handle timestamp = 'value' - treat as interval (e.g., '2018-01-01' spans full day)
         if (Chars.equals(node.token, '=')) {
             ExpressionNode valueNode;
             if (node.lhs.type == ExpressionNode.LITERAL && isTimestamp(node.lhs)) {
@@ -2175,11 +2175,18 @@ public final class WhereClauseParser implements Mutable {
             } else {
                 valueNode = node.lhs;
             }
-            long ts = parseTokenAsTimestamp(timestampDriver, valueNode);
-            if (leftFirst) {
-                model.intersectIntervals(ts, ts);
+            if (isNullKeyword(valueNode.token)) {
+                if (leftFirst) {
+                    model.intersectIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                } else {
+                    model.unionIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                }
             } else {
-                model.unionIntervals(ts, ts);
+                if (leftFirst) {
+                    model.intersectIntervals(valueNode.token, 1, valueNode.token.length() - 1, valueNode.position);
+                } else {
+                    model.unionIntervals(valueNode.token, 1, valueNode.token.length() - 1, valueNode.position);
+                }
             }
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;

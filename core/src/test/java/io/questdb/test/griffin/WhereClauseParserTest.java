@@ -3263,12 +3263,80 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampEqualsOrSingleValues() throws Exception {
-        // timestamp = 'value' OR timestamp = 'value2' should also use interval scan
-        IntrinsicModel m = modelOf("timestamp = '2018-01-01T10:00:00.000Z' or timestamp = '2018-01-02T10:00:00.000Z'");
+        // timestamp = 'value' OR timestamp = 'value2' should use interval scan
+        // Values are parsed as intervals (e.g., '2018-01-01' spans full day)
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01' or timestamp = '2018-01-02'");
         Assert.assertTrue(m.hasIntervalFilters());
         assertFilter(m, null);
         TestUtils.assertEquals(
-                replaceTimestampSuffix("[{lo=2018-01-01T10:00:00.000000Z, hi=2018-01-01T10:00:00.000000Z},{lo=2018-01-02T10:00:00.000000Z, hi=2018-01-02T10:00:00.000000Z}]"),
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampMixedInAndEqualsOr() throws Exception {
+        // Mixed: timestamp IN 'value' OR timestamp = 'value2'
+        IntrinsicModel m = modelOf("timestamp in '2018-01-01' or timestamp = '2018-01-02'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrWithRangeFilter() throws Exception {
+        // OR is processed first (before the > filter), so both are extracted as intrinsics
+        // The > filter is then intersected with the OR intervals
+        IntrinsicModel m = modelOf("timestamp > '2020-01-01' and (timestamp in '2020-06-01' or timestamp in '2020-07-01')");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        // Both intervals from OR are kept (both are after 2020-01-01)
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z},{lo=2020-07-01T00:00:00.000000Z, hi=2020-07-01T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrNotExtractedWhenIntervalFilterFirst() throws Exception {
+        // When interval filter is processed first (appears in lhs of AND),
+        // OR extraction is skipped and left in filter
+        IntrinsicModel m = modelOf("timestamp between '2020-01-01' and '2020-12-31' and (timestamp in '2020-06-01' or timestamp in '2020-07-01')");
+        Assert.assertTrue(m.hasIntervalFilters());
+        // OR is left in filter because interval filter was already set
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z},{lo=2020-07-01T00:00:00.000000Z, hi=2020-07-01T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrWithBindVariables() throws SqlException {
+        // OR with bind variables is not extracted as intrinsic (only constants supported)
+        // Falls back to filter for row-by-row evaluation
+        long day1 = 24L * 3600 * 1000 * 1000;
+        long day2 = 2 * day1;
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, day1);
+        bindVariableService.setTimestamp(1, day2);
+        IntrinsicModel m = modelOf("timestamp in $1 or timestamp in $2");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "$2 timestamp in $1 timestamp in or");
+    }
+
+    @Test
+    public void testTimestampOrWithPeriodicIntervals() throws Exception {
+        // OR with periodic intervals - each IN produces multiple interval pairs
+        // '2020-01-01;1d;1M;3' = 3 monthly intervals, each spanning 1 day
+        IntrinsicModel m = modelOf("timestamp in '2020-01-01;1d;1M;3' or timestamp in '2020-06-01'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        // Should have 4 intervals: 3 from periodic + 1 from simple date
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2020-01-01T00:00:00.000000Z, hi=2020-01-02T23:59:59.999999Z},{lo=2020-02-01T00:00:00.000000Z, hi=2020-02-02T23:59:59.999999Z},{lo=2020-03-01T00:00:00.000000Z, hi=2020-03-02T23:59:59.999999Z},{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z}]"),
                 intervalToString(m)
         );
     }
