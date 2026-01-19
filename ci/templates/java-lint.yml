@@ -27,68 +27,23 @@ steps:
     timeoutInMinutes: 30
   - bash: |
       RESULTS_DIR="$(Agent.TempDirectory)/qodana-results"
-      OUTPUT_FILE="$RESULTS_DIR/qodana-output.txt"
-      HTML_REPORT="$RESULTS_DIR/inspection-report.html"
+      SARIF_FILE="$RESULTS_DIR/qodana.sarif.json"
 
-      # Parse problems from Qodana output
-      cat "$OUTPUT_FILE" | sed 's/\x1b\[[0-9;]*m//g' | awk '
-        /^(HIGH|MODERATE|LOW|CRITICAL) / { inspection=$0 }
-        /\.java:[0-9]+:[0-9]+$/ { gsub(/^ +/, ""); print inspection " | " $0 }
-      ' | sort | uniq > "$RESULTS_DIR/problems.txt"
+      if [ ! -f "$SARIF_FILE" ]; then
+        echo "##vso[task.logissue type=error]SARIF results file not found"
+        exit 1
+      fi
 
-      PROBLEM_COUNT=$(wc -l < "$RESULTS_DIR/problems.txt")
+      echo "=== Qodana Inspection Results ==="
+      echo ""
 
-      # Start HTML report
-      cat > "$HTML_REPORT" << 'HTMLHEAD'
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Qodana Inspection Results</title>
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 20px; }
-          h1 { color: #333; }
-          table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-          th { background-color: #4a90d9; color: white; }
-          tr:nth-child(even) { background-color: #f9f9f9; }
-          tr:hover { background-color: #f1f1f1; }
-          .severity-HIGH { color: #d32f2f; font-weight: bold; }
-          .severity-MODERATE { color: #f57c00; }
-          .severity-LOW { color: #1976d2; }
-          .file { font-family: monospace; font-size: 0.9em; }
-          .summary { margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 5px; }
-        </style>
-      </head>
-      <body>
-      <h1>Qodana Inspection Results</h1>
-      <div class="summary" id="summary"></div>
-      <table>
-      <tr><th>Severity</th><th>Inspection</th><th>File</th><th>Location</th></tr>
-      HTMLHEAD
+      # Parse SARIF JSON and output problems with descriptions
+      jq -r '.runs[0].results[] | "\(.level | ascii_upcase) \(.ruleId)\n  File: \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)\n  \(.message.text)\n"' "$SARIF_FILE" | head -500
 
-      echo "=== Inspection Results ==="
-
-      # Process parsed problems
-      while IFS='|' read -r inspection location; do
-        severity=$(echo "$inspection" | awk '{print $1}')
-        inspection_name=$(echo "$inspection" | awk '{$1=""; print $0}' | sed 's/^ //')
-        file=$(echo "$location" | sed 's/^ //')
-
-        echo "[$severity] $inspection_name: $file"
-        echo "<tr><td class=\"severity-$severity\">$severity</td><td>$inspection_name</td><td class=\"file\">$file</td><td></td></tr>" >> "$HTML_REPORT"
-      done < "$RESULTS_DIR/problems.txt"
-
-      # Finish HTML report
-      cat >> "$HTML_REPORT" << HTMLFOOT
-      </table>
-      <script>document.getElementById('summary').innerHTML = 'Total problems found: <strong>$PROBLEM_COUNT</strong>';</script>
-      </body>
-      </html>
-      HTMLFOOT
+      PROBLEM_COUNT=$(jq '.runs[0].results | length' "$SARIF_FILE")
 
       echo "=== Summary ==="
       echo "Total problems found: $PROBLEM_COUNT"
-      echo "HTML report: $HTML_REPORT"
 
       # Fail the build if any problems are found
       if [ "$PROBLEM_COUNT" -gt 0 ]; then
@@ -96,11 +51,4 @@ steps:
         exit 1
       fi
     displayName: "Check inspection results"
-  - task: PublishPipelineArtifact@1
-    condition: always()
-    inputs:
-      targetPath: '$(Agent.TempDirectory)/qodana-results'
-      artifact: 'inspection-report'
-      publishLocation: 'pipeline'
-    displayName: "Publish inspection report"
 
