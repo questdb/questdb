@@ -10288,6 +10288,97 @@ public class WindowFunctionTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testNestedWindowFunctionsIntermediateValues() throws Exception {
+        // Diagnostic test to understand what values the intermediate expressions produce
+        // Note: rank() OVER () without ORDER BY returns 1 for all rows (all ties)
+        assertQuery(
+                """
+                        x\trn\trk\tinner_sum
+                        1\t1\t1\t2
+                        2\t2\t1\t3
+                        3\t3\t1\t4
+                        """,
+                "SELECT x, row_number() OVER () as rn, rank() OVER () as rk, row_number() OVER () + rank() OVER () as inner_sum FROM t",
+                "CREATE TABLE t AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,  // supportsRandomAccess
+                true   // expectSize
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionsWithPartitionByColumnReference() throws Exception {
+        // Test nested window functions where the outer window function's PARTITION BY
+        // references a column that must be propagated through multiple inner window models.
+        // This tests that collectReferencedAliases properly traverses WindowExpression's partitionBy.
+        //
+        // Query: SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (PARTITION BY x) FROM t
+        // - row_number() OVER () creates first inner window model
+        // - rank() OVER () creates second inner window model
+        // - sum(...) OVER (PARTITION BY x) is the outer window function
+        // - x must be propagated through both inner window models
+        //
+        // row_number() OVER () = 1, 2, 3 for each row
+        // rank() OVER () = 1, 1, 1 for each row (no ORDER BY, so all ties)
+        // row_number() + rank() = 2, 3, 4 for each row
+        // Since each row has unique x (1, 2, 3), each partition has one row
+        // sum(2) for x=1, sum(3) for x=2, sum(4) for x=3
+        assertQuery(
+                """
+                        x\tsum
+                        1\t2.0
+                        2\t3.0
+                        3\t4.0
+                        """,
+                "SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (PARTITION BY x) as sum FROM t",
+                "CREATE TABLE t AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,  // supportsRandomAccess
+                true   // expectSize
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionsWithOrderByColumnReference() throws Exception {
+        // Test nested window functions where the outer window function's ORDER BY
+        // references a column that must be propagated through multiple inner window models.
+        // This tests that collectReferencedAliases properly traverses WindowExpression's orderBy.
+        //
+        // Query: SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t
+        // - row_number() OVER () creates first inner window model
+        // - rank() OVER () creates second inner window model
+        // - sum(...) OVER (ORDER BY x ROWS...) is the outer window function
+        // - x must be propagated through both inner window models
+        //
+        // row_number() OVER () = 1, 2, 3 for each row
+        // rank() OVER () = 1, 1, 1 for each row (no ORDER BY, so all ties)
+        // row_number() + rank() = 2, 3, 4 for each row
+        // Running sum: 2, 2+3=5, 5+4=9
+        assertQuery(
+                """
+                        x\tsum
+                        1\t2.0
+                        2\t5.0
+                        3\t9.0
+                        """,
+                "SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as sum FROM t",
+                "CREATE TABLE t AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,  // supportsRandomAccess
+                true   // expectSize
+        );
+    }
+
     static {
         FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "ksum(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",

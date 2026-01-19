@@ -1939,6 +1939,31 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Collects all literal (column reference) aliases from a query column.
+     * For window columns, this also traverses the PARTITION BY, ORDER BY,
+     * and frame bound expressions in addition to the function AST.
+     */
+    private void collectReferencedAliasesFromColumn(QueryColumn col, LowerCaseCharSequenceHashSet aliases) {
+        collectReferencedAliases(col.getAst(), aliases);
+        if (col.isWindowColumn()) {
+            WindowExpression wc = (WindowExpression) col;
+            // Traverse partitionBy expressions
+            ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                collectReferencedAliases(partitionBy.getQuick(i), aliases);
+            }
+            // Traverse orderBy expressions
+            ObjList<ExpressionNode> orderBy = wc.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                collectReferencedAliases(orderBy.getQuick(i), aliases);
+            }
+            // Traverse frame bound expressions
+            collectReferencedAliases(wc.getRowsLoExpr(), aliases);
+            collectReferencedAliases(wc.getRowsHiExpr(), aliases);
+        }
+    }
+
     private void collectSameModelProjectionColumns(ExpressionNode node, QueryModel model) {
         if (node == null) {
             return;
@@ -7833,11 +7858,12 @@ public class SqlOptimiser implements Mutable {
             // This avoids adding unnecessary pass-through columns.
             if (innerWindowModels.size() > 1) {
                 // Collect all column aliases referenced by windowModel's window functions
+                // (including PARTITION BY, ORDER BY, and frame bound expressions)
                 referencedAliasesSet.clear();
                 for (int i = 0, n = windowCols.size(); i < n; i++) {
                     QueryColumn col = windowCols.getQuick(i);
                     if (col.isWindowColumn()) {
-                        collectReferencedAliases(col.getAst(), referencedAliasesSet);
+                        collectReferencedAliasesFromColumn(col, referencedAliasesSet);
                     }
                 }
 
