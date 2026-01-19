@@ -880,6 +880,79 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateaddIntrinsic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id long, ts timestamp, ts2 timestamp) timestamp(ts) partition by hour;");
+
+            assertPlanNoLeakCheck(
+                    "select * from x where id = 42 and dateadd('h', -1, ts) = '2020-01-01T00:01'",
+                    """
+                            Async JIT Filter workers: 1
+                              filter: id=42
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2020-01-01T01:01:00.000000Z","2020-01-01T01:01:00.000000Z")]
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where id = 42 and dateadd('h', -1, ts2) = '2020-01-01T00:01'",
+                    """
+                            Async Filter workers: 1
+                              filter: (id=42 and dateadd('h',-1,ts2)=2020-01-01T00:01:00.000000Z)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select * from x where dateadd('d', 1, ts) >= '2020-01-01T00:01' and id < 42",
+                    """
+                            Async JIT Filter workers: 1
+                              filter: id<42
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2019-12-31T00:01:00.000000Z","MAX")]
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where dateadd('d', 1, ts2) >= '2020-01-01T00:01' and id < 42",
+                    """
+                            Async Filter workers: 1
+                              filter: (dateadd('d',1,ts2)>=2020-01-01T00:01:00.000000Z and id<42)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select * from x where id in (1,2,3) and dateadd('m', -1, ts) between '2020-01-01T00:01' and '2020-01-01T00:02'",
+                    """
+                            Async JIT Filter workers: 1
+                              filter: id in [1,2,3]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2020-01-01T00:02:00.000000Z","2020-01-01T00:03:00.000000Z")]
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where id in (1,2,3) and dateadd('m', -1, ts2) between '2020-01-01T00:01' and '2020-01-01T00:02'",
+                    """
+                            Async Filter workers: 1
+                              filter: (id in [1,2,3] and dateadd('m',-1,ts2) between 1577836860000000 and 1577836920000000)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testDistinctOverWindowFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (event double )");

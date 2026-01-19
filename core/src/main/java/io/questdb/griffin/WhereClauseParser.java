@@ -83,12 +83,12 @@ public final class WhereClauseParser implements Mutable {
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
     private final IntList tempKeyExcludedValuePos = new IntList();
-    //expression node types (literal, bind var, etc.) of excluded keys used  when comparing values and generating functions
+    // expression node types (literal, bind var, etc.) of excluded keys used  when comparing values and generating functions
     private final IntList tempKeyExcludedValueType = new IntList();
-    //assumption: either tempKeyExcludedValues or tempKeyValues has to be empty, otherwise sql code generator will produce wrong factory
+    // assumption: either tempKeyExcludedValues or tempKeyValues has to be empty, otherwise sql code generator will produce wrong factory
     private final CharSequenceHashSet tempKeyExcludedValues = new CharSequenceHashSet();
     private final IntList tempKeyValuePos = new IntList();
-    //expression node types (literal, bind var, etc.) of tempKeys used  when comparing values
+    // expression node types (literal, bind var, etc.) of tempKeys used  when comparing values
     private final IntList tempKeyValueType = new IntList();
     private final CharSequenceHashSet tempKeyValues = new CharSequenceHashSet();
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
@@ -146,7 +146,7 @@ public final class WhereClauseParser implements Mutable {
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
 
-        // Extracts designated timestamp argument from dateadd predicates.
+        // Extracts designated timestamp argument from dateadd predicates, if any.
         rewriteDateaddTimestamp(expressionNodePool, node);
 
         IntrinsicModel model = models.next();
@@ -1786,20 +1786,20 @@ public final class WhereClauseParser implements Mutable {
             ExpressionNode originalDateadd,
             ExpressionNode value
     ) {
-        if (expressionNodePool == null) {
-            return null;
-        }
-
-        ExpressionNode periodArg = originalDateadd.args.getQuick(2);
-        ExpressionNode strideArg = originalDateadd.args.getQuick(1);
+        final ExpressionNode periodArg = originalDateadd.args.getQuick(2);
+        final ExpressionNode strideArg = originalDateadd.args.getQuick(1);
 
         // Extract and negate the stride (handles both constants and unary minus)
-        int stride = extractConstantInt(strideArg);
-        int negatedStride = -stride;
+        final int stride;
+        try {
+            stride = extractConstantInt(strideArg);
+        } catch (NumericException ne) {
+            return null;
+        }
+        final int negatedStride = -stride;
 
         // Create negated stride node
-        ExpressionNode negatedStrideNode = expressionNodePool.next();
-        negatedStrideNode.of(
+        final ExpressionNode negatedStrideNode = expressionNodePool.next().of(
                 ExpressionNode.CONSTANT,
                 Integer.toString(negatedStride),
                 0,
@@ -1807,8 +1807,7 @@ public final class WhereClauseParser implements Mutable {
         );
 
         // Create the new dateadd function node
-        ExpressionNode newDateadd = expressionNodePool.next();
-        newDateadd.of(
+        final ExpressionNode newDateadd = expressionNodePool.next().of(
                 ExpressionNode.FUNCTION,
                 "dateadd",
                 0,
@@ -1916,25 +1915,17 @@ public final class WhereClauseParser implements Mutable {
      * Extracts the integer value from a constant or unary minus of constant node.
      * Returns 0 if extraction fails.
      */
-    private int extractConstantInt(ExpressionNode node) {
+    private int extractConstantInt(ExpressionNode node) throws NumericException {
         if (node.type == ExpressionNode.CONSTANT) {
-            try {
-                return Numbers.parseInt(node.token);
-            } catch (NumericException e) {
-                return 0;
-            }
+            return Numbers.parseInt(node.token);
         }
         // Handle unary minus
-        if (node.type == ExpressionNode.OPERATION && Chars.equals(node.token, "-") && node.rhs != null && node.lhs == null) {
-            if (node.rhs.type == ExpressionNode.CONSTANT) {
-                try {
-                    return -Numbers.parseInt(node.rhs.token);
-                } catch (NumericException e) {
-                    return 0;
-                }
+        if (node.type == ExpressionNode.OPERATION && Chars.equals(node.token, '-') && node.lhs == null) {
+            if (node.rhs != null && node.rhs.type == ExpressionNode.CONSTANT) {
+                return -Numbers.parseInt(node.rhs.token);
             }
         }
-        return 0;
+        throw NumericException.instance().put("integer constant expected");
     }
 
     private CharSequence getStrFromFunction(
@@ -1968,7 +1959,7 @@ public final class WhereClauseParser implements Mutable {
 
     /**
      * Checks if a node represents a constant integer value.
-     * Handles both direct constants (e.g., "15") and unary minus of constants (e.g., "-15").
+     * Handles both direct constant (e.g., "15") and unary minus of a constant (e.g. "-15").
      */
     private boolean isConstantInt(ExpressionNode node) {
         if (node.type == ExpressionNode.CONSTANT) {
@@ -1980,8 +1971,8 @@ public final class WhereClauseParser implements Mutable {
             }
         }
         // Handle unary minus: node is OPERATION with token "-" and rhs is a constant
-        if (node.type == ExpressionNode.OPERATION && Chars.equals(node.token, "-") && node.rhs != null && node.lhs == null) {
-            if (node.rhs.type == ExpressionNode.CONSTANT) {
+        if (node.type == ExpressionNode.OPERATION && Chars.equals(node.token, '-') && node.lhs == null) {
+            if (node.rhs != null && node.rhs.type == ExpressionNode.CONSTANT) {
                 try {
                     Numbers.parseInt(node.rhs.token);
                     return true;
@@ -1995,7 +1986,37 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean isCorrectType(int type) {
         return type != ExpressionNode.OPERATION;
+    }
 
+    /**
+     * Checks if node is dateadd(const_period, const_stride, designated_timestamp).
+     *
+     * @param node the expression node to check
+     * @return true the dateadd node if it matches the pattern, false otherwise
+     */
+    private boolean isDateaddOnTimestamp(ExpressionNode node) {
+        if (node == null || timestamp == null) {
+            return false;
+        }
+        if (node.type != ExpressionNode.FUNCTION
+                || !Chars.equalsLowerCaseAscii(node.token, "dateadd")
+                || node.args.size() != 3) {
+            return false;
+        }
+        // Args are in reverse order: args[0]=timestamp, args[1]=stride, args[2]=period
+        final ExpressionNode timestampArg = node.args.getQuick(0);
+        final ExpressionNode strideArg = node.args.getQuick(1);
+        final ExpressionNode periodArg = node.args.getQuick(2);
+        // Check timestamp arg is the designated timestamp column
+        if (timestampArg.type != ExpressionNode.LITERAL || !isTimestamp(timestampArg)) {
+            return false;
+        }
+        // Check period is a constant char (e.g., 'm', 'd', 'h')
+        if (periodArg.type != ExpressionNode.CONSTANT) {
+            return false;
+        }
+        // Check stride is a constant integer (either a direct constant or unary minus of constant)
+        return isConstantInt(strideArg);
     }
 
     private boolean isGeoHashConstFunction(Function fn) {
@@ -2010,9 +2031,9 @@ public final class WhereClauseParser implements Mutable {
         return Chars.equalsIgnoreCaseNc(n.token, timestamp);
     }
 
-    //calculates intersect of existing and new set for IN ()
-    //and sum of existing and new set for NOT IN ()
-    //returns false when there's a type clash between items with the same 'key', e.g. ':id' literal and :id bind variable
+    // calculates intersect of existing and new set for IN ()
+    // and sum of existing and new set for NOT IN ()
+    // returns false when there's a type clash between items with the same 'key', e.g. ':id' literal and :id bind variable
     private boolean mergeKeys(IntrinsicModel model, boolean includedValues) {
         CharSequenceHashSet values;
         IntList positions;
@@ -2030,14 +2051,14 @@ public final class WhereClauseParser implements Mutable {
         tempP.clear();
         tempT.clear();
 
-        if (includedValues) {//intersect
+        if (includedValues) { // intersect
             for (int i = 0, k = tempKeys.size(); i < k; i++) {
                 if (values.contains(tempKeys.get(i)) && tempK.add(tempKeys.get(i))) {
                     tempP.add(tempPos.get(i));
                     tempT.add(tempType.get(i));
                 }
             }
-        } else {//sum
+        } else { // sum
             tempK.addAll(values);
             tempP.addAll(positions);
             tempT.addAll(types);
@@ -2315,7 +2336,6 @@ public final class WhereClauseParser implements Mutable {
                 tryRewriteDateaddComparison(expressionNodePool, node);
             }
         }
-
         // Check for BETWEEN: dateadd() BETWEEN lo AND hi
         if (isBetweenKeyword(node.token) && node.paramCount == 3 && node.args.size() >= 3) {
             tryRewriteDateaddBetween(expressionNodePool, node);
@@ -2341,11 +2361,9 @@ public final class WhereClauseParser implements Mutable {
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
                 if (isAndKeyword(node.token)) {
-                    // For AND nodes, push rhs to stack and continue with lhs
                     stack.push(node.rhs);
                     node = node.lhs;
                 } else {
-                    // Process non-AND node
                     rewriteDateaddNode(expressionNodePool, node);
                     node = stack.poll();
                 }
@@ -2389,65 +2407,23 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
-     * Checks if node is dateadd(const_period, const_stride, designated_timestamp).
-     *
-     * @param node the expression node to check
-     * @return the dateadd node if it matches the pattern, null otherwise
-     */
-    private ExpressionNode tryExtractDateaddOnTimestamp(ExpressionNode node) {
-        if (node == null || timestamp == null) {
-            return null;
-        }
-        if (node.type != ExpressionNode.FUNCTION) {
-            return null;
-        }
-        if (!Chars.equalsLowerCaseAscii(node.token, "dateadd")) {
-            return null;
-        }
-        if (node.paramCount != 3 || node.args.size() != 3) {
-            return null;
-        }
-        // Args are in reverse order: args[0]=timestamp, args[1]=stride, args[2]=period
-        ExpressionNode timestampArg = node.args.getQuick(0);
-        ExpressionNode strideArg = node.args.getQuick(1);
-        ExpressionNode periodArg = node.args.getQuick(2);
-
-        // Check timestamp arg is the designated timestamp column
-        if (timestampArg.type != ExpressionNode.LITERAL || !isTimestamp(timestampArg)) {
-            return null;
-        }
-        // Check period is a constant char (e.g., 'm', 'd', 'h')
-        if (periodArg.type != ExpressionNode.CONSTANT) {
-            return null;
-        }
-        // Check stride is a constant integer (either a direct constant or unary minus of constant)
-        if (!isConstantInt(strideArg)) {
-            return null;
-        }
-        return node;
-    }
-
-    /**
      * Tries to rewrite a BETWEEN node if the column is wrapped in dateadd.
      * <p>
      * Transforms: dateadd(p, s, ts) BETWEEN lo AND hi  ->  ts BETWEEN dateadd(p, -s, lo) AND dateadd(p, -s, hi)
      */
     private void tryRewriteDateaddBetween(ObjectPool<ExpressionNode> expressionNodePool, ExpressionNode node) {
         // Args are in reverse order: args[0]=hi, args[1]=lo, args[2]=col (or last element)
-        ExpressionNode col = node.args.getLast();
-        ExpressionNode dateaddNode = tryExtractDateaddOnTimestamp(col);
-        if (dateaddNode != null) {
-            ExpressionNode lo = node.args.getQuick(1);
-            ExpressionNode hi = node.args.getQuick(0);
-
-            ExpressionNode transformedLo = createInverseDateadd(expressionNodePool, dateaddNode, lo);
-            ExpressionNode transformedHi = createInverseDateadd(expressionNodePool, dateaddNode, hi);
-
-            if (transformedLo != null && transformedHi != null) {
+        final ExpressionNode col = node.args.getLast();
+        if (isDateaddOnTimestamp(col)) {
+            final ExpressionNode lo = node.args.getQuick(1);
+            final ExpressionNode hi = node.args.getQuick(0);
+            final ExpressionNode inverseLo = createInverseDateadd(expressionNodePool, col, lo);
+            final ExpressionNode inverseHi = createInverseDateadd(expressionNodePool, col, hi);
+            if (inverseLo != null && inverseHi != null) {
                 // Replace the column with the unwrapped timestamp
-                node.args.setQuick(node.args.size() - 1, dateaddNode.args.getQuick(0));
-                node.args.setQuick(1, transformedLo);
-                node.args.setQuick(0, transformedHi);
+                node.args.setQuick(node.args.size() - 1, col.args.getQuick(0));
+                node.args.setQuick(1, inverseLo);
+                node.args.setQuick(0, inverseHi);
             }
         }
     }
@@ -2459,26 +2435,21 @@ public final class WhereClauseParser implements Mutable {
      * If RHS is dateadd(period, stride, ts), transforms to: dateadd(period, -stride, LHS) OP ts
      */
     private void tryRewriteDateaddComparison(ObjectPool<ExpressionNode> expressionNodePool, ExpressionNode node) {
-        // Try LHS
-        ExpressionNode dateaddNode = tryExtractDateaddOnTimestamp(node.lhs);
-        if (dateaddNode != null) {
-            ExpressionNode transformedRhs = createInverseDateadd(expressionNodePool, dateaddNode, node.rhs);
-            if (transformedRhs != null) {
+        if (isDateaddOnTimestamp(node.lhs)) {
+            final ExpressionNode dateadd = node.lhs;
+            final ExpressionNode inverseDateadd = createInverseDateadd(expressionNodePool, dateadd, node.rhs);
+            if (inverseDateadd != null) {
                 // Replace: dateadd(p, s, ts) OP value  ->  ts OP dateadd(p, -s, value)
-                node.lhs = dateaddNode.args.getQuick(0); // the timestamp column
-                node.rhs = transformedRhs;
+                node.lhs = dateadd.args.getQuick(0); // the timestamp column
+                node.rhs = inverseDateadd;
             }
-            return;
-        }
-
-        // Try RHS
-        dateaddNode = tryExtractDateaddOnTimestamp(node.rhs);
-        if (dateaddNode != null) {
-            ExpressionNode transformedLhs = createInverseDateadd(expressionNodePool, dateaddNode, node.lhs);
-            if (transformedLhs != null) {
+        } else if (isDateaddOnTimestamp(node.rhs)) {
+            final ExpressionNode dateadd = node.rhs;
+            final ExpressionNode inverseDateadd = createInverseDateadd(expressionNodePool, dateadd, node.lhs);
+            if (inverseDateadd != null) {
                 // Replace: value OP dateadd(p, s, ts)  ->  dateadd(p, -s, value) OP ts
-                node.lhs = transformedLhs;
-                node.rhs = dateaddNode.args.getQuick(0); // the timestamp column
+                node.lhs = inverseDateadd;
+                node.rhs = dateadd.args.getQuick(0); // the timestamp column
             }
         }
     }
