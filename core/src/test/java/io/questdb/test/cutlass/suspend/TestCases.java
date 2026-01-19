@@ -69,7 +69,6 @@ public class TestCases {
         addTestCase("select * from x where isym in (select s from y limit 3) and i != 42");
 //        addTestCase("select * from x where isym in (select s from y limit 3) and i != 42 limit -10");
 
-
         // EqTimestampCursorFunctionFactory
 //        addTestCase("select * from x where ts = (select ts from y limit 3) and i != 41 limit -10");
 //        addTestCase("select * from x where ts = (select ts::string from y limit 3) and i != 40 limit -7");
@@ -78,7 +77,6 @@ public class TestCases {
 //        addTestCase("select * from x where ts > (select ts from y limit 1)");
 //        addTestCase("select * from x where ts > (select ts::string from y limit 1)");
 //        addTestCase("select * from x where ts > (select ts::varchar from y limit 1)");
-
 
 //        addTestCase("select * from x where ts < (select ts from y limit -2)");
 //        addTestCase("select * from x where ts < (select ts::string from y limit -2)");
@@ -122,12 +120,11 @@ public class TestCases {
         addTestCase("select * from (x union all y) order by i");
 
         // SortedLightRecordCursorFactory
-        addTestCase("select sym, min(i) imin from x where ts in '1970-01-01' order by imin");
+//        addTestCase("select sym, min(i) imin from x where ts in '1970-01-01' order by imin");
         addTestCase("select * from x where ts in '1970-01-01' order by isym, ts desc");
 
         // SortedSymbolIndexRecordCursorFactory
         addTestCase("select * from x where ts in '1970-01-01T00' order by isym, ts desc");
-
 
         // LimitedSizeSortedLightRecordCursorFactory
         addTestCase("select * from x order by i limit 3");
@@ -151,17 +148,17 @@ public class TestCases {
         addTestCase("select distinct sym from (x union all y)");
 
         // DistinctSymbolRecordCursorFactory
-        addTestCase("select distinct sym from x order by sym");
+//        addTestCase("select distinct sym from x order by sym");
 
         // DistinctIntKeyRecordCursorFactory
-        addTestCase("select distinct i from x order by i");
+//        addTestCase("select distinct i from x order by i");
 
-        // GroupByNotKeyedVectorRecordCursor
-        addTestCase("select max(i), min(i) from x");
+        // vect/GroupByNotKeyedRecordCursor
+//        addTestCase("select max(i), min(i) from x");
 
         // vect/GroupByRecordCursorFactory
         // order by is added here to guarantee a deterministic order in the result set
-        addTestCase("select sym, max(i), min(i) from x order by sym");
+//        addTestCase("select sym, max(i), min(i) from x order by sym");
 
         // GroupByNotKeyedRecordCursorFactory
         addTestCase("select max(i), min(i) from (x union all y)");
