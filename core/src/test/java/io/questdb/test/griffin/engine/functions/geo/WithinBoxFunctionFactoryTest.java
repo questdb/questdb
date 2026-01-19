@@ -29,7 +29,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
+public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testInWhereClause() throws Exception {
@@ -46,7 +46,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                             5.0\t5.0
                             0.0\t0.0
                             """,
-                    "select x, y from points where geo_within_box(x, y, 0.0, 0.0, 10.0, 10.0)"
+                    "select x, y from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)"
             );
         });
     }
@@ -55,56 +55,56 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
     public void testInfinity() throws Exception {
         // Note: QuestDB's division converts Infinity to NaN (see DivDoubleFunctionFactory),
         // so 1.0/0.0 produces NaN, not Infinity. These tests verify NaN handling.
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(1.0/0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(-1.0/0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(1.0/0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(-1.0/0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testInvertedBoxX() throws Exception {
         // min_x > max_x should return false
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, 5.0, 10.0, 0.0, 0.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 10.0, 0.0, 0.0, 10.0)");
     }
 
     @Test
     public void testInvertedBoxY() throws Exception {
         // min_y > max_y should return false
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, 5.0, 0.0, 10.0, 10.0, 0.0)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 0.0, 10.0, 10.0, 0.0)");
     }
 
     @Test
     public void testNaNMaxX() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, 5.0, 0.0, 0.0, NaN, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 0.0, 0.0, NaN, 10.0)");
     }
 
     @Test
     public void testNaNMaxY() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, 5.0, 0.0, 0.0, 10.0, NaN)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 0.0, 0.0, 10.0, NaN)");
     }
 
     @Test
     public void testNaNMinX() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, 5.0, NaN, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, NaN, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testNaNMinY() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, 5.0, 0.0, NaN, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 0.0, NaN, 10.0, 10.0)");
     }
 
     @Test
     public void testNaNX() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(NaN, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(NaN, 5.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testNaNY() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, NaN, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, NaN, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testNegativeCoordinates() throws Exception {
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(-5.0, -5.0, -10.0, -10.0, 0.0, 0.0)");
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(-15.0, -5.0, -10.0, -10.0, 0.0, 0.0)");
+        assertSql("within_box\ntrue\n", "select within_box(-5.0, -5.0, -10.0, -10.0, 0.0, 0.0)");
+        assertSql("within_box\nfalse\n", "select within_box(-15.0, -5.0, -10.0, -10.0, 0.0, 0.0)");
     }
 
     @Test
@@ -120,68 +120,68 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                             QUERY PLAN
                             Empty table
                             """,
-                    "explain select * from points where geo_within_box(x, y, 10.0, 0.0, 0.0, 10.0)"
+                    "explain select * from points where within_box(x, y, 10.0, 0.0, 0.0, 10.0)"
             );
         });
     }
 
     @Test
     public void testPointInsideBox() throws Exception {
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(5.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(5.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testPointOnCorner() throws Exception {
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(0.0, 0.0, 0.0, 0.0, 10.0, 10.0)");
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(10.0, 10.0, 0.0, 0.0, 10.0, 10.0)");
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(0.0, 10.0, 0.0, 0.0, 10.0, 10.0)");
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(10.0, 0.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(0.0, 0.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(10.0, 10.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(0.0, 10.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(10.0, 0.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testPointOnMaxXBoundary() throws Exception {
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(10.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(10.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testPointOnMaxYBoundary() throws Exception {
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(5.0, 10.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(5.0, 10.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testPointOnMinXBoundary() throws Exception {
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testPointOnMinYBoundary() throws Exception {
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(5.0, 0.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(5.0, 0.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testPointOutsideBoxAbove() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, 11.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, 11.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testPointOutsideBoxBelow() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, -1.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, -1.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testPointOutsideBoxLeft() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(-1.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(-1.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testPointOutsideBoxRight() throws Exception {
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(11.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(11.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
     }
 
     @Test
     public void testVerySmallDifferences() throws Exception {
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(1.0000000001, 1.0, 1.0, 1.0, 2.0, 2.0)");
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(0.9999999999, 1.0, 1.0, 1.0, 2.0, 2.0)");
+        assertSql("within_box\ntrue\n", "select within_box(1.0000000001, 1.0, 1.0, 1.0, 2.0, 2.0)");
+        assertSql("within_box\nfalse\n", "select within_box(0.9999999999, 1.0, 1.0, 1.0, 2.0, 2.0)");
     }
 
     @Test
@@ -199,7 +199,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                             null\t5.0\tfalse
                             5.0\tnull\tfalse
                             """,
-                    "select x, y, geo_within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points"
+                    "select x, y, within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points"
             );
         });
     }
@@ -221,7 +221,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                             5.0\t11.0\tfalse
                             0.0\t0.0\ttrue
                             """,
-                    "select x, y, geo_within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points"
+                    "select x, y, within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points"
             );
         });
     }
@@ -229,9 +229,9 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testZeroSizedBox() throws Exception {
         // Point exactly at zero-sized box location
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(5.0, 5.0, 5.0, 5.0, 5.0, 5.0)");
+        assertSql("within_box\ntrue\n", "select within_box(5.0, 5.0, 5.0, 5.0, 5.0, 5.0)");
         // Point not at zero-sized box location
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(5.0, 5.0, 6.0, 6.0, 6.0, 6.0)");
+        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 6.0, 6.0, 6.0, 6.0)");
     }
 
     @Test
@@ -247,7 +247,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                             QUERY PLAN
                             Empty table
                             """,
-                    "explain select * from points where geo_within_box(x, y, NaN, 0.0, 10.0, 10.0)"
+                    "explain select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)"
             );
 
             // Should return no rows
@@ -255,7 +255,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                     """
                             x\ty
                             """,
-                    "select * from points where geo_within_box(x, y, NaN, 0.0, 10.0, 10.0)"
+                    "select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)"
             );
         });
     }
@@ -271,12 +271,12 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                     """
                             QUERY PLAN
                             Async Filter workers: 1
-                              filter: geo_within_box(x,y,0.0,0.0,10.0,10.0)
+                              filter: within_box(x,y,0.0,0.0,10.0,10.0)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: points
                             """,
-                    "explain select * from points where geo_within_box(x, y, 0.0, 0.0, 10.0, 10.0)"
+                    "explain select * from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)"
             );
         });
     }
@@ -295,7 +295,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                             5.0\t5.0\t0.0\t0.0\t10.0\t10.0\ttrue
                             15.0\t5.0\t0.0\t0.0\t10.0\t10.0\tfalse
                             """,
-                    "select *, geo_within_box(x, y, minX, minY, maxX, maxY) as inside from points"
+                    "select *, within_box(x, y, minX, minY, maxX, maxY) as inside from points"
             );
         });
     }
@@ -307,9 +307,9 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
         // Edge case: -0.0 on exact boundary returns false due to branchless bit comparison.
         // This is documented behavior - -0.0 has sign bit 1, making (x - minX) = -0.0 appear negative.
         // In practice, this edge case is extremely rare and acceptable for performance.
-        assertSql("geo_within_box\nfalse\n", "select geo_within_box(-0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertSql("within_box\nfalse\n", "select within_box(-0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
         // -0.0 in box bounds works correctly when point is clearly inside
-        assertSql("geo_within_box\ntrue\n", "select geo_within_box(5.0, 5.0, -0.0, -0.0, 10.0, 10.0)");
+        assertSql("within_box\ntrue\n", "select within_box(5.0, 5.0, -0.0, -0.0, 10.0, 10.0)");
     }
 
     @Test
@@ -325,8 +325,8 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        // Query with geo_within_box filter - box from (0,0) to (50,50)
-                        String sql = "select count(*) from points where geo_within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
+                        // Query with within_box filter - box from (0,0) to (50,50)
+                        String sql = "select count(*) from points where within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
 
                         // Verify the query plan shows parallel execution
                         TestUtils.assertSql(
@@ -338,7 +338,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                                         QUERY PLAN
                                         Count
                                             Async Filter workers: 4
-                                              filter: geo_within_box(x,y,0.0,0.0,50.0,50.0)
+                                              filter: within_box(x,y,0.0,0.0,50.0,50.0)
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: points
@@ -362,7 +362,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testParallelFilterVerifyCorrectness() throws Exception {
-        // Create dataset and verify geo_within_box gives same results as manual bounds check
+        // Create dataset and verify within_box gives same results as manual bounds check
         execute("create table points as (" +
                 "select " +
                 "  (rnd_double() * 200 - 100) x, " +
@@ -373,8 +373,8 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        // Compare geo_within_box result with equivalent manual bounds check
-                        String geoWithinBoxQuery = "select count(*) from points where geo_within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
+                        // Compare within_box result with equivalent manual bounds check
+                        String geoWithinBoxQuery = "select count(*) from points where within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
                         String manualBoundsQuery = "select count(*) from points where x >= 0.0 and x <= 50.0 and y >= 0.0 and y <= 50.0";
 
                         // Both queries should return the same count
@@ -405,7 +405,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        String sql = "select count(*) from points where geo_within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
+                        String sql = "select count(*) from points where within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
 
                         // Run query and verify results are consistent
                         TestUtils.assertSqlCursors(
@@ -439,7 +439,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values ('p4', 15.0, 15.0)");   // in no zone
             execute("insert into points values ('p5', 0.0, 0.0)");     // on zone_a boundary
 
-            // Join points with zones using geo_within_box
+            // Join points with zones using within_box
             assertSql(
                     """
                             point_id\tx\ty\tzone_name
@@ -450,7 +450,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                             """,
                     "select p.point_id, p.x, p.y, z.zone_name " +
                             "from points p " +
-                            "join zones z on geo_within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                            "join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
                             "order by p.point_id"
             );
         });
@@ -481,7 +481,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                             """,
                     "select p.point_id, z.zone_name " +
                             "from points p, zones z " +
-                            "where geo_within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                            "where within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
                             "order by p.point_id, z.zone_name"
             );
         });
@@ -508,7 +508,7 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
                             """,
                     "select p.point_id, z.zone_name " +
                             "from points p " +
-                            "left join zones z on geo_within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                            "left join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
                             "order by p.point_id"
             );
         });

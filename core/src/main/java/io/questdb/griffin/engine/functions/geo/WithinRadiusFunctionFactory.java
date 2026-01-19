@@ -40,23 +40,32 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
- * Returns true if point (x, y) is within the bounding box defined by
- * (min_x, min_y) to (max_x, max_y), inclusive.
+ * Returns true if point (x, y) is within radius distance of (center_x, center_y), inclusive.
+ * Uses Cartesian/Euclidean distance.
  * <p>
- * Signature: geo_within_box(x, y, min_x, min_y, max_x, max_y)
+ * Signature: within_radius(x, y, center_x, center_y, radius)
  * <p>
  * Edge cases:
  * <ul>
  *   <li>Returns false if any input is NaN</li>
  *   <li>Returns true if point is exactly on the boundary (inclusive)</li>
- *   <li>Returns false if box is inverted (min > max)</li>
- *   <li>Returns false if point coordinate is -0.0 and box boundary is +0.0 (rare edge case)</li>
+ *   <li>Returns false if radius is negative</li>
  * </ul>
  */
 @SuppressWarnings("unused")
-public class GeoWithinBoxFunctionFactory implements FunctionFactory {
+public class WithinRadiusFunctionFactory implements FunctionFactory {
     // Threshold for NaN detection: values with (bits & 0x7FFFFFFFFFFFFFFF) > this are NaN
     private static final long INF_BITS = 0x7FF0000000000000L;
+
+    @Override
+    public String getSignature() {
+        return "within_radius(DDDDD)";
+    }
+
+    @Override
+    public boolean isBoolean() {
+        return true;
+    }
 
     @Override
     public Function newInstance(
@@ -68,100 +77,74 @@ public class GeoWithinBoxFunctionFactory implements FunctionFactory {
     ) {
         final Function xFunc = args.getQuick(0);
         final Function yFunc = args.getQuick(1);
-        final Function minXFunc = args.getQuick(2);
-        final Function minYFunc = args.getQuick(3);
-        final Function maxXFunc = args.getQuick(4);
-        final Function maxYFunc = args.getQuick(5);
+        final Function centerXFunc = args.getQuick(2);
+        final Function centerYFunc = args.getQuick(3);
+        final Function radiusFunc = args.getQuick(4);
 
-        // Optimization: if bounding box is constant, pre-validate and use optimized function
-        if (minXFunc.isConstant() && minYFunc.isConstant() && maxXFunc.isConstant() && maxYFunc.isConstant()) {
-            final double minX = minXFunc.getDouble(null);
-            final double minY = minYFunc.getDouble(null);
-            final double maxX = maxXFunc.getDouble(null);
-            final double maxY = maxYFunc.getDouble(null);
+        // Optimization: if center and radius are constant, pre-validate and use optimized function
+        if (centerXFunc.isConstant() && centerYFunc.isConstant() && radiusFunc.isConstant()) {
+            final double centerX = centerXFunc.getDouble(null);
+            final double centerY = centerYFunc.getDouble(null);
+            final double radius = radiusFunc.getDouble(null);
 
-            // Check for NaN or inverted box - if invalid, always return false
-            if (Numbers.isNull(minX) || Numbers.isNull(minY) || Numbers.isNull(maxX) || Numbers.isNull(maxY)
-                    || minX > maxX || minY > maxY) {
+            // Check for NaN or negative radius - if invalid, always return false
+            if (Numbers.isNull(centerX) || Numbers.isNull(centerY) || Numbers.isNull(radius) || radius < 0) {
                 return BooleanConstant.FALSE;
             }
 
-            return new ConstBoxGeoWithinBoxFunction(xFunc, yFunc, minX, minY, maxX, maxY);
+            final double radiusSq = radius * radius;
+            return new ConstRadiusGeoWithinRadiusFunction(xFunc, yFunc, centerX, centerY, radius, radiusSq);
         }
 
-        return new GeoWithinBoxFunction(xFunc, yFunc, minXFunc, minYFunc, maxXFunc, maxYFunc);
-    }
-
-    @Override
-    public String getSignature() {
-        return "geo_within_box(DDDDDD)";
-    }
-
-    @Override
-    public boolean isBoolean() {
-        return true;
+        return new GeoWithinRadiusFunction(xFunc, yFunc, centerXFunc, centerYFunc, radiusFunc);
     }
 
     /**
-     * Branchless check if point (x, y) is within box [minX, maxX] x [minY, maxY].
-     * Returns true if inside (inclusive), false if outside or any value is NaN.
+     * Branchless check if point (x, y) is within radius of (centerX, centerY).
+     * Returns true if inside (inclusive), false if outside, NaN, or negative radius.
      */
-    private static boolean isWithinBox(double x, double y, double minX, double minY, double maxX, double maxY) {
-        // Compute boundary differences
-        final double dx1 = x - minX;
-        final double dx2 = maxX - x;
-        final double dy1 = y - minY;
-        final double dy2 = maxY - y;
+    private static boolean isWithinRadius(double x, double y, double centerX, double centerY, double radiusSq) {
+        final double dx = x - centerX;
+        final double dy = y - centerY;
+        final double diff = radiusSq - (dx * dx + dy * dy);
 
         // Convert to raw bits for branchless comparison
-        final long b1 = Double.doubleToRawLongBits(dx1);
-        final long b2 = Double.doubleToRawLongBits(dx2);
-        final long b3 = Double.doubleToRawLongBits(dy1);
-        final long b4 = Double.doubleToRawLongBits(dy2);
-
-        // Sign check: OR propagates sign bit. Result < 0 if ANY difference is negative.
-        final long signCheck = b1 | b2 | b3 | b4;
+        final long bits = Double.doubleToRawLongBits(diff);
 
         // NaN check: A value is NaN iff (bits & 0x7FFFFFFFFFFFFFFF) > INF_BITS.
         // We compute INF_BITS - (bits & 0x7FFFFFFFFFFFFFFF), which is < 0 for NaN.
-        // OR propagates negativity: result < 0 if ANY difference is NaN.
-        final long n1 = INF_BITS - (b1 & 0x7FFFFFFFFFFFFFFFL);
-        final long n2 = INF_BITS - (b2 & 0x7FFFFFFFFFFFFFFFL);
-        final long n3 = INF_BITS - (b3 & 0x7FFFFFFFFFFFFFFFL);
-        final long n4 = INF_BITS - (b4 & 0x7FFFFFFFFFFFFFFFL);
-        final long nanCheck = n1 | n2 | n3 | n4;
+        final long nanCheck = INF_BITS - (bits & 0x7FFFFFFFFFFFFFFFL);
 
-        // Point is inside iff both checks pass (both >= 0).
-        // OR propagates sign bit: (a | b) >= 0 iff both a >= 0 and b >= 0.
-        return (signCheck | nanCheck) >= 0;
+        // Point is inside iff diff >= 0 (bits >= 0) and not NaN (nanCheck >= 0).
+        return (bits | nanCheck) >= 0;
     }
 
     /**
-     * Optimized function for the common case where bounding box is constant.
-     * Pre-validates box at construction and stores bounds as primitives.
+     * Optimized function for the common case where center and radius are constant.
+     * Pre-validates inputs at construction and stores radiusSq.
      */
-    private static class ConstBoxGeoWithinBoxFunction extends BooleanFunction {
-        private final double maxX;
-        private final double maxY;
-        private final double minX;
-        private final double minY;
+    private static class ConstRadiusGeoWithinRadiusFunction extends BooleanFunction {
+        private final double centerX;
+        private final double centerY;
+        private final double radius;
+        private final double radiusSq;
         private final Function xFunc;
         private final Function yFunc;
 
-        public ConstBoxGeoWithinBoxFunction(
+        public ConstRadiusGeoWithinRadiusFunction(
                 Function xFunc,
                 Function yFunc,
-                double minX,
-                double minY,
-                double maxX,
-                double maxY
+                double centerX,
+                double centerY,
+                double radius,
+                double radiusSq
         ) {
             this.xFunc = xFunc;
             this.yFunc = yFunc;
-            this.minX = minX;
-            this.minY = minY;
-            this.maxX = maxX;
-            this.maxY = maxY;
+            this.centerX = centerX;
+            this.centerY = centerY;
+            this.radius = radius;
+            this.radiusSq = radiusSq;
         }
 
         @Override
@@ -178,7 +161,7 @@ public class GeoWithinBoxFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return isWithinBox(xFunc.getDouble(rec), yFunc.getDouble(rec), minX, minY, maxX, maxY);
+            return isWithinRadius(xFunc.getDouble(rec), yFunc.getDouble(rec), centerX, centerY, radiusSq);
         }
 
         @Override
@@ -197,11 +180,10 @@ public class GeoWithinBoxFunctionFactory implements FunctionFactory {
             if (this == other) {
                 return true;
             }
-            if (other instanceof ConstBoxGeoWithinBoxFunction that) {
-                return minX == that.minX
-                        && minY == that.minY
-                        && maxX == that.maxX
-                        && maxY == that.maxY
+            if (other instanceof ConstRadiusGeoWithinRadiusFunction that) {
+                return centerX == that.centerX
+                        && centerY == that.centerY
+                        && radius == that.radius
                         && xFunc.isEquivalentTo(that.xFunc)
                         && yFunc.isEquivalentTo(that.yFunc);
             }
@@ -246,13 +228,12 @@ public class GeoWithinBoxFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("geo_within_box(")
+            sink.val("within_radius(")
                     .val(xFunc).val(',')
                     .val(yFunc).val(',')
-                    .val(minX).val(',')
-                    .val(minY).val(',')
-                    .val(maxX).val(',')
-                    .val(maxY).val(')');
+                    .val(centerX).val(',')
+                    .val(centerY).val(',')
+                    .val(radius).val(')');
         }
 
         @Override
@@ -262,59 +243,58 @@ public class GeoWithinBoxFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class GeoWithinBoxFunction extends BooleanFunction {
+    private static class GeoWithinRadiusFunction extends BooleanFunction {
+        private final Function centerXFunc;
+        private final Function centerYFunc;
+        private final Function radiusFunc;
         private final Function xFunc;
         private final Function yFunc;
-        private final Function maxXFunc;
-        private final Function maxYFunc;
-        private final Function minXFunc;
-        private final Function minYFunc;
 
-        public GeoWithinBoxFunction(
+        public GeoWithinRadiusFunction(
                 Function xFunc,
                 Function yFunc,
-                Function minXFunc,
-                Function minYFunc,
-                Function maxXFunc,
-                Function maxYFunc
+                Function centerXFunc,
+                Function centerYFunc,
+                Function radiusFunc
         ) {
             this.xFunc = xFunc;
             this.yFunc = yFunc;
-            this.minXFunc = minXFunc;
-            this.minYFunc = minYFunc;
-            this.maxXFunc = maxXFunc;
-            this.maxYFunc = maxYFunc;
+            this.centerXFunc = centerXFunc;
+            this.centerYFunc = centerYFunc;
+            this.radiusFunc = radiusFunc;
         }
 
         @Override
         public void close() {
             Misc.free(xFunc);
             Misc.free(yFunc);
-            Misc.free(minXFunc);
-            Misc.free(minYFunc);
-            Misc.free(maxXFunc);
-            Misc.free(maxYFunc);
+            Misc.free(centerXFunc);
+            Misc.free(centerYFunc);
+            Misc.free(radiusFunc);
         }
 
         @Override
         public void cursorClosed() {
             xFunc.cursorClosed();
             yFunc.cursorClosed();
-            minXFunc.cursorClosed();
-            minYFunc.cursorClosed();
-            maxXFunc.cursorClosed();
-            maxYFunc.cursorClosed();
+            centerXFunc.cursorClosed();
+            centerYFunc.cursorClosed();
+            radiusFunc.cursorClosed();
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return isWithinBox(
+            final double radius = radiusFunc.getDouble(rec);
+            // Negative radius check - must be done before squaring
+            if (radius < 0) {
+                return false;
+            }
+            return isWithinRadius(
                     xFunc.getDouble(rec),
                     yFunc.getDouble(rec),
-                    minXFunc.getDouble(rec),
-                    minYFunc.getDouble(rec),
-                    maxXFunc.getDouble(rec),
-                    maxYFunc.getDouble(rec)
+                    centerXFunc.getDouble(rec),
+                    centerYFunc.getDouble(rec),
+                    radius * radius
             );
         }
 
@@ -322,20 +302,18 @@ public class GeoWithinBoxFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             xFunc.init(symbolTableSource, executionContext);
             yFunc.init(symbolTableSource, executionContext);
-            minXFunc.init(symbolTableSource, executionContext);
-            minYFunc.init(symbolTableSource, executionContext);
-            maxXFunc.init(symbolTableSource, executionContext);
-            maxYFunc.init(symbolTableSource, executionContext);
+            centerXFunc.init(symbolTableSource, executionContext);
+            centerYFunc.init(symbolTableSource, executionContext);
+            radiusFunc.init(symbolTableSource, executionContext);
         }
 
         @Override
         public boolean isConstant() {
             return xFunc.isConstant()
                     && yFunc.isConstant()
-                    && minXFunc.isConstant()
-                    && minYFunc.isConstant()
-                    && maxXFunc.isConstant()
-                    && maxYFunc.isConstant();
+                    && centerXFunc.isConstant()
+                    && centerYFunc.isConstant()
+                    && radiusFunc.isConstant();
         }
 
         @Override
@@ -343,13 +321,12 @@ public class GeoWithinBoxFunctionFactory implements FunctionFactory {
             if (this == other) {
                 return true;
             }
-            if (other instanceof GeoWithinBoxFunction that) {
+            if (other instanceof GeoWithinRadiusFunction that) {
                 return xFunc.isEquivalentTo(that.xFunc)
                         && yFunc.isEquivalentTo(that.yFunc)
-                        && minXFunc.isEquivalentTo(that.minXFunc)
-                        && minYFunc.isEquivalentTo(that.minYFunc)
-                        && maxXFunc.isEquivalentTo(that.maxXFunc)
-                        && maxYFunc.isEquivalentTo(that.maxYFunc);
+                        && centerXFunc.isEquivalentTo(that.centerXFunc)
+                        && centerYFunc.isEquivalentTo(that.centerYFunc)
+                        && radiusFunc.isEquivalentTo(that.radiusFunc);
             }
             return false;
         }
@@ -358,91 +335,82 @@ public class GeoWithinBoxFunctionFactory implements FunctionFactory {
         public boolean isNonDeterministic() {
             return xFunc.isNonDeterministic()
                     || yFunc.isNonDeterministic()
-                    || minXFunc.isNonDeterministic()
-                    || minYFunc.isNonDeterministic()
-                    || maxXFunc.isNonDeterministic()
-                    || maxYFunc.isNonDeterministic();
+                    || centerXFunc.isNonDeterministic()
+                    || centerYFunc.isNonDeterministic()
+                    || radiusFunc.isNonDeterministic();
         }
 
         @Override
         public boolean isRandom() {
             return xFunc.isRandom()
                     || yFunc.isRandom()
-                    || minXFunc.isRandom()
-                    || minYFunc.isRandom()
-                    || maxXFunc.isRandom()
-                    || maxYFunc.isRandom();
+                    || centerXFunc.isRandom()
+                    || centerYFunc.isRandom()
+                    || radiusFunc.isRandom();
         }
 
         @Override
         public boolean isRuntimeConstant() {
             return (xFunc.isConstant() || xFunc.isRuntimeConstant())
                     && (yFunc.isConstant() || yFunc.isRuntimeConstant())
-                    && (minXFunc.isConstant() || minXFunc.isRuntimeConstant())
-                    && (minYFunc.isConstant() || minYFunc.isRuntimeConstant())
-                    && (maxXFunc.isConstant() || maxXFunc.isRuntimeConstant())
-                    && (maxYFunc.isConstant() || maxYFunc.isRuntimeConstant());
+                    && (centerXFunc.isConstant() || centerXFunc.isRuntimeConstant())
+                    && (centerYFunc.isConstant() || centerYFunc.isRuntimeConstant())
+                    && (radiusFunc.isConstant() || radiusFunc.isRuntimeConstant());
         }
 
         @Override
         public boolean isThreadSafe() {
             return xFunc.isThreadSafe()
                     && yFunc.isThreadSafe()
-                    && minXFunc.isThreadSafe()
-                    && minYFunc.isThreadSafe()
-                    && maxXFunc.isThreadSafe()
-                    && maxYFunc.isThreadSafe();
+                    && centerXFunc.isThreadSafe()
+                    && centerYFunc.isThreadSafe()
+                    && radiusFunc.isThreadSafe();
         }
 
         @Override
         public boolean shouldMemoize() {
             return xFunc.shouldMemoize()
                     || yFunc.shouldMemoize()
-                    || minXFunc.shouldMemoize()
-                    || minYFunc.shouldMemoize()
-                    || maxXFunc.shouldMemoize()
-                    || maxYFunc.shouldMemoize();
+                    || centerXFunc.shouldMemoize()
+                    || centerYFunc.shouldMemoize()
+                    || radiusFunc.shouldMemoize();
         }
 
         @Override
         public boolean supportsParallelism() {
             return xFunc.supportsParallelism()
                     && yFunc.supportsParallelism()
-                    && minXFunc.supportsParallelism()
-                    && minYFunc.supportsParallelism()
-                    && maxXFunc.supportsParallelism()
-                    && maxYFunc.supportsParallelism();
+                    && centerXFunc.supportsParallelism()
+                    && centerYFunc.supportsParallelism()
+                    && radiusFunc.supportsParallelism();
         }
 
         @Override
         public boolean supportsRandomAccess() {
             return xFunc.supportsRandomAccess()
                     && yFunc.supportsRandomAccess()
-                    && minXFunc.supportsRandomAccess()
-                    && minYFunc.supportsRandomAccess()
-                    && maxXFunc.supportsRandomAccess()
-                    && maxYFunc.supportsRandomAccess();
+                    && centerXFunc.supportsRandomAccess()
+                    && centerYFunc.supportsRandomAccess()
+                    && radiusFunc.supportsRandomAccess();
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("geo_within_box(")
+            sink.val("within_radius(")
                     .val(xFunc).val(',')
                     .val(yFunc).val(',')
-                    .val(minXFunc).val(',')
-                    .val(minYFunc).val(',')
-                    .val(maxXFunc).val(',')
-                    .val(maxYFunc).val(')');
+                    .val(centerXFunc).val(',')
+                    .val(centerYFunc).val(',')
+                    .val(radiusFunc).val(')');
         }
 
         @Override
         public void toTop() {
             xFunc.toTop();
             yFunc.toTop();
-            minXFunc.toTop();
-            minYFunc.toTop();
-            maxXFunc.toTop();
-            maxYFunc.toTop();
+            centerXFunc.toTop();
+            centerYFunc.toTop();
+            radiusFunc.toTop();
         }
     }
 }

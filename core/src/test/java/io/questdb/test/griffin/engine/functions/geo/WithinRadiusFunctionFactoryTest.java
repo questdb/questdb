@@ -29,7 +29,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
+public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstantNegativeRadius() throws Exception {
@@ -43,7 +43,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                             QUERY PLAN
                             Empty table
                             """,
-                    "explain select * from points where geo_within_radius(x, y, 0.0, 0.0, -5.0)"
+                    "explain select * from points where within_radius(x, y, 0.0, 0.0, -5.0)"
             );
         });
     }
@@ -60,7 +60,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                             QUERY PLAN
                             Empty table
                             """,
-                    "explain select * from points where geo_within_radius(x, y, 0.0, 0.0, NaN)"
+                    "explain select * from points where within_radius(x, y, 0.0, 0.0, NaN)"
             );
         });
     }
@@ -75,12 +75,12 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                     """
                             QUERY PLAN
                             Async Filter workers: 1
-                              filter: geo_within_radius(x,y,0.0,0.0,10.0)
+                              filter: within_radius(x,y,0.0,0.0,10.0)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: points
                             """,
-                    "explain select * from points where geo_within_radius(x, y, 0.0, 0.0, 10.0)"
+                    "explain select * from points where within_radius(x, y, 0.0, 0.0, 10.0)"
             );
         });
     }
@@ -100,7 +100,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                             5.0\t5.0\t4.0\t4.0\ttrue
                             5.0\t5.0\t20.0\t20.0\tfalse
                             """,
-                    "select x, y, cx, cy, geo_within_radius(x, y, cx, cy, 10.0) as inside from points"
+                    "select x, y, cx, cy, within_radius(x, y, cx, cy, 10.0) as inside from points"
             );
         });
     }
@@ -120,7 +120,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                             3.0\t4.0\t4.0\tfalse
                             3.0\t4.0\t10.0\ttrue
                             """,
-                    "select x, y, radius, geo_within_radius(x, y, 0.0, 0.0, radius) as inside from points"
+                    "select x, y, radius, within_radius(x, y, 0.0, 0.0, radius) as inside from points"
             );
         });
     }
@@ -141,59 +141,59 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                             0.0\t0.0
                             6.0\t8.0
                             """,
-                    "select x, y from points where geo_within_radius(x, y, 0.0, 0.0, 10.0)"
+                    "select x, y from points where within_radius(x, y, 0.0, 0.0, 10.0)"
             );
         });
     }
 
     @Test
     public void testLargeRadius() throws Exception {
-        assertSql("geo_within_radius\ntrue\n", "select geo_within_radius(1000000.0, 1000000.0, 0.0, 0.0, 2000000.0)");
+        assertSql("within_radius\ntrue\n", "select within_radius(1000000.0, 1000000.0, 0.0, 0.0, 2000000.0)");
     }
 
     @Test
     public void testNaNCenterX() throws Exception {
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(0.0, 0.0, NaN, 0.0, 10.0)");
+        assertSql("within_radius\nfalse\n", "select within_radius(0.0, 0.0, NaN, 0.0, 10.0)");
     }
 
     @Test
     public void testNaNCenterY() throws Exception {
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(0.0, 0.0, 0.0, NaN, 10.0)");
+        assertSql("within_radius\nfalse\n", "select within_radius(0.0, 0.0, 0.0, NaN, 10.0)");
     }
 
     @Test
     public void testNaNRadius() throws Exception {
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(0.0, 0.0, 0.0, 0.0, NaN)");
+        assertSql("within_radius\nfalse\n", "select within_radius(0.0, 0.0, 0.0, 0.0, NaN)");
     }
 
     @Test
     public void testNaNX() throws Exception {
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(NaN, 0.0, 0.0, 0.0, 10.0)");
+        assertSql("within_radius\nfalse\n", "select within_radius(NaN, 0.0, 0.0, 0.0, 10.0)");
     }
 
     @Test
     public void testNaNY() throws Exception {
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(0.0, NaN, 0.0, 0.0, 10.0)");
+        assertSql("within_radius\nfalse\n", "select within_radius(0.0, NaN, 0.0, 0.0, 10.0)");
     }
 
     @Test
     public void testNegativeCoordinates() throws Exception {
         // Point (-3, -4) is distance 5 from origin
-        assertSql("geo_within_radius\ntrue\n", "select geo_within_radius(-3.0, -4.0, 0.0, 0.0, 5.0)");
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(-3.0, -4.0, 0.0, 0.0, 4.0)");
+        assertSql("within_radius\ntrue\n", "select within_radius(-3.0, -4.0, 0.0, 0.0, 5.0)");
+        assertSql("within_radius\nfalse\n", "select within_radius(-3.0, -4.0, 0.0, 0.0, 4.0)");
     }
 
     @Test
     public void testNegativeRadius() throws Exception {
         // Negative radius should return false
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(0.0, 0.0, 0.0, 0.0, -5.0)");
+        assertSql("within_radius\nfalse\n", "select within_radius(0.0, 0.0, 0.0, 0.0, -5.0)");
     }
 
     @Test
     public void testNonOriginCenter() throws Exception {
         // Point (13, 14) is distance 5 from center (10, 10)
-        assertSql("geo_within_radius\ntrue\n", "select geo_within_radius(13.0, 14.0, 10.0, 10.0, 5.0)");
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(13.0, 14.0, 10.0, 10.0, 4.0)");
+        assertSql("within_radius\ntrue\n", "select within_radius(13.0, 14.0, 10.0, 10.0, 5.0)");
+        assertSql("within_radius\nfalse\n", "select within_radius(13.0, 14.0, 10.0, 10.0, 4.0)");
     }
 
     @Test
@@ -208,7 +208,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        String sql = "select count(*) from points where geo_within_radius(x, y, 0.0, 0.0, 50.0)";
+                        String sql = "select count(*) from points where within_radius(x, y, 0.0, 0.0, 50.0)";
 
                         // Verify the query plan shows parallel execution
                         TestUtils.assertSql(
@@ -220,7 +220,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                                         QUERY PLAN
                                         Count
                                             Async Filter workers: 4
-                                              filter: geo_within_radius(x,y,0.0,0.0,50.0)
+                                              filter: within_radius(x,y,0.0,0.0,50.0)
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: points
@@ -254,9 +254,9 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        // Compare geo_within_radius result with equivalent manual distance check
+                        // Compare within_radius result with equivalent manual distance check
                         // radius 50, so radius^2 = 2500
-                        String geoWithinRadiusQuery = "select count(*) from points where geo_within_radius(x, y, 0.0, 0.0, 50.0)";
+                        String geoWithinRadiusQuery = "select count(*) from points where within_radius(x, y, 0.0, 0.0, 50.0)";
                         String manualDistanceQuery = "select count(*) from points where (x * x + y * y) <= 2500.0";
 
                         // Both queries should return the same count
@@ -286,7 +286,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        String sql = "select count(*) from points where geo_within_radius(x, y, 0.0, 0.0, 50.0)";
+                        String sql = "select count(*) from points where within_radius(x, y, 0.0, 0.0, 50.0)";
 
                         // Run query and verify results are consistent
                         TestUtils.assertSqlCursors(
@@ -305,13 +305,13 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPointAtCenter() throws Exception {
-        assertSql("geo_within_radius\ntrue\n", "select geo_within_radius(5.0, 5.0, 5.0, 5.0, 10.0)");
+        assertSql("within_radius\ntrue\n", "select within_radius(5.0, 5.0, 5.0, 5.0, 10.0)");
     }
 
     @Test
     public void testPointExactlyOnBoundary() throws Exception {
         // Point (3, 4) is exactly distance 5 from origin
-        assertSql("geo_within_radius\ntrue\n", "select geo_within_radius(3.0, 4.0, 0.0, 0.0, 5.0)");
+        assertSql("within_radius\ntrue\n", "select within_radius(3.0, 4.0, 0.0, 0.0, 5.0)");
     }
 
     // Tests for constant radius optimization
@@ -319,19 +319,19 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testPointInsideRadius() throws Exception {
         // Point (3, 4) is distance 5 from origin, radius is 10
-        assertSql("geo_within_radius\ntrue\n", "select geo_within_radius(3.0, 4.0, 0.0, 0.0, 10.0)");
+        assertSql("within_radius\ntrue\n", "select within_radius(3.0, 4.0, 0.0, 0.0, 10.0)");
     }
 
     @Test
     public void testPointOutsideRadius() throws Exception {
         // Point (10, 10) is distance ~14.14 from origin, radius is 10
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(10.0, 10.0, 0.0, 0.0, 10.0)");
+        assertSql("within_radius\nfalse\n", "select within_radius(10.0, 10.0, 0.0, 0.0, 10.0)");
     }
 
     @Test
     public void testVerySmallRadius() throws Exception {
-        assertSql("geo_within_radius\ntrue\n", "select geo_within_radius(0.0, 0.0, 0.0, 0.0, 0.0000001)");
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(0.0001, 0.0, 0.0, 0.0, 0.0000001)");
+        assertSql("within_radius\ntrue\n", "select within_radius(0.0, 0.0, 0.0, 0.0, 0.0000001)");
+        assertSql("within_radius\nfalse\n", "select within_radius(0.0001, 0.0, 0.0, 0.0, 0.0000001)");
     }
 
     @Test
@@ -349,7 +349,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                             null\t4.0\tfalse
                             3.0\tnull\tfalse
                             """,
-                    "select x, y, geo_within_radius(x, y, 0.0, 0.0, 10.0) as inside from points"
+                    "select x, y, within_radius(x, y, 0.0, 0.0, 10.0) as inside from points"
             );
         });
     }
@@ -371,7 +371,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                             10.0\t10.0\tfalse
                             0.0\t0.0\ttrue
                             """,
-                    "select x, y, geo_within_radius(x, y, 0.0, 0.0, 10.0) as inside from points"
+                    "select x, y, within_radius(x, y, 0.0, 0.0, 10.0) as inside from points"
             );
         });
     }
@@ -379,8 +379,8 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testZeroRadius() throws Exception {
         // Only the center point should be inside
-        assertSql("geo_within_radius\ntrue\n", "select geo_within_radius(5.0, 5.0, 5.0, 5.0, 0.0)");
-        assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(5.1, 5.0, 5.0, 5.0, 0.0)");
+        assertSql("within_radius\ntrue\n", "select within_radius(5.0, 5.0, 5.0, 5.0, 0.0)");
+        assertSql("within_radius\nfalse\n", "select within_radius(5.1, 5.0, 5.0, 5.0, 0.0)");
     }
 
     @Test
@@ -409,7 +409,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                             """,
                     "select d.detection_id, s.sensor_id " +
                             "from detections d " +
-                            "join sensors s on geo_within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
+                            "join sensors s on within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
                             "order by d.detection_id, s.sensor_id"
             );
         });
@@ -436,7 +436,7 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                             """,
                     "select d.detection_id, s.sensor_id " +
                             "from detections d, sensors s " +
-                            "where geo_within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
+                            "where within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
                             "order by d.detection_id, s.sensor_id"
             );
         });
