@@ -382,4 +382,63 @@ public class GeoWithinRadiusFunctionFactoryTest extends AbstractCairoTest {
         assertSql("geo_within_radius\ntrue\n", "select geo_within_radius(5.0, 5.0, 5.0, 5.0, 0.0)");
         assertSql("geo_within_radius\nfalse\n", "select geo_within_radius(5.1, 5.0, 5.0, 5.0, 0.0)");
     }
+
+    @Test
+    public void testJoinWithSensorsTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create sensors table with detection zones (center + radius)
+            execute("create table sensors (sensor_id symbol, center_x double, center_y double, range double)");
+            execute("insert into sensors values ('s1', 0.0, 0.0, 10.0)");
+            execute("insert into sensors values ('s2', 20.0, 20.0, 5.0)");
+            execute("insert into sensors values ('s3', 50.0, 50.0, 15.0)");
+
+            // Create detections table with points
+            execute("create table detections (detection_id symbol, x double, y double)");
+            execute("insert into detections values ('d1', 3.0, 4.0)");    // distance 5 from s1, in range
+            execute("insert into detections values ('d2', 22.0, 22.0)");  // distance ~2.83 from s2, in range
+            execute("insert into detections values ('d3', 100.0, 100.0)");// far from all sensors
+            execute("insert into detections values ('d4', 10.0, 0.0)");   // exactly on s1 boundary
+
+            // Join detections with sensors to find which sensor detected each point
+            assertSql(
+                    """
+                            detection_id\tsensor_id
+                            d1\ts1
+                            d2\ts2
+                            d4\ts1
+                            """,
+                    "select d.detection_id, s.sensor_id " +
+                            "from detections d " +
+                            "join sensors s on geo_within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
+                            "order by d.detection_id, s.sensor_id"
+            );
+        });
+    }
+
+    @Test
+    public void testCrossJoinWithOverlappingSensors() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create overlapping sensor zones
+            execute("create table sensors (sensor_id symbol, center_x double, center_y double, range double)");
+            execute("insert into sensors values ('s1', 0.0, 0.0, 15.0)");
+            execute("insert into sensors values ('s2', 10.0, 0.0, 15.0)");  // overlaps with s1
+
+            // Point in overlap region
+            execute("create table detections (detection_id symbol, x double, y double)");
+            execute("insert into detections values ('d1', 5.0, 0.0)");  // distance 5 from both
+
+            // Should match both sensors
+            assertSql(
+                    """
+                            detection_id\tsensor_id
+                            d1\ts1
+                            d1\ts2
+                            """,
+                    "select d.detection_id, s.sensor_id " +
+                            "from detections d, sensors s " +
+                            "where geo_within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
+                            "order by d.detection_id, s.sensor_id"
+            );
+        });
+    }
 }

@@ -370,4 +370,97 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
             );
         }
     }
+
+    @Test
+    public void testJoinOnDistanceLessThanThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create warehouses table
+            execute("create table warehouses (warehouse_id symbol, lat double, lon double, max_delivery_km double)");
+            execute("insert into warehouses values ('w1', 40.7580, -73.9855, 0.5)");   // Times Square, 500m
+            execute("insert into warehouses values ('w2', 40.7484, -73.9857, 0.5)");   // Empire State, 500m (~1070m from w1)
+
+            // Create orders table
+            // Note: 0.001 degree lat ≈ 111m
+            execute("create table orders (order_id symbol, lat double, lon double)");
+            execute("insert into orders values ('o1', 40.7582, -73.9855)");  // ~22m from w1, ~1090m from w2
+            execute("insert into orders values ('o2', 40.7486, -73.9857)");  // ~1048m from w1, ~22m from w2
+            execute("insert into orders values ('o3', 40.7200, -73.9900)");  // far from both
+
+            // Join orders with warehouses where distance < max_delivery (converted to meters)
+            // o1 should only match w1, o2 should only match w2, o3 matches nothing
+            assertSql(
+                    """
+                            order_id\twarehouse_id
+                            o1\tw1
+                            o2\tw2
+                            """,
+                    "select o.order_id, w.warehouse_id " +
+                            "from orders o " +
+                            "join warehouses w on geo_distance_meters(o.lat, o.lon, w.lat, w.lon) < w.max_delivery_km * 1000.0 " +
+                            "order by o.order_id, w.warehouse_id"
+            );
+        });
+    }
+
+    @Test
+    public void testJoinWithDistanceInSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create locations table
+            execute("create table locations (name symbol, lat double, lon double)");
+            execute("insert into locations values ('times_square', 40.7580, -73.9855)");
+            execute("insert into locations values ('empire_state', 40.7484, -73.9857)");
+
+            // Create points of interest
+            execute("create table pois (poi_name symbol, lat double, lon double)");
+            execute("insert into pois values ('central_park', 40.7829, -73.9654)");
+            execute("insert into pois values ('bryant_park', 40.7536, -73.9832)");
+
+            // Cross join to get distance matrix - verify distances are in expected ranges
+            // Bryant Park is ~500-650m from both, Central Park is ~3000-4300m
+            assertSql(
+                    """
+                            name\tpoi_name\tin_range
+                            empire_state\tbryant_park\ttrue
+                            empire_state\tcentral_park\ttrue
+                            times_square\tbryant_park\ttrue
+                            times_square\tcentral_park\ttrue
+                            """,
+                    "select l.name, p.poi_name, " +
+                            "case " +
+                            "  when p.poi_name = 'bryant_park' then geo_distance_meters(l.lat, l.lon, p.lat, p.lon) >= 500.0 and geo_distance_meters(l.lat, l.lon, p.lat, p.lon) <= 650.0 " +
+                            "  else geo_distance_meters(l.lat, l.lon, p.lat, p.lon) >= 3000.0 and geo_distance_meters(l.lat, l.lon, p.lat, p.lon) <= 4300.0 " +
+                            "end as in_range " +
+                            "from locations l, pois p " +
+                            "order by l.name, p.poi_name"
+            );
+        });
+    }
+
+    @Test
+    public void testFindNearestWithJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create reference points
+            execute("create table refs (ref_id symbol, lat double, lon double)");
+            execute("insert into refs values ('r1', 40.7580, -73.9855)");
+
+            // Create candidates
+            execute("create table candidates (candidate_id symbol, lat double, lon double)");
+            execute("insert into candidates values ('c1', 40.7590, -73.9855)");  // ~111m north
+            execute("insert into candidates values ('c2', 40.7600, -73.9855)");  // ~222m north
+            execute("insert into candidates values ('c3', 40.7570, -73.9855)");  // ~111m south
+
+            // Find closest candidate to each reference point
+            assertSql(
+                    """
+                            ref_id\tcandidate_id
+                            r1\tc1
+                            r1\tc3
+                            """,
+                    "select r.ref_id, c.candidate_id " +
+                            "from refs r " +
+                            "join candidates c on geo_distance_meters(r.lat, r.lon, c.lat, c.lon) < 150.0 " +
+                            "order by r.ref_id, c.candidate_id"
+            );
+        });
+    }
 }

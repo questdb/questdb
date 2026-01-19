@@ -421,4 +421,96 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
             );
         }
     }
+
+    @Test
+    public void testJoinWithZonesTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create zones table with named regions
+            execute("create table zones (zone_name symbol, min_x double, min_y double, max_x double, max_y double)");
+            execute("insert into zones values ('zone_a', 0.0, 0.0, 10.0, 10.0)");
+            execute("insert into zones values ('zone_b', 20.0, 20.0, 30.0, 30.0)");
+            execute("insert into zones values ('zone_c', -10.0, -10.0, -5.0, -5.0)");
+
+            // Create points table
+            execute("create table points (point_id symbol, x double, y double)");
+            execute("insert into points values ('p1', 5.0, 5.0)");     // in zone_a
+            execute("insert into points values ('p2', 25.0, 25.0)");   // in zone_b
+            execute("insert into points values ('p3', -7.0, -7.0)");   // in zone_c
+            execute("insert into points values ('p4', 15.0, 15.0)");   // in no zone
+            execute("insert into points values ('p5', 0.0, 0.0)");     // on zone_a boundary
+
+            // Join points with zones using geo_within_box
+            assertSql(
+                    """
+                            point_id\tx\ty\tzone_name
+                            p1\t5.0\t5.0\tzone_a
+                            p2\t25.0\t25.0\tzone_b
+                            p3\t-7.0\t-7.0\tzone_c
+                            p5\t0.0\t0.0\tzone_a
+                            """,
+                    "select p.point_id, p.x, p.y, z.zone_name " +
+                            "from points p " +
+                            "join zones z on geo_within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                            "order by p.point_id"
+            );
+        });
+    }
+
+    @Test
+    public void testCrossJoinWithZonesFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create zones table
+            execute("create table zones (zone_name symbol, min_x double, min_y double, max_x double, max_y double)");
+            execute("insert into zones values ('north', 0.0, 50.0, 100.0, 100.0)");
+            execute("insert into zones values ('south', 0.0, 0.0, 100.0, 50.0)");
+
+            // Create points table
+            execute("create table points (point_id symbol, x double, y double)");
+            execute("insert into points values ('p1', 25.0, 75.0)");   // in north
+            execute("insert into points values ('p2', 25.0, 25.0)");   // in south
+            execute("insert into points values ('p3', 50.0, 50.0)");   // on boundary (in both due to inclusive)
+
+            // Cross join with filter - point on boundary should appear in both zones
+            assertSql(
+                    """
+                            point_id\tzone_name
+                            p1\tnorth
+                            p2\tsouth
+                            p3\tnorth
+                            p3\tsouth
+                            """,
+                    "select p.point_id, z.zone_name " +
+                            "from points p, zones z " +
+                            "where geo_within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                            "order by p.point_id, z.zone_name"
+            );
+        });
+    }
+
+    @Test
+    public void testLeftJoinWithZones() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create zones table
+            execute("create table zones (zone_name symbol, min_x double, min_y double, max_x double, max_y double)");
+            execute("insert into zones values ('zone_a', 0.0, 0.0, 10.0, 10.0)");
+
+            // Create points table with some points outside any zone
+            execute("create table points (point_id symbol, x double, y double)");
+            execute("insert into points values ('inside', 5.0, 5.0)");
+            execute("insert into points values ('outside', 50.0, 50.0)");
+
+            // Left join to see which points have matching zones
+            assertSql(
+                    """
+                            point_id\tzone_name
+                            inside\tzone_a
+                            outside\t
+                            """,
+                    "select p.point_id, z.zone_name " +
+                            "from points p " +
+                            "left join zones z on geo_within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                            "order by p.point_id"
+            );
+        });
+    }
 }

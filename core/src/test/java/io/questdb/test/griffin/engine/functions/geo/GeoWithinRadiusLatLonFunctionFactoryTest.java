@@ -567,4 +567,61 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
         assertSql("geo_within_radius_latlon\ntrue\n",
                 "select geo_within_radius_latlon(0.0, -180.0, 0.0, -180.0, 100.0)");
     }
+
+    @Test
+    public void testJoinWithStoresTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create stores table with locations and delivery radius in meters
+            execute("create table stores (store_name symbol, lat double, lon double, delivery_radius double)");
+            execute("insert into stores values ('store_a', 40.7580, -73.9855, 500.0)");   // Times Square, 500m radius
+            execute("insert into stores values ('store_b', 40.7484, -73.9857, 300.0)");   // Empire State, 300m radius
+
+            // Create customers table with locations
+            // Note: 0.001 degree lat ≈ 111m, 0.001 degree lon at lat 40 ≈ 85m
+            execute("create table customers (customer_id symbol, lat double, lon double)");
+            execute("insert into customers values ('c1', 40.7582, -73.9850)");  // ~55m from store_a
+            execute("insert into customers values ('c2', 40.7486, -73.9855)");  // ~22m from store_b
+            execute("insert into customers values ('c3', 40.7300, -73.9900)");  // far from both
+
+            // Join to find which stores can deliver to each customer
+            assertSql(
+                    """
+                            customer_id\tstore_name
+                            c1\tstore_a
+                            c2\tstore_b
+                            """,
+                    "select c.customer_id, s.store_name " +
+                            "from customers c " +
+                            "join stores s on geo_within_radius_latlon(c.lat, c.lon, s.lat, s.lon, s.delivery_radius) " +
+                            "order by c.customer_id, s.store_name"
+            );
+        });
+    }
+
+    @Test
+    public void testCrossJoinWithOverlappingDeliveryZones() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create stores with overlapping delivery zones
+            execute("create table stores (store_name symbol, lat double, lon double, delivery_radius double)");
+            execute("insert into stores values ('store_a', 40.7580, -73.9855, 1000.0)");  // 1km radius
+            execute("insert into stores values ('store_b', 40.7590, -73.9855, 1000.0)");  // 1km radius, ~111m north
+
+            // Customer in overlap zone
+            execute("create table customers (customer_id symbol, lat double, lon double)");
+            execute("insert into customers values ('c1', 40.7585, -73.9855)");  // between both stores
+
+            // Should match both stores
+            assertSql(
+                    """
+                            customer_id\tstore_name
+                            c1\tstore_a
+                            c1\tstore_b
+                            """,
+                    "select c.customer_id, s.store_name " +
+                            "from customers c, stores s " +
+                            "where geo_within_radius_latlon(c.lat, c.lon, s.lat, s.lon, s.delivery_radius) " +
+                            "order by c.customer_id, s.store_name"
+            );
+        });
+    }
 }
