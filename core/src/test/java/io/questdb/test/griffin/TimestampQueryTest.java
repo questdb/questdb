@@ -1545,6 +1545,14 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "select min(nts), max(nts) from tt where nts in ('2020-01-01T12:00', '2020-01-01')");
 
             expected = """
+                    min	max
+                    2020-01-01T12:00:00.000000Z	2020-01-01T12:00:00.000000Z
+                    """;
+            assertTimestampTtQuery(
+                    expected,
+                    "select min(nts), max(nts) from tt where nts = '2020-01-01T12:00'");
+
+            expected = """
                     min\tmax
                     2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z
                     """;

@@ -3264,12 +3264,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampEqualsOrSingleValues() throws Exception {
         // timestamp = 'value' OR timestamp = 'value2' should use interval scan
-        // Values are parsed as intervals (e.g., '2018-01-01' spans full day)
+        // Values are parsed as point intervals [ts, ts]
         IntrinsicModel m = modelOf("timestamp = '2018-01-01' or timestamp = '2018-01-02'");
         Assert.assertTrue(m.hasIntervalFilters());
         assertFilter(m, null);
         TestUtils.assertEquals(
-                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T23:59:59.999999Z}]"),
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T00:00:00.000000Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T00:00:00.000000Z}]"),
                 intervalToString(m)
         );
     }
@@ -3277,11 +3277,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampMixedInAndEqualsOr() throws Exception {
         // Mixed: timestamp IN 'value' OR timestamp = 'value2'
+        // IN 'value' gives full-day interval, = 'value' gives point interval
         IntrinsicModel m = modelOf("timestamp in '2018-01-01' or timestamp = '2018-01-02'");
         Assert.assertTrue(m.hasIntervalFilters());
         assertFilter(m, null);
         TestUtils.assertEquals(
-                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T23:59:59.999999Z}]"),
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T00:00:00.000000Z}]"),
                 intervalToString(m)
         );
     }
@@ -3301,12 +3302,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampOrNotExtractedWhenIntervalFilterFirst() throws Exception {
+    public void testTimestampOrExtractedWhenIntervalFilterFirst() throws Exception {
         // When interval filter is processed first (appears in lhs of AND),
-        // OR extraction is skipped and left in filter
+        // OR clauses are still extracted into interval filters
         IntrinsicModel m = modelOf("timestamp between '2020-01-01' and '2020-12-31' and (timestamp in '2020-06-01' or timestamp in '2020-07-01')");
         Assert.assertTrue(m.hasIntervalFilters());
-        // OR is left in filter because interval filter was already set
+        // Both OR intervals are extracted and intersected with the BETWEEN range
         TestUtils.assertEquals(
                 replaceTimestampSuffix("[{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z},{lo=2020-07-01T00:00:00.000000Z, hi=2020-07-01T23:59:59.999999Z}]"),
                 intervalToString(m)
