@@ -53,6 +53,7 @@ import io.questdb.std.ObjList;
  *   <li>Returns false if point coordinate is -0.0 and box boundary is +0.0 (rare edge case)</li>
  * </ul>
  */
+@SuppressWarnings("unused")
 public class GeoWithinBoxFunctionFactory implements FunctionFactory {
     // Threshold for NaN detection: values with (bits & 0x7FFFFFFFFFFFFFFF) > this are NaN
     private static final long INF_BITS = 0x7FF0000000000000L;

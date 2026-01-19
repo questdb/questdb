@@ -57,6 +57,7 @@ import io.questdb.std.ObjList;
  *   <li>At poles (lat ±90), cosLat approaches 0 - still works but less accurate</li>
  * </ul>
  */
+@SuppressWarnings("unused")
 public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
     // Threshold for NaN detection: values with (bits & 0x7FFFFFFFFFFFFFFF) > this are NaN
     private static final long INF_BITS = 0x7FF0000000000000L;

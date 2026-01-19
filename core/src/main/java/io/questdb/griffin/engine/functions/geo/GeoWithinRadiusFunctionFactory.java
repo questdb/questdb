@@ -52,6 +52,7 @@ import io.questdb.std.ObjList;
  *   <li>Returns false if radius is negative</li>
  * </ul>
  */
+@SuppressWarnings("unused")
 public class GeoWithinRadiusFunctionFactory implements FunctionFactory {
     // Threshold for NaN detection: values with (bits & 0x7FFFFFFFFFFFFFFF) > this are NaN
     private static final long INF_BITS = 0x7FF0000000000000L;

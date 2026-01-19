@@ -56,6 +56,7 @@ import io.questdb.std.ObjList;
  *   <li>Throws error for invalid longitude (outside -180 to 180)</li>
  * </ul>
  */
+@SuppressWarnings("unused")
 public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
     // Approximate meters per degree of latitude (constant everywhere on Earth)
     private static final double METERS_PER_DEG = 111_320.0;
@@ -138,7 +139,7 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isEquivalentTo(Function other) {
-            return this == other || other instanceof ConstNaNFunction;
+            return other instanceof ConstNaNFunction;
         }
 
         @Override
