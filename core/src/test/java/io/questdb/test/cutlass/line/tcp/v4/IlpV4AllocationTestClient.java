@@ -293,7 +293,7 @@ public class IlpV4AllocationTestClient {
             System.out.println("Batch size: " + String.format("%,d", batchSize));
             System.out.println("Total time: " + String.format("%.2f", totalSeconds) + " seconds");
             System.out.println("Throughput: " + String.format("%,.0f", rowsPerSecond) + " rows/second");
-            System.out.println("Data rate: " + String.format("%.2f", (totalRows * estimatedRowSize()) / (1024.0 * 1024.0 * totalSeconds)) + " MB/s (estimated)");
+            System.out.println("Data rate (before compression): " + String.format("%.2f", ((long)totalRows * estimatedRowSize()) / (1024.0 * 1024.0 * totalSeconds)) + " MB/s (estimated)");
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
