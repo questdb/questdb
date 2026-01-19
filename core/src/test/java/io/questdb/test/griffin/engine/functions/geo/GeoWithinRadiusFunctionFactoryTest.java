@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.bool;
+package io.questdb.test.griffin.engine.functions.geo;
 
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;

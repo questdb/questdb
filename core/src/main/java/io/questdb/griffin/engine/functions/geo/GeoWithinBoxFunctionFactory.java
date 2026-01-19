@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bool;
+package io.questdb.griffin.engine.functions.geo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -189,6 +189,22 @@ public class GeoWithinBoxFunctionFactory implements FunctionFactory {
         @Override
         public boolean isConstant() {
             return xFunc.isConstant() && yFunc.isConstant();
+        }
+
+        @Override
+        public boolean isEquivalentTo(Function other) {
+            if (this == other) {
+                return true;
+            }
+            if (other instanceof ConstBoxGeoWithinBoxFunction that) {
+                return minX == that.minX
+                        && minY == that.minY
+                        && maxX == that.maxX
+                        && maxY == that.maxY
+                        && xFunc.isEquivalentTo(that.xFunc)
+                        && yFunc.isEquivalentTo(that.yFunc);
+            }
+            return false;
         }
 
         @Override

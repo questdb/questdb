@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bool;
+package io.questdb.griffin.engine.functions.geo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -175,6 +175,21 @@ public class GeoWithinRadiusFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isEquivalentTo(Function other) {
+            if (this == other) {
+                return true;
+            }
+            if (other instanceof ConstRadiusGeoWithinRadiusFunction that) {
+                return centerX == that.centerX
+                        && centerY == that.centerY
+                        && radius == that.radius
+                        && xFunc.isEquivalentTo(that.xFunc)
+                        && yFunc.isEquivalentTo(that.yFunc);
+            }
+            return false;
+        }
+
+        @Override
         public boolean isNonDeterministic() {
             return xFunc.isNonDeterministic() || yFunc.isNonDeterministic();
         }
@@ -298,6 +313,21 @@ public class GeoWithinRadiusFunctionFactory implements FunctionFactory {
                     && centerXFunc.isConstant()
                     && centerYFunc.isConstant()
                     && radiusFunc.isConstant();
+        }
+
+        @Override
+        public boolean isEquivalentTo(Function other) {
+            if (this == other) {
+                return true;
+            }
+            if (other instanceof GeoWithinRadiusFunction that) {
+                return xFunc.isEquivalentTo(that.xFunc)
+                        && yFunc.isEquivalentTo(that.yFunc)
+                        && centerXFunc.isEquivalentTo(that.centerXFunc)
+                        && centerYFunc.isEquivalentTo(that.centerYFunc)
+                        && radiusFunc.isEquivalentTo(that.radiusFunc);
+            }
+            return false;
         }
 
         @Override
