@@ -5280,6 +5280,10 @@ public class SqlOptimiser implements Mutable {
                 wc.of(alias, node);
             }
             windowModel.addBottomUpColumn(wc);
+            // Register in hash map for future deduplication lookups
+            // (ensures findDuplicateWindowFunction can find this window when processing later columns)
+            int hash = ExpressionNode.deepHashCode(node);
+            registerWindowFunction(wc, hash);
             // Emit literals referenced by the window column to inner models
             emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
             return nextLiteral(alias);
