@@ -7713,6 +7713,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testMissingExpressionInOrderByThrowsCorrectErrorMessage() throws Exception {
+        assertSyntaxError("SELECT a,b,c FROM t1 ORDER BY col1,,col2;", 35,
+                "literal or expression expected"
+        );
+
+        assertSyntaxError(
+                "SELECT  a,\n" +
+                        "  CASE \n" +
+                        "    WHEN col10 > '3975' THEN col7 \n" +
+                        "    WHEN col5 < '4045' FILL -3754167527262084558 \n" +
+                        "  END\n" +
+                        "FROM t1 \n" +
+                        "ORDER BY col1,,col2;", 133,
+                "literal or expression expected"
+        );
+    }
+
+    @Test
     public void testMissingTable() throws Exception {
         assertSyntaxError(
                 "select a from",
@@ -7965,7 +7983,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testNonWindowFunctionInWindowContext() throws Exception {
         assertException(
-                "select ksum(price) over (partition by symbol) from trades",
+                "select nsum(price) over (partition by symbol) from trades",
                 "create table trades " +
                         "(" +
                         " price double," +
@@ -8110,70 +8128,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("c", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionSimple() throws Exception {
-        // Basic window function without cast - should work
-        assertQuery(
-                "select-window row_number() row_number over (order by ts) from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
-                "SELECT row_number() OVER (ORDER BY ts) FROM x",
-                modelOf("x")
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionCastNoParen() throws Exception {
-        // Window function with cast - the window function is extracted to select-window,
-        // and the cast operation references it by alias in select-virtual
-        assertQuery(
-                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
-                "SELECT row_number() OVER (ORDER BY ts)::string FROM x",
-                modelOf("x")
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionCastToString() throws Exception {
-        // Window function with cast AND outer parentheses - same structure as without parentheses
-        assertQuery(
-                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
-                "SELECT (row_number() OVER (ORDER BY ts))::string FROM x",
-                modelOf("x")
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionArithmeticTwoWindows() throws Exception {
-        // Two window functions in arithmetic operation - sum() is both aggregate and window function name,
-        // but with OVER clause it should be treated as window function, not GROUP BY aggregate
-        assertQuery(
-                "select-virtual sum - lag id_diff from (select-window [lag(id) lag over (order by ts), sum(id) sum over (order by ts)] lag(id) lag over (order by ts), sum(id) sum over (order by ts) from (select [id, ts] from x timestamp (ts)))",
-                "SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x",
-                modelOf("x")
-                        .col("id", ColumnType.LONG)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionInCaseExpression() throws Exception {
-        // Window function directly inside CASE WHEN condition (two WHEN clauses with same window function)
-        // Both window functions are extracted to select-window layer with different aliases
-        assertQuery(
-                "select-virtual case when row_number = 1 then 'first' when row_number1 = 3 then 'last' else 'middle' end category from (select-window [row_number() row_number over (order by ts), row_number() row_number1 over (order by ts)] row_number() row_number over (order by ts), row_number() row_number1 over (order by ts) from (select [ts] from x timestamp (ts)))",
-                "SELECT CASE " +
-                        "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
-                        "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
-                        "  ELSE 'middle' " +
-                        "END AS category " +
-                        "FROM x",
-                modelOf("x")
                         .timestamp("ts")
         );
     }
@@ -12364,6 +12318,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUnbalancedRightParenthesesThrowsCorrectErrorMessage() throws Exception {
+        assertSyntaxError("SELECT a,b+c) from t1;", 12,
+                "unexpected token [)]"
+        );
+        assertSyntaxError("SELECT ts, col6 AS a1, CASE WHEN col5 <> '192.168.150.217' THEN 754326 WHEN col1 = false THEN '' " +
+                        "WHEN ts <= ''''qocvwy'''' THEN col4 ELSE sym END, col4, -109639495026, '1986-05-10T21:39:17Z', '" +
+                        "2026-07-22T10:32:41.213795Z',) col2 AS a2, 'p', 0.0 AS a3 FROM t1 a4 LT JOIN t2 " +
+                        "a5 ON a4.timestamp = a5.timestamp LEFT OUTER JOIN t3 ON a4.col3 = t3.col3 LEFT col7 <= false " +
+                        "OR a4.sym <> col2 GROUP BY a5.col4, col4, a5.col7, col10 ORDER BY col7 ASC NULLS FIRST, a5.col10 DESC," +
+                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 222,
+                "unexpected token [)]"
+        );
+
+        // Verify ) in CREATE TABLE AS SELECT context is treated as closing the outer paren,
+        // not as an unbalanced paren - this confirms the createTableMode flag works correctly
+        assertSyntaxError("CREATE TABLE t2 AS (SELECT a,b+c) FROM t1)", 34,
+                "unexpected token [FROM]"
+        );
+
+        // Same test with nested parentheses inside expression
+        assertSyntaxError("CREATE TABLE t2 AS (SELECT a, (b+c)) FROM t1)", 37,
+                "unexpected token [FROM]"
+        );
+
+        // Verify ) in CREATE VIEW context is treated correctly - confirms createViewMode flag works
+        assertSyntaxError("CREATE VIEW v1 AS (SELECT a,b+c) FROM t1)", 33,
+                "unexpected token [FROM]"
+        );
+
+        // Verify ) in subquery context is treated correctly - confirms subQueryMode flag works
+        assertSyntaxError("SELECT * FROM (SELECT a,b+c) WHERE 1=1)", 38,
+                "unexpected token [)]"
+        );
+    }
+
+    @Test
     public void testUndefinedBindVariables() throws SqlException {
         assertQuery(
                 "select-virtual $1 + 1 column, $2 $2, $3 $3 from (long_sequence(10))",
@@ -12710,6 +12700,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionArithmeticTwoWindows() throws Exception {
+        // Two window functions in arithmetic operation - sum() is both aggregate and window function name,
+        // but with OVER clause it should be treated as window function, not GROUP BY aggregate
+        assertQuery(
+                "select-virtual sum - lag id_diff from (select-window [lag(id) lag over (order by ts), sum(id) sum over (order by ts)] lag(id) lag over (order by ts), sum(id) sum over (order by ts) from (select [id, ts] from x timestamp (ts)))",
+                "SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x",
+                modelOf("x")
+                        .col("id", ColumnType.LONG)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWindowFunctionAsArgumentToFunctionNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             // Window function as argument to cast() - not allowed
@@ -12729,6 +12732,46 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionCastNoParen() throws Exception {
+        // Window function with cast - the window function is extracted to select-window,
+        // and the cast operation references it by alias in select-virtual
+        assertQuery(
+                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts)::string FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionCastToString() throws Exception {
+        // Window function with cast AND outer parentheses - same structure as without parentheses
+        assertQuery(
+                "select-virtual row_number::string cast from (select-window [row_number() row_number over (order by ts)] row_number() row_number over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT (row_number() OVER (ORDER BY ts))::string FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInCaseExpression() throws Exception {
+        // Window function directly inside CASE WHEN condition (two WHEN clauses with same window function)
+        // Both window functions are extracted to select-window layer with different aliases
+        assertQuery(
+                "select-virtual case when row_number = 1 then 'first' when row_number1 = 3 then 'last' else 'middle' end category from (select-window [row_number() row_number over (order by ts), row_number() row_number1 over (order by ts)] row_number() row_number over (order by ts), row_number() row_number1 over (order by ts) from (select [ts] from x timestamp (ts)))",
+                "SELECT CASE " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
+                        "  ELSE 'middle' " +
+                        "END AS category " +
+                        "FROM x",
+                modelOf("x")
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWindowFunctionReferencesSameColumnAsVirtual() throws Exception {
         assertQuery(
                 "select-window a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts] a, concat(b, 'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
@@ -12737,6 +12780,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("c", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionSimple() throws Exception {
+        // Basic window function without cast - should work
+        assertQuery(
+                "select-window row_number() row_number over (order by ts) from (select-choose [ts] ts from (select [ts] from x timestamp (ts)))",
+                "SELECT row_number() OVER (ORDER BY ts) FROM x",
+                modelOf("x")
                         .timestamp("ts")
         );
     }

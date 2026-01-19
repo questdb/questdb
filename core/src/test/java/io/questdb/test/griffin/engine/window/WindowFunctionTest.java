@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFacto
 import io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.KSumDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDateFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagLongFunctionFactory;
@@ -58,7 +59,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -72,6 +72,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             },
             {
                     "i", "j" // sum
+            },
+            {
+                    "i", "j" // ksum
             },
             {
                     "i", "j", // first_value
@@ -111,7 +114,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testAggregateFunctionInPartitionByFails() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertException(
                 """
                         SELECT pickup_datetime, avg(total_amount) OVER (PARTITION BY avg(total_amount)
@@ -2327,7 +2329,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testFrameFunctionResolvesSymbolTables() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("create table  cpu ( hostname symbol, usage_system double )");
             execute("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
@@ -2368,7 +2369,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testFrameFunctionResolvesSymbolTablesInPartitionByCachedWindow() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("create table x (sym symbol, i int);");
             execute("insert into x values ('aaa', NULL);");
@@ -3458,6 +3458,787 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKSumCurrentRow() throws Exception {
+        // Test ksum() over (rows current row) - KSumOverCurrentRowFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x%5 from long_sequence(5)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t2.0\t2.0
+                            1970-01-01T00:00:00.000003Z\t3.0\t3.0
+                            1970-01-01T00:00:00.000004Z\t4.0\t4.0
+                            1970-01-01T00:00:00.000005Z\t0.0\t0.0
+                            """),
+                    "select ts, val, ksum(val) over (order by ts rows current row) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumEmptyFrame() throws Exception {
+        // Test ksum() with empty frame (rowsHi < rowsLo) - L99
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1000000::timestamp, 1.0)");
+            execute("insert into tab values (2000000::timestamp, 2.0)");
+
+            // Frame "between 1 preceding and 2 preceding" is empty (hi < lo)
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum
+                            1970-01-01T00:00:01.000000Z\t1.0\tnull
+                            1970-01-01T00:00:02.000000Z\t2.0\tnull
+                            """),
+                    "select ts, val, ksum(val) over (order by ts rows between 1 preceding and 2 preceding) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionAllNulls() throws Exception {
+        // Test ksum() with partition where all values are NULL - L402
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1000000::timestamp, 1, NULL)");
+            execute("insert into tab values (2000000::timestamp, 1, NULL)");
+            execute("insert into tab values (3000000::timestamp, 2, 10.0)");
+
+            // Partition 1 has all NULLs -> ksum should be NaN
+            // Partition 2 has a value -> ksum should be 10
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:01.000000Z\t1\tnull\tnull
+                            1970-01-01T00:00:02.000000Z\t1\tnull\tnull
+                            1970-01-01T00:00:03.000000Z\t2\t10.0\t10.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i) from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedRangeFirstRowNull() throws Exception {
+        // Test ksum() with partition by range frame where first row in partition is NULL
+        // This tests lines 503-507 in KSumOverPartitionRangeFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            // Insert in timestamp order - partition 1 starts with NULL
+            execute("insert into tab values (1000000::timestamp, 1, NULL)");  // t=1s, partition 1, NULL
+            execute("insert into tab values (2000000::timestamp, 1, 2.0)");   // t=2s, partition 1
+            execute("insert into tab values (3000000::timestamp, 2, 10.0)");  // t=3s, partition 2 (first row)
+            execute("insert into tab values (4000000::timestamp, 1, 3.0)");   // t=4s, partition 1
+            execute("insert into tab values (5000000::timestamp, 2, 20.0)");  // t=5s, partition 2
+
+            // Range of 10 seconds includes all rows in each partition
+            // Partition 1 at t=1s: NULL -> null
+            // Partition 1 at t=2s: NULL + 2 = 2
+            // Partition 2 at t=3s: 10 -> 10
+            // Partition 1 at t=4s: NULL + 2 + 3 = 5
+            // Partition 2 at t=5s: 10 + 20 = 30
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:01.000000Z\t1\tnull\tnull
+                            1970-01-01T00:00:02.000000Z\t1\t2.0\t2.0
+                            1970-01-01T00:00:03.000000Z\t2\t10.0\t10.0
+                            1970-01-01T00:00:04.000000Z\t1\t3.0\t5.0
+                            1970-01-01T00:00:05.000000Z\t2\t20.0\t30.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i order by ts range between 10 second preceding and current row) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedRangeFrame() throws Exception {
+        // Test ksum() over (partition by x order by ts range between N preceding and current row) - KSumOverPartitionRangeFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x%2, x from long_sequence(6)");
+
+            // range between 2 microseconds preceding and current row
+            // i=0: ts=2,4,6 values=2,4,6
+            //   ts=2: range [0,2] -> [2] = 2
+            //   ts=4: range [2,4] -> [2,4] = 6
+            //   ts=6: range [4,6] -> [4,6] = 10
+            // i=1: ts=1,3,5 values=1,3,5
+            //   ts=1: range [-1,1] -> [1] = 1
+            //   ts=3: range [1,3] -> [1,3] = 4
+            //   ts=5: range [3,5] -> [3,5] = 8
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t2.0
+                            1970-01-01T00:00:00.000003Z\t1\t3.0\t4.0
+                            1970-01-01T00:00:00.000004Z\t0\t4.0\t6.0
+                            1970-01-01T00:00:00.000005Z\t1\t5.0\t8.0
+                            1970-01-01T00:00:00.000006Z\t0\t6.0\t10.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i order by ts range between 2 microseconds preceding and current row) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedRangeFrameBufferExpansion() throws Exception {
+        // Test ksum() with partitioned range frame that triggers buffer expansion (>32 rows)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            // Create 40 rows all in the same partition to exceed initial buffer size of 32
+            execute("insert into tab select (x * 1000000)::timestamp, 1, x from long_sequence(40)");
+
+            // Range of 100 seconds should include all rows, triggering buffer expansion
+            // Sum of 1..40 = 40*41/2 = 820
+            // Last row timestamp: 40 * 1000000 microseconds = 40 seconds
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:40.000000Z\t1\t40.0\t820.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i order by ts range between 100 second preceding and current row) from tab limit -1",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedRangeFramePlan() throws Exception {
+        // Test toPlan() method of KSumOverPartitionRangeFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            // Range values depend on timestamp type (micros vs nanos)
+            String tenSeconds = timestampType == TestTimestampType.MICRO ? "10000000" : "10000000000";
+            String twoSeconds = timestampType == TestTimestampType.MICRO ? "2000000" : "2000000000";
+
+            // Test bounded range frame plan
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [ksum(val) over (partition by [i] range between " + tenSeconds + " preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, i, val, ksum(val) over (partition by i order by ts range between 10 second preceding and current row) from tab"
+            );
+
+            // Test unbounded preceding plan
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [ksum(val) over (partition by [i] range between unbounded preceding and " + twoSeconds + " preceding)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, i, val, ksum(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedRangeUnboundedPreceding() throws Exception {
+        // Test ksum() with partition by and range between unbounded preceding and N preceding
+        // This tests the else branch (frameLoBounded=false) in KSumOverPartitionRangeFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            // Rows 1 second apart in partition 1
+            execute("insert into tab values (1000000::timestamp, 1, 1.0)");  // t=1s
+            execute("insert into tab values (2000000::timestamp, 1, 2.0)");  // t=2s
+            execute("insert into tab values (3000000::timestamp, 1, 3.0)");  // t=3s
+            execute("insert into tab values (4000000::timestamp, 1, 4.0)");  // t=4s
+
+            // Frame: unbounded preceding to 2 second preceding
+            // At t=1s: no rows >= 2s before -> NaN
+            // At t=2s: no rows >= 2s before -> NaN
+            // At t=3s: t=1s is 2s before (included) -> 1.0
+            // At t=4s: t=1s is 3s before, t=2s is 2s before -> 1.0 + 2.0 = 3.0
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:01.000000Z\t1\t1.0\tnull
+                            1970-01-01T00:00:02.000000Z\t1\t2.0\tnull
+                            1970-01-01T00:00:03.000000Z\t1\t3.0\t1.0
+                            1970-01-01T00:00:04.000000Z\t1\t4.0\t3.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedRowsFrameAllNulls() throws Exception {
+        // Test ksum() with partitioned rows frame where frame has all NULLs - L779
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1000000::timestamp, 1, NULL)");
+            execute("insert into tab values (2000000::timestamp, 1, NULL)");
+            execute("insert into tab values (3000000::timestamp, 1, 3.0)");
+
+            // Sliding window of 1 preceding + current
+            // At t=1s: window=[NULL] -> NaN
+            // At t=2s: window=[NULL, NULL] -> NaN
+            // At t=3s: window=[NULL, 3.0] -> 3.0
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:01.000000Z\t1\tnull\tnull
+                            1970-01-01T00:00:02.000000Z\t1\tnull\tnull
+                            1970-01-01T00:00:03.000000Z\t1\t3.0\t3.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i order by ts rows between 1 preceding and current row) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedRowsFramePlan() throws Exception {
+        // Test toPlan() method of KSumOverPartitionRowsFrameFunction - L847, L853
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            // Test unbounded preceding with N preceding end (L847) - uses KSumOverPartitionRowsFrameFunction
+            // "rows between unbounded preceding and 1 preceding" triggers frameLoBounded=false
+            assertSql(
+                    """
+                            QUERY PLAN
+                            Window
+                              functions: [ksum(val) over (partition by [i] rows between unbounded preceding and 0 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
+                    "explain select ts, i, val, ksum(val) over (partition by i order by ts rows between unbounded preceding and 1 preceding) from tab"
+            );
+
+            // Test bounded preceding with N preceding end (L853)
+            assertSql(
+                    """
+                            QUERY PLAN
+                            Window
+                              functions: [ksum(val) over (partition by [i] rows between 3 preceding and 0 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
+                    "explain select ts, i, val, ksum(val) over (partition by i order by ts rows between 3 preceding and 1 preceding) from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedSlidingRows() throws Exception {
+        // Test ksum() over (partition by x order by ts rows between N preceding and current row) - KSumOverPartitionRowsFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x%2, x from long_sequence(8)");
+
+            // i=0: values 2,4,6,8 with window size 2 (1 preceding + current)
+            //   row 2: [2] = 2
+            //   row 4: [2,4] = 6
+            //   row 6: [4,6] = 10
+            //   row 8: [6,8] = 14
+            // i=1: values 1,3,5,7 with window size 2
+            //   row 1: [1] = 1
+            //   row 3: [1,3] = 4
+            //   row 5: [3,5] = 8
+            //   row 7: [5,7] = 12
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t2.0
+                            1970-01-01T00:00:00.000003Z\t1\t3.0\t4.0
+                            1970-01-01T00:00:00.000004Z\t0\t4.0\t6.0
+                            1970-01-01T00:00:00.000005Z\t1\t5.0\t8.0
+                            1970-01-01T00:00:00.000006Z\t0\t6.0\t10.0
+                            1970-01-01T00:00:00.000007Z\t1\t7.0\t12.0
+                            1970-01-01T00:00:00.000008Z\t0\t8.0\t14.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i order by ts rows between 1 preceding and current row) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedUnboundedPreceding() throws Exception {
+        // Test ksum() over (partition by x order by ts rows unbounded preceding) - KSumOverUnboundedPartitionRowsFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x%2, x from long_sequence(6)");
+
+            // i=0: values 2,4,6 -> cumulative: 2, 6, 12
+            // i=1: values 1,3,5 -> cumulative: 1, 4, 9
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t2.0
+                            1970-01-01T00:00:00.000003Z\t1\t3.0\t4.0
+                            1970-01-01T00:00:00.000004Z\t0\t4.0\t6.0
+                            1970-01-01T00:00:00.000005Z\t1\t5.0\t9.0
+                            1970-01-01T00:00:00.000006Z\t0\t6.0\t12.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i order by ts rows unbounded preceding) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPrecision() throws Exception {
+        // Test that ksum handles NULL values and basic summation correctly
+        // Kahan summation improves precision for accumulated floating point errors
+        // but extreme cases like 1e16 + 1 - 1e16 are beyond what Kahan can fully compensate
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table precision_tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            // Test with NULL handling and basic precision
+            execute("insert into precision_tab values (1::timestamp, 1.1)");
+            execute("insert into precision_tab values (2::timestamp, 2.2)");
+            execute("insert into precision_tab values (3::timestamp, NULL)");
+            execute("insert into precision_tab values (4::timestamp, 3.3)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1.1\t1.1
+                            1970-01-01T00:00:00.000002Z\t2.2\t3.3000000000000003
+                            1970-01-01T00:00:00.000003Z\tnull\t3.3000000000000003
+                            1970-01-01T00:00:00.000004Z\t3.3\t6.6
+                            """),
+                    "select ts, val, ksum(val) over (order by ts rows unbounded preceding) from precision_tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumRangeFrame() throws Exception {
+        // Test ksum() over (order by ts range between N preceding and current row) - KSumOverRangeFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x from long_sequence(5)");
+
+            // range between 2 microseconds preceding and current row
+            // ts=1: range [-1,1] -> [1] = 1
+            // ts=2: range [0,2] -> [1,2] = 3
+            // ts=3: range [1,3] -> [1,2,3] = 6
+            // ts=4: range [2,4] -> [2,3,4] = 9
+            // ts=5: range [3,5] -> [3,4,5] = 12
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t2.0\t3.0
+                            1970-01-01T00:00:00.000003Z\t3.0\t6.0
+                            1970-01-01T00:00:00.000004Z\t4.0\t9.0
+                            1970-01-01T00:00:00.000005Z\t5.0\t12.0
+                            """),
+                    "select ts, val, ksum(val) over (order by ts range between 2 microseconds preceding and current row) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumRangeFrameBufferExpansion() throws Exception {
+        // Test ksum() with non-partitioned range frame that triggers buffer expansion (>32 rows)
+        // This tests lines 952-966 in KSumOverRangeFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            // Create 40 rows, 1 second apart
+            execute("insert into tab select (x * 1000000)::timestamp, x from long_sequence(40)");
+
+            // Range of 100 seconds should include all rows, triggering buffer expansion
+            // Sum of 1..40 = 40*41/2 = 820
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum
+                            1970-01-01T00:00:40.000000Z\t40.0\t820.0
+                            """),
+                    "select ts, val, ksum(val) over (order by ts range between 100 second preceding and current row) from tab limit -1",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumRangeFramePlan() throws Exception {
+        // Test toPlan() method of KSumOverRangeFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            // Range values depend on timestamp type (micros vs nanos)
+            String tenSeconds = timestampType == TestTimestampType.MICRO ? "10000000" : "10000000000";
+            String twoSeconds = timestampType == TestTimestampType.MICRO ? "2000000" : "2000000000";
+
+            // Test bounded range with current row
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [ksum(val) over (range between " + tenSeconds + " preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, val, ksum(val) over (order by ts range between 10 second preceding and current row) from tab"
+            );
+
+            // Test unbounded preceding with N preceding end
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [ksum(val) over (range between unbounded preceding and " + twoSeconds + " preceding)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, val, ksum(val) over (order by ts range between unbounded preceding and 2 second preceding) from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testKSumRangeFrameUnboundedPreceding() throws Exception {
+        // Test ksum() with non-partitioned range between unbounded preceding and N preceding
+        // This tests lines 980-998 in KSumOverRangeFrameFunction (frameLoBounded=false branch)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            // Rows 1 second apart
+            execute("insert into tab values (1000000::timestamp, 1.0)");  // t=1s
+            execute("insert into tab values (2000000::timestamp, 2.0)");  // t=2s
+            execute("insert into tab values (3000000::timestamp, 3.0)");  // t=3s
+            execute("insert into tab values (4000000::timestamp, 4.0)");  // t=4s
+
+            // Frame: unbounded preceding to 2 second preceding
+            // At t=1s: no rows >= 2s before -> NaN
+            // At t=2s: no rows >= 2s before -> NaN
+            // At t=3s: t=1s is 2s before (included) -> 1.0
+            // At t=4s: t=1s is 3s before, t=2s is 2s before -> 1.0 + 2.0 = 3.0
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum
+                            1970-01-01T00:00:01.000000Z\t1.0\tnull
+                            1970-01-01T00:00:02.000000Z\t2.0\tnull
+                            1970-01-01T00:00:03.000000Z\t3.0\t1.0
+                            1970-01-01T00:00:04.000000Z\t4.0\t3.0
+                            """),
+                    "select ts, val, ksum(val) over (order by ts range between unbounded preceding and 2 second preceding) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumRowsBetweenPrecedingAndPreceding() throws Exception {
+        // Test ksum() over (rows between N preceding and M preceding) - frame excludes current row
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x from long_sequence(6)");
+
+            // rows between 3 preceding and 1 preceding (excludes current row)
+            // row 1: frame is empty -> NaN
+            // row 2: [1] = 1
+            // row 3: [1,2] = 3
+            // row 4: [1,2,3] = 6
+            // row 5: [2,3,4] = 9
+            // row 6: [3,4,5] = 12
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1.0\tnull
+                            1970-01-01T00:00:00.000002Z\t2.0\t1.0
+                            1970-01-01T00:00:00.000003Z\t3.0\t3.0
+                            1970-01-01T00:00:00.000004Z\t4.0\t6.0
+                            1970-01-01T00:00:00.000005Z\t5.0\t9.0
+                            1970-01-01T00:00:00.000006Z\t6.0\t12.0
+                            """),
+                    "select ts, val, ksum(val) over (order by ts rows between 3 preceding and 1 preceding) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumRowsFramePlan() throws Exception {
+        // Test toPlan() method of KSumOverRowsFrameFunction (non-partitioned)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            // Test bounded rows with current row
+            assertSql(
+                    """
+                            QUERY PLAN
+                            Window
+                              functions: [ksum(val) over ( rows between 3 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
+                    "explain select ts, val, ksum(val) over (order by ts rows between 3 preceding and current row) from tab"
+            );
+
+            // Test unbounded rows with N preceding end
+            assertSql(
+                    """
+                            QUERY PLAN
+                            Window
+                              functions: [ksum(val) over ( rows between unbounded preceding and 0 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
+                    "explain select ts, val, ksum(val) over (order by ts rows between unbounded preceding and 1 preceding) from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testKSumWholePartitionWithRowsFrame() throws Exception {
+        // Test ksum() over (partition by x rows between unbounded preceding and unbounded following)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x%2, x from long_sequence(6)");
+
+            // i=0: values 2,4,6 -> sum=12
+            // i=1: values 1,3,5 -> sum=9
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1\t1.0\t9.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t12.0
+                            1970-01-01T00:00:00.000003Z\t1\t3.0\t9.0
+                            1970-01-01T00:00:00.000004Z\t0\t4.0\t12.0
+                            1970-01-01T00:00:00.000005Z\t1\t5.0\t9.0
+                            1970-01-01T00:00:00.000006Z\t0\t6.0\t12.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i rows between unbounded preceding and unbounded following) from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumWholeResultSet() throws Exception {
+        // Test ksum() over () - whole result set without partition - L274
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1000000::timestamp, 1.0)");
+            execute("insert into tab values (2000000::timestamp, 2.0)");
+            execute("insert into tab values (3000000::timestamp, 3.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum
+                            1970-01-01T00:00:01.000000Z\t1.0\t6.0
+                            1970-01-01T00:00:02.000000Z\t2.0\t6.0
+                            1970-01-01T00:00:03.000000Z\t3.0\t6.0
+                            """),
+                    "select ts, val, ksum(val) over () from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double, s symbol) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x/4, x%5, 'k' || (x%3) ::symbol from long_sequence(10)");
+
+            // Test ksum() over partition
+            // i=0: j values are 1,2,3 -> sum=6
+            // i=1: j values are 4,0,1,2 -> sum=7
+            // i=2: j values are 3,4,0 -> sum=7
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tj\tksum
+                            1970-01-01T00:00:00.000001Z\t0\t1.0\t6.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t6.0
+                            1970-01-01T00:00:00.000003Z\t0\t3.0\t6.0
+                            1970-01-01T00:00:00.000004Z\t1\t4.0\t7.0
+                            1970-01-01T00:00:00.000005Z\t1\t0.0\t7.0
+                            1970-01-01T00:00:00.000006Z\t1\t1.0\t7.0
+                            1970-01-01T00:00:00.000007Z\t1\t2.0\t7.0
+                            1970-01-01T00:00:00.000008Z\t2\t3.0\t7.0
+                            1970-01-01T00:00:00.000009Z\t2\t4.0\t7.0
+                            1970-01-01T00:00:00.000010Z\t2\t0.0\t7.0
+                            """),
+                    "select ts, i, j, ksum(j) over (partition by i) from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Test ksum() over unbounded preceding
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tj\tksum
+                            1970-01-01T00:00:00.000001Z\t0\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t3.0
+                            1970-01-01T00:00:00.000003Z\t0\t3.0\t6.0
+                            1970-01-01T00:00:00.000004Z\t1\t4.0\t10.0
+                            1970-01-01T00:00:00.000005Z\t1\t0.0\t10.0
+                            1970-01-01T00:00:00.000006Z\t1\t1.0\t11.0
+                            1970-01-01T00:00:00.000007Z\t1\t2.0\t13.0
+                            1970-01-01T00:00:00.000008Z\t2\t3.0\t16.0
+                            1970-01-01T00:00:00.000009Z\t2\t4.0\t20.0
+                            1970-01-01T00:00:00.000010Z\t2\t0.0\t20.0
+                            """),
+                    "select ts, i, j, ksum(j) over (order by ts rows unbounded preceding) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Test ksum() over sliding window
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tj\tksum
+                            1970-01-01T00:00:00.000001Z\t0\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t3.0
+                            1970-01-01T00:00:00.000003Z\t0\t3.0\t6.0
+                            1970-01-01T00:00:00.000004Z\t1\t4.0\t9.0
+                            1970-01-01T00:00:00.000005Z\t1\t0.0\t7.0
+                            1970-01-01T00:00:00.000006Z\t1\t1.0\t5.0
+                            1970-01-01T00:00:00.000007Z\t1\t2.0\t3.0
+                            1970-01-01T00:00:00.000008Z\t2\t3.0\t6.0
+                            1970-01-01T00:00:00.000009Z\t2\t4.0\t9.0
+                            1970-01-01T00:00:00.000010Z\t2\t0.0\t7.0
+                            """),
+                    "select ts, i, j, ksum(j) over (order by ts rows between 2 preceding and current row) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Test ksum() over () - whole result set
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tj\tksum
+                            1970-01-01T00:00:00.000001Z\t0\t1.0\t20.0
+                            1970-01-01T00:00:00.000002Z\t0\t2.0\t20.0
+                            1970-01-01T00:00:00.000003Z\t0\t3.0\t20.0
+                            1970-01-01T00:00:00.000004Z\t1\t4.0\t20.0
+                            1970-01-01T00:00:00.000005Z\t1\t0.0\t20.0
+                            1970-01-01T00:00:00.000006Z\t1\t1.0\t20.0
+                            1970-01-01T00:00:00.000007Z\t1\t2.0\t20.0
+                            1970-01-01T00:00:00.000008Z\t2\t3.0\t20.0
+                            1970-01-01T00:00:00.000009Z\t2\t4.0\t20.0
+                            1970-01-01T00:00:00.000010Z\t2\t0.0\t20.0
+                            """),
+                    "select ts, i, j, ksum(j) over () from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumWithNulls() throws Exception {
+        // Test ksum with NULL values in various positions
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1::timestamp, 1, 1.0)");
+            execute("insert into tab values (2::timestamp, 1, NULL)");
+            execute("insert into tab values (3::timestamp, 1, 3.0)");
+            execute("insert into tab values (4::timestamp, 2, NULL)");
+            execute("insert into tab values (5::timestamp, 2, 5.0)");
+            execute("insert into tab values (6::timestamp, 2, NULL)");
+
+            // Test partitioned with NULLs
+            // i=1: values 1, NULL, 3 -> sum=4
+            // i=2: values NULL, 5, NULL -> sum=5
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1\t1.0\t4.0
+                            1970-01-01T00:00:00.000002Z\t1\tnull\t4.0
+                            1970-01-01T00:00:00.000003Z\t1\t3.0\t4.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull\t5.0
+                            1970-01-01T00:00:00.000005Z\t2\t5.0\t5.0
+                            1970-01-01T00:00:00.000006Z\t2\tnull\t5.0
+                            """),
+                    "select ts, i, val, ksum(val) over (partition by i) from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Test sliding window with NULLs
+            // Window is "1 preceding and current row":
+            // Row 1: val=1.0, window=[1.0] -> 1.0
+            // Row 2: val=null, window=[1.0, null] -> 1.0
+            // Row 3: val=3.0, window=[null, 3.0] -> 3.0
+            // Row 4: val=null, window=[3.0, null] -> 3.0
+            // Row 5: val=5.0, window=[null, 5.0] -> 5.0
+            // Row 6: val=null, window=[5.0, null] -> 5.0
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tval\tksum
+                            1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t1\tnull\t1.0
+                            1970-01-01T00:00:00.000003Z\t1\t3.0\t3.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull\t3.0
+                            1970-01-01T00:00:00.000005Z\t2\t5.0\t5.0
+                            1970-01-01T00:00:00.000006Z\t2\tnull\t5.0
+                            """),
+                    "select ts, i, val, ksum(val) over (order by ts rows between 1 preceding and current row) from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLagException() throws Exception {
         executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
         assertExceptionNoLeakCheck(
@@ -4290,7 +5071,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testLeadLagTimestampMixedDefaultValue() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() ->
                 {
                     execute("create table x as (" +
@@ -4319,7 +5099,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for max(double)
             // This tests boundary conditions with large ranges that trigger buffer growth
@@ -4385,7 +5164,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxDoubleOverPartitionedRangeWithLargeFrameNanos() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.NANO);
         assertMemoryLeak(() -> {
             // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for max(double)
             // This tests boundary conditions with large ranges that trigger buffer growth
@@ -4454,7 +5232,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxNonDesignatedTimestampWithManyNulls() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, other_ts timestamp, val long, grp symbol) timestamp(ts)");
 
@@ -4501,7 +5278,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxNonDesignatedTimestampWithManyNullsNanos() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.NANO);
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp_ns, other_ts timestamp_ns, val long, grp symbol) timestamp(ts)");
 
@@ -4637,7 +5413,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxTimestampOverPartitionedRangeWithLargeFrame() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             // Test similar to testFrameFunctionOverPartitionedRangeWithLargeFrame but for max(timestamp)
             // This tests boundary conditions with large ranges that trigger buffer growth
@@ -4706,7 +5481,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testMaxTimestampOverPartitionedRangeWithLargeFrameNanos() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.NANO);
         assertMemoryLeak(() -> {
             // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for timestamp_ns type
             // This tests boundary conditions with large ranges that trigger buffer growth
@@ -6286,7 +7060,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         // https://github.com/questdb/questdb/issues/4748
         assertMemoryLeak(() -> assertQuery("""
                         x\trow_number
@@ -7268,7 +8041,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndDifferentOrder() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertQuery(
                 """
                         x\ty\trn
@@ -7599,6 +8371,55 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwoWindowColumns() throws Exception {
+        // Test two window functions with different specifications
+        assertQuery(
+                """
+                        id\trn\ttotal
+                        1\t1\t15.0
+                        2\t2\t15.0
+                        3\t3\t15.0
+                        4\t4\t15.0
+                        5\t5\t15.0
+                        """,
+                "SELECT id, " +
+                        "row_number() OVER (ORDER BY ts) AS rn, " +
+                        "sum(id) OVER () AS total " +
+                        "FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTwoWindowFunctionsInArithmetic() throws Exception {
+        // Test arithmetic between two window functions: sum() OVER - lag() OVER
+        assertQuery(
+                """
+                        id_diff
+                        null
+                        2.0
+                        4.0
+                        7.0
+                        11.0
+                        """,
+                "SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testUnSupportImplicitCast() throws Exception {
         assertException(
                 "SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
@@ -7621,6 +8442,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "AS next_price FROM trades ",
                 0,
                 "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]"
+        );
+    }
+
+    @Test
+    public void testWindowAvg() throws Exception {
+        // Test avg() window function
+        assertQuery(
+                """
+                        id\tavg_val
+                        1\t1.0
+                        2\t1.5
+                        3\t2.0
+                        4\t2.5
+                        5\t3.0
+                        """,
+                "SELECT id, avg(id) OVER (ORDER BY ts) AS avg_val FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
         );
     }
 
@@ -7721,6 +8565,77 @@ public class WindowFunctionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 0);
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 0);
         }
+    }
+
+    @Test
+    public void testWindowCount() throws Exception {
+        // Test count() window function
+        assertQuery(
+                """
+                        id\tcnt
+                        1\t1
+                        2\t2
+                        3\t3
+                        4\t4
+                        5\t5
+                        """,
+                "SELECT id, count(*) OVER (ORDER BY ts) AS cnt FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowCumulativeSum() throws Exception {
+        // Test cumulative sum using ROWS UNBOUNDED PRECEDING
+        assertQuery(
+                """
+                        id\tcum_sum
+                        1\t1.0
+                        2\t3.0
+                        3\t6.0
+                        4\t10.0
+                        5\t15.0
+                        """,
+                "SELECT id, sum(id) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS cum_sum FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowDenseRank() throws Exception {
+        // Test dense_rank() window function with ties
+        assertQuery(
+                """
+                        val\tdrnk
+                        1\t1
+                        1\t1
+                        2\t2
+                        3\t3
+                        3\t3
+                        """,
+                "SELECT val, dense_rank() OVER (ORDER BY val) AS drnk FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x IN (1, 2) THEN 1 WHEN x = 3 THEN 2 ELSE 3 END AS val, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -8145,6 +9060,96 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFirstValue() throws Exception {
+        // Test first_value() window function
+        assertQuery(
+                """
+                        id\tfirst_val
+                        1\t1
+                        2\t1
+                        3\t1
+                        4\t1
+                        5\t1
+                        """,
+                "SELECT id, first_value(id) OVER (ORDER BY ts) AS first_val FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFrameRowsBetween() throws Exception {
+        // Test window function with ROWS BETWEEN frame specification
+        // Note: QuestDB only supports PRECEDING and CURRENT ROW for frame end
+        assertQuery(
+                """
+                        id\tmoving_sum
+                        1\t1.0
+                        2\t3.0
+                        3\t5.0
+                        4\t7.0
+                        5\t9.0
+                        """,
+                "SELECT id, sum(id) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS moving_sum FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionArithmeticWithOrderBy() throws Exception {
+        // Test window function with ORDER BY and arithmetic: row_number() + 1
+        assertQuery(
+                """
+                        adjusted_rank
+                        2
+                        3
+                        4
+                        5
+                        6
+                        """,
+                "SELECT row_number() OVER (ORDER BY ts) + 1 AS adjusted_rank FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionCastToInt() throws Exception {
+        // Test window function cast to int
+        assertQuery(
+                """
+                        rn
+                        1
+                        2
+                        3
+                        """,
+                "SELECT row_number() OVER (ORDER BY ts)::int AS rn FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testWindowFunctionContextCleanup() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table trades as " +
@@ -8332,7 +9337,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowFunctionFailsInNonWindowContext() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             Class<?>[] factories = new Class<?>[]{
                     RankFunctionFactory.class,
@@ -8340,6 +9344,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     RowNumberFunctionFactory.class,
                     AvgDoubleWindowFunctionFactory.class,
                     SumDoubleWindowFunctionFactory.class,
+                    KSumDoubleWindowFunctionFactory.class,
                     CountConstWindowFunctionFactory.class,
                     CountDoubleWindowFunctionFactory.class,
                     CountSymbolWindowFunctionFactory.class,
@@ -8376,6 +9381,112 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionInCaseDifferentOverSpecs() throws Exception {
+        // Window functions with different OVER specs in THEN vs ELSE branches
+        assertQuery(
+                """
+                        id\tresult
+                        1\t1.0
+                        2\t3.0
+                        3\t6.0
+                        4\t4.0
+                        5\t5.0
+                        """,
+                "SELECT id, CASE " +
+                        "  WHEN id <= 3 THEN sum(id) OVER (ORDER BY ts) " +
+                        "  ELSE sum(id) OVER (PARTITION BY id ORDER BY ts) " +
+                        "END AS result " +
+                        "FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInCaseExpression() throws Exception {
+        // Test window function directly inside CASE WHEN condition
+        assertQuery(
+                """
+                        category
+                        first
+                        middle
+                        last
+                        """,
+                "SELECT CASE " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
+                        "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
+                        "  ELSE 'middle' " +
+                        "END AS category " +
+                        "FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInCaseThenAndElse() throws Exception {
+        // Window functions in both THEN and ELSE with different functions
+        assertQuery(
+                """
+                        id\tresult
+                        1\t1
+                        2\t2
+                        3\t3
+                        4\t3
+                        5\t4
+                        """,
+                "SELECT id, CASE " +
+                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) " +
+                        "  ELSE lag(id) OVER (ORDER BY ts) " +
+                        "END AS result " +
+                        "FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionInCaseWithCast() throws Exception {
+        // Window function with cast inside CASE expression
+        assertQuery(
+                """
+                        id\tresult
+                        1\t1
+                        2\t2
+                        3\t3
+                        4\tN/A
+                        5\tN/A
+                        """,
+                "SELECT id, CASE " +
+                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts)::string " +
+                        "  ELSE 'N/A' " +
+                        "END AS result " +
+                        "FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testWindowFunctionInPartitionByFails() throws Exception {
         assertException(
                 """
@@ -8391,6 +9502,76 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(pickup_datetime) partition by day",
                 56,
                 "window function called in non-window context, make sure to add OVER clause"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionLagMinusLead() throws Exception {
+        // Test lag() - lead() window function arithmetic
+        assertQuery(
+                """
+                        diff
+                        null
+                        -2
+                        -2
+                        null
+                        """,
+                "SELECT lag(id) OVER (ORDER BY ts) - lead(id) OVER (ORDER BY ts) AS diff FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionMultipleInSelect() throws Exception {
+        // Test multiple window functions in select with different operations
+        assertQuery(
+                """
+                        id\trunning_sum\tprev_id\tdiff
+                        1\t1.0\tnull\tnull
+                        2\t3.0\t1\t2.0
+                        3\t6.0\t2\t4.0
+                        4\t10.0\t3\t7.0
+                        5\t15.0\t4\t11.0
+                        """,
+                "SELECT " +
+                        "  id, " +
+                        "  sum(id) OVER (ORDER BY ts) AS running_sum, " +
+                        "  lag(id) OVER (ORDER BY ts) AS prev_id, " +
+                        "  sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS diff " +
+                        "FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNestedParenthesesWithCast() throws Exception {
+        // Deeply nested parentheses with cast
+        assertQuery(
+                """
+                        rn
+                        1
+                        2
+                        3
+                        """,
+                "SELECT (((row_number() OVER (ORDER BY ts))))::int AS rn FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
         );
     }
 
@@ -8492,6 +9673,166 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionWithArithmeticInCaseBranches() throws Exception {
+        // Window function with arithmetic operations in different CASE branches
+        assertQuery(
+                """
+                        id\tresult
+                        1\t2
+                        2\t3
+                        3\t4
+                        4\t3
+                        5\t4
+                        """,
+                "SELECT id, CASE " +
+                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) + 1 " +
+                        "  ELSE row_number() OVER (ORDER BY ts) - 1 " +
+                        "END AS result " +
+                        "FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionWithCast() throws Exception {
+        // Test window function with :: cast operator
+        assertQuery(
+                """
+                        rn
+                        1
+                        2
+                        3
+                        """,
+                "SELECT row_number() OVER (ORDER BY ts)::string AS rn FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,  // window functions don't support random access
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionWithCastInParentheses() throws Exception {
+        // Test window function with cast and outer parentheses
+        assertQuery(
+                """
+                        rn
+                        1
+                        2
+                        3
+                        """,
+                "SELECT (row_number() OVER (ORDER BY ts))::string AS rn FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionWithLimit() throws Exception {
+        // Test window function with LIMIT clause
+        assertQuery(
+                """
+                        rn
+                        1
+                        2
+                        """,
+                "SELECT row_number() OVER (ORDER BY ts) AS rn FROM x LIMIT 2",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionWithNullHandling() throws Exception {
+        // Test window functions with null values in arithmetic
+        assertQuery(
+                """
+                        id\tprev\tdiff
+                        1\tnull\tnull
+                        null\t1\tnull
+                        3\tnull\tnull
+                        4\t3\t1
+                        """,
+                "SELECT id, lag(id) OVER (ORDER BY ts) AS prev, id - lag(id) OVER (ORDER BY ts) AS diff FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x = 2 THEN NULL ELSE x END AS id, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionWithPartitionBy() throws Exception {
+        // Test window function with PARTITION BY and cast
+        assertQuery(
+                """
+                        sym\trn
+                        A\t1
+                        A\t2
+                        B\t1
+                        B\t2
+                        """,
+                "SELECT sym, row_number() OVER (PARTITION BY sym ORDER BY ts)::string AS rn FROM x ORDER BY sym, ts",
+                "CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS sym, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowMultiplePartitionBy() throws Exception {
+        // Test window function with multiple PARTITION BY columns
+        assertQuery(
+                """
+                        a\tb\trn
+                        1\tX\t1
+                        1\tX\t2
+                        1\tY\t1
+                        2\tX\t1
+                        2\tY\t1
+                        """,
+                "SELECT a, b, row_number() OVER (PARTITION BY a, b ORDER BY ts) AS rn FROM x ORDER BY a, b, ts",
+                "CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x <= 3 THEN 1 ELSE 2 END AS a, " +
+                        "  CASE WHEN x IN (1, 2, 4) THEN 'X' ELSE 'Y' END AS b, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testWindowOnNestWithMultiArgsFunction() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x ( timestamp #TIMESTAMP, ticker SYMBOL, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, true_range DOUBLE ) TIMESTAMP(timestamp) PARTITION BY MONTH;", timestampType.getTypeName());
@@ -8574,6 +9915,54 @@ public class WindowFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWindowOrderByDesc() throws Exception {
+        // Test window function with ORDER BY DESC
+        assertQuery(
+                """
+                        id\trn
+                        1\t5
+                        2\t4
+                        3\t3
+                        4\t2
+                        5\t1
+                        """,
+                "SELECT id, row_number() OVER (ORDER BY ts DESC) AS rn FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowRank() throws Exception {
+        // Test rank() window function with ties
+        assertQuery(
+                """
+                        val\trnk
+                        1\t1
+                        1\t1
+                        2\t3
+                        3\t4
+                        3\t4
+                        """,
+                "SELECT val, rank() OVER (ORDER BY val) AS rnk FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x IN (1, 2) THEN 1 WHEN x = 3 THEN 2 ELSE 3 END AS val, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
     private static void normalizeSuffix(List<String> values) {
         int maxLength = 0;
         for (int i = 0, n = values.size(); i < n; i++) {
@@ -8628,7 +10017,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     static {
-        FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
+        FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "ksum(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",
                 "last_value(#COLUMN)", "last_value(#COLUMN) ignore nulls", "last_value(#COLUMN) respect nulls");
 

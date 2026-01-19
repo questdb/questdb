@@ -147,6 +147,9 @@ public class SqlParser {
     private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
+    private boolean copyMode = false;
+    private boolean createTableMode = false;
+    private boolean createViewMode = false;
     private int digit;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
@@ -921,10 +924,15 @@ public class SqlParser {
 
         if (tok.length() == 1 && tok.charAt(0) == '(') {
             startOfSelect = lexer.getPosition();
-            parseDml(lexer, startOfSelect, sqlParserCallback);
-            final int endOfSelect = lexer.getPosition() - 1;
-            selectText = lexer.getContent().subSequence(startOfSelect, endOfSelect);
-            expectTok(lexer, ')');
+            copyMode = true;
+            try {
+                parseDml(lexer, startOfSelect, sqlParserCallback);
+                final int endOfSelect = lexer.getPosition() - 1;
+                selectText = lexer.getContent().subSequence(startOfSelect, endOfSelect);
+                expectTok(lexer, ')');
+            } finally {
+                copyMode = false;
+            }
         } else {
             lexer.unparseLast();
             target = expectExpr(lexer, sqlParserCallback);
@@ -1740,7 +1748,13 @@ public class SqlParser {
         final int startOfSelect = lexer.getPosition();
         // Parse SELECT for the sake of basic SQL validation.
         // It'll be compiled and optimized later, at the execution phase.
-        final QueryModel selectModel = parseDml(lexer, startOfSelect, sqlParserCallback);
+        QueryModel selectModel;
+        createTableMode = true;
+        try {
+            selectModel = parseDml(lexer, startOfSelect, sqlParserCallback);
+        } finally {
+            createTableMode = false;
+        }
         final int endOfSelect = lexer.getPosition() - 1;
         final String selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
         createTableOperationBuilder.setSelectText(selectText, startOfSelect);
@@ -2016,7 +2030,13 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        final QueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        final QueryModel queryModel;
+        try {
+            createViewMode = true;
+            queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        } finally {
+            createViewMode = false;
+        }
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
@@ -2787,8 +2807,9 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
 
+                // token can sometimes be null, like during parsing of CASE clause
                 if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token))
-                        || (n.type == ExpressionNode.LITERAL && n.token.isEmpty())) {
+                        || (n.type == ExpressionNode.LITERAL && (n.token == null || n.token.isEmpty()))) {
                     throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
                 }
 
@@ -3721,10 +3742,20 @@ public class SqlParser {
                 accumulatedColumns.add(col);
                 accumulatedColumnPositions.add(colPosition);
 
-                if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {
-                    //accept ending ')' in create table as
+                if (tok == null || Chars.equals(tok, ';')) {
                     lexer.unparseLast();
                     break;
+                }
+
+                if (Chars.equals(tok, ')')) {
+                    if (subQueryMode || createTableMode || copyMode || createViewMode) {
+                        // it's a balanced: ')'
+                        lexer.unparseLast();
+                        break;
+                    } else {
+                        // it's an unbalanced ')' in top-level SELECT
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
+                    }
                 }
 
                 if (isFromKeyword(tok)) {
@@ -4614,6 +4645,9 @@ public class SqlParser {
         withClauseModelPool.clear();
         compileViewModelPool.clear();
         subQueryMode = false;
+        createTableMode = false;
+        copyMode = false;
+        createViewMode = false;
         characterStore.clear();
         insertModelPool.clear();
         pivotQueryColumnPool.clear();
