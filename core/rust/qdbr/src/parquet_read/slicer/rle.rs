@@ -5,12 +5,43 @@ use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 use std::mem::size_of;
 
-type RepeatIterator = std::iter::RepeatN<u32>;
-type BitbackIterator<'a> = bitpacked::Decoder<'a, u32>;
+type BitpackedIterator<'a> = bitpacked::Decoder<'a, u32>;
+
+struct RepeatValue {
+    value: u32,
+    remaining: usize,
+}
+
+impl RepeatValue {
+    #[inline(always)]
+    fn new(value: u32, count: usize) -> Self {
+        Self { value, remaining: count }
+    }
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<u32> {
+        if self.remaining > 0 {
+            self.remaining -= 1;
+            Some(self.value)
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.remaining
+    }
+
+    #[inline(always)]
+    fn skip(&mut self, count: usize) {
+        self.remaining = self.remaining.saturating_sub(count);
+    }
+}
 
 enum RleIterator<'a> {
-    Bitpacked(BitbackIterator<'a>),
-    Rle(RepeatIterator),
+    Bitpacked(BitpackedIterator<'a>),
+    Rle(RepeatValue),
 }
 
 impl RleIterator<'_> {
@@ -19,6 +50,33 @@ impl RleIterator<'_> {
         match self {
             RleIterator::Bitpacked(iter) => iter.next(),
             RleIterator::Rle(iter) => iter.next(),
+        }
+    }
+
+    /// Returns remaining count to skip, or 0 if done
+    #[inline(always)]
+    pub fn skip(&mut self, count: usize) -> usize {
+        match self {
+            RleIterator::Bitpacked(iter) => {
+                let remaining = iter.size_hint().0;
+                if count >= remaining {
+                    iter.skip(remaining);
+                    count - remaining
+                } else {
+                    iter.skip(count);
+                    0
+                }
+            }
+            RleIterator::Rle(iter) => {
+                let remaining = iter.len();
+                if count >= remaining {
+                    iter.skip(remaining);
+                    count - remaining
+                } else {
+                    iter.skip(count);
+                    0
+                }
+            }
         }
     }
 }
@@ -74,7 +132,7 @@ impl<'a, 'b> SlicerInner<'a, 'b> {
                     *dst = *src;
                 });
                 let value = u32::from_le_bytes(bytes);
-                let iterator = std::iter::repeat_n(value, repeat);
+                let iterator = RepeatValue::new(value, repeat);
                 self.data = RleIterator::Rle(iterator);
             }
         }
@@ -85,6 +143,19 @@ impl<'a, 'b> SlicerInner<'a, 'b> {
     fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
         // Not supported
         None
+    }
+
+    fn skip(&mut self, mut count: usize) {
+        while count > 0 {
+            let remaining = self.data.skip(count);
+            if remaining == 0 {
+                return;
+            }
+            count = remaining;
+            if self.decode().is_err() {
+                return;
+            }
+        }
     }
 
     fn count(&self) -> usize {
@@ -211,10 +282,9 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
         Ok(())
     }
 
+    #[inline]
     fn skip(&mut self, count: usize) {
-        for _ in 0..count {
-            self.next();
-        }
+        self.inner.skip(count);
     }
 
     fn count(&self) -> usize {
@@ -246,7 +316,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
                 dict,
                 inner: SlicerInner::new(
                     Some(decoder),
-                    RleIterator::Rle(std::iter::repeat_n(0, 0)),
+                    RleIterator::Rle(RepeatValue::new(0, 0)),
                     sliced_row_count,
                     error_value,
                 ),
@@ -258,7 +328,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
                 dict,
                 inner: SlicerInner::new(
                     None,
-                    RleIterator::Rle(std::iter::repeat_n(0, row_count)),
+                    RleIterator::Rle(RepeatValue::new(0, row_count)),
                     sliced_row_count,
                     error_value,
                 ),
@@ -364,10 +434,9 @@ impl DataPageSlicer for RleLocalIsGlobalSymbolDecoder<'_, '_> {
         Ok(())
     }
 
+    #[inline]
     fn skip(&mut self, count: usize) {
-        for _ in 0..count {
-            self.next();
-        }
+        self.inner.skip(count);
     }
 
     fn count(&self) -> usize {
@@ -398,7 +467,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
                 next_value: [0; 4],
                 inner: SlicerInner::new(
                     Some(decoder),
-                    RleIterator::Rle(std::iter::repeat_n(0, 0)),
+                    RleIterator::Rle(RepeatValue::new(0, 0)),
                     sliced_row_count,
                     error_value,
                 ),
@@ -410,7 +479,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
                 next_value: [0; 4],
                 inner: SlicerInner::new(
                     None,
-                    RleIterator::Rle(std::iter::repeat_n(0, row_count)),
+                    RleIterator::Rle(RepeatValue::new(0, row_count)),
                     sliced_row_count,
                     error_value,
                 ),

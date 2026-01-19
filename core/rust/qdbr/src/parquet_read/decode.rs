@@ -2568,7 +2568,11 @@ fn decode_page0_filtered<T: Pushable>(
                     }
 
                     if bit_offset < length {
-                        sink.skip(count_ones_in_bitmap(values, bit_offset, length - bit_offset));
+                        sink.skip(count_ones_in_bitmap(
+                            values,
+                            bit_offset,
+                            length - bit_offset,
+                        ));
                     }
 
                     current_row += length;
@@ -2696,8 +2700,8 @@ fn count_ones_in_bitmap(values: &[u8], offset: usize, length: usize) -> usize {
 
             let second_bits = length - (8 - start_bit);
             let second_mask = (1u8 << second_bits) - 1;
-            count +=
-                (unsafe { *values.get_unchecked(byte_idx + 1) } & second_mask).count_ones() as usize;
+            count += (unsafe { *values.get_unchecked(byte_idx + 1) } & second_mask).count_ones()
+                as usize;
             count
         };
     }

@@ -242,11 +242,14 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
         Ok(())
     }
 
+    #[inline]
     fn skip(&mut self, count: usize) {
-        for _ in 0..count {
-            self.pos += self.lengths[self.index] as usize;
-            self.index += 1;
-        }
+        let skip_bytes: usize = self.lengths[self.index..self.index + count]
+            .iter()
+            .map(|&len| len as usize)
+            .sum();
+        self.pos += skip_bytes;
+        self.index += count;
     }
 
     fn count(&self) -> usize {
