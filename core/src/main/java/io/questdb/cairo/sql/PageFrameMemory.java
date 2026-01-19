@@ -34,7 +34,7 @@ import io.questdb.std.IntHashSet;
  */
 public interface PageFrameMemory {
 
-    boolean fillOtherColumns(IntHashSet excludedColumnIndexes, DirectLongList rows);
+    boolean fillOtherColumns(IntHashSet excludedColumnIndexes, DirectLongList rows, boolean fillWithNulls);
 
     /**
      * Returns aux (index) vector address for a var-size column.

@@ -38,6 +38,7 @@ import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -57,6 +58,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -80,6 +82,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final CairoConfiguration configuration;
     // Used to merge shards from ownerFragment and perWorkerFragments.
     private final ObjList<Map> destShards;
+    private final IntHashSet filterUsedColumnIndexes;
+    private final ObjList<PageFrameFilteredNoRandomAccessMemoryRecord> frameFilteredMemoryRecords = new ObjList<>();
     private final ColumnTypes keyTypes;
     private final MapStats lastOwnerStats;
     private final ObjList<MapStats> lastShardStats;
@@ -90,6 +94,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
+    private final PageFrameFilteredNoRandomAccessMemoryRecord ownerPageFrameFilteredNoRandomAccessMemoryRecord = new PageFrameFilteredNoRandomAccessMemoryRecord();
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<MapFragment> perWorkerFragments;
@@ -122,6 +127,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerFilter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
@@ -138,6 +144,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
             this.ownerFilter = ownerFilter;
+            this.filterUsedColumnIndexes = filterUsedColumnIndexes;
             this.perWorkerFilters = perWorkerFilters;
             this.ownerKeyFunctions = ownerKeyFunctions;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
@@ -166,6 +173,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             perWorkerFragments = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerFragments.extendAndSet(i, new MapFragment(i));
+                frameFilteredMemoryRecords.extendAndSet(i, new PageFrameFilteredNoRandomAccessMemoryRecord());
             }
             // Destination shards are lazily initialized by the worker threads.
             destShards = new ObjList<>(NUM_SHARDS);
@@ -318,6 +326,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerFilters.getQuick(slotId);
     }
 
+    public IntHashSet getFilterUsedColumnIndexes() {
+        return filterUsedColumnIndexes;
+    }
+
     public MapFragment getFragment(int slotId) {
         if (slotId == -1) {
             return ownerFragment;
@@ -367,6 +379,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // thread-unsafe
     public DirectLongLongSortedList getOwnerLongTopKList() {
         return ownerLongTopKList;
+    }
+
+    public PageFrameFilteredNoRandomAccessMemoryRecord getPageFrameFilteredMemoryRecord(int slotId) {
+        if (slotId == -1) {
+            return ownerPageFrameFilteredNoRandomAccessMemoryRecord;
+        }
+        return frameFilteredMemoryRecords.getQuick(slotId);
     }
 
     // thread-unsafe

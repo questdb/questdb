@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -50,6 +51,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
     private final Function filter;
+    private final IntHashSet filterUsedColumnIndexes;
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
     private final boolean preTouchEnabled;
@@ -58,11 +60,13 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
             @NotNull Function filter,
+            @NotNull IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull IntList columnTypes,
             boolean preTouchEnabled
     ) {
         this.filter = filter;
+        this.filterUsedColumnIndexes = filterUsedColumnIndexes;
         this.perWorkerFilters = perWorkerFilters;
         if (perWorkerFilters != null) {
             perWorkerLocks = new PerWorkerLocks(configuration, perWorkerFilters.size());
@@ -84,6 +88,10 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             return filter;
         }
         return perWorkerFilters.getQuick(filterId);
+    }
+
+    public IntHashSet getFilterUsedColumnIndexes() {
+        return filterUsedColumnIndexes;
     }
 
     @Override

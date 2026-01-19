@@ -383,7 +383,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
-        public boolean fillOtherColumns(IntHashSet excludedColumnIndexes, DirectLongList rows) {
+        public boolean fillOtherColumns(IntHashSet excludedColumnIndexes, DirectLongList rows, boolean fillWithNulls) {
             assert frameFormat == PartitionFormat.PARQUET;
             if (excludedColumnIndexes.size() == addressCache.getColumnCount()) {
                 return false;
@@ -394,7 +394,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
             final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
             if (rows.size() != 0) {
-                currentRowGroupBuffer.decodeRemainingColumns(parquetDecoder, excludedColumnIndexes.size(), parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi, rows);
+                currentRowGroupBuffer.decodeRemainingColumns(parquetDecoder, excludedColumnIndexes.size(), parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi, rows, fillWithNulls);
                 return true;
             }
             return false;
@@ -531,9 +531,22 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
         }
 
-        public void decodeRemainingColumns(PartitionDecoder parquetDecoder, int columnOffset, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi, DirectLongList filteredRows) {
+        public void decodeRemainingColumns(
+                PartitionDecoder parquetDecoder,
+                int columnOffset,
+                DirectIntList parquetColumns,
+                int rowGroup,
+                int rowLo,
+                int rowHi,
+                DirectLongList filteredRows,
+                boolean fillWithNulls
+        ) {
             if (parquetColumns.size() > 0) {
-                parquetDecoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
+                if (fillWithNulls) {
+                    parquetDecoder.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
+                } else {
+                    parquetDecoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
+                }
                 for (int i = 0, n = (int) (parquetColumns.size() / 2); i < n; i++) {
                     final int parquetColumnIndex = parquetColumns.get(2L * i);
                     final int columnIndex = fromParquetColumnIndexes.getQuick(parquetColumnIndex);

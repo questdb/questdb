@@ -51,6 +51,7 @@ import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -90,6 +91,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull CompiledFilter compiledFilter,
             @NotNull CompiledCountOnlyFilter compiledCountOnlyFilter,
             @NotNull Function filter,
+            @NotNull IntHashSet filterUsedColumnIndexes,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull ExpressionNode filterExpr,
@@ -123,6 +125,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
                 configuration,
                 filter,
+                filterUsedColumnIndexes,
                 perWorkerFilters,
                 compiledFilter,
                 compiledCountOnlyFilter,
@@ -309,7 +312,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final PageFrameSequence<AsyncJitFilterAtom> frameSequence = task.getFrameSequence(AsyncJitFilterAtom.class);
         final AsyncJitFilterAtom atom = frameSequence.getAtom();
 
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        final PageFrameMemory frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
         record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
@@ -336,6 +339,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         if (filter.getBool(record)) {
                             rows.add(r);
                         }
+                    }
+                    if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                        record.init(frameMemory);
                     }
                     task.setFilteredRowCount(rows.size());
                 }
@@ -371,6 +377,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     rows.getAddress(),
                     frameRowCount
             );
+            if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                record.init(frameMemory);
+            }
             rows.setPos(filteredRowCount);
             task.setFilteredRowCount(rows.size());
 
@@ -401,6 +410,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         public AsyncJitFilterAtom(
                 CairoConfiguration configuration,
                 Function filter,
+                IntHashSet filterUsedColumnIndexes,
                 ObjList<Function> perWorkerFilters,
                 CompiledFilter compiledFilter,
                 CompiledCountOnlyFilter compiledCountOnlyFilter,
@@ -409,7 +419,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 IntList columnTypes,
                 boolean enablePreTouch
         ) {
-            super(configuration, filter, perWorkerFilters, columnTypes, enablePreTouch);
+            super(configuration, filter, filterUsedColumnIndexes, perWorkerFilters, columnTypes, enablePreTouch);
             this.compiledFilter = compiledFilter;
             this.compiledCountOnlyFilter = compiledCountOnlyFilter;
             this.bindVarMemory = bindVarMemory;

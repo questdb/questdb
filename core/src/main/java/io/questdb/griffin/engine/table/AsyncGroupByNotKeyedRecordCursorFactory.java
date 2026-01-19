@@ -86,7 +86,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
-            @NotNull IntHashSet filterUsedColumnIndexes,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
@@ -276,7 +276,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             } else {
                 AsyncFilterUtils.applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
-            if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows)) {
+            if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, false)) {
                 PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = atom.getPageFrameFilteredMemoryRecord(slotId);
                 filteredMemoryRecord.of(frameMemory, record, atom.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;

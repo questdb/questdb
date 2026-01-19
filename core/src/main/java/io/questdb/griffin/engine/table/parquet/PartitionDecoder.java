@@ -107,7 +107,7 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
-    public int decodeRowGroupWithRowFilter(
+    public void decodeRowGroupWithRowFilter(
             RowGroupBuffers rowGroupBuffers,
             int columnOffset,
             DirectIntList columns, // contains [parquet_column_index, column_type] pairs
@@ -121,7 +121,36 @@ public class PartitionDecoder implements QuietCloseable {
             // lazy init
             decodeContextPtr = createDecodeContext(fileAddr, fileSize);
         }
-        return decodeRowGroupWithRowFilter(
+        decodeRowGroupWithRowFilter(
+                ptr,
+                decodeContextPtr,
+                rowGroupBuffers.ptr(),
+                columnOffset,
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex,
+                rowLo,
+                rowHi,
+                filteredRows.getAddress(),
+                filteredRows.size()
+        );
+    }
+
+    public void decodeRowGroupWithRowFilterFillNulls(
+            RowGroupBuffers rowGroupBuffers,
+            int columnOffset,
+            DirectIntList columns, // contains [parquet_column_index, column_type] pairs
+            int rowGroupIndex,
+            int rowLo, // low row index within the row group, inclusive
+            int rowHi, // high row index within the row group, exclusive
+            DirectLongList filteredRows
+    ) {
+        assert ptr != 0;
+        if (decodeContextPtr == 0) {
+            // lazy init
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
+        }
+        decodeRowGroupWithRowFilterFillNulls(
                 ptr,
                 decodeContextPtr,
                 rowGroupBuffers.ptr(),
@@ -268,6 +297,20 @@ public class PartitionDecoder implements QuietCloseable {
     ) throws CairoException;
 
     private static native int decodeRowGroupWithRowFilter(
+            long decoderPtr,
+            long decodeContextPtr,
+            long rowGroupBuffersPtr,
+            int columnOffset,
+            long columnsPtr,
+            int columnCount,
+            int rowGroup,
+            int rowLo,
+            int rowHi,
+            long filteredRowsPtr,
+            long filteredRowsSize
+    ) throws CairoException;
+
+    private static native int decodeRowGroupWithRowFilterFillNulls(
             long decoderPtr,
             long decodeContextPtr,
             long rowGroupBuffersPtr,

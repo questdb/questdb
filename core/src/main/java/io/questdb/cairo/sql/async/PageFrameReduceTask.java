@@ -102,9 +102,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         Misc.free(frameMemoryPool);
     }
 
-    public boolean fillFrameMemory(IntHashSet excludeColumns, DirectLongList list) {
+    public boolean fillFrameMemory(IntHashSet excludeColumns, DirectLongList list, boolean fillWithNulls) {
         if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET) {
-            return frameMemory.fillOtherColumns(excludeColumns, list);
+            return frameMemory.fillOtherColumns(excludeColumns, list, fillWithNulls);
         }
         return false;
     }

@@ -2893,6 +2893,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
         final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
         if (enableParallelFilter && factory.supportsPageFrameCursor()) {
+            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+            collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
+
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                     && (!model.isUpdate() || executionContext.isWalApplication());
             final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
@@ -2930,6 +2933,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             compiledFilter,
                             compiledCountOnlyFilter,
                             filter,
+                            filterUsedColumnIndexes,
                             reduceTaskFactory,
                             compileWorkerFilterConditionally(
                                     executionContext,
@@ -2976,6 +2980,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext.getMessageBus(),
                         factory,
                         filter,
+                        filterUsedColumnIndexes,
                         reduceTaskFactory,
                         compileWorkerFilterConditionally(
                                 executionContext,
@@ -4147,6 +4152,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 master.getMetadata(),
                                 executionContext
                         );
+                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
                         master = new AsyncFilteredRecordCursorFactory(
                                 executionContext.getCairoEngine(),
@@ -4154,6 +4161,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 executionContext.getMessageBus(),
                                 master,
                                 filter,
+                                filterUsedColumnIndexes,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
                                         executionContext,
@@ -4203,12 +4211,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else {
                     // make it a post-join filter (same as for post join where clause above)
                     if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
+
                         master = new AsyncFilteredRecordCursorFactory(
                                 executionContext.getCairoEngine(),
                                 configuration,
                                 executionContext.getMessageBus(),
                                 master,
                                 filter,
+                                filterUsedColumnIndexes,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
                                         executionContext,
@@ -5973,6 +5985,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     bindVarMemory,
                                     bindVarFunctions,
                                     filter,
+                                    filterUsedColumnIndexes,
                                     compileWorkerFilterConditionally(
                                             executionContext,
                                             filter,
