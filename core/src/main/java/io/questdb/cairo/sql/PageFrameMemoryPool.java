@@ -394,7 +394,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
             final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
             if (rows.size() != 0) {
-                currentRowGroupBuffer.decodeOtherColumns(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi, rows);
+                currentRowGroupBuffer.decodeOtherColumns(parquetDecoder, excludedColumnIndexes.size(), parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi, rows);
                 return true;
             }
             return false;
@@ -531,19 +531,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
         }
 
-        public void decodeOtherColumns(PartitionDecoder parquetDecoder, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi, DirectLongList columnOffsets) {
+        public void decodeOtherColumns(PartitionDecoder parquetDecoder, int encodedSize, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi, DirectLongList rows) {
             if (parquetColumns.size() > 0) {
-                // Decode the requested columns from the row group.
-                parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi, columnOffsets);
+                parquetDecoder.decodeRowGroup(rowGroupBuffers, encodedSize, parquetColumns, rowGroup, rowLo, rowHi, rows);
                 for (int i = 0, n = (int) (parquetColumns.size() / 2); i < n; i++) {
                     final int parquetColumnIndex = parquetColumns.get(2L * i);
                     final int columnIndex = fromParquetColumnIndexes.getQuick(parquetColumnIndex);
                     final int columnType = parquetColumns.get(2L * i + 1);
-                    pageAddresses.set(columnIndex, rowGroupBuffers.getChunkDataPtr(i));
-                    pageSizes.set(columnIndex, rowGroupBuffers.getChunkDataSize(i));
+                    pageAddresses.set(columnIndex, rowGroupBuffers.getChunkDataPtr(encodedSize + i));
+                    pageSizes.set(columnIndex, rowGroupBuffers.getChunkDataSize(encodedSize + i));
                     if (ColumnType.isVarSize(columnType)) {
-                        auxPageAddresses.set(columnIndex, rowGroupBuffers.getChunkAuxPtr(i));
-                        auxPageSizes.set(columnIndex, rowGroupBuffers.getChunkAuxSize(i));
+                        auxPageAddresses.set(columnIndex, rowGroupBuffers.getChunkAuxPtr(encodedSize + i));
+                        auxPageSizes.set(columnIndex, rowGroupBuffers.getChunkAuxSize(encodedSize + i));
                     }
                 }
             }

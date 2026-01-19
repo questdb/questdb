@@ -136,6 +136,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     decoder: *const ParquetDecoder,
     ctx: *mut DecodeContext,
     row_group_bufs: *mut RowGroupBuffers,
+    encoded_column_size: u32,
     columns: *const (ParquetColumnIndex, ColumnType),
     column_count: u32,
     row_group_index: u32,
@@ -167,6 +168,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         decoder.decode_row_group_filtered(
             ctx,
             row_group_bufs,
+            encoded_column_size as usize,
             columns,
             row_group_index,
             row_group_lo,

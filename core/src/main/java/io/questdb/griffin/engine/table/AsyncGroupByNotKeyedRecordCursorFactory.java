@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
@@ -276,7 +277,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 AsyncFilterUtils.applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
             if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows)) {
-                record.init(frameMemory);
+                PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = atom.getPageFrameFilteredMemoryRecord(slotId);
+                filteredMemoryRecord.of(frameMemory, record, atom.getFilterUsedColumnIndexes());
+                record = filteredMemoryRecord;
             }
             record.setRowIndex(0);
             long baseRowId = record.getRowId();

@@ -234,6 +234,7 @@ impl ParquetDecoder {
         &self,
         ctx: &mut DecodeContext,
         row_group_bufs: &mut RowGroupBuffers,
+        dest_col_offset: usize,
         columns: &[(ParquetColumnIndex, ColumnType)],
         row_group_index: u32,
         row_group_lo: u32,
@@ -249,11 +250,10 @@ impl ParquetDecoder {
             ));
         }
 
-        if rows_filter.is_empty() {
-            // No rows to decode
-            row_group_bufs.ensure_n_columns(columns.len())?;
-            for dest_col_idx in 0..columns.len() {
-                let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
+        if rows_filter.is_empty() { // No rows to decode
+            row_group_bufs.ensure_n_columns(dest_col_offset + columns.len())?;
+            for i in 0..columns.len() {
+                let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_offset + i];
                 column_chunk_bufs.data_vec.clear();
                 column_chunk_bufs.data_size = 0;
                 column_chunk_bufs.data_ptr = ptr::null_mut();
@@ -265,12 +265,13 @@ impl ParquetDecoder {
         }
 
         let accumulated_size = self.row_group_sizes_acc[row_group_index as usize];
-        row_group_bufs.ensure_n_columns(columns.len())?;
+        row_group_bufs.ensure_n_columns(dest_col_offset + columns.len())?;
 
         let filter_count = rows_filter.len();
         let mut decoded = 0usize;
 
-        for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
+        for (i, &(column_idx, to_column_type)) in columns.iter().enumerate() {
+            let dest_col_idx = dest_col_offset + i;
             let column_idx = column_idx as usize;
             let mut column_type = self.columns[column_idx].column_type.ok_or_else(|| {
                 fmt_err!(

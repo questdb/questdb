@@ -1,4 +1,4 @@
-use crate::allocator::AcVec;
+use crate::allocator::{AcVec, AcVecSetLen};
 use crate::parquet::error::ParquetResult;
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
@@ -65,8 +65,17 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumn
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        for _ in 0..count {
-            self.buffers.data_vec.extend_from_slice(self.null_value)?;
+        if count == 0 {
+            return Ok(());
+        }
+        let total_bytes = count * N;
+        let base = self.buffers.data_vec.len();
+        unsafe {
+            let dst = self.buffers.data_vec.as_mut_ptr().add(base);
+            for i in 0..count {
+                ptr::copy_nonoverlapping(self.null_value.as_ptr(), dst.add(i * N), N);
+            }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
@@ -128,8 +137,18 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        for _ in 0..count {
-            self.buffers.data_vec.extend_from_slice(&self.null_value)?;
+        if count == 0 {
+            return Ok(());
+        }
+        let total_bytes = count * N;
+        let base = self.buffers.data_vec.len();
+        self.buffers.data_vec.reserve(total_bytes)?;
+        unsafe {
+            let dst = self.buffers.data_vec.as_mut_ptr().add(base);
+            for i in 0..count {
+                ptr::copy_nonoverlapping(self.null_value.as_ptr(), dst.add(i * N), N);
+            }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
@@ -189,8 +208,19 @@ impl<T: DataPageSlicer> Pushable for NanoTimestampColumnSink<'_, T> {
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        for _ in 0..count {
-            self.buffers.data_vec.extend_from_slice(self.null_value)?;
+        if count == 0 {
+            return Ok(());
+        }
+        let n = self.null_value.len();
+        let total_bytes = count * n;
+        let base = self.buffers.data_vec.len();
+        self.buffers.data_vec.reserve(total_bytes)?;
+        unsafe {
+            let dst = self.buffers.data_vec.as_mut_ptr().add(base);
+            for i in 0..count {
+                ptr::copy_nonoverlapping(self.null_value.as_ptr(), dst.add(i * n), n);
+            }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
@@ -278,8 +308,19 @@ impl<T: DataPageSlicer> Pushable for IntDecimalColumnSink<'_, T> {
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        for _ in 0..count {
-            self.buffers.data_vec.extend_from_slice(self.null_value)?;
+        if count == 0 {
+            return Ok(());
+        }
+        let n = self.null_value.len();
+        let total_bytes = count * n;
+        let base = self.buffers.data_vec.len();
+        self.buffers.data_vec.reserve(total_bytes)?;
+        unsafe {
+            let dst = self.buffers.data_vec.as_mut_ptr().add(base);
+            for i in 0..count {
+                ptr::copy_nonoverlapping(self.null_value.as_ptr(), dst.add(i * n), n);
+            }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }

@@ -109,6 +109,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     public int decodeRowGroup(
             RowGroupBuffers rowGroupBuffers,
+            int encodedColumnSize,
             DirectIntList columns, // contains [parquet_column_index, column_type] pairs
             int rowGroupIndex,
             int rowLo, // low row index within the row group, inclusive
@@ -124,6 +125,7 @@ public class PartitionDecoder implements QuietCloseable {
                 ptr,
                 decodeContextPtr,
                 rowGroupBuffers.ptr(),
+                encodedColumnSize,
                 columns.getAddress(),
                 (int) (columns.size() >>> 1),
                 rowGroupIndex,
@@ -269,6 +271,7 @@ public class PartitionDecoder implements QuietCloseable {
             long decoderPtr,
             long decodeContextPtr,
             long rowGroupBuffersPtr,
+            int encodedColumnSize,
             long columnsPtr,
             int columnCount,
             int rowGroup,
