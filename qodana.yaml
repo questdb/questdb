@@ -1,9 +1,10 @@
 version: "1.0"
 linter: jetbrains/qodana-jvm-community:latest
 
-# Only inspect Java source files in core and benchmarks
+# Inspect Java source files in core and benchmarks (main + test)
 include:
   - name: "core/src/main/java"
+  - name: "core/src/test/java"
   - name: "benchmarks/src/main/java"
 
 # Exclude vendored/third-party code and disable certain inspections

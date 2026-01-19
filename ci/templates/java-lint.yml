@@ -24,6 +24,7 @@ steps:
         jetbrains/qodana-jvm-community:latest \
         --print-problems 2>&1 | tee $(Agent.TempDirectory)/qodana-results/qodana-output.txt
     displayName: "Run Qodana inspections"
+    timeoutInMinutes: 30
   - bash: |
       RESULTS_DIR="$(Agent.TempDirectory)/qodana-results"
       OUTPUT_FILE="$RESULTS_DIR/qodana-output.txt"
@@ -89,8 +90,11 @@ steps:
       echo "Total problems found: $PROBLEM_COUNT"
       echo "HTML report: $HTML_REPORT"
 
-      # For now, don't fail the build - just report
-      # Uncomment to enforce: if [ "$PROBLEM_COUNT" -gt 0 ]; then exit 1; fi
+      # Fail the build if any problems are found
+      if [ "$PROBLEM_COUNT" -gt 0 ]; then
+        echo "##vso[task.logissue type=error]Qodana found $PROBLEM_COUNT code inspection problems"
+        exit 1
+      fi
     displayName: "Check inspection results"
   - task: PublishPipelineArtifact@1
     condition: always()
