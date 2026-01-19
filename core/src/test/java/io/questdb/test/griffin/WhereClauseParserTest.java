@@ -3302,11 +3302,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampOrExtractedWhenIntervalFilterFirst() throws Exception {
-        // When interval filter is processed first (appears in lhs of AND),
-        // OR clauses are still extracted into interval filters
+    public void testTimestampOrWithBetweenAndCondition() throws Exception {
+        // OR in rhs is processed first, then BETWEEN in lhs intersects with the OR intervals
         IntrinsicModel m = modelOf("timestamp between '2020-01-01' and '2020-12-31' and (timestamp in '2020-06-01' or timestamp in '2020-07-01')");
         Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
         // Both OR intervals are extracted and intersected with the BETWEEN range
         TestUtils.assertEquals(
                 replaceTimestampSuffix("[{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z},{lo=2020-07-01T00:00:00.000000Z, hi=2020-07-01T23:59:59.999999Z}]"),
