@@ -40,22 +40,11 @@ macro_rules! unpack_impl {
             assert!(input.len() >= NUM_BITS * $bytes);
 
             let r = |output_idx: usize| {
-                unsafe {  // Manually read bytes to avoid copy_nonoverlapping precondition checks, ~ 1.5x performance enhancement
-                    let p = input.as_ptr().add(output_idx * $bytes);
-                    if $bytes == 1 {
-                        *p as $t
-                    } else if $bytes == 2 {
-                        (*p as $t) | ((*p.add(1) as $t) << 8)
-                    } else if $bytes == 4 {
-                        (*p as $t) | ((*p.add(1) as $t) << 8) |
-                        ((*p.add(2) as $t) << 16) | ((*p.add(3) as $t) << 24)
-                    } else { // $byte == 8
-                        (*p as $t) | ((*p.add(1) as $t) << 8) |
-                        ((*p.add(2) as $t) << 16) | ((*p.add(3) as $t) << 24) |
-                        ((*p.add(4) as $t) << 32) | ((*p.add(5) as $t) << 40) |
-                        ((*p.add(6) as $t) << 48) | ((*p.add(7) as $t) << 56)
-                    }
-                }
+                <$t>::from_le_bytes(
+                    input[output_idx * $bytes..output_idx * $bytes + $bytes]
+                        .try_into()
+                        .unwrap(),
+                )
             };
 
             seq_macro::seq!(i in 0..$bits {
@@ -110,8 +99,6 @@ unpack!(unpack64, u64, 8, 64);
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_basic() {
         let input = [0xFF; 4096];
