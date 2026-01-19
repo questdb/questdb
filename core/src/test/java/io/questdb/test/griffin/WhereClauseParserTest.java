@@ -3262,6 +3262,18 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsOrSingleValues() throws Exception {
+        // timestamp = 'value' OR timestamp = 'value2' should also use interval scan
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01T10:00:00.000Z' or timestamp = '2018-01-02T10:00:00.000Z'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T10:00:00.000000Z, hi=2018-01-01T10:00:00.000000Z},{lo=2018-01-02T10:00:00.000000Z, hi=2018-01-02T10:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
     public void testTimestampEqualsToBindVariable() throws SqlException {
         long day = 24L * 3600 * 1000 * 1000;
         bindVariableService.clear();
@@ -3351,6 +3363,36 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampGreaterConstFunctionVarchar() throws SqlException {
         runWhereIntervalTest0("timestamp > to_date('2015-02-22'::varchar, 'yyyy-MM-dd'::varchar)", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
+    public void testTimestampInOrSingleValues() throws Exception {
+        // Issue #6668: timestamp IN 'value' OR timestamp IN 'value2' should use interval scan
+        // Single-value IN treats values as intervals (e.g., '2018-01-01' spans full day)
+        // Note: '2018-01-01T12:00' is contained within '2018-01-01' so they merge
+        IntrinsicModel m = modelOf("timestamp in '2018-01-01' or timestamp in '2018-01-01T12:00' or timestamp in '2018-01-02'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampInOrWithAndCondition() throws Exception {
+        // (timestamp IN 'A' OR timestamp IN 'B') AND other_condition
+        // sym = 'ABC' is extracted as indexed symbol key, not left in filter
+        // Single-value IN treats values as intervals (spans full day)
+        IntrinsicModel m = modelOf("(timestamp in '2018-01-01' or timestamp in '2018-01-02') and sym = 'ABC'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[ABC]", keyValueFuncsToString(m.keyValueFuncs));
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
     }
 
     @Test
@@ -3586,12 +3628,17 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoIntervalsWithOr() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') or timestamp in ('2014-02-01T12:30:00.000Z', '2014-02-02T12:30:00.000Z')");
-        Assert.assertFalse(m.hasIntervalFilters());
-        assertFilter(m, "'2014-02-02T12:30:00.000Z' '2014-02-01T12:30:00.000Z' timestamp in '2014-01-02T12:30:00.000Z' '2014-01-01T12:30:00.000Z' timestamp in or");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z},{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z},{lo=2014-02-01T12:30:00.000000Z, hi=2014-02-01T12:30:00.000000Z},{lo=2014-02-02T12:30:00.000000Z, hi=2014-02-02T12:30:00.000000Z}]"),
+                intervalToString(m)
+        );
     }
 
     @Test
     public void testTwoIntervalsWithOrVarchar() throws Exception {
+        // Varchar cast prevents intrinsic extraction (requires constant values)
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z'::varchar, '2014-01-02T12:30:00.000Z'::varchar) or timestamp in ('2014-02-01T12:30:00.000Z'::varchar, '2014-02-02T12:30:00.000Z'::varchar)");
         Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "varchar '2014-02-02T12:30:00.000Z' cast varchar '2014-02-01T12:30:00.000Z' cast timestamp in varchar '2014-01-02T12:30:00.000Z' cast varchar '2014-01-01T12:30:00.000Z' cast timestamp in or");
