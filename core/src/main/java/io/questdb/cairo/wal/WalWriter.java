@@ -908,7 +908,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     );
                 }
             }
-        } catch (CairoException ex) {
+        } catch (CairoException | TableReferenceOutOfDateException ex) {
             distressed = true;
             throw ex;
         } catch (Throwable th) {
@@ -1769,6 +1769,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
             events.sync();
         }
+    }
+
+    protected void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 
     private static class ConversionSymbolMapWriter implements SymbolMapWriterLite {
