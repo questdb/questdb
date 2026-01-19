@@ -28,7 +28,9 @@ use parquet2::encoding::hybrid_rle::BitmapIter;
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
 use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::page::DataPageHeader;
-use parquet2::page::{split_buffer, DataPage, DictPage, Page};
+use parquet2::page::{
+    split_buffer, CompressedDataPage, CompressedDictPage, CompressedPage, DataPage, DictPage, Page,
+};
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{decompress, get_page_iterator};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
@@ -250,7 +252,8 @@ impl ParquetDecoder {
             ));
         }
 
-        if rows_filter.is_empty() { // No rows to decode
+        if rows_filter.is_empty() {
+            // No rows to decode
             row_group_bufs.ensure_n_columns(dest_col_offset + columns.len())?;
             for i in 0..columns.len() {
                 let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_offset + i];
@@ -349,16 +352,14 @@ impl ParquetDecoder {
         Ok(filter_count)
     }
 
-    /// Decode a column chunk with row filtering.
-    /// Only decodes pages that contain rows in the filter, and only outputs filtered rows.
     #[allow(clippy::too_many_arguments)]
-    pub fn decode_column_chunk_filtered(
+    fn decode_column_chunk_filtered(
         &self,
         ctx: &mut DecodeContext,
         column_chunk_bufs: &mut ColumnChunkBuffers,
         row_group_index: usize,
-        _row_group_lo: usize,
-        _row_group_hi: usize,
+        row_group_lo: usize,
+        row_group_hi: usize,
         column_index: usize,
         col_info: QdbMetaCol,
         rows_filter: &[i64],
@@ -384,70 +385,122 @@ impl ParquetDecoder {
 
         let mut dict = None;
         let mut page_row_start = 0usize;
-        let mut filter_idx = 0usize; // Current position in rows_filter
+        let mut filter_idx = 0usize;
         let filter_count = rows_filter.len();
 
         column_chunk_bufs.aux_vec.clear();
         column_chunk_bufs.data_vec.clear();
 
         for maybe_page in page_reader {
-            let page = maybe_page?;
-            let page = decompress(page, &mut ctx.decompress_buffer)?;
+            let compressed_page = maybe_page?;
 
-            match page {
-                Page::Dict(page) => {
+            match compressed_page {
+                CompressedPage::Dict(dict_page) => {
+                    let page = decompress_dict(dict_page, &mut ctx.decompress_buffer)?;
                     dict = Some(page);
                 }
-                Page::Data(page) => {
-                    let page_row_count = page_row_count(&page, col_info.column_type)?;
-                    let page_row_end = page_row_start + page_row_count;
+                CompressedPage::Data(data_page) => {
+                    let page_row_count_opt =
+                        compressed_page_row_count(&data_page, col_info.column_type);
 
-                    // Find all rows in the filter that fall within this page
-                    // rows_filter is assumed to be sorted
-                    let mut page_filter_start = filter_idx;
-                    while filter_idx < filter_count {
-                        let row = rows_filter[filter_idx] as usize;
-                        if row >= page_row_end {
+                    if let Some(page_row_count) = page_row_count_opt {
+                        let page_end = page_row_start + page_row_count;
+                        if page_end <= row_group_lo {
+                            page_row_start = page_end;
+                            continue;
+                        }
+                        if page_row_start >= row_group_hi {
                             break;
                         }
-                        if row >= page_row_start {
-                            filter_idx += 1;
+
+                        let page_filter_start = filter_idx;
+                        if filter_count - filter_idx <= 64 {
+                            while filter_idx < filter_count
+                                && (rows_filter[filter_idx] as usize + row_group_lo) < page_end
+                            {
+                                filter_idx += 1;
+                            }
                         } else {
-                            // This shouldn't happen if rows_filter is sorted and within range
-                            filter_idx += 1;
-                            page_filter_start = filter_idx;
+                            filter_idx += rows_filter[filter_idx..]
+                                .partition_point(|&r| (r as usize + row_group_lo) < page_end);
                         }
-                    }
 
-                    // If there are rows to decode from this page
-                    if page_filter_start < filter_idx {
-                        let page_rows_filter = &rows_filter[page_filter_start..filter_idx];
-
-                        // Decode the page with row filter
-                        decode_page_filtered(
-                            &page,
-                            dict.as_ref(),
-                            column_chunk_bufs,
-                            col_info,
-                            page_row_start,
-                            page_row_count,
-                            page_rows_filter,
-                        )
-                        .with_context(|_| {
-                            format!(
-                                "could not decode page for column {:?} in row group {}",
-                                self.metadata.schema_descr.columns()[column_index]
-                                    .descriptor
-                                    .primitive_type
-                                    .field_info
-                                    .name,
-                                row_group_index,
+                        if page_filter_start < filter_idx {
+                            let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
+                            decode_page_filtered(
+                                &page,
+                                dict.as_ref(),
+                                column_chunk_bufs,
+                                col_info,
+                                page_row_start,
+                                page_row_count,
+                                row_group_lo,
+                                &rows_filter[page_filter_start..filter_idx],
                             )
-                        })?;
-                    }
-                    // Skip pages that don't contain any filtered rows
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
+                        }
+                        page_row_start = page_end;
+                    } else {
+                        if page_row_start >= row_group_hi {
+                            break;
+                        }
 
-                    page_row_start = page_row_end;
+                        let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
+                        let page_row_count = page_row_count(&page, col_info.column_type)?;
+                        let page_end = page_row_start + page_row_count;
+
+                        if page_end <= row_group_lo {
+                            page_row_start = page_end;
+                            continue;
+                        }
+
+                        let page_filter_start = filter_idx;
+                        if filter_count - filter_idx <= 64 {
+                            while filter_idx < filter_count
+                                && (rows_filter[filter_idx] as usize + row_group_lo) < page_end
+                            {
+                                filter_idx += 1;
+                            }
+                        } else {
+                            filter_idx += rows_filter[filter_idx..]
+                                .partition_point(|&r| (r as usize + row_group_lo) < page_end);
+                        }
+
+                        if page_filter_start < filter_idx {
+                            decode_page_filtered(
+                                &page,
+                                dict.as_ref(),
+                                column_chunk_bufs,
+                                col_info,
+                                page_row_start,
+                                page_row_count,
+                                row_group_lo,
+                                &rows_filter[page_filter_start..filter_idx],
+                            )
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
+                        }
+                        page_row_start = page_end;
+                    }
                 }
             };
         }
@@ -491,37 +544,68 @@ impl ParquetDecoder {
         column_chunk_bufs.aux_vec.clear();
         column_chunk_bufs.data_vec.clear();
         for maybe_page in page_reader {
-            let page = maybe_page?;
-            let page = decompress(page, &mut ctx.decompress_buffer)?;
+            let compressed_page = maybe_page?;
 
-            match page {
-                Page::Dict(page) => {
+            match compressed_page {
+                CompressedPage::Dict(dict_page) => {
+                    let page = decompress_dict(dict_page, &mut ctx.decompress_buffer)?;
                     dict = Some(page);
                 }
-                Page::Data(page) => {
-                    let page_row_count = page_row_count(&page, col_info.column_type)?;
-                    if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
-                        decode_page(
-                            &page,
-                            dict.as_ref(),
-                            column_chunk_bufs,
-                            col_info,
-                            row_group_lo.saturating_sub(row_count),
-                            cmp::min(page_row_count, row_group_hi - row_count),
-                        )
-                        .with_context(|_| {
-                            format!(
-                                "could not decode page for column {:?} in row group {}",
-                                self.metadata.schema_descr.columns()[column_index]
-                                    .descriptor
-                                    .primitive_type
-                                    .field_info
-                                    .name,
-                                row_group_index,
+                CompressedPage::Data(data_page) => {
+                    let page_row_count_opt =
+                        compressed_page_row_count(&data_page, col_info.column_type);
+
+                    if let Some(page_row_count) = page_row_count_opt {
+                        if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
+                            let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
+                            decode_page(
+                                &page,
+                                dict.as_ref(),
+                                column_chunk_bufs,
+                                col_info,
+                                row_group_lo.saturating_sub(row_count),
+                                cmp::min(page_row_count, row_group_hi - row_count),
                             )
-                        })?;
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
+                        }
+                        row_count += page_row_count;
+                    } else {
+                        let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
+                        let page_row_count = page_row_count(&page, col_info.column_type)?;
+
+                        if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
+                            decode_page(
+                                &page,
+                                dict.as_ref(),
+                                column_chunk_bufs,
+                                col_info,
+                                row_group_lo.saturating_sub(row_count),
+                                cmp::min(page_row_count, row_group_hi - row_count),
+                            )
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
+                        }
+                        row_count += page_row_count;
                     }
-                    row_count += page_row_count;
                 }
             };
         }
@@ -689,11 +773,7 @@ impl ParquetDecoder {
     }
 }
 
-/// Decode a page with sparse row filtering.
-/// `page_row_start` is the absolute row index where this page starts in the row group.
-/// `page_row_count` is the number of rows in this page.
-/// `rows_filter` contains absolute row indices (relative to row group) to decode.
-/// All indices in rows_filter should be within [page_row_start, page_row_start + page_row_count).
+#[allow(clippy::too_many_arguments)]
 pub fn decode_page_filtered(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -701,6 +781,7 @@ pub fn decode_page_filtered(
     col_info: QdbMetaCol,
     page_row_start: usize,
     page_row_count: usize,
+    row_group_lo: usize,
     rows_filter: &[i64],
 ) -> ParquetResult<()> {
     if rows_filter.is_empty() {
@@ -728,6 +809,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedInt2ShortColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
@@ -747,9 +829,13 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedInt2ShortColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<2>::try_new(values_buffer, page_row_count)?,
+                            &mut DeltaBinaryPackedSlicer::<2>::try_new(
+                                values_buffer,
+                                page_row_count,
+                            )?,
                             bufs,
                             &SHORT_NULL,
                         ),
@@ -761,6 +847,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedInt2ByteColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
@@ -780,9 +867,13 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedInt2ByteColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<1>::try_new(values_buffer, page_row_count)?,
+                            &mut DeltaBinaryPackedSlicer::<1>::try_new(
+                                values_buffer,
+                                page_row_count,
+                            )?,
                             bufs,
                             &BYTE_NULL,
                         ),
@@ -799,6 +890,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedIntColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
@@ -813,6 +905,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedLongColumnSink::new(
                             &mut ValueConvertSlicer::<8, _, _>::new(
@@ -841,9 +934,13 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedIntColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<4>::try_new(values_buffer, page_row_count)?,
+                            &mut DeltaBinaryPackedSlicer::<4>::try_new(
+                                values_buffer,
+                                page_row_count,
+                            )?,
                             bufs,
                             &INT_NULL,
                         ),
@@ -868,6 +965,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedIntColumnSink::new(&mut slicer, bufs, &INT_NULL),
                     )?;
@@ -896,6 +994,7 @@ pub fn decode_page_filtered(
                                 page,
                                 page_row_start,
                                 page_row_count,
+                                row_group_lo,
                                 rows_filter,
                                 &mut IntDecimalColumnSink::new(
                                     &mut slicer,
@@ -911,9 +1010,13 @@ pub fn decode_page_filtered(
                                 page,
                                 page_row_start,
                                 page_row_count,
+                                row_group_lo,
                                 rows_filter,
                                 &mut IntDecimalColumnSink::new(
-                                    &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
+                                    &mut DataPageFixedSlicer::<4>::new(
+                                        values_buffer,
+                                        page_row_count,
+                                    ),
                                     bufs,
                                     &DOUBLE_NULL,
                                     scale as i32,
@@ -942,6 +1045,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedInt2ShortColumnSink::new(&mut slicer, bufs, &SHORT_NULL),
                     )?;
@@ -965,6 +1069,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedInt2ByteColumnSink::new(&mut slicer, bufs, &BYTE_NULL),
                     )?;
@@ -988,6 +1093,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedLongColumnSink::new(
                             &mut DataPageFixedSlicer::<8>::new(values_buffer, page_row_count),
@@ -1010,9 +1116,13 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedLongColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<8>::try_new(values_buffer, page_row_count)?,
+                            &mut DeltaBinaryPackedSlicer::<8>::try_new(
+                                values_buffer,
+                                page_row_count,
+                            )?,
                             bufs,
                             &LONG_NULL,
                         ),
@@ -1040,6 +1150,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
                     )?;
@@ -1055,6 +1166,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut ReverseFixedColumnSink::new(
                             &mut DataPageFixedSlicer::<16>::new(values_buffer, page_row_count),
@@ -1074,6 +1186,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedLong128ColumnSink::new(
                             &mut DataPageFixedSlicer::<16>::new(values_buffer, page_row_count),
@@ -1093,6 +1206,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedLong256ColumnSink::new(
                             &mut DataPageFixedSlicer::<32>::new(values_buffer, page_row_count),
@@ -1110,24 +1224,32 @@ pub fn decode_page_filtered(
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::String) => {
-                    let mut slicer =
-                        DeltaLengthArraySlicer::try_new(values_buffer, page_row_count, page_row_count)?;
+                    let mut slicer = DeltaLengthArraySlicer::try_new(
+                        values_buffer,
+                        page_row_count,
+                        page_row_count,
+                    )?;
                     decode_page0_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer =
-                        DeltaLengthArraySlicer::try_new(values_buffer, page_row_count, page_row_count)?;
+                    let mut slicer = DeltaLengthArraySlicer::try_new(
+                        values_buffer,
+                        page_row_count,
+                        page_row_count,
+                    )?;
                     decode_page0_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
@@ -1150,6 +1272,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
@@ -1161,6 +1284,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
@@ -1172,18 +1296,23 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(())
                 }
                 (Encoding::DeltaByteArray, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer =
-                        DeltaBytesArraySlicer::try_new(values_buffer, page_row_count, page_row_count)?;
+                    let mut slicer = DeltaBytesArraySlicer::try_new(
+                        values_buffer,
+                        page_row_count,
+                        page_row_count,
+                    )?;
                     decode_page0_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
@@ -1206,6 +1335,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedIntColumnSink::new(&mut slicer, bufs, &SYMBOL_NULL),
                     )?;
@@ -1223,18 +1353,23 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Binary) => {
-                    let mut slicer =
-                        DeltaLengthArraySlicer::try_new(values_buffer, page_row_count, page_row_count)?;
+                    let mut slicer = DeltaLengthArraySlicer::try_new(
+                        values_buffer,
+                        page_row_count,
+                        page_row_count,
+                    )?;
                     decode_page0_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
@@ -1257,6 +1392,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
@@ -1269,18 +1405,23 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Array) => {
-                    let mut slicer =
-                        DeltaLengthArraySlicer::try_new(values_buffer, page_row_count, page_row_count)?;
+                    let mut slicer = DeltaLengthArraySlicer::try_new(
+                        values_buffer,
+                        page_row_count,
+                        page_row_count,
+                    )?;
                     decode_page0_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
@@ -1297,6 +1438,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut NanoTimestampColumnSink::new(
                             &mut DataPageFixedSlicer::<12>::new(values_buffer, page_row_count),
@@ -1324,6 +1466,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut NanoTimestampColumnSink::new(&mut slicer, bufs, &LONG_NULL),
                     )?;
@@ -1341,6 +1484,7 @@ pub fn decode_page_filtered(
                     page,
                     page_row_start,
                     page_row_count,
+                    row_group_lo,
                     rows_filter,
                     &mut FixedDoubleColumnSink::new(
                         &mut DataPageFixedSlicer::<8>::new(values_buffer, page_row_count),
@@ -1370,6 +1514,7 @@ pub fn decode_page_filtered(
                     page,
                     page_row_start,
                     page_row_count,
+                    row_group_lo,
                     rows_filter,
                     &mut FixedDoubleColumnSink::new(&mut slicer, bufs, &DOUBLE_NULL),
                 )?;
@@ -1381,6 +1526,7 @@ pub fn decode_page_filtered(
                     page,
                     page_row_start,
                     page_row_count,
+                    row_group_lo,
                     rows_filter,
                     &mut slicer,
                     bufs,
@@ -1404,6 +1550,7 @@ pub fn decode_page_filtered(
                     page,
                     page_row_start,
                     page_row_count,
+                    row_group_lo,
                     rows_filter,
                     &mut slicer,
                     bufs,
@@ -1436,6 +1583,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedFloatColumnSink::new(&mut slicer, bufs, &FLOAT_NULL),
                     )?;
@@ -1446,6 +1594,7 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedFloatColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
@@ -1460,9 +1609,14 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(values_buffer, page_row_count, page_row_count),
+                            &mut BooleanBitmapSlicer::new(
+                                values_buffer,
+                                page_row_count,
+                                page_row_count,
+                            ),
                             bufs,
                             &[0],
                         ),
@@ -1474,9 +1628,14 @@ pub fn decode_page_filtered(
                         page,
                         page_row_start,
                         page_row_count,
+                        row_group_lo,
                         rows_filter,
                         &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(values_buffer, page_row_count, page_row_count),
+                            &mut BooleanBitmapSlicer::new(
+                                values_buffer,
+                                page_row_count,
+                                page_row_count,
+                            ),
                             bufs,
                             &[0],
                         ),
@@ -2269,7 +2428,7 @@ fn decode_page0<T: Pushable>(
     row_hi: usize,
     sink: &mut T,
 ) -> ParquetResult<()> {
-    sink.reserve()?;
+    sink.reserve(row_hi - row_lo)?;
     let iter = decode_null_bitmap(page, row_hi)?;
     if let Some(iter) = iter {
         let mut skip_count = row_lo;
@@ -2340,15 +2499,12 @@ fn decode_page0<T: Pushable>(
     sink.result()
 }
 
-/// Decode a page with sparse row filtering.
-/// `page_row_start` is where this page starts in the row group (absolute index).
-/// `rows_filter` contains absolute row indices (relative to row group) to decode.
-/// Only rows in `rows_filter` will be pushed to the sink.
 #[allow(clippy::while_let_on_iterator)]
 fn decode_page0_filtered<T: Pushable>(
     page: &DataPage,
     page_row_start: usize,
     page_row_count: usize,
+    row_group_lo: usize,
     rows_filter: &[i64],
     sink: &mut T,
 ) -> ParquetResult<()> {
@@ -2356,82 +2512,50 @@ fn decode_page0_filtered<T: Pushable>(
         return Ok(());
     }
 
-    sink.reserve()?;
+    sink.reserve(rows_filter.len())?;
 
     let mut filter_idx = 0usize;
     let filter_len = rows_filter.len();
 
     let iter = decode_null_bitmap(page, page_row_count)?;
     if let Some(iter) = iter {
-        let mut current_row = 0usize; // Current row index within page
-        let mut data_idx = 0usize; // Index into non-null data values
+        let mut current_row = 0usize;
 
         for run in iter {
             let run = run?;
             match run {
                 HybridEncoded::Bitmap(values, length) => {
-                    let run_start = current_row;
-                    let run_end = current_row + length;
-
-                    // Check if any filter rows fall within this run
-                    let abs_run_start = page_row_start + run_start;
-                    let abs_run_end = page_row_start + run_end;
-
-                    // Skip if all remaining filter rows are before this run
-                    // (shouldn't happen with sorted filter, but be safe)
-                    while filter_idx < filter_len
-                        && (rows_filter[filter_idx] as usize) < abs_run_start
-                    {
-                        filter_idx += 1;
-                    }
-
-                    // Early exit if no more filter rows
+                    let run_start_pos = page_row_start + current_row;
+                    let run_end_pos = run_start_pos + length;
                     if filter_idx >= filter_len {
-                        // Count remaining non-nulls in this run and skip them
-                        let non_nulls = count_ones_in_bitmap(values, 0, length);
-                        data_idx += non_nulls;
-                        sink.skip(data_idx);
                         return sink.result();
                     }
 
-                    // Check if any filter rows fall within this run
-                    if (rows_filter[filter_idx] as usize) >= abs_run_end {
-                        // No filter rows in this run, batch skip
-                        let non_nulls = count_ones_in_bitmap(values, 0, length);
-                        data_idx += non_nulls;
-                        current_row = run_end;
+                    if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
+                        sink.skip(count_ones_in_bitmap(values, 0, length));
+                        current_row += length;
                         continue;
                     }
 
-                    // Process the bitmap - some filter rows fall within this run
                     let mut bit_offset = 0usize;
-                    while bit_offset < length && filter_idx < filter_len {
-                        let abs_row = abs_run_start + bit_offset;
-                        let target_abs_row = rows_filter[filter_idx] as usize;
-
-                        if target_abs_row >= abs_run_end {
-                            // No more filter rows in this run
-                            let non_nulls = count_ones_in_bitmap(values, bit_offset, length - bit_offset);
-                            data_idx += non_nulls;
+                    while filter_idx < filter_len {
+                        let target_offset =
+                            (rows_filter[filter_idx] as usize + row_group_lo) - run_start_pos;
+                        if target_offset >= length {
                             break;
                         }
 
-                        if abs_row < target_abs_row {
-                            // Batch skip to the target row
-                            let skip_count = target_abs_row - abs_row;
-                            let skip_count = skip_count.min(length - bit_offset);
-                            let non_nulls = count_ones_in_bitmap(values, bit_offset, skip_count);
-                            data_idx += non_nulls;
-                            bit_offset += skip_count;
-                            continue;
+                        if bit_offset < target_offset {
+                            sink.skip(count_ones_in_bitmap(
+                                values,
+                                bit_offset,
+                                target_offset - bit_offset,
+                            ));
+                            bit_offset = target_offset;
                         }
 
-                        // abs_row == target_abs_row: this row is in the filter
-                        let is_set = get_bit_at(values, bit_offset);
-                        if is_set {
-                            sink.skip(data_idx);
+                        if get_bit_at(values, bit_offset) {
                             sink.push()?;
-                            data_idx = 0;
                         } else {
                             sink.push_null()?;
                         }
@@ -2439,76 +2563,46 @@ fn decode_page0_filtered<T: Pushable>(
                         bit_offset += 1;
                     }
 
-                    // If we exited the loop without processing remaining bits
-                    if bit_offset < length && filter_idx >= filter_len {
-                        let non_nulls = count_ones_in_bitmap(values, bit_offset, length - bit_offset);
-                        data_idx += non_nulls;
-                    }
-
-                    current_row = run_end;
-                }
-                HybridEncoded::Repeated(is_set, length) => {
-                    let run_start = current_row;
-                    let run_end = current_row + length;
-                    let abs_run_start = page_row_start + run_start;
-                    let abs_run_end = page_row_start + run_end;
-
-                    // Skip filter entries before this run
-                    while filter_idx < filter_len
-                        && (rows_filter[filter_idx] as usize) < abs_run_start
-                    {
-                        filter_idx += 1;
-                    }
-
-                    // Early exit if no more filter rows
                     if filter_idx >= filter_len {
-                        if is_set {
-                            data_idx += length;
-                        }
-                        sink.skip(data_idx);
                         return sink.result();
                     }
 
-                    // Check if any filter rows fall within this run
-                    if (rows_filter[filter_idx] as usize) >= abs_run_end {
-                        // No filter rows in this run, batch skip
+                    if bit_offset < length {
+                        sink.skip(count_ones_in_bitmap(values, bit_offset, length - bit_offset));
+                    }
+
+                    current_row += length;
+                }
+                HybridEncoded::Repeated(is_set, length) => {
+                    let run_start_pos = page_row_start + current_row;
+                    let run_end_pos = run_start_pos + length;
+                    if filter_idx >= filter_len {
+                        return sink.result();
+                    }
+                    if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
                         if is_set {
-                            data_idx += length;
+                            sink.skip(length);
                         }
-                        current_row = run_end;
+                        current_row += length;
                         continue;
                     }
 
-                    // Process filter rows within this run
                     let mut row_offset = 0usize;
-                    while row_offset < length && filter_idx < filter_len {
-                        let abs_row = abs_run_start + row_offset;
-                        let target_abs_row = rows_filter[filter_idx] as usize;
+                    while filter_idx < filter_len {
+                        let target_offset =
+                            (rows_filter[filter_idx] as usize + row_group_lo) - run_start_pos;
 
-                        if target_abs_row >= abs_run_end {
-                            // No more filter rows in this run
-                            if is_set {
-                                data_idx += length - row_offset;
-                            }
+                        if target_offset >= length {
                             break;
                         }
 
-                        if abs_row < target_abs_row {
-                            // Batch skip to the target row
-                            let skip_count = target_abs_row - abs_row;
-                            let skip_count = skip_count.min(length - row_offset);
-                            if is_set {
-                                data_idx += skip_count;
-                            }
-                            row_offset += skip_count;
-                            continue;
+                        if is_set && row_offset < target_offset {
+                            sink.skip(target_offset - row_offset);
                         }
+                        row_offset = target_offset;
 
-                        // abs_row == target_abs_row: this row is in the filter
                         if is_set {
-                            sink.skip(data_idx);
                             sink.push()?;
-                            data_idx = 0;
                         } else {
                             sink.push_null()?;
                         }
@@ -2516,117 +2610,133 @@ fn decode_page0_filtered<T: Pushable>(
                         row_offset += 1;
                     }
 
-                    // Handle remaining rows after filter exhausted
-                    if row_offset < length && filter_idx >= filter_len && is_set {
-                        data_idx += length - row_offset;
+                    if filter_idx >= filter_len {
+                        return sink.result();
                     }
 
-                    current_row = run_end;
+                    if is_set && row_offset < length {
+                        sink.skip(length - row_offset);
+                    }
+
+                    current_row += length;
                 }
             };
-
-            // Early exit after each run if filter exhausted
-            if filter_idx >= filter_len {
-                sink.skip(data_idx);
-                return sink.result();
-            }
         }
-        // Skip any remaining data values
-        sink.skip(data_idx);
     } else {
-        // No null bitmap - all values are non-null
-        // Optimized: directly jump to filter positions
-        for i in 0..filter_len {
-            let target_row = rows_filter[i] as usize;
-            let page_relative_row = target_row - page_row_start;
+        let mut i = 0usize;
+        let mut prev_row_end = 0usize;
 
-            if page_relative_row >= page_row_count {
+        while i < filter_len {
+            let first_row = rows_filter[i] as usize + row_group_lo - page_row_start;
+            if first_row >= page_row_count {
                 break;
             }
 
-            // Calculate how many data values to skip
-            let skip_count = if i == 0 {
-                page_relative_row
-            } else {
-                let prev_row = rows_filter[i - 1] as usize - page_row_start;
-                page_relative_row - prev_row - 1
-            };
+            let mut consecutive = 1usize;
+            while i + consecutive < filter_len {
+                let curr = rows_filter[i + consecutive - 1] as usize;
+                let next = rows_filter[i + consecutive] as usize;
+                if next != curr + 1 {
+                    break;
+                }
+                let next_row = next + row_group_lo - page_row_start;
+                if next_row >= page_row_count {
+                    break;
+                }
+                consecutive += 1;
+            }
 
-            sink.skip(skip_count);
-            sink.push()?;
+            sink.skip(first_row - prev_row_end);
+            sink.push_slice(consecutive)?;
+            prev_row_end = first_row + consecutive;
+            i += consecutive;
         }
 
-        // Calculate remaining rows to skip
-        if filter_len > 0 {
-            let last_filter_row = rows_filter[filter_len - 1] as usize - page_row_start;
-            let remaining = page_row_count - last_filter_row - 1;
-            sink.skip(remaining);
+        if prev_row_end < page_row_count {
+            sink.skip(page_row_count - prev_row_end);
         }
     }
 
     sink.result()
 }
 
-/// Count the number of set bits (1s) in a bitmap slice.
-/// `offset` is the bit offset to start from, `length` is the number of bits to count.
+/// Counts 1s in a bitmap range. Always uses popcount, never bit-by-bit iteration.
 #[inline]
 fn count_ones_in_bitmap(values: &[u8], offset: usize, length: usize) -> usize {
-    if length == 0 {
-        return 0;
+    let byte_idx = offset >> 3;
+    let start_bit = offset & 7;
+    let byte = unsafe { *values.get_unchecked(byte_idx) };
+
+    // Fast path: 1 bit
+    if length == 1 {
+        return ((byte >> start_bit) & 1) as usize;
     }
 
-    let start_byte = offset / 8;
-    let start_bit = offset % 8;
-    let end_bit_pos = offset + length;
-    let end_byte = end_bit_pos.div_ceil(8);
-
-    if end_byte > values.len() {
-        // Bounds check - count what we can
-        let available_bits = values.len() * 8 - offset;
-        if available_bits == 0 {
-            return 0;
-        }
-        return count_ones_in_bitmap(values, offset, available_bits.min(length));
+    // Fast path: 2 bits
+    if length == 2 {
+        return if start_bit <= 6 {
+            let two_bits = (byte >> start_bit) & 0b11;
+            ((two_bits & 1) + (two_bits >> 1)) as usize
+        } else {
+            let first = (byte >> 7) & 1;
+            let second = unsafe { *values.get_unchecked(byte_idx + 1) } & 1;
+            (first + second) as usize
+        };
     }
 
+    // Fast path: small length
+    if length <= 8 {
+        let end_bit = start_bit + length;
+        return if end_bit <= 8 {
+            let mask = ((1u16 << length) - 1) << start_bit;
+            (byte & mask as u8).count_ones() as usize
+        } else {
+            let first_mask = 0xFFu8 << start_bit;
+            let mut count = (byte & first_mask).count_ones() as usize;
+
+            let second_bits = length - (8 - start_bit);
+            let second_mask = (1u8 << second_bits) - 1;
+            count +=
+                (unsafe { *values.get_unchecked(byte_idx + 1) } & second_mask).count_ones() as usize;
+            count
+        };
+    }
+
+    // General path for larger lengths
     let mut count = 0usize;
+    let mut bit_pos = offset;
+    let end_pos = offset + length;
 
-    if start_bit == 0 && length >= 8 {
-        // Fast path: byte-aligned start, can use popcount on whole bytes
-        let full_bytes = length / 8;
-        for &byte in &values[start_byte..start_byte + full_bytes] {
-            count += byte.count_ones() as usize;
-        }
-        // Handle remaining bits
-        let remaining_bits = length % 8;
-        if remaining_bits > 0 {
-            let last_byte_idx = start_byte + full_bytes;
-            if last_byte_idx < values.len() {
-                let mask = (1u8 << remaining_bits) - 1;
-                count += (values[last_byte_idx] & mask).count_ones() as usize;
-            }
-        }
-    } else {
-        // Slow path: not byte-aligned or small range
-        for i in 0..length {
-            if get_bit_at(values, offset + i) {
-                count += 1;
-            }
-        }
+    // Handle unaligned start
+    if start_bit != 0 {
+        let bits_in_first_byte = 8 - start_bit;
+        let mask = 0xFFu8 << start_bit;
+        count += (unsafe { *values.get_unchecked(byte_idx) } & mask).count_ones() as usize;
+        bit_pos += bits_in_first_byte;
+    }
+
+    // Handle full bytes
+    let full_byte_start = bit_pos >> 3;
+    let full_byte_end = end_pos >> 3;
+    for &byte in &values[full_byte_start..full_byte_end] {
+        count += byte.count_ones() as usize;
+    }
+
+    // Handle remaining bits
+    let remaining = end_pos & 7;
+    if remaining > 0 {
+        let mask = (1u8 << remaining) - 1;
+        count += (unsafe { *values.get_unchecked(full_byte_end) } & mask).count_ones() as usize;
     }
 
     count
 }
 
-/// Get a single bit at the given offset.
 #[inline]
 fn get_bit_at(values: &[u8], bit_offset: usize) -> bool {
-    let byte_idx = bit_offset / 8;
-    let bit_idx = bit_offset % 8;
-    if byte_idx >= values.len() {
-        return false;
-    }
-    (values[byte_idx] >> bit_idx) & 1 == 1
+    let byte_idx = bit_offset >> 3;
+    let bit_idx = bit_offset & 7;
+    unsafe { (values.get_unchecked(byte_idx) >> bit_idx) & 1 == 1 }
 }
 
 fn decode_null_bitmap(
@@ -2651,6 +2761,7 @@ fn decode_array_page_filtered<T: DataPageSlicer>(
     page: &DataPage,
     page_row_start: usize,
     page_row_count: usize,
+    row_group_lo: usize,
     rows_filter: &[i64],
     slicer: &mut T,
     buffers: &mut ColumnChunkBuffers,
@@ -2659,8 +2770,9 @@ fn decode_array_page_filtered<T: DataPageSlicer>(
         return Ok(());
     }
 
-    let count = slicer.count();
-    buffers.aux_vec.reserve(count * ARRAY_AUX_SIZE)?;
+    buffers
+        .aux_vec
+        .reserve(rows_filter.len() * ARRAY_AUX_SIZE)?;
     buffers.data_vec.reserve(slicer.data_size())?;
 
     let (rep_levels, def_levels, _) = split_buffer(page)?;
@@ -2689,10 +2801,11 @@ fn decode_array_page_filtered<T: DataPageSlicer>(
 
     while let Some(levels) = levels_iter.next_levels() {
         let levels = levels?;
-        let abs_row = page_row_start + current_row;
+        let row_pos = page_row_start + current_row;
 
         // Check if this row is in the filter
-        let in_filter = filter_idx < filter_len && rows_filter[filter_idx] as usize == abs_row;
+        let in_filter =
+            filter_idx < filter_len && (rows_filter[filter_idx] as usize + row_group_lo) == row_pos;
 
         if in_filter {
             append_array(
@@ -2724,8 +2837,9 @@ fn decode_array_page<T: DataPageSlicer>(
     slicer: &mut T,
     buffers: &mut ColumnChunkBuffers,
 ) -> ParquetResult<()> {
-    let count = slicer.count();
-    buffers.aux_vec.reserve(count * ARRAY_AUX_SIZE)?;
+    buffers
+        .aux_vec
+        .reserve((row_hi - row_lo) * ARRAY_AUX_SIZE)?;
     buffers.data_vec.reserve(slicer.data_size())?;
 
     let (rep_levels, def_levels, _) = split_buffer(page)?;
@@ -2831,6 +2945,38 @@ fn skip_array<T: DataPageSlicer>(slicer: &mut T, max_def_level: u32, def_levels:
         if def_level == max_def_level {
             slicer.next();
         }
+    }
+}
+
+fn decompress_dict(page: CompressedDictPage, buffer: &mut Vec<u8>) -> ParquetResult<DictPage> {
+    let compressed = CompressedPage::Dict(page);
+    match decompress(compressed, buffer)? {
+        Page::Dict(dict_page) => Ok(dict_page),
+        _ => unreachable!(),
+    }
+}
+
+fn decompress_data(page: CompressedDataPage, buffer: &mut Vec<u8>) -> ParquetResult<DataPage> {
+    let compressed = CompressedPage::Data(page);
+    match decompress(compressed, buffer)? {
+        Page::Data(data_page) => Ok(data_page),
+        _ => unreachable!(),
+    }
+}
+
+fn compressed_page_row_count(page: &CompressedDataPage, column_type: ColumnType) -> Option<usize> {
+    match page.header() {
+        DataPageHeader::V2(header) => Some(header.num_rows as usize),
+        DataPageHeader::V1(header) => match column_type.tag() {
+            ColumnTypeTag::Array => {
+                if page.descriptor().primitive_type.physical_type == PhysicalType::ByteArray {
+                    Some(header.num_values as usize)
+                } else {
+                    None
+                }
+            }
+            _ => Some(header.num_values as usize),
+        },
     }
 }
 

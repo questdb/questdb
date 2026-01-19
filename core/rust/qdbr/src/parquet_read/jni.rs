@@ -130,20 +130,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroup1(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroupWithRowFilter(
     mut env: JNIEnv,
     _class: JClass,
     decoder: *const ParquetDecoder,
     ctx: *mut DecodeContext,
     row_group_bufs: *mut RowGroupBuffers,
-    encoded_column_size: u32,
+    column_offset: u32,
     columns: *const (ParquetColumnIndex, ColumnType),
     column_count: u32,
     row_group_index: u32,
     row_group_lo: u32,
     row_group_hi: u32,
-    rows_filter_ptr: *const i64,
-    rows_filter_size: i64,
+    filtered_rows_ptr: *const i64,
+    filtered_rows_size: i64,
 ) -> u32 {
     assert!(!decoder.is_null(), "decoder pointer is null");
     assert!(!ctx.is_null(), "decode context pointer is null");
@@ -153,35 +153,38 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     );
     assert!(!columns.is_null(), "columns pointer is null");
     assert!(
-        !rows_filter_ptr.is_null(),
-        "rows filter pointer is null"
+        !filtered_rows_ptr.is_null(),
+        "filtered rows pointer is null"
     );
 
     let decoder = unsafe { &*decoder };
     let ctx = unsafe { &mut *ctx };
     let row_group_bufs = unsafe { &mut *row_group_bufs };
     let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
-    let rows_filter = unsafe { slice::from_raw_parts(rows_filter_ptr, rows_filter_size as usize) };
+    let filtered_rows =
+        unsafe { slice::from_raw_parts(filtered_rows_ptr, filtered_rows_size as usize) };
 
     // We've unsafely accepted a `ColumnType` from Java, so we need to validate it.
     let res = validate_jni_column_types(columns).and_then(|()| {
         decoder.decode_row_group_filtered(
             ctx,
             row_group_bufs,
-            encoded_column_size as usize,
+            column_offset as usize,
             columns,
             row_group_index,
             row_group_lo,
             row_group_hi,
-            rows_filter,
+            filtered_rows,
         )
     });
 
     match res {
         Ok(row_count) => row_count as u32,
         Err(mut err) => {
-            err.add_context(format!("could not decode row group {row_group_index} with row filter"));
-            err.add_context("error in PartitionDecoder.decodeRowGroup1");
+            err.add_context(format!(
+                "could not decode row group {row_group_index} with row filter"
+            ));
+            err.add_context("error in PartitionDecoder.decodeRowGroupWithRowFilter");
             err.into_cairo_exception().throw(&mut env)
         }
     }

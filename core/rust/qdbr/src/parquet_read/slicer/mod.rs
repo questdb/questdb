@@ -15,7 +15,7 @@ pub trait ByteSink {
 }
 
 impl ByteSink for AcVec<u8> {
-    #[inline]
+    #[inline(always)]
     fn extend_from_slice(&mut self, data: &[u8]) -> ParquetResult<()> {
         unsafe {
             let len = self.len();

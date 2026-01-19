@@ -44,8 +44,7 @@ pub struct VarcharColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        let count = self.slicer.count();
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         self.buffers.aux_vec.reserve(count * VARCHAR_AUX_SIZE)?;
         self.buffers.data_vec.reserve(self.slicer.data_size())?;
         Ok(())
@@ -105,8 +104,7 @@ pub struct StringColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        let count = self.slicer.count();
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         if count > 0 {
             self.buffers
                 .aux_vec
@@ -218,8 +216,7 @@ pub struct BinaryColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        let count = self.slicer.count();
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         if count > 0 {
             self.buffers
                 .aux_vec
@@ -313,8 +310,7 @@ pub struct RawArrayColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        let count = self.slicer.count();
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         self.buffers.aux_vec.reserve(count * ARRAY_AUX_SIZE)?;
         self.buffers.data_vec.reserve(self.slicer.data_size())?;
         Ok(())

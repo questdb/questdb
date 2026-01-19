@@ -27,8 +27,8 @@ pub type FixedLong128ColumnSink<'a, T> = FixedColumnSink<'a, 16, 16, T>;
 pub type FixedBooleanColumnSink<'a, T> = FixedColumnSink<'a, 1, 1, T>;
 
 impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumnSink<'_, N, R, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        self.buffers.data_vec.reserve(self.slicer.count() * N)?;
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(count * N)?;
         Ok(())
     }
 
@@ -107,8 +107,8 @@ pub struct ReverseFixedColumnSink<'a, const N: usize, T: DataPageSlicer> {
 }
 
 impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, N, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        self.buffers.data_vec.reserve(self.slicer.count() * N)?;
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(count * N)?;
         Ok(())
     }
 
@@ -180,8 +180,8 @@ pub struct NanoTimestampColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for NanoTimestampColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        self.buffers.data_vec.reserve(self.slicer.count() * 8)?;
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(count * 8)?;
         Ok(())
     }
 
@@ -276,8 +276,8 @@ pub struct IntDecimalColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for IntDecimalColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        self.buffers.data_vec.reserve(self.slicer.count() * 4)?;
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(count * 8)?;
         Ok(())
     }
 

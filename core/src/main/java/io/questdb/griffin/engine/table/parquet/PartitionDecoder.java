@@ -107,32 +107,32 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
-    public int decodeRowGroup(
+    public int decodeRowGroupWithRowFilter(
             RowGroupBuffers rowGroupBuffers,
-            int encodedColumnSize,
+            int columnOffset,
             DirectIntList columns, // contains [parquet_column_index, column_type] pairs
             int rowGroupIndex,
             int rowLo, // low row index within the row group, inclusive
             int rowHi, // high row index within the row group, exclusive
-            DirectLongList rows
+            DirectLongList filteredRows
     ) {
         assert ptr != 0;
         if (decodeContextPtr == 0) {
             // lazy init
             decodeContextPtr = createDecodeContext(fileAddr, fileSize);
         }
-        return decodeRowGroup1(
+        return decodeRowGroupWithRowFilter(
                 ptr,
                 decodeContextPtr,
                 rowGroupBuffers.ptr(),
-                encodedColumnSize,
+                columnOffset,
                 columns.getAddress(),
                 (int) (columns.size() >>> 1),
                 rowGroupIndex,
                 rowLo,
                 rowHi,
-                rows.getAddress(),
-                rows.size()
+                filteredRows.getAddress(),
+                filteredRows.size()
         );
     }
 
@@ -267,18 +267,18 @@ public class PartitionDecoder implements QuietCloseable {
             int rowHi
     ) throws CairoException;
 
-    private static native int decodeRowGroup1(
+    private static native int decodeRowGroupWithRowFilter(
             long decoderPtr,
             long decodeContextPtr,
             long rowGroupBuffersPtr,
-            int encodedColumnSize,
+            int columnOffset,
             long columnsPtr,
             int columnCount,
             int rowGroup,
             int rowLo,
             int rowHi,
-            long rowsFilterPtr,
-            long rowsFilterSize
+            long filteredRowsPtr,
+            long filteredRowsSize
     ) throws CairoException;
 
     private static native void destroy(long impl);
