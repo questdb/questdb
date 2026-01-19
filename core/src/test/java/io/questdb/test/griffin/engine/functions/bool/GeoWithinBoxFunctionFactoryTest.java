@@ -39,9 +39,11 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (0.0, 0.0)");
 
             assertSql(
-                    "x\ty\n" +
-                            "5.0\t5.0\n" +
-                            "0.0\t0.0\n",
+                    """
+                            x\ty
+                            5.0\t5.0
+                            0.0\t0.0
+                            """,
                     "select x, y from points where geo_within_box(x, y, 0.0, 0.0, 10.0, 10.0)"
             );
         });
@@ -178,10 +180,12 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, null)");
 
             assertSql(
-                    "x\ty\tinside\n" +
-                            "5.0\t5.0\ttrue\n" +
-                            "null\t5.0\tfalse\n" +
-                            "5.0\tnull\tfalse\n",
+                    """
+                            x\ty\tinside
+                            5.0\t5.0\ttrue
+                            null\t5.0\tfalse
+                            5.0\tnull\tfalse
+                            """,
                     "select x, y, geo_within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points"
             );
         });
@@ -197,11 +201,13 @@ public class GeoWithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (0.0, 0.0)");
 
             assertSql(
-                    "x\ty\tinside\n" +
-                            "5.0\t5.0\ttrue\n" +
-                            "-1.0\t5.0\tfalse\n" +
-                            "5.0\t11.0\tfalse\n" +
-                            "0.0\t0.0\ttrue\n",
+                    """
+                            x\ty\tinside
+                            5.0\t5.0\ttrue
+                            -1.0\t5.0\tfalse
+                            5.0\t11.0\tfalse
+                            0.0\t0.0\ttrue
+                            """,
                     "select x, y, geo_within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points"
             );
         });
