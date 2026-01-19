@@ -409,17 +409,17 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
-        isOpen = true;
+        this.isOpen = true;
         this.frameSequence = frameSequence;
         this.rowsRemaining = rowsRemaining;
-        ogRowsRemaining = rowsRemaining;
+        this.ogRowsRemaining = rowsRemaining;
         // put a cap the number of in-flight page frame tasks in case of LIMIT N query
-        dispatchLimit = rowsRemaining != Long.MAX_VALUE ? defaultDispatchLimit : Integer.MAX_VALUE;
-        frameIndex = -1;
-        frameLimit = -1;
-        frameRowIndex = -1;
-        frameRowCount = -1;
-        allFramesActive = true;
+        this.dispatchLimit = rowsRemaining != Long.MAX_VALUE ? defaultDispatchLimit : Integer.MAX_VALUE;
+        this.frameIndex = -1;
+        this.frameLimit = -1;
+        this.frameRowIndex = -1;
+        this.frameRowCount = -1;
+        this.allFramesActive = true;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {
