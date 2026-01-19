@@ -433,10 +433,8 @@ impl ParquetDecoder {
                         }
 
                         if FILL_NULLS {
-                            // Calculate row_lo, row_hi relative to page
                             let row_lo = row_group_lo.saturating_sub(page_row_start);
                             let row_hi = (row_group_hi - page_row_start).min(page_row_count);
-
                             let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
                             decode_page_filtered::<true>(
                                 &page,
@@ -515,7 +513,6 @@ impl ParquetDecoder {
                         }
 
                         if FILL_NULLS {
-                            // Calculate row_lo, row_hi relative to page
                             let row_lo = row_group_lo.saturating_sub(page_row_start);
                             let row_hi = (row_group_hi - page_row_start).min(page_row_count);
 
@@ -848,8 +845,6 @@ impl ParquetDecoder {
 /// Decode a filtered data page.
 /// - `FILL_NULLS = false`: skip rows not in filter, output `rows_filter.len()` rows
 /// - `FILL_NULLS = true`: fill nulls for rows not in filter, output `row_hi - row_lo` rows
-///
-/// `row_lo` and `row_hi` are relative to page (0..page_row_count), only used when `FILL_NULLS = true`.
 #[allow(clippy::too_many_arguments)]
 pub fn decode_page_filtered<const FILL_NULLS: bool>(
     page: &DataPage,
@@ -2687,7 +2682,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
     let mut filter_idx = 0usize;
     let filter_len = rows_filter.len();
-    let mut output_row = row_lo; // only used when FILL_NULLS = true
+    let mut output_row = row_lo;
 
     let iter = decode_null_bitmap(page, page_row_count)?;
     if let Some(iter) = iter {

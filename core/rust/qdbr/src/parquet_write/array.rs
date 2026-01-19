@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-use std::mem;
+use std::{mem, ptr};
 
 use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
 use parquet2::compression::CompressionOptions;
@@ -40,7 +40,7 @@ use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
 use super::util::ArrayStats;
-use crate::allocator::AcVec;
+use crate::allocator::{AcVec, AcVecSetLen};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
@@ -742,8 +742,25 @@ pub fn append_array_nulls(
     data_mem: &[u8],
     count: usize,
 ) -> ParquetResult<()> {
-    for _ in 0..count {
-        append_array_null(aux_mem, data_mem)?;
+    if count == 0 {
+        return Ok(());
+    }
+
+    // 8 bytes offset + 8 bytes null header
+    const ENTRY_SIZE: usize = 16;
+    let mut null_entry = [0u8; ENTRY_SIZE];
+    null_entry[..8].copy_from_slice(&data_mem.len().to_le_bytes());
+
+    let total_bytes = count * ENTRY_SIZE;
+    let base = aux_mem.len();
+    aux_mem.reserve(total_bytes)?;
+
+    unsafe {
+        let dst = aux_mem.as_mut_ptr().add(base);
+        for i in 0..count {
+            ptr::copy_nonoverlapping(null_entry.as_ptr(), dst.add(i * ENTRY_SIZE), ENTRY_SIZE);
+        }
+        aux_mem.set_len(base + total_bytes);
     }
     Ok(())
 }
