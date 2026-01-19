@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -230,9 +229,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         return masterCursor.size();
     }
 
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
-        // isMasterHasNextPending is false is only possible when slave cursor navigation inside hasNext() threw DataUnavailableException
-        // and in such case we expect hasNext() to be called again, rather than skipRows()
+    public void skipRows(Counter rowCount) {
         assert isMasterHasNextPending;
         masterCursor.skipRows(rowCount);
     }

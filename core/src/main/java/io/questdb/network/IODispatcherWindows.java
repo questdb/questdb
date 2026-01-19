@@ -191,15 +191,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         for (int i = 0, n = pending.size(); i < n; ) {
             final C context = pending.get(i);
 
-            // check if the context is waiting for a suspend event
-            final SuspendEvent suspendEvent = context.getSuspendEvent();
-            if (suspendEvent != null) {
-                if (suspendEvent.checkTriggered() || suspendEvent.isDeadlineMet(timestamp)) {
-                    // the event has been triggered or expired already, clear it and proceed
-                    context.clearSuspendEvent();
-                }
-            }
-
             final long fd = pending.get(i, OPM_FD);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
@@ -239,10 +230,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 } else {
                     int operation = (int) pending.get(i, OPM_OPERATION);
                     i++;
-                    if (suspendEvent != null) {
-                        // if the operation was suspended, we request a read to be able to detect a client disconnect
-                        operation = IOOperation.READ;
-                    }
 
                     if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
                         readFdSet.add(fd);
@@ -255,26 +242,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 }
             } else {
                 // select()'ed operation case
-                if (suspendEvent != null) {
-                    // the event is still pending, check if we have a client disconnect
-                    if (testConnection(context.getFd())) {
-                        doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
-                        pending.deleteRow(i);
-                        n--;
-                        watermark--;
-                    } else {
-                        // the connection is alive, so we need to add it to poll to be able to detect broken connection
-                        readFdSet.add(fd);
-                        readFdCount++;
-
-                        if (context.getSocket().wantsTlsWrite()) {
-                            writeFdSet.add(fd);
-                            writeFdCount++;
-                        }
-                        i++; // now skip to the next operation
-                    }
-                    continue;
-                }
 
                 // we got a (potentially requested) event
                 useful = true;

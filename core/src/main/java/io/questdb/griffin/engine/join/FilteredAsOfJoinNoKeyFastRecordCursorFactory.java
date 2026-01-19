@@ -198,9 +198,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 unfilteredCursorFrameIndex = timeFrame.getFrameIndex();
             }
 
-            // we have to set the `isMasterHasNextPending` only now since `nextSlave()` may throw DataUnavailableException
-            // and in such case we do not want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
-            // if we are here then it's clear nextSlave() did not throw DataUnavailableException.
             isMasterHasNextPending = true;
             if (!record.hasSlave()) {
                 // the non-filtering algo did not find a matching record in the slave table.

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -244,15 +243,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void skipRows(Counter skipCounter) throws DataUnavailableException {
+        public void skipRows(Counter skipCounter) {
             ensureReadyToConsume();
             long rowsToSkip = skipCounter.get();
             long excessCount = Math.max(0, rowsToSkip - remaining);
             rowsToSkip -= excessCount;
-            // Updating skipCounter like this will cause broken behavior if base.skipRows()
-            // throws DataUnavailableException. Fixing it would require saving excessCount
-            // in a field. Since this suspension mechanism will be deprecated soon, the
-            // added complexity was left out.
             skipCounter.dec(excessCount);
             base.skipRows(skipCounter);
             long counterAfterSkip = skipCounter.get();

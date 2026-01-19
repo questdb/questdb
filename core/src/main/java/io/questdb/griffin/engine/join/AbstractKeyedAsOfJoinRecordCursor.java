@@ -77,9 +77,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         if (masterTimestamp >= lookaheadTimestamp) {
             nextSlave(masterTimestamp);
         }
-        // Set `isMasterHasNextPending` only now because `nextSlave()` may throw DataUnavailableException,
-        // and in such a case we don't want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
-        // If we are here, it's clear that nextSlave() did not throw DataUnavailableException.
         isMasterHasNextPending = true;
 
         boolean hasSlave = record.hasSlave();
