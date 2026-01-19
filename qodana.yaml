@@ -1,20 +1,16 @@
 version: "1.0"
 linter: jetbrains/qodana-jvm-community:latest
 
-# Inspect Java source files in core and benchmarks (main + test)
-include:
-  - name: "core/src/main/java"
-  - name: "core/src/test/java"
-  - name: "benchmarks/src/main/java"
-
-# Exclude vendored/third-party code and disable certain inspections
+# Exclude paths and inspections not applicable for QuestDB
 exclude:
-  # Vendored/third-party code paths
-  - name: "core/src/main/java/io/questdb/std/histogram/org/HdrHistogram"
-  - name: "core/src/main/java/io/questdb/std/ConcurrentHashMap.java"
-  - name: "core/src/main/java/io/questdb/std/ConcurrentIntHashMap.java"
-  - name: "core/src/main/java/io/questdb/std/ConcurrentLongHashMap.java"
-  # Inspections to disable (false positives or not applicable for QuestDB's design)
+  # Exclude all inspections for vendored/third-party code
+  - name: All
+    paths:
+      - core/src/main/java/io/questdb/std/histogram/org/HdrHistogram
+      - core/src/main/java/io/questdb/std/ConcurrentHashMap.java
+      - core/src/main/java/io/questdb/std/ConcurrentIntHashMap.java
+      - core/src/main/java/io/questdb/std/ConcurrentLongHashMap.java
+  # Inspections to disable globally (false positives or not applicable for QuestDB's design)
   # QuestDB manages resources manually for zero-GC - not always using try-with-resources
   - name: AutoCloseableResource
   # Java 14+ style annotation - not critical
