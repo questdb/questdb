@@ -29,10 +29,13 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public final class IntervalUtils {
@@ -715,5 +718,332 @@ public final class IntervalUtils {
 
     static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
         replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
+    }
+
+    /**
+     * Parses interval strings with bracket expansion syntax.
+     * <p>
+     * Brackets allow concise specification of multiple disjoint intervals:
+     * <ul>
+     *   <li>Comma-separated: {@code 2018-01-[10,15]} → days 10 and 15</li>
+     *   <li>Ranges: {@code 2018-01-[10..12]} → days 10, 11, 12</li>
+     *   <li>Mixed: {@code 2018-01-[5,10..12,20]} → days 5, 10, 11, 12, 20</li>
+     *   <li>Multiple groups (cartesian product): {@code 2018-[01,06]-[10,15]} → 4 intervals</li>
+     * </ul>
+     * <p>
+     * If the input contains no brackets, this method delegates to {@link #parseInterval}.
+     *
+     * @param timestampDriver timestamp driver for parsing
+     * @param seq             input interval string
+     * @param lo              start index in seq
+     * @param lim             end index in seq
+     * @param position        position for error reporting
+     * @param out             output list for parsed intervals
+     * @param operation       interval operation
+     * @throws SqlException if the interval format is invalid
+     */
+    public static void parseBracketInterval(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation
+    ) throws SqlException {
+        if (!containsBrackets(seq, lo, lim)) {
+            // No brackets, delegate to existing parseInterval
+            parseInterval(timestampDriver, seq, lo, lim, position, out, operation);
+            applyLastEncodedInterval(timestampDriver, out);
+            return;
+        }
+        expandBracketsAndParse(timestampDriver, seq, lo, lim, position, out, operation);
+    }
+
+    private static boolean containsBrackets(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim; i++) {
+            if (seq.charAt(i) == '[') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int findMatchingBracket(CharSequence seq, int start, int lim, int position) throws SqlException {
+        // start points to '['
+        int depth = 1;
+        for (int i = start + 1; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        throw SqlException.$(position, "Unclosed '[' in interval");
+    }
+
+    private static int findSemicolonOutsideBrackets(CharSequence seq, int lo, int lim) {
+        int depth = 0;
+        for (int i = lo; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (c == ';' && depth == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static void parseBracketValues(
+            CharSequence seq,
+            int lo,
+            int hi,
+            int position,
+            IntList out
+    ) throws SqlException {
+        // Parse content between '[' and ']'
+        // Handles: numbers, commas, ranges (..)
+        // Example: "10,12..14,20" -> [10, 12, 13, 14, 20]
+        int i = lo;
+        while (i < hi) {
+            // Skip whitespace
+            while (i < hi && Character.isWhitespace(seq.charAt(i))) {
+                i++;
+            }
+            if (i >= hi) {
+                break;
+            }
+
+            // Parse a number
+            int numStart = i;
+            while (i < hi && Character.isDigit(seq.charAt(i))) {
+                i++;
+            }
+            if (numStart == i) {
+                throw SqlException.$(position, "Expected number in bracket expansion");
+            }
+
+            int value;
+            try {
+                value = Numbers.parseInt(seq, numStart, i);
+            } catch (NumericException e) {
+                throw SqlException.$(position, "Expected number in bracket expansion");
+            }
+
+            // Skip whitespace
+            while (i < hi && Character.isWhitespace(seq.charAt(i))) {
+                i++;
+            }
+
+            // Check for range (..)
+            if (i + 1 < hi && seq.charAt(i) == '.' && seq.charAt(i + 1) == '.') {
+                i += 2;
+                // Skip whitespace
+                while (i < hi && Character.isWhitespace(seq.charAt(i))) {
+                    i++;
+                }
+                // Parse range end
+                int endStart = i;
+                while (i < hi && Character.isDigit(seq.charAt(i))) {
+                    i++;
+                }
+                if (endStart == i) {
+                    throw SqlException.$(position, "Expected number after '..'");
+                }
+                int endValue;
+                try {
+                    endValue = Numbers.parseInt(seq, endStart, i);
+                } catch (NumericException e) {
+                    throw SqlException.$(position, "Expected number after '..'");
+                }
+                if (endValue < value) {
+                    throw SqlException.$(position, "Range must be ascending: " + value + ".." + endValue);
+                }
+                // Add all values in range
+                for (int v = value; v <= endValue; v++) {
+                    out.add(v);
+                }
+            } else {
+                out.add(value);
+            }
+
+            // Skip whitespace
+            while (i < hi && Character.isWhitespace(seq.charAt(i))) {
+                i++;
+            }
+
+            // Expect comma or end
+            if (i < hi) {
+                if (seq.charAt(i) == ',') {
+                    i++;
+                } else if (!Character.isWhitespace(seq.charAt(i))) {
+                    throw SqlException.$(position, "Expected ',' or end of bracket");
+                }
+            }
+        }
+
+        if (out.size() == 0) {
+            throw SqlException.$(position, "Empty bracket expansion");
+        }
+    }
+
+    private static void expandBracketsAndParse(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation
+    ) throws SqlException {
+        // Find semicolon outside brackets to separate date part from duration suffix
+        int semicolonPos = findSemicolonOutsideBrackets(seq, lo, lim);
+        int dateLim = semicolonPos >= 0 ? semicolonPos : lim;
+
+        // Extract all bracket groups with their positions
+        ObjList<IntList> bracketGroups = new ObjList<>();
+        IntList bracketStarts = new IntList();
+        IntList bracketEnds = new IntList();
+
+        int i = lo;
+        while (i < dateLim) {
+            if (seq.charAt(i) == '[') {
+                int closePos = findMatchingBracket(seq, i, dateLim, position);
+                IntList values = new IntList();
+                parseBracketValues(seq, i + 1, closePos, position, values);
+                bracketGroups.add(values);
+                bracketStarts.add(i);
+                bracketEnds.add(closePos);
+                i = closePos + 1;
+            } else {
+                i++;
+            }
+        }
+
+        int numGroups = bracketGroups.size();
+        if (numGroups == 0) {
+            // No brackets found (shouldn't happen since containsBrackets returned true)
+            parseInterval(timestampDriver, seq, lo, lim, position, out, operation);
+            return;
+        }
+
+        // Calculate total combinations (cartesian product)
+        int totalCombinations = 1;
+        for (int g = 0; g < numGroups; g++) {
+            totalCombinations *= bracketGroups.getQuick(g).size();
+        }
+
+        // Indices for iterating through cartesian product
+        int[] indices = new int[numGroups];
+        StringSink expandedStr = new StringSink();
+        LongList tempOut = new LongList();
+        boolean firstInterval = true;
+
+        for (int combo = 0; combo < totalCombinations; combo++) {
+            // Build expanded string
+            expandedStr.clear();
+            int srcPos = lo;
+            for (int g = 0; g < numGroups; g++) {
+                // Copy text before this bracket
+                expandedStr.put(seq, srcPos, bracketStarts.getQuick(g));
+                // Get current value for this group
+                int value = bracketGroups.getQuick(g).getQuick(indices[g]);
+                // Determine zero-padding width based on position
+                int padWidth = determinePadWidth(seq, lo, bracketStarts.getQuick(g));
+                appendPaddedInt(expandedStr, value, padWidth);
+                srcPos = bracketEnds.getQuick(g) + 1;
+            }
+            // Copy remaining text (including duration suffix if any)
+            expandedStr.put(seq, srcPos, lim);
+
+            // Parse this expanded interval
+            tempOut.clear();
+            parseInterval(timestampDriver, expandedStr, 0, expandedStr.length(), position, tempOut, operation);
+            applyLastEncodedInterval(timestampDriver, tempOut);
+
+            // Union with previous results
+            if (firstInterval) {
+                out.addAll(tempOut);
+                firstInterval = false;
+            } else {
+                int divider = out.size();
+                out.addAll(tempOut);
+                unionInPlace(out, divider);
+            }
+
+            // Advance indices (increment rightmost, carry over)
+            for (int g = numGroups - 1; g >= 0; g--) {
+                indices[g]++;
+                if (indices[g] < bracketGroups.getQuick(g).size()) {
+                    break;
+                }
+                indices[g] = 0;
+            }
+        }
+    }
+
+    private static int determinePadWidth(CharSequence seq, int lo, int bracketStart) {
+        // Determine field width based on bracket position in timestamp
+        // Count separators before bracket to determine which field we're in
+        // Format: YYYY-MM-DDTHH:MM:SS.ffffff
+        int dashes = 0;
+        boolean afterT = false;
+        boolean afterDot = false;
+
+        for (int i = lo; i < bracketStart; i++) {
+            char c = seq.charAt(i);
+            if (c == '-' && !afterT) {
+                dashes++;
+            } else if (c == 'T' || c == ' ') {
+                afterT = true;
+            } else if (c == '.') {
+                afterDot = true;
+            }
+        }
+
+        if (afterDot) {
+            // Microseconds - no padding (variable width)
+            return 0;
+        }
+        if (afterT) {
+            // Time field: hour, minute, or second - 2 digits
+            return 2;
+        }
+        if (dashes == 1) {
+            // Month - 2 digits
+            return 2;
+        }
+        if (dashes >= 2) {
+            // Day - 2 digits
+            return 2;
+        }
+        // Year - no padding
+        return 0;
+    }
+
+    private static void appendPaddedInt(StringSink sink, int value, int padWidth) {
+        if (padWidth <= 0 || value < 0) {
+            Numbers.append(sink, value);
+            return;
+        }
+        // Calculate number of digits
+        int digits = 1;
+        int temp = value;
+        while (temp >= 10) {
+            temp /= 10;
+            digits++;
+        }
+        // Add leading zeros
+        for (int i = digits; i < padWidth; i++) {
+            sink.put('0');
+        }
+        Numbers.append(sink, value);
     }
 }

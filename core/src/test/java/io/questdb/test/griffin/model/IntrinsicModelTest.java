@@ -463,4 +463,177 @@ public class IntrinsicModelTest {
                 intervalToString(timestampDriver, out)
         );
     }
+
+    // ==================== Bracket Expansion Tests ====================
+
+    @Test
+    public void testBracketExpansionSingleValue() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]",
+                "2018-01-[10]"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionTwoValues() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]",
+                "2018-01-[10,15]"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionMonth() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z},{lo=2018-06-15T00:00:00.000000Z, hi=2018-06-15T23:59:59.999999Z}]",
+                "2018-[01,06]-15"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionRange() throws SqlException {
+        // Range expands to individual intervals for each value
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-11T00:00:00.000000Z, hi=2018-01-11T23:59:59.999999Z},{lo=2018-01-12T00:00:00.000000Z, hi=2018-01-12T23:59:59.999999Z}]",
+                "2018-01-[10..12]"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionMixed() throws SqlException {
+        // Each value in the bracket becomes a separate interval
+        assertBracketInterval(
+                "[{lo=2018-01-05T00:00:00.000000Z, hi=2018-01-05T23:59:59.999999Z},{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-11T00:00:00.000000Z, hi=2018-01-11T23:59:59.999999Z},{lo=2018-01-12T00:00:00.000000Z, hi=2018-01-12T23:59:59.999999Z},{lo=2018-01-20T00:00:00.000000Z, hi=2018-01-20T23:59:59.999999Z}]",
+                "2018-01-[5,10..12,20]"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionCartesianProduct() throws SqlException {
+        // 2018-[01,06]-[10,15] should produce 4 intervals: Jan 10, Jan 15, Jun 10, Jun 15
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z},{lo=2018-06-10T00:00:00.000000Z, hi=2018-06-10T23:59:59.999999Z},{lo=2018-06-15T00:00:00.000000Z, hi=2018-06-15T23:59:59.999999Z}]",
+                "2018-[01,06]-[10,15]"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionWithTime() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:30:59.999999Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T10:30:59.999999Z}]",
+                "2018-01-[10,15]T10:30"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionHourMinute() throws SqlException {
+        // Test bracket expansion in time part
+        assertBracketInterval(
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:30:59.999999Z},{lo=2018-01-10T14:30:00.000000Z, hi=2018-01-10T14:30:59.999999Z}]",
+                "2018-01-10T[10,14]:30"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionWithDuration() throws SqlException {
+        // 10:30 is minute-level, so hi = 10:30:59.999999, then +1h = 11:30:59.999999
+        assertBracketInterval(
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:30:59.999999Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T11:30:59.999999Z}]",
+                "2018-01-[10,15]T10:30;1h"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionWithWhitespace() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]",
+                "2018-01-[ 10 , 15 ]"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionNoBrackets() throws SqlException {
+        // Should delegate to parseInterval when no brackets
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]",
+                "2018-01-10"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionZeroPaddingDay() throws SqlException {
+        // Single digit day should be zero-padded
+        assertBracketInterval(
+                "[{lo=2018-01-05T00:00:00.000000Z, hi=2018-01-05T23:59:59.999999Z}]",
+                "2018-01-[5]"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionZeroPaddingMonth() throws SqlException {
+        // Single digit month should be zero-padded
+        assertBracketInterval(
+                "[{lo=2018-05-01T00:00:00.000000Z, hi=2018-05-31T23:59:59.999999Z}]",
+                "2018-[5]"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionWithRepeatingInterval() throws SqlException {
+        // 2018-01-[10,15]T10:30;30m;2d;2 means 10:30-11:00:59 every second day for each expanded date
+        // 10:30 is minute-level, so hi = 10:30:59.999999, then +30m = 11:00:59.999999
+        assertBracketInterval(
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:00:59.999999Z},{lo=2018-01-12T10:30:00.000000Z, hi=2018-01-12T11:00:59.999999Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T11:00:59.999999Z},{lo=2018-01-17T10:30:00.000000Z, hi=2018-01-17T11:00:59.999999Z}]",
+                "2018-01-[10,15]T10:30;30m;2d;2"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionErrorUnclosedBracket() {
+        assertBracketIntervalError("2018-01-[10,15", "Unclosed '[' in interval");
+    }
+
+    @Test
+    public void testBracketExpansionErrorEmptyBracket() {
+        assertBracketIntervalError("2018-01-[]", "Empty bracket expansion");
+    }
+
+    @Test
+    public void testBracketExpansionErrorDescendingRange() {
+        assertBracketIntervalError("2018-01-[15..10]", "Range must be ascending");
+    }
+
+    @Test
+    public void testBracketExpansionErrorNonNumeric() {
+        assertBracketIntervalError("2018-01-[abc]", "Expected number in bracket expansion");
+    }
+
+    @Test
+    public void testBracketExpansionErrorMissingRangeEnd() {
+        assertBracketIntervalError("2018-01-[10..]", "Expected number after '..'");
+    }
+
+    private void assertBracketInterval(String expected, String interval) throws SqlException {
+        LongList out = new LongList();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        IntervalUtils.parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        : expected,
+                intervalToString(timestampDriver, out)
+        );
+    }
+
+    private void assertBracketIntervalError(String interval, String expectedError) {
+        try {
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            LongList out = new LongList();
+            IntervalUtils.parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            Assert.fail("Expected SqlException with message containing: " + expectedError);
+        } catch (SqlException e) {
+            Assert.assertTrue("Expected error message to contain '" + expectedError + "' but got: " + e.getMessage(),
+                    e.getMessage().contains(expectedError));
+        }
+    }
 }
