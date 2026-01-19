@@ -411,4 +411,160 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
         assertSql("geo_within_radius_latlon\nfalse\n",
                 "select geo_within_radius_latlon(40.0001, -73.0, 40.0, -73.0, 0.0)");
     }
+
+    // Tests for invalid latitude/longitude validation
+
+    @Test
+    public void testInvalidCenterLatAbove90() throws Exception {
+        // Constant center lat > 90 should throw compile-time exception
+        assertException(
+                "select geo_within_radius_latlon(40.0, -73.0, 91.0, -73.0, 1000.0)",
+                45,
+                "latitude must be between -90 and 90"
+        );
+    }
+
+    @Test
+    public void testInvalidCenterLatBelow90() throws Exception {
+        // Constant center lat < -90 should throw compile-time exception
+        assertException(
+                "select geo_within_radius_latlon(40.0, -73.0, -91.0, -73.0, 1000.0)",
+                45,
+                "latitude must be between -90 and 90"
+        );
+    }
+
+    @Test
+    public void testInvalidCenterLonAbove180() throws Exception {
+        // Constant center lon > 180 should throw compile-time exception
+        assertException(
+                "select geo_within_radius_latlon(40.0, -73.0, 40.0, 181.0, 1000.0)",
+                51,
+                "longitude must be between -180 and 180"
+        );
+    }
+
+    @Test
+    public void testInvalidCenterLonBelow180() throws Exception {
+        // Constant center lon < -180 should throw compile-time exception
+        assertException(
+                "select geo_within_radius_latlon(40.0, -73.0, 40.0, -181.0, 1000.0)",
+                51,
+                "longitude must be between -180 and 180"
+        );
+    }
+
+    @Test
+    public void testInvalidPointLatAbove90() throws Exception {
+        // Point lat > 90 should throw runtime exception
+        assertException(
+                "select geo_within_radius_latlon(91.0, -73.0, 40.0, -73.0, 1000.0)",
+                32,
+                "latitude must be between -90 and 90"
+        );
+    }
+
+    @Test
+    public void testInvalidPointLatBelow90() throws Exception {
+        // Point lat < -90 should throw runtime exception
+        assertException(
+                "select geo_within_radius_latlon(-91.0, -73.0, 40.0, -73.0, 1000.0)",
+                32,
+                "latitude must be between -90 and 90"
+        );
+    }
+
+    @Test
+    public void testInvalidPointLonAbove180() throws Exception {
+        // Point lon > 180 should throw runtime exception
+        assertException(
+                "select geo_within_radius_latlon(40.0, 181.0, 40.0, -73.0, 1000.0)",
+                38,
+                "longitude must be between -180 and 180"
+        );
+    }
+
+    @Test
+    public void testInvalidPointLonBelow180() throws Exception {
+        // Point lon < -180 should throw runtime exception
+        assertException(
+                "select geo_within_radius_latlon(40.0, -181.0, 40.0, -73.0, 1000.0)",
+                38,
+                "longitude must be between -180 and 180"
+        );
+    }
+
+    @Test
+    public void testInvalidLatitudeInTableThrowsException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table points (lat double, lon double)");
+            execute("insert into points values (91.0, -73.0)");  // invalid lat > 90
+
+            assertException(
+                    "select lat, lon, geo_within_radius_latlon(lat, lon, 40.0, -73.0, 1000.0) as inside from points",
+                    42,
+                    "latitude must be between -90 and 90"
+            );
+        });
+    }
+
+    @Test
+    public void testInvalidLongitudeInTableThrowsException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table points (lat double, lon double)");
+            execute("insert into points values (40.0, 181.0)");  // invalid lon > 180
+
+            assertException(
+                    "select lat, lon, geo_within_radius_latlon(lat, lon, 40.0, -73.0, 1000.0) as inside from points",
+                    47,
+                    "longitude must be between -180 and 180"
+            );
+        });
+    }
+
+    @Test
+    public void testInvalidDynamicCenterLatThrowsException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table points (lat double, lon double, clat double)");
+            execute("insert into points values (40.0, -73.0, 91.0)");  // invalid center > 90
+
+            assertException(
+                    "select lat, lon, clat, geo_within_radius_latlon(lat, lon, clat, -73.0, 1000.0) as inside from points",
+                    58,
+                    "latitude must be between -90 and 90"
+            );
+        });
+    }
+
+    @Test
+    public void testInvalidDynamicCenterLonThrowsException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table points (lat double, lon double, clon double)");
+            execute("insert into points values (40.0, -73.0, 181.0)");  // invalid center lon > 180
+
+            assertException(
+                    "select lat, lon, clon, geo_within_radius_latlon(lat, lon, 40.0, clon, 1000.0) as inside from points",
+                    64,
+                    "longitude must be between -180 and 180"
+            );
+        });
+    }
+
+    @Test
+    public void testBoundaryLatitudes() throws Exception {
+        // Exactly at +90 and -90 should be valid
+        assertSql("geo_within_radius_latlon\ntrue\n",
+                "select geo_within_radius_latlon(90.0, 0.0, 90.0, 0.0, 100.0)");
+        assertSql("geo_within_radius_latlon\ntrue\n",
+                "select geo_within_radius_latlon(-90.0, 0.0, -90.0, 0.0, 100.0)");
+    }
+
+    @Test
+    public void testBoundaryLongitudes() throws Exception {
+        // Exactly at +180 and -180 should be valid
+        assertSql("geo_within_radius_latlon\ntrue\n",
+                "select geo_within_radius_latlon(0.0, 180.0, 0.0, 180.0, 100.0)");
+        assertSql("geo_within_radius_latlon\ntrue\n",
+                "select geo_within_radius_latlon(0.0, -180.0, 0.0, -180.0, 100.0)");
+    }
 }

@@ -92,7 +92,7 @@ public class GeoWithinRadiusFunctionFactory implements FunctionFactory {
             }
 
             final double radiusSq = radius * radius;
-            return new ConstRadiusGeoWithinRadiusFunction(xFunc, yFunc, centerX, centerY, radiusSq);
+            return new ConstRadiusGeoWithinRadiusFunction(xFunc, yFunc, centerX, centerY, radius, radiusSq);
         }
 
         return new GeoWithinRadiusFunction(xFunc, yFunc, centerXFunc, centerYFunc, radiusFunc);
@@ -125,6 +125,7 @@ public class GeoWithinRadiusFunctionFactory implements FunctionFactory {
     private static class ConstRadiusGeoWithinRadiusFunction extends BooleanFunction {
         private final double centerX;
         private final double centerY;
+        private final double radius;
         private final double radiusSq;
         private final Function xFunc;
         private final Function yFunc;
@@ -134,12 +135,14 @@ public class GeoWithinRadiusFunctionFactory implements FunctionFactory {
                 Function yFunc,
                 double centerX,
                 double centerY,
+                double radius,
                 double radiusSq
         ) {
             this.xFunc = xFunc;
             this.yFunc = yFunc;
             this.centerX = centerX;
             this.centerY = centerY;
+            this.radius = radius;
             this.radiusSq = radiusSq;
         }
 
@@ -214,7 +217,7 @@ public class GeoWithinRadiusFunctionFactory implements FunctionFactory {
                     .val(yFunc).val(',')
                     .val(centerX).val(',')
                     .val(centerY).val(',')
-                    .val(Math.sqrt(radiusSq)).val(')');
+                    .val(radius).val(')');
         }
 
         @Override

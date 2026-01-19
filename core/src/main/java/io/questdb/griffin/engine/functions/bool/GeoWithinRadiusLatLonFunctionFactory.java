@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -45,8 +46,8 @@ import io.questdb.std.ObjList;
  * <p>
  * Signature: geo_within_radius_latlon(lat, lon, center_lat, center_lon, radius_meters)
  * <p>
- * Accuracy: Equirectangular approximation is accurate to ~0.1% for distances < 100km.
- * For lidar scans (typically < 1km), error is negligible.
+ * Accuracy: Equirectangular approximation is accurate to ~0.1% for distances &lt; 100km.
+ * For lidar scans (typically &lt; 1km), error is negligible.
  * <p>
  * Edge cases:
  * <ul>
@@ -79,12 +80,17 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         final Function latFunc = args.getQuick(0);
         final Function lonFunc = args.getQuick(1);
         final Function centerLatFunc = args.getQuick(2);
         final Function centerLonFunc = args.getQuick(3);
         final Function radiusFunc = args.getQuick(4);
+
+        final int latPos = argPositions.getQuick(0);
+        final int lonPos = argPositions.getQuick(1);
+        final int centerLatPos = argPositions.getQuick(2);
+        final int centerLonPos = argPositions.getQuick(3);
 
         // Optimization: if center and radius are constant, precompute cosLat, metersPerDegLon, radiusSq
         if (centerLatFunc.isConstant() && centerLonFunc.isConstant() && radiusFunc.isConstant()) {
@@ -92,9 +98,21 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
             final double centerLon = centerLonFunc.getDouble(null);
             final double radius = radiusFunc.getDouble(null);
 
-            // Check for NaN or negative radius
+            // Check for NaN or negative radius - these return false without error
             if (Numbers.isNull(centerLat) || Numbers.isNull(centerLon) || Numbers.isNull(radius) || radius < 0) {
                 return BooleanConstant.FALSE;
+            }
+
+            // Validate center latitude
+            if (centerLat < -90.0 || centerLat > 90.0) {
+                throw SqlException.position(centerLatPos)
+                        .put("latitude must be between -90 and 90 [value=").put(centerLat).put(']');
+            }
+
+            // Validate center longitude
+            if (centerLon < -180.0 || centerLon > 180.0) {
+                throw SqlException.position(centerLonPos)
+                        .put("longitude must be between -180 and 180 [value=").put(centerLon).put(']');
             }
 
             // Precompute expensive operations
@@ -103,11 +121,15 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
             final double radiusSq = radius * radius;
 
             return new ConstCenterGeoWithinRadiusLatLonFunction(
-                    latFunc, lonFunc, centerLat, centerLon, metersPerDegLon, radiusSq
+                    latFunc, lonFunc, centerLat, centerLon, metersPerDegLon, radius, radiusSq,
+                    latPos, lonPos
             );
         }
 
-        return new GeoWithinRadiusLatLonFunction(latFunc, lonFunc, centerLatFunc, centerLonFunc, radiusFunc);
+        return new GeoWithinRadiusLatLonFunction(
+                latFunc, lonFunc, centerLatFunc, centerLonFunc, radiusFunc,
+                latPos, lonPos, centerLatPos, centerLonPos
+        );
     }
 
     /**
@@ -145,8 +167,11 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
         private final double centerLat;
         private final double centerLon;
         private final Function latFunc;
+        private final int latPos;
         private final Function lonFunc;
+        private final int lonPos;
         private final double metersPerDegLon;
+        private final double radius;
         private final double radiusSq;
 
         public ConstCenterGeoWithinRadiusLatLonFunction(
@@ -155,14 +180,20 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
                 double centerLat,
                 double centerLon,
                 double metersPerDegLon,
-                double radiusSq
+                double radius,
+                double radiusSq,
+                int latPos,
+                int lonPos
         ) {
             this.latFunc = latFunc;
             this.lonFunc = lonFunc;
             this.centerLat = centerLat;
             this.centerLon = centerLon;
             this.metersPerDegLon = metersPerDegLon;
+            this.radius = radius;
             this.radiusSq = radiusSq;
+            this.latPos = latPos;
+            this.lonPos = lonPos;
         }
 
         @Override
@@ -179,14 +210,27 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return isWithinRadius(
-                    latFunc.getDouble(rec),
-                    lonFunc.getDouble(rec),
-                    centerLat,
-                    centerLon,
-                    metersPerDegLon,
-                    radiusSq
-            );
+            final double lat = latFunc.getDouble(rec);
+            final double lon = lonFunc.getDouble(rec);
+
+            // NaN returns false without error
+            if (Numbers.isNull(lat) || Numbers.isNull(lon)) {
+                return false;
+            }
+
+            // Validate latitude
+            if (lat < -90.0 || lat > 90.0) {
+                throw CairoException.nonCritical().position(latPos)
+                        .put("latitude must be between -90 and 90 [value=").put(lat).put(']');
+            }
+
+            // Validate longitude
+            if (lon < -180.0 || lon > 180.0) {
+                throw CairoException.nonCritical().position(lonPos)
+                        .put("longitude must be between -180 and 180 [value=").put(lon).put(']');
+            }
+
+            return isWithinRadius(lat, lon, centerLat, centerLon, metersPerDegLon, radiusSq);
         }
 
         @Override
@@ -243,7 +287,7 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
                     .val(lonFunc).val(',')
                     .val(centerLat).val(',')
                     .val(centerLon).val(',')
-                    .val(Math.sqrt(radiusSq)).val(')');
+                    .val(radius).val(')');
         }
 
         @Override
@@ -255,9 +299,13 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
 
     private static class GeoWithinRadiusLatLonFunction extends BooleanFunction {
         private final Function centerLatFunc;
+        private final int centerLatPos;
         private final Function centerLonFunc;
+        private final int centerLonPos;
         private final Function latFunc;
+        private final int latPos;
         private final Function lonFunc;
+        private final int lonPos;
         private final Function radiusFunc;
 
         public GeoWithinRadiusLatLonFunction(
@@ -265,13 +313,21 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
                 Function lonFunc,
                 Function centerLatFunc,
                 Function centerLonFunc,
-                Function radiusFunc
+                Function radiusFunc,
+                int latPos,
+                int lonPos,
+                int centerLatPos,
+                int centerLonPos
         ) {
             this.latFunc = latFunc;
             this.lonFunc = lonFunc;
             this.centerLatFunc = centerLatFunc;
             this.centerLonFunc = centerLonFunc;
             this.radiusFunc = radiusFunc;
+            this.latPos = latPos;
+            this.lonPos = lonPos;
+            this.centerLatPos = centerLatPos;
+            this.centerLonPos = centerLonPos;
         }
 
         @Override
@@ -295,23 +351,49 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final double radius = radiusFunc.getDouble(rec);
-            // Negative radius check
-            if (radius < 0) {
+            // NaN or negative radius returns false without error
+            if (Numbers.isNull(radius) || radius < 0) {
                 return false;
             }
 
             final double centerLat = centerLatFunc.getDouble(rec);
+            final double centerLon = centerLonFunc.getDouble(rec);
+            final double lat = latFunc.getDouble(rec);
+            final double lon = lonFunc.getDouble(rec);
+
+            // NaN returns false without error
+            if (Numbers.isNull(centerLat) || Numbers.isNull(centerLon) || Numbers.isNull(lat) || Numbers.isNull(lon)) {
+                return false;
+            }
+
+            // Validate center latitude
+            if (centerLat < -90.0 || centerLat > 90.0) {
+                throw CairoException.nonCritical().position(centerLatPos)
+                        .put("latitude must be between -90 and 90 [value=").put(centerLat).put(']');
+            }
+
+            // Validate center longitude
+            if (centerLon < -180.0 || centerLon > 180.0) {
+                throw CairoException.nonCritical().position(centerLonPos)
+                        .put("longitude must be between -180 and 180 [value=").put(centerLon).put(']');
+            }
+
+            // Validate point latitude
+            if (lat < -90.0 || lat > 90.0) {
+                throw CairoException.nonCritical().position(latPos)
+                        .put("latitude must be between -90 and 90 [value=").put(lat).put(']');
+            }
+
+            // Validate point longitude
+            if (lon < -180.0 || lon > 180.0) {
+                throw CairoException.nonCritical().position(lonPos)
+                        .put("longitude must be between -180 and 180 [value=").put(lon).put(']');
+            }
+
             final double cosLat = Math.cos(Math.toRadians(centerLat));
             final double metersPerDegLon = METERS_PER_DEG_LAT * cosLat;
 
-            return isWithinRadius(
-                    latFunc.getDouble(rec),
-                    lonFunc.getDouble(rec),
-                    centerLat,
-                    centerLonFunc.getDouble(rec),
-                    metersPerDegLon,
-                    radius * radius
-            );
+            return isWithinRadius(lat, lon, centerLat, centerLon, metersPerDegLon, radius * radius);
         }
 
         @Override
