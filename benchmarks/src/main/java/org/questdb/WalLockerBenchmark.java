@@ -117,15 +117,17 @@ public class WalLockerBenchmark {
 
     @TearDown
     public void tearDown() throws IOException {
-        Files.walk(tempDir)
-                .map(java.nio.file.Path::toFile)
-                .forEachOrdered(java.io.File::delete);
+        try (java.util.stream.Stream<java.nio.file.Path> paths = Files.walk(tempDir)) {
+            paths.sorted(java.util.Comparator.reverseOrder())
+                    .map(java.nio.file.Path::toFile)
+                    .forEachOrdered(java.io.File::delete);
+        }
         Files.deleteIfExists(tempDir);
     }
 
     @TearDown(Level.Trial)
     public void tearDownTrial() {
-        locker.clear();
+        locker.close();
         path.close();
         for (int i = 0; i < NUM_TABLES; i++) {
             tableNames[i].close();
