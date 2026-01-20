@@ -3762,7 +3762,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
 
                                 if (!isLastWindowJoin) {
-                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(joinMetadata, splitIndex);
+                                    final GenericRecordMetadata metadata = GenericRecordMetadata.deepCopyOf(joinMetadata, splitIndex);
                                     for (int j = 0, m = outerProjectionMetadata.getColumnCount(); j < m; j++) {
                                         metadata.add(outerProjectionMetadata.getColumnMetadata(j));
                                     }
@@ -3850,7 +3850,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (columnIndex == null) {
                                                 factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
                                             } else {
-                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
+                                                GenericRecordMetadata metadata = GenericRecordMetadata.deepCopyOf(masterMetadata);
                                                 for (int k = 0, m = aggregateCols.size(); k < m; k++) {
                                                     metadata.add(new TableColumnMetadata(aggregateCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
                                                 }
