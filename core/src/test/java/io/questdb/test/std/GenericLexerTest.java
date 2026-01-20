@@ -397,6 +397,71 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testLineCommentWithUnbalancedQuote() throws SqlException {
+        // Reproducer for https://github.com/questdb/questdb/issues/6671
+        // When a line comment contains an unbalanced single quote, subsequent tokens
+        // should still be parsed correctly after the newline
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("+");
+        lex.defineSymbol("*");
+        lex.defineSymbol("/*");
+        lex.defineSymbol("*/");
+        lex.defineSymbol("--");
+
+        lex.of("a + -- magic '\n 'b' * abc");
+
+        StringSink sink = new StringSink();
+        CharSequence token;
+        while ((token = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(token);
+        }
+
+        TestUtils.assertEquals("a+'b'*abc", sink);
+    }
+
+    @Test
+    public void testHintWithLineCommentUnbalancedQuote() throws SqlException {
+        // Test fetchNextHintToken() with unbalanced quote in line comment inside hint block
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("+");
+        lex.defineSymbol("*");
+        lex.defineSymbol("/*");
+        lex.defineSymbol("/*+");
+        lex.defineSymbol("*/");
+        lex.defineSymbol("--");
+
+        lex.of("SELECT /*+ hint1 -- it's a comment '\n hint2 */ col FROM tab");
+
+        StringSink sink = new StringSink();
+
+        // First, get tokens before the hint block
+        CharSequence token = SqlUtil.fetchNext(lex, true);
+        TestUtils.assertEquals("SELECT", token);
+
+        // Get hint start marker
+        token = SqlUtil.fetchNext(lex, true);
+        TestUtils.assertEquals("/*+", token);
+
+        // Now use fetchNextHintToken to get hint tokens
+        while ((token = SqlUtil.fetchNextHintToken(lex)) != null) {
+            sink.put(token);
+        }
+
+        // Should get both hint1 and hint2, with the line comment (containing unbalanced quote) skipped
+        TestUtils.assertEquals("hint1hint2", sink);
+
+        // Continue with tokens after hint block
+        token = SqlUtil.fetchNext(lex, true);
+        TestUtils.assertEquals("col", token);
+
+        token = SqlUtil.fetchNext(lex, true);
+        TestUtils.assertEquals("FROM", token);
+
+        token = SqlUtil.fetchNext(lex, true);
+        TestUtils.assertEquals("tab", token);
+    }
+
+    @Test
     public void testNullContent() {
         GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol(" ");
