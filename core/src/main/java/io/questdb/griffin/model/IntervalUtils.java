@@ -421,21 +421,14 @@ public final class IntervalUtils {
             StringSink sink,
             boolean applyEncoded
     ) throws SqlException {
-        // Check for brackets first - if none, delegate directly to parseInterval0
-        if (!containsBrackets(seq, lo, lim)) {
-            parseInterval0(timestampDriver, seq, lo, lim, position, out, operation);
-            if (applyEncoded) {
-                applyLastEncodedInterval(timestampDriver, out);
-            }
-            return;
-        }
-
-        // Find semicolon outside brackets to separate date part from duration suffix
+        // Single scan: detect brackets and find semicolon position
         int dateLim = lim;
         int depth = 0;
+        boolean hasBrackets = false;
         for (int i = lo; i < lim; i++) {
             char c = seq.charAt(i);
             if (c == '[') {
+                hasBrackets = true;
                 depth++;
             } else if (c == ']') {
                 depth--;
@@ -443,6 +436,14 @@ public final class IntervalUtils {
                 dateLim = i;
                 break;
             }
+        }
+
+        if (!hasBrackets) {
+            parseInterval0(timestampDriver, seq, lo, lim, position, out, operation);
+            if (applyEncoded) {
+                applyLastEncodedInterval(timestampDriver, out);
+            }
+            return;
         }
 
         int outSize = out.size();
@@ -457,15 +458,6 @@ public final class IntervalUtils {
             out.setPos(outSize);
             throw e;
         }
-    }
-
-    private static boolean containsBrackets(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim; i++) {
-            if (seq.charAt(i) == '[') {
-                return true;
-            }
-        }
-        return false;
     }
 
     public static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
