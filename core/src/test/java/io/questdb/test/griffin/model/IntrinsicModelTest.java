@@ -158,6 +158,49 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionErrorTooManySemicolons() {
+        // 4 semicolons triggers "Invalid interval format" (exercises line 1192)
+        assertBracketIntervalError("2018-01-10;1h;1d;2;extra", "Invalid interval format");
+    }
+
+    @Test
+    public void testBracketExpansionRawTimestamp() throws SqlException {
+        // Raw long timestamp (exercises line 1219 - Numbers.parseLong fallback)
+        // 1234567890000000 microseconds = 2009-02-13T23:31:30.000000Z
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "1234567890000000";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        Assert.assertEquals(1234567890000000L, out.getQuick(0));
+        Assert.assertEquals(1234567890000000L, out.getQuick(1));
+    }
+
+    @Test
+    public void testBracketExpansionErrorPeriodNotANumber() {
+        // Invalid period in repeating interval format (exercises line 1236)
+        assertBracketIntervalError("2018-01-10T10:30;30m;Xd;2", "Period not a number");
+    }
+
+    @Test
+    public void testBracketExpansionErrorCountNotANumber() {
+        // Invalid count in repeating interval format (exercises line 1242)
+        assertBracketIntervalError("2018-01-10T10:30;30m;2d;X", "Count not a number");
+    }
+
+    @Test
+    public void testBracketExpansionErrorUnknownPeriodType() {
+        // Unknown period type 'w' (exercises line 1260)
+        assertBracketIntervalError("2018-01-10T10:30;30m;2w;3", "Unknown period");
+    }
+
+    @Test
+    public void testBracketExpansionErrorTwoSemicolons() {
+        // Exactly 2 semicolons is invalid format (exercises line 1264)
+        assertBracketIntervalError("2018-01-10T10:30;30m;2d", "Invalid interval format");
+    }
+
+    @Test
     public void testBracketExpansionErrorNonNumeric() {
         assertBracketIntervalError("2018-01-[abc]", "Expected number in bracket expansion");
     }
@@ -416,6 +459,29 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionWithSubtractApplyEncodedFalse() throws SqlException {
+        // Test SUBTRACT operation with applyEncoded=false (exercises line 1167)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2018-01-[10,15]";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.SUBTRACT, false);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        // 2 intervals * 4 longs = 8
+        Assert.assertEquals(8, out.size());
+    }
+
+    @Test
+    public void testNoBracketsWithApplyEncodedFalse() throws SqlException {
+        // Test no-brackets path with applyEncoded=false (exercises line 484 branch)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2025-01-15";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        Assert.assertEquals(4, out.size());
+    }
+
+    @Test
     public void testDateCeilMicroWithDiffFraction() throws NumericException {
         assertDateFloor("2015-02-28T08:22:44.556012Z", "2015-02-28T08:22:44.556012");
         assertDateFloor("2015-02-28T08:22:44.556010Z", "2015-02-28T08:22:44.55601");
@@ -569,6 +635,12 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testWhitespaceOnlyInput() {
+        // All whitespace input (exercises line 426 - firstNonSpace reaches lim)
+        assertBracketIntervalError("   ", "Invalid date");
+    }
+
+    @Test
     public void testDateListSingleDate() throws SqlException {
         // '[2025-12-31]' produces 1 full-day interval
         assertBracketInterval(
@@ -592,6 +664,25 @@ public class IntrinsicModelTest {
         assertBracketInterval(
                 "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-01T23:59:59.999999Z},{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z}]",
                 "[2025-01-01,2025-01-05]"
+        );
+    }
+
+    @Test
+    public void testDateListUnsortedDates() throws SqlException {
+        // Dates out of chronological order - tests insertion sort (exercises line 1329)
+        // '[2025-01-20,2025-01-05,2025-01-15]' should be sorted to 05, 15, 20
+        assertBracketInterval(
+                "[{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z},{lo=2025-01-15T00:00:00.000000Z, hi=2025-01-15T23:59:59.999999Z},{lo=2025-01-20T00:00:00.000000Z, hi=2025-01-20T23:59:59.999999Z}]",
+                "[2025-01-20,2025-01-05,2025-01-15]"
+        );
+    }
+
+    @Test
+    public void testDateListOverlappingIntervals() throws SqlException {
+        // Duplicate dates should be merged into one interval (exercises line 1350)
+        assertBracketInterval(
+                "[{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z}]",
+                "[2025-01-05,2025-01-05,2025-01-05]"
         );
     }
 

@@ -706,47 +706,6 @@ public final class IntervalUtils {
         Numbers.append(sink, value);
     }
 
-    /**
-     * Determines if a string starting with '[' is a date list or field expansion.
-     * <p>
-     * A date list: [2025-01-01,2025-01-05] or [2025-01-01]T09:30
-     * Field expansion: [1]-[1]-[1]T... or [2018,2019]-01-10
-     * <p>
-     * The key difference: after the closing ']' that matches the opening '[':
-     * - Date list: followed by end-of-string, 'T', ';', or whitespace
-     * - Field expansion: followed by '-', ':', '.', or digit (part of date format)
-     *
-     * @param seq string that starts with '['
-     * @param lo  position of the opening '['
-     * @param lim end of string
-     * @return true if this is a date list, false if it's field expansion
-     */
-    private static boolean isDateList(CharSequence seq, int lo, int lim) {
-        // Find the matching ']' for the opening '['
-        int depth = 1;
-        for (int i = lo + 1; i < lim; i++) {
-            char c = seq.charAt(i);
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-                if (depth == 0) {
-                    // Found matching ']', check what follows
-                    if (i + 1 >= lim) {
-                        // End of string - it's a date list
-                        return true;
-                    }
-                    char next = seq.charAt(i + 1);
-                    // Date list: followed by T, ;, or whitespace
-                    // Field expansion: followed by -, :, ., or digit
-                    return next == 'T' || next == ';' || Character.isWhitespace(next);
-                }
-            }
-        }
-        // No matching ']' found - will error later, treat as date list for now
-        return true;
-    }
-
     private static void apply(TimestampDriver timestampDriver, LongList temp, long lo, long hi, int period, char periodType, int count) {
         temp.add(lo, hi);
         if (count > 1) {
@@ -810,163 +769,6 @@ public final class IntervalUtils {
         }
         // Year - no padding
         return 0;
-    }
-
-    /**
-     * Expands a date list in the format: [date1,date2,...]suffix
-     * Each date element can contain field expansion brackets.
-     * The suffix (like T09:30;1h) is appended to each date.
-     *
-     * @param timestampDriver timestamp driver for parsing
-     * @param seq             input string starting with '['
-     * @param lo              position of the opening '['
-     * @param lim             end of string
-     * @param errorPos        position for error reporting
-     * @param out             output list for parsed intervals
-     * @param operation       interval operation
-     * @param sink            reusable StringSink for building expanded strings
-     * @param applyEncoded    if true, converts to simple format
-     * @param outSizeBeforeExpansion size of out before expansion started
-     */
-    private static void expandDateList(
-            TimestampDriver timestampDriver,
-            CharSequence seq,
-            int lo,
-            int lim,
-            int errorPos,
-            LongList out,
-            short operation,
-            StringSink sink,
-            boolean applyEncoded,
-            int outSizeBeforeExpansion
-    ) throws SqlException {
-        // lo points to '[' - find the matching ']' for the date list
-        int depth = 1;
-        int listEnd = -1;
-        for (int i = lo + 1; i < lim; i++) {
-            char c = seq.charAt(i);
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-                if (depth == 0) {
-                    listEnd = i;
-                    break;
-                }
-            }
-        }
-
-        if (listEnd < 0) {
-            throw SqlException.$(errorPos, "Unclosed '[' in date list");
-        }
-
-        // Check for empty brackets
-        int contentStart = lo + 1;
-        int contentEnd = listEnd;
-
-        // Skip leading whitespace in content
-        while (contentStart < contentEnd && Character.isWhitespace(seq.charAt(contentStart))) {
-            contentStart++;
-        }
-
-        if (contentStart >= contentEnd) {
-            throw SqlException.$(errorPos, "Empty date list");
-        }
-
-        // The suffix is everything after the closing bracket (like T09:30;1h)
-        int suffixStart = listEnd + 1;
-
-        // Parse comma-separated date elements, respecting nested brackets
-        int elementStart = contentStart;
-        int elementCount = 0;
-
-        for (int i = contentStart; i <= contentEnd; i++) {
-            char c = i < contentEnd ? seq.charAt(i) : ','; // Treat end as virtual comma
-
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-            } else if (c == ',' && depth == 0) {
-                // Found element boundary
-                int elementEnd = i;
-
-                // Trim whitespace from element
-                while (elementStart < elementEnd && Character.isWhitespace(seq.charAt(elementStart))) {
-                    elementStart++;
-                }
-                while (elementEnd > elementStart && Character.isWhitespace(seq.charAt(elementEnd - 1))) {
-                    elementEnd--;
-                }
-
-                if (elementStart >= elementEnd) {
-                    throw SqlException.$(errorPos, "Empty element in date list");
-                }
-
-                // Build the full interval string: element + suffix
-                sink.clear();
-                sink.put(seq, elementStart, elementEnd);
-                sink.put(seq, suffixStart, lim);
-
-                // Check if the combined string contains brackets that need expansion
-                // This includes brackets in the element part AND in the suffix part
-                boolean hasBrackets = false;
-                int expandedLen = sink.length();
-                for (int j = 0; j < expandedLen; j++) {
-                    if (sink.charAt(j) == '[') {
-                        hasBrackets = true;
-                        break;
-                    }
-                }
-
-                if (hasBrackets) {
-                    // Element has field expansion brackets - use existing recursive expansion
-                    // Find where semicolon would be in the expanded string
-                    int expandedLim = sink.length();
-                    int dateLim = expandedLim;
-                    int bracketDepth = 0;
-                    for (int j = 0; j < expandedLim; j++) {
-                        char ch = sink.charAt(j);
-                        if (ch == ';') {
-                            // Semicolon always appears after brackets close (in suffix like T[09,14]:30;1h)
-                            dateLim = j;
-                            break;
-                        }
-                    }
-
-                    // Use a separate sink for the recursive expansion
-                    int sinkLen = sink.length();
-                    CharSequence elementWithSuffix = sink.toString();
-                    sink.clear();
-
-                    expandBracketsRecursive(
-                            timestampDriver,
-                            elementWithSuffix,
-                            0,
-                            0,
-                            dateLim,
-                            sinkLen,
-                            errorPos,
-                            out,
-                            operation,
-                            sink,
-                            0,
-                            applyEncoded,
-                            outSizeBeforeExpansion
-                    );
-                } else {
-                    // No brackets - parse directly
-                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
-                }
-
-                elementCount++;
-                elementStart = i + 1;
-            }
-        }
-
-        if (elementCount == 0) {
-            throw SqlException.$(errorPos, "Empty date list");
-        }
     }
 
     /**
@@ -1123,6 +925,156 @@ public final class IntervalUtils {
         sink.clear(startLen);
     }
 
+    /**
+     * Expands a date list in the format: [date1,date2,...]suffix
+     * Each date element can contain field expansion brackets.
+     * The suffix (like T09:30;1h) is appended to each date.
+     *
+     * @param timestampDriver        timestamp driver for parsing
+     * @param seq                    input string starting with '['
+     * @param lo                     position of the opening '['
+     * @param lim                    end of string
+     * @param errorPos               position for error reporting
+     * @param out                    output list for parsed intervals
+     * @param operation              interval operation
+     * @param sink                   reusable StringSink for building expanded strings
+     * @param applyEncoded           if true, converts to simple format
+     * @param outSizeBeforeExpansion size of out before expansion started
+     */
+    private static void expandDateList(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int errorPos,
+            LongList out,
+            short operation,
+            StringSink sink,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion
+    ) throws SqlException {
+        // lo points to '[' - find the matching ']' for the date list
+        int depth = 1;
+        int listEnd = -1;
+        for (int i = lo + 1; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+                if (depth == 0) {
+                    listEnd = i;
+                    break;
+                }
+            }
+        }
+
+        if (listEnd < 0) {
+            throw SqlException.$(errorPos, "Unclosed '[' in date list");
+        }
+
+        // Check for empty brackets
+        int contentStart = lo + 1;
+        int contentEnd = listEnd;
+
+        // Skip leading whitespace in content
+        while (contentStart < contentEnd && Character.isWhitespace(seq.charAt(contentStart))) {
+            contentStart++;
+        }
+
+        if (contentStart >= contentEnd) {
+            throw SqlException.$(errorPos, "Empty date list");
+        }
+
+        // The suffix is everything after the closing bracket (like T09:30;1h)
+        int suffixStart = listEnd + 1;
+
+        // Parse comma-separated date elements, respecting nested brackets
+        int elementStart = contentStart;
+
+        for (int i = contentStart; i <= contentEnd; i++) {
+            char c = i < contentEnd ? seq.charAt(i) : ','; // Treat end as virtual comma
+
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                // Found element boundary
+                int elementEnd = i;
+
+                // Trim whitespace from element
+                while (elementStart < elementEnd && Character.isWhitespace(seq.charAt(elementStart))) {
+                    elementStart++;
+                }
+                while (elementEnd > elementStart && Character.isWhitespace(seq.charAt(elementEnd - 1))) {
+                    elementEnd--;
+                }
+
+                if (elementStart >= elementEnd) {
+                    throw SqlException.$(errorPos, "Empty element in date list");
+                }
+
+                // Build the full interval string: element + suffix
+                sink.clear();
+                sink.put(seq, elementStart, elementEnd);
+                sink.put(seq, suffixStart, lim);
+
+                // Check if the combined string contains brackets that need expansion
+                // This includes brackets in the element part AND in the suffix part
+                boolean hasBrackets = false;
+                int expandedLen = sink.length();
+                for (int j = 0; j < expandedLen; j++) {
+                    if (sink.charAt(j) == '[') {
+                        hasBrackets = true;
+                        break;
+                    }
+                }
+
+                if (hasBrackets) {
+                    // Element has field expansion brackets - use existing recursive expansion
+                    // Find where semicolon would be in the expanded string
+                    int expandedLim = sink.length();
+                    int dateLim = expandedLim;
+                    for (int j = 0; j < expandedLim; j++) {
+                        char ch = sink.charAt(j);
+                        if (ch == ';') {
+                            // Semicolon always appears after brackets close (in suffix like T[09,14]:30;1h)
+                            dateLim = j;
+                            break;
+                        }
+                    }
+
+                    // Use a separate sink for the recursive expansion
+                    int sinkLen = sink.length();
+                    CharSequence elementWithSuffix = sink.toString();
+                    sink.clear();
+
+                    expandBracketsRecursive(
+                            timestampDriver,
+                            elementWithSuffix,
+                            0,
+                            0,
+                            dateLim,
+                            sinkLen,
+                            errorPos,
+                            out,
+                            operation,
+                            sink,
+                            0,
+                            applyEncoded,
+                            outSizeBeforeExpansion
+                    );
+                } else {
+                    // No brackets - parse directly
+                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                }
+
+                elementStart = i + 1;
+            }
+        }
+    }
+
     private static int findMatchingBracket(CharSequence seq, int start, int lim, int position) throws SqlException {
         // start points to '['
         int depth = 1;
@@ -1138,6 +1090,47 @@ public final class IntervalUtils {
             }
         }
         throw SqlException.$(position, "Unclosed '[' in interval");
+    }
+
+    /**
+     * Determines if a string starting with '[' is a date list or field expansion.
+     * <p>
+     * A date list: [2025-01-01,2025-01-05] or [2025-01-01]T09:30
+     * Field expansion: [1]-[1]-[1]T... or [2018,2019]-01-10
+     * <p>
+     * The key difference: after the closing ']' that matches the opening '[':
+     * - Date list: followed by end-of-string, 'T', ';', or whitespace
+     * - Field expansion: followed by '-', ':', '.', or digit (part of date format)
+     *
+     * @param seq string that starts with '['
+     * @param lo  position of the opening '['
+     * @param lim end of string
+     * @return true if this is a date list, false if it's field expansion
+     */
+    private static boolean isDateList(CharSequence seq, int lo, int lim) {
+        // Find the matching ']' for the opening '['
+        int depth = 1;
+        for (int i = lo + 1; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+                if (depth == 0) {
+                    // Found matching ']', check what follows
+                    if (i + 1 >= lim) {
+                        // End of string - it's a date list
+                        return true;
+                    }
+                    char next = seq.charAt(i + 1);
+                    // Date list: followed by T, ;, or whitespace
+                    // Field expansion: followed by -, :, ., or digit
+                    return next == 'T' || next == ';' || Character.isWhitespace(next);
+                }
+            }
+        }
+        // No matching ']' found - will error later, treat as date list for now
+        return true;
     }
 
     /**
@@ -1323,9 +1316,7 @@ public final class IntervalUtils {
      */
     private static void unionBracketExpandedIntervals(LongList out, int startIndex) {
         int bracketCount = (out.size() - startIndex) / 2;
-        if (bracketCount <= 1) {
-            return; // Nothing to union
-        }
+        // Note: caller guarantees bracketCount >= 2 via the guard: out.size() > outSize + 2
 
         // Sort intervals in-place by lo value (insertion sort - bracket lists are typically small)
         for (int i = 1; i < bracketCount; i++) {
