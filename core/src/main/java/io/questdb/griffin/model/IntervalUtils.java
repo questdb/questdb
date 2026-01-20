@@ -31,6 +31,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
@@ -1045,9 +1046,9 @@ public final class IntervalUtils {
                         }
                     }
 
-                    // Use a separate sink for the recursive expansion
-                    int sinkLen = sink.length();
-                    CharSequence elementWithSuffix = sink.toString();
+                    // Copy to thread-local sink to avoid String allocation
+                    StringSink elementWithSuffix = Misc.getThreadLocalSink();
+                    elementWithSuffix.put(sink);
                     sink.clear();
 
                     expandBracketsRecursive(
@@ -1056,7 +1057,7 @@ public final class IntervalUtils {
                             0,
                             0,
                             dateLim,
-                            sinkLen,
+                            elementWithSuffix.length(),
                             errorPos,
                             out,
                             operation,
