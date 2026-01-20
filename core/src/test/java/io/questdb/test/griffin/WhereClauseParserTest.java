@@ -2690,6 +2690,80 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     /**
+     * Test bracket expansion with a RESTRICTIVE interval that filters out some results.
+     * This verifies that bracket-expanded intervals are properly intersected with other constraints.
+     */
+    @Test
+    public void testBracketIntervalWithRestrictiveInterval() throws Exception {
+        // timestamp IN '2018-01-[10,15,20]' expands to Jan 10, Jan 15, Jan 20
+        // Adding upper bound timestamp < '2018-01-16' should filter out Jan 20
+        // Expected: only Jan 10 and Jan 15
+        runWhereIntervalTest0(
+                "timestamp >= '2018-01-01' and timestamp < '2018-01-16' and timestamp IN '2018-01-[10,15,20]'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+
+        // Reverse order should produce same result
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,15,20]' and timestamp >= '2018-01-01' and timestamp < '2018-01-16'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+    }
+
+    /**
+     * Test bracket expansion with UNSORTED values in the bracket.
+     * Values should be properly unioned regardless of order.
+     */
+    @Test
+    public void testBracketIntervalUnsortedValues() throws Exception {
+        // Unsorted bracket values: [20,10,15] should produce same result as [10,15,20]
+        String expected = "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}," +
+                "{lo=2018-01-20T00:00:00.000000Z, hi=2018-01-20T23:59:59.999999Z}]";
+
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[20,10,15]'",
+                expected
+        );
+
+        // With restrictive constraint
+        runWhereIntervalTest0(
+                "timestamp >= '2018-01-01' and timestamp < '2018-01-16' and timestamp IN '2018-01-[20,10,15]'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+    }
+
+    /**
+     * Test bracket expansion with duplicate values - duplicates should be merged.
+     */
+    @Test
+    public void testBracketIntervalDuplicateValues() throws Exception {
+        // Duplicate values should be merged into a single interval
+        String singleDay = "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]";
+
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,10]'",
+                singleDay
+        );
+
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,10,10]'",
+                singleDay
+        );
+
+        // Mixed duplicates and unique values
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,15,10,15,20]'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}," +
+                        "{lo=2018-01-20T00:00:00.000000Z, hi=2018-01-20T23:59:59.999999Z}]"
+        );
+    }
+
+    /**
      * Test nested bracket expansion (cartesian product) with dynamic intervals.
      * '2018-[01,06]-[10,15]' expands to 4 intervals: Jan 10, Jan 15, Jun 10, Jun 15
      */

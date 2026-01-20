@@ -464,6 +464,11 @@ public final class IntervalUtils {
                     applyEncoded,
                     outSize
             );
+            // In static mode, union all bracket-expanded intervals with each other
+            // (they were added without union during expansion)
+            if (applyEncoded && out.size() > outSize + 2) {
+                unionBracketExpandedIntervals(out, outSize);
+            }
         } catch (SqlException e) {
             // Unwind output on error
             out.setPos(outSize);
@@ -898,12 +903,13 @@ public final class IntervalUtils {
 
     /**
      * Parses a fully-expanded interval string (no brackets) and adds result to output.
-     * In static mode (applyEncoded=true), results are converted to 2-long format and unioned.
+     * In static mode (applyEncoded=true), results are converted to 2-long format.
+     * Union of bracket-expanded intervals is done at the end of parseBracketInterval.
      * In dynamic mode (applyEncoded=false), results stay in 4-long format:
      * - For INTERSECT operations: first interval uses INTERSECT, subsequent use UNION
-     *   (intervals are combined, then intersected with previous constraints)
+     * (intervals are combined, then intersected with previous constraints)
      * - For SUBTRACT operations: all intervals use SUBTRACT
-     *   (each interval is individually inverted and intersected, achieving NOT A AND NOT B)
+     * (each interval is individually inverted and intersected, achieving NOT A AND NOT B)
      */
     private static void parseExpandedInterval(
             TimestampDriver timestampDriver,
@@ -915,13 +921,10 @@ public final class IntervalUtils {
             int outSizeBeforeExpansion
     ) throws SqlException {
         if (applyEncoded) {
-            // Static mode: convert to 2-long format and union
-            int divider = out.size();
+            // Static mode: convert to 2-long format
+            // Union is done at the end of bracket expansion in parseBracketInterval
             parseInterval0(timestampDriver, expanded, 0, expanded.length(), errorPos, out, operation);
             applyLastEncodedInterval(timestampDriver, out);
-            if (divider > 0) {
-                unionInPlace(out, divider);
-            }
         } else {
             // Dynamic mode: keep 4-long format
             boolean isFirstInterval = out.size() == outSizeBeforeExpansion;
@@ -1071,6 +1074,51 @@ public final class IntervalUtils {
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }
+    }
+
+    /**
+     * Unions intervals in the range [startIndex, end) with each other.
+     * Pre-existing intervals at [0, startIndex) are preserved unchanged.
+     * Bracket values may be in any order (e.g., [20,10,15]), so we sort first.
+     */
+    private static void unionBracketExpandedIntervals(LongList out, int startIndex) {
+        int bracketCount = (out.size() - startIndex) / 2;
+        if (bracketCount <= 1) {
+            return; // Nothing to union
+        }
+
+        // Copy bracket intervals to a temp list
+        LongList tempList = new LongList();
+        tempList.add(out, startIndex, out.size());
+
+        // Sort intervals by lo value (simple insertion sort - bracket lists are typically small)
+        for (int i = 1; i < bracketCount; i++) {
+            long lo = tempList.getQuick(2 * i);
+            long hi = tempList.getQuick(2 * i + 1);
+            int j = i - 1;
+            while (j >= 0 && tempList.getQuick(2 * j) > lo) {
+                tempList.setQuick(2 * (j + 1), tempList.getQuick(2 * j));
+                tempList.setQuick(2 * (j + 1) + 1, tempList.getQuick(2 * j + 1));
+                j--;
+            }
+            tempList.setQuick(2 * (j + 1), lo);
+            tempList.setQuick(2 * (j + 1) + 1, hi);
+        }
+
+        // Union sorted intervals
+        // unionInPlace(list, divider) unions [0, divider) with [divider, end)
+        // We need to iteratively union until stable
+        int prevSize;
+        do {
+            prevSize = tempList.size();
+            if (tempList.size() > 2) {
+                unionInPlace(tempList, tempList.size() - 2);
+            }
+        } while (tempList.size() < prevSize);
+
+        // Copy result back
+        out.setPos(startIndex);
+        out.add(tempList);
     }
 
     static int append(LongList list, int writePoint, long lo, long hi) {

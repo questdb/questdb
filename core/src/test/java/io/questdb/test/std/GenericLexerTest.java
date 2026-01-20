@@ -170,14 +170,16 @@ public class GenericLexerTest {
         while ((tok = SqlUtil.fetchNext(lex)) != null) {
             sink.put(tok).put('\n');
         }
-        TestUtils.assertEquals("insert\n" +
-                        "into\n" +
-                        "data\n" +
-                        "values\n" +
-                        "(\n" +
-                        "'{ title: \\\"Title\\\"}'\n" +
-                        ")\n" +
-                        ";\n",
+        TestUtils.assertEquals("""
+                        insert
+                        into
+                        data
+                        values
+                        (
+                        '{ title: \\"Title\\"}'
+                        )
+                        ;
+                        """,
                 sink
         );
     }
@@ -213,13 +215,16 @@ public class GenericLexerTest {
         while ((tok = SqlUtil.fetchNext(lex)) != null) {
             sink.put(tok).put('\n');
         }
-        TestUtils.assertEquals("INSERT\n" +
-                        "INTO\n" +
-                        "\"t\"\"ab\"\n" +
-                        "VALUES\n" +
-                        "(\n" +
-                        "'obrian'\n" +
-                        ")\n;\n",
+        TestUtils.assertEquals("""
+                        INSERT
+                        INTO
+                        "t""ab"
+                        VALUES
+                        (
+                        'obrian'
+                        )
+                        ;
+                        """,
                 sink
         );
     }
@@ -237,13 +242,16 @@ public class GenericLexerTest {
         while ((tok = SqlUtil.fetchNext(lex)) != null) {
             sink.put(tok).put('\n');
         }
-        TestUtils.assertEquals("INSERT\n" +
-                        "INTO\n" +
-                        "tab\n" +
-                        "VALUES\n" +
-                        "(\n" +
-                        "'o''brian'\n" +
-                        ")\n;\n",
+        TestUtils.assertEquals("""
+                        INSERT
+                        INTO
+                        tab
+                        VALUES
+                        (
+                        'o''brian'
+                        )
+                        ;
+                        """,
                 sink
         );
     }
