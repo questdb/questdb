@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -58,9 +59,10 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
         if (cursor == null) {
             cursor = new PageFrameRecordCursorImpl(
-                    executionContext.getCairoEngine().getConfiguration(),
+                    configuration,
                     getMetadata(),
                     new PageFrameRowCursorFactory(ORDER_ASC),
                     true,
@@ -68,7 +70,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
             );
         }
         if (pageFrameCursor == null) {
-            pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata());
         }
         pageFrameCursor.of(path.$());
         try {
@@ -83,8 +85,9 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert order != ORDER_DESC;
-        if (this.pageFrameCursor == null) {
-            this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        if (pageFrameCursor == null) {
+            final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata());
         }
         pageFrameCursor.of(path.$());
         return pageFrameCursor;
