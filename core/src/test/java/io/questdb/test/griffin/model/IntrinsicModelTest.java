@@ -65,6 +65,22 @@ public class IntrinsicModelTest {
         });
     }
 
+    /**
+     * Convenience overload that allocates a temporary StringSink.
+     * For hot paths, prefer the overload that accepts a reusable sink.
+     */
+    public static void parseBracketInterval(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation
+    ) throws SqlException {
+        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, out, operation, new StringSink());
+    }
+
     @Before
     public void setUp() {
         a.clear();
@@ -241,16 +257,19 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testInvert() throws SqlException {
-        final String intervalStr = "2018-01-10T10:30:00.000Z;30m;2d;2";
+    public void testBracketExpansionWithNonZeroOffset() throws SqlException {
+        // Tests that bracket parsing works correctly when lo > 0
+        // The prefix "XXX" should be ignored, and padding should be calculated from the interval start
+        String input = "XXX2018-01-[5,10]";
+        int lo = 3; // skip "XXX"
         LongList out = new LongList();
-        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseBracketInterval(timestampDriver, intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
-        // Non-bracket interval returns encoded format, need to apply it first
-        IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
-        IntervalUtils.invert(out);
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        parseBracketInterval(timestampDriver, input, lo, input.length(), 0, out, IntervalOperation.INTERSECT);
+        // Day field should be zero-padded to 2 digits
         TestUtils.assertEquals(
-                "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? "[{lo=2018-01-05T00:00:00.000000000Z, hi=2018-01-05T23:59:59.999999999Z},{lo=2018-01-10T00:00:00.000000000Z, hi=2018-01-10T23:59:59.999999999Z}]"
+                        : "[{lo=2018-01-05T00:00:00.000000Z, hi=2018-01-05T23:59:59.999999Z},{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]",
                 intervalToString(timestampDriver, out)
         );
     }
@@ -442,10 +461,25 @@ public class IntrinsicModelTest {
         );
     }
 
+    @Test
+    public void testInvert() throws SqlException {
+        final String intervalStr = "2018-01-10T10:30:00.000Z;30m;2d;2";
+        LongList out = new LongList();
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        parseBracketInterval(timestampDriver, intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
+        // Non-bracket interval returns encoded format, need to apply it first
+        IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
+        IntervalUtils.invert(out);
+        TestUtils.assertEquals(
+                "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
+                intervalToString(timestampDriver, out)
+        );
+    }
+
     private void assertBracketInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        IntervalUtils.parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         // For non-bracket intervals, parseBracketInterval returns encoded format (4 longs).
         // For bracket intervals, it returns simple format (2 longs per interval).
         if (!IntervalUtils.containsBrackets(interval, 0, interval.length())) {
@@ -457,15 +491,6 @@ public class IntrinsicModelTest {
                         : expected,
                 intervalToString(timestampDriver, out)
         );
-    }
-
-    private void assertIntervalError(String interval) {
-        try {
-            final TimestampDriver timestampDriver = timestampType.getDriver();
-            IntervalUtils.parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            Assert.fail();
-        } catch (SqlException ignore) {
-        }
     }
 
     // ==================== Bracket Expansion Tests ====================
@@ -738,10 +763,31 @@ public class IntrinsicModelTest {
         );
     }
 
+    private void assertBracketIntervalError(String interval, String expectedError) {
+        try {
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            LongList out = new LongList();
+            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            Assert.fail("Expected SqlException with message containing: " + expectedError);
+        } catch (SqlException e) {
+            Assert.assertTrue("Expected error message to contain '" + expectedError + "' but got: " + e.getMessage(),
+                    e.getMessage().contains(expectedError));
+        }
+    }
+
+    private void assertIntervalError(String interval) {
+        try {
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            Assert.fail();
+        } catch (SqlException ignore) {
+        }
+    }
+
     private void assertShortInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        IntervalUtils.parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         // For non-bracket intervals, parseBracketInterval returns encoded format (4 longs).
         // For bracket intervals, it returns simple format (2 longs per interval).
         if (!IntervalUtils.containsBrackets(interval, 0, interval.length())) {
@@ -753,17 +799,5 @@ public class IntrinsicModelTest {
                         : expected,
                 intervalToString(timestampDriver, out)
         );
-    }
-
-    private void assertBracketIntervalError(String interval, String expectedError) {
-        try {
-            final TimestampDriver timestampDriver = timestampType.getDriver();
-            LongList out = new LongList();
-            IntervalUtils.parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            Assert.fail("Expected SqlException with message containing: " + expectedError);
-        } catch (SqlException e) {
-            Assert.assertTrue("Expected error message to contain '" + expectedError + "' but got: " + e.getMessage(),
-                    e.getMessage().contains(expectedError));
-        }
     }
 }

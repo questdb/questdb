@@ -64,6 +64,15 @@ public final class IntervalUtils {
         apply(timestampDriver, intervals, lo, hi, period, periodType, count);
     }
 
+    public static boolean containsBrackets(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim; i++) {
+            if (seq.charAt(i) == '[') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static long decodeIntervalHi(LongList out, int index) {
         return out.getQuick(index + HI_INDEX);
     }
@@ -195,13 +204,13 @@ public final class IntervalUtils {
         );
     }
 
-    public static boolean containsBrackets(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim; i++) {
-            if (seq.charAt(i) == '[') {
-                return true;
-            }
-        }
-        return false;
+    public static int getIntervalType(int timestampType) {
+        assert ColumnType.isTimestamp(timestampType);
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> ColumnType.INTERVAL_TIMESTAMP_MICRO;
+            case ColumnType.TIMESTAMP_NANO -> ColumnType.INTERVAL_TIMESTAMP_NANO;
+            default -> ColumnType.UNDEFINED;
+        };
     }
 
     public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
@@ -212,11 +221,11 @@ public final class IntervalUtils {
         return MicrosTimestampDriver.INSTANCE;
     }
 
-    public static int getIntervalType(int timestampType) {
-        assert ColumnType.isTimestamp(timestampType);
-        return switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO -> ColumnType.INTERVAL_TIMESTAMP_MICRO;
-            case ColumnType.TIMESTAMP_NANO -> ColumnType.INTERVAL_TIMESTAMP_NANO;
+    public static int getTimestampTypeByIntervalType(int intervalType) {
+        assert ColumnType.isInterval(intervalType);
+        return switch (intervalType) {
+            case ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO -> ColumnType.TIMESTAMP_MICRO;
+            case ColumnType.INTERVAL_TIMESTAMP_NANO -> ColumnType.TIMESTAMP_NANO;
             default -> ColumnType.UNDEFINED;
         };
     }
@@ -362,15 +371,6 @@ public final class IntervalUtils {
         return findInterval(intervals, timestamp) != -1;
     }
 
-    public static int getTimestampTypeByIntervalType(int intervalType) {
-        assert ColumnType.isInterval(intervalType);
-        return switch (intervalType) {
-            case ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO -> ColumnType.TIMESTAMP_MICRO;
-            case ColumnType.INTERVAL_TIMESTAMP_NANO -> ColumnType.TIMESTAMP_NANO;
-            default -> ColumnType.UNDEFINED;
-        };
-    }
-
     public static void parseAndApplyInterval(
             TimestampDriver timestampDriver,
             @Nullable CharSequence seq,
@@ -449,48 +449,13 @@ public final class IntervalUtils {
         sink.clear();
         try {
             expandBracketsRecursive(
-                    timestampDriver, seq, lo, dateLim, lim,
+                    timestampDriver, seq, lo, lo, dateLim, lim,
                     position, out, operation, sink, 0
             );
         } catch (SqlException e) {
             // Unwind output on error
             out.setPos(outSize);
             throw e;
-        }
-    }
-
-    /**
-     * Convenience overload that allocates a temporary StringSink.
-     * For hot paths, prefer the overload that accepts a reusable sink.
-     */
-    public static void parseBracketInterval(
-            TimestampDriver timestampDriver,
-            CharSequence seq,
-            int lo,
-            int lim,
-            int position,
-            LongList out,
-            short operation
-    ) throws SqlException {
-        parseBracketInterval(timestampDriver, seq, lo, lim, position, out, operation, new StringSink());
-    }
-
-    /**
-     * Parses a fully-expanded interval string (no brackets) and adds result to output.
-     * Results are unioned with existing intervals in the output list.
-     */
-    private static void parseExpandedInterval(
-            TimestampDriver timestampDriver,
-            CharSequence expanded,
-            int errorPos,
-            LongList out,
-            short operation
-    ) throws SqlException {
-        int divider = out.size();
-        parseInterval0(timestampDriver, expanded, 0, expanded.length(), errorPos, out, operation);
-        applyLastEncodedInterval(timestampDriver, out);
-        if (divider > 0) {
-            unionInPlace(out, divider);
         }
     }
 
@@ -760,6 +725,7 @@ public final class IntervalUtils {
     private static void expandBracketsRecursive(
             TimestampDriver timestampDriver,
             CharSequence seq,
+            int intervalStart, // start of interval in seq (for pad width calculation)
             int pos,        // current position in seq (within date part)
             int dateLim,    // end of date part (before semicolon)
             int fullLim,    // end of entire string (including duration suffix)
@@ -802,7 +768,7 @@ public final class IntervalUtils {
         int bracketEnd = findMatchingBracket(seq, bracketStart, dateLim, errorPos);
 
         // Determine zero-padding width based on position in timestamp
-        int padWidth = determinePadWidth(seq, 0, bracketStart);
+        int padWidth = determinePadWidth(seq, intervalStart, bracketStart);
 
         // Iterate through values in bracket without allocating collections
         int i = bracketStart + 1;
@@ -868,7 +834,7 @@ public final class IntervalUtils {
             for (int v = value; v <= rangeEnd; v++) {
                 appendPaddedInt(sink, v, padWidth);
                 expandBracketsRecursive(
-                        timestampDriver, seq, bracketEnd + 1, dateLim, fullLim,
+                        timestampDriver, seq, intervalStart, bracketEnd + 1, dateLim, fullLim,
                         errorPos, out, operation, sink, depth + 1
                 );
                 sink.clear(afterPrefixLen);
@@ -914,6 +880,25 @@ public final class IntervalUtils {
             }
         }
         throw SqlException.$(position, "Unclosed '[' in interval");
+    }
+
+    /**
+     * Parses a fully-expanded interval string (no brackets) and adds result to output.
+     * Results are unioned with existing intervals in the output list.
+     */
+    private static void parseExpandedInterval(
+            TimestampDriver timestampDriver,
+            CharSequence expanded,
+            int errorPos,
+            LongList out,
+            short operation
+    ) throws SqlException {
+        int divider = out.size();
+        parseInterval0(timestampDriver, expanded, 0, expanded.length(), errorPos, out, operation);
+        applyLastEncodedInterval(timestampDriver, out);
+        if (divider > 0) {
+            unionInPlace(out, divider);
+        }
     }
 
     private static void parseInterval0(
