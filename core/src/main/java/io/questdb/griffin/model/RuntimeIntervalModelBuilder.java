@@ -142,8 +142,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
-            // Dynamic mode: interval already encoded in staticIntervals as 4 longs
-            dynamicRangeList.add(null);
+            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
+            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+            for (int i = 0; i < intervalsAdded; i++) {
+                dynamicRangeList.add(null);
+            }
         }
         intervalApplied = true;
     }
@@ -349,8 +352,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
-            // Dynamic mode: interval already encoded in staticIntervals as 4 longs
-            dynamicRangeList.add(null);
+            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
+            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+            for (int i = 0; i < intervalsAdded; i++) {
+                dynamicRangeList.add(null);
+            }
         }
         intervalApplied = true;
     }

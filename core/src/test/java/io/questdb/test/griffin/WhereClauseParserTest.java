@@ -2630,6 +2630,94 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertFilter(modelOf("(timestamp = '2014-06-20T13:25:00.000Z;10m;2d;4' or ex = 'D') and sym in ('A', 'B')"), "'D' ex = '2014-06-20T13:25:00.000Z;10m;2d;4' timestamp = or");
     }
 
+    /**
+     * Test that bracket expansion syntax (e.g., '2018-01-[10,15]') works correctly
+     * when combined with dynamic intervals, regardless of WHERE clause order.
+     * Bracket expansion produces multiple intervals that are UNIONed together before
+     * being intersected with other constraints.
+     */
+    @Test
+    public void testBracketIntervalWithDynamicInterval() throws Exception {
+        // Bracket expansion '2018-01-[10,15]' expands to 2 intervals (Jan 10 and Jan 15)
+        // Both orderings should produce the same result
+
+        // Order 1: dynamic first in WHERE clause (bracket on RHS, processed first)
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2018-01-[10,15]'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+
+        // Order 2: bracket first in WHERE clause (dynamic on RHS, processed first)
+        // This now works because bracket-expanded intervals use UNION operation
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,15]' and timestamp < dateadd('y', 100, now())",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+    }
+
+    /**
+     * Test that NOT IN with bracket expansion works correctly with dynamic intervals.
+     * For SUBTRACT, each bracket-expanded interval is processed individually (inverted and intersected),
+     * achieving NOT A AND NOT B semantics.
+     */
+    @Test
+    public void testBracketIntervalWithDynamicIntervalNotIn() throws Exception {
+        // NOT IN bracket expansion subtracts the bracket-expanded intervals
+        // Test with a constrained date range so we can verify subtraction
+        String expected = "[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-09T23:59:59.999999Z}," +
+                "{lo=2018-01-11T00:00:00.000000Z, hi=2018-01-14T23:59:59.999999Z}," +
+                "{lo=2018-01-16T00:00:00.000000Z, hi=2018-01-19T23:59:59.999999Z}]";
+
+        // Static mode (no dynamic intervals)
+        runWhereIntervalTest0(
+                "timestamp >= '2018-01-01' and timestamp < '2018-01-20' and timestamp NOT IN '2018-01-[10,15]'",
+                expected
+        );
+
+        // Dynamic mode - dynamic interval first in WHERE clause
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp >= '2018-01-01' and timestamp < '2018-01-20' and timestamp NOT IN '2018-01-[10,15]'",
+                expected
+        );
+
+        // Dynamic mode - bracket NOT IN first in WHERE clause
+        runWhereIntervalTest0(
+                "timestamp NOT IN '2018-01-[10,15]' and timestamp >= '2018-01-01' and timestamp < '2018-01-20' and timestamp < dateadd('y', 100, now())",
+                expected
+        );
+    }
+
+    /**
+     * Test nested bracket expansion (cartesian product) with dynamic intervals.
+     * '2018-[01,06]-[10,15]' expands to 4 intervals: Jan 10, Jan 15, Jun 10, Jun 15
+     */
+    @Test
+    public void testBracketIntervalNestedWithDynamicInterval() throws Exception {
+        String expected = "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}," +
+                "{lo=2018-06-10T00:00:00.000000Z, hi=2018-06-10T23:59:59.999999Z}," +
+                "{lo=2018-06-15T00:00:00.000000Z, hi=2018-06-15T23:59:59.999999Z}]";
+
+        // Static mode
+        runWhereIntervalTest0(
+                "timestamp IN '2018-[01,06]-[10,15]'",
+                expected
+        );
+
+        // Dynamic mode - both orderings
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2018-[01,06]-[10,15]'",
+                expected
+        );
+
+        runWhereIntervalTest0(
+                "timestamp IN '2018-[01,06]-[10,15]' and timestamp < dateadd('y', 100, now())",
+                expected
+        );
+    }
+
     @Test(expected = SqlException.class)
     public void testInvalidIntervalSource1() throws Exception {
         modelOf("timestamp = '2014-06-20T13:25:00.000Z;10m;2d'");

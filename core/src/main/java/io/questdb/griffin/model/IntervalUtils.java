@@ -450,8 +450,19 @@ public final class IntervalUtils {
         sink.clear();
         try {
             expandBracketsRecursive(
-                    timestampDriver, seq, lo, lo, dateLim, lim,
-                    position, out, operation, sink, 0
+                    timestampDriver,
+                    seq,
+                    lo,
+                    lo,
+                    dateLim,
+                    lim,
+                    position,
+                    out,
+                    operation,
+                    sink,
+                    0,
+                    applyEncoded,
+                    outSize
             );
         } catch (SqlException e) {
             // Unwind output on error
@@ -734,7 +745,9 @@ public final class IntervalUtils {
             LongList out,
             short operation,
             StringSink sink,
-            int depth
+            int depth,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion
     ) throws SqlException {
         if (depth > MAX_BRACKET_DEPTH) {
             throw SqlException.$(errorPos, "Too many bracket groups (max " + MAX_BRACKET_DEPTH + ")");
@@ -753,7 +766,7 @@ public final class IntervalUtils {
             // No more brackets - append remaining text and parse
             int sinkLen = sink.length();
             sink.put(seq, pos, fullLim);
-            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation);
+            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
             sink.clear(sinkLen);
             return;
         }
@@ -836,7 +849,7 @@ public final class IntervalUtils {
                 appendPaddedInt(sink, v, padWidth);
                 expandBracketsRecursive(
                         timestampDriver, seq, intervalStart, bracketEnd + 1, dateLim, fullLim,
-                        errorPos, out, operation, sink, depth + 1
+                        errorPos, out, operation, sink, depth + 1, applyEncoded, outSizeBeforeExpansion
                 );
                 sink.clear(afterPrefixLen);
             }
@@ -885,20 +898,44 @@ public final class IntervalUtils {
 
     /**
      * Parses a fully-expanded interval string (no brackets) and adds result to output.
-     * Results are unioned with existing intervals in the output list.
+     * In static mode (applyEncoded=true), results are converted to 2-long format and unioned.
+     * In dynamic mode (applyEncoded=false), results stay in 4-long format:
+     * - For INTERSECT operations: first interval uses INTERSECT, subsequent use UNION
+     *   (intervals are combined, then intersected with previous constraints)
+     * - For SUBTRACT operations: all intervals use SUBTRACT
+     *   (each interval is individually inverted and intersected, achieving NOT A AND NOT B)
      */
     private static void parseExpandedInterval(
             TimestampDriver timestampDriver,
             CharSequence expanded,
             int errorPos,
             LongList out,
-            short operation
+            short operation,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion
     ) throws SqlException {
-        int divider = out.size();
-        parseInterval0(timestampDriver, expanded, 0, expanded.length(), errorPos, out, operation);
-        applyLastEncodedInterval(timestampDriver, out);
-        if (divider > 0) {
-            unionInPlace(out, divider);
+        if (applyEncoded) {
+            // Static mode: convert to 2-long format and union
+            int divider = out.size();
+            parseInterval0(timestampDriver, expanded, 0, expanded.length(), errorPos, out, operation);
+            applyLastEncodedInterval(timestampDriver, out);
+            if (divider > 0) {
+                unionInPlace(out, divider);
+            }
+        } else {
+            // Dynamic mode: keep 4-long format
+            boolean isFirstInterval = out.size() == outSizeBeforeExpansion;
+            short effectiveOp;
+            if (operation == IntervalOperation.SUBTRACT) {
+                // For SUBTRACT: each interval is processed individually (inverted and intersected)
+                // This achieves: NOT A AND NOT B AND NOT C...
+                effectiveOp = operation;
+            } else {
+                // For INTERSECT: first uses INTERSECT, subsequent use UNION to combine
+                // This achieves: (A OR B OR C...) AND previous
+                effectiveOp = isFirstInterval ? operation : IntervalOperation.UNION;
+            }
+            parseInterval0(timestampDriver, expanded, 0, expanded.length(), errorPos, out, effectiveOp);
         }
     }
 

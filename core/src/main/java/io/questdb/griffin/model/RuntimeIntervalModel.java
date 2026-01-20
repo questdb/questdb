@@ -260,19 +260,16 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             // If this is the first element and no pre-calculated static intervals exist.
             if (firstFuncApplied || divider > 0) {
                 switch (operation) {
-                    case IntervalOperation.INTERSECT:
-                    case IntervalOperation.INTERSECT_BETWEEN:
-                    case IntervalOperation.INTERSECT_INTERVALS:
-                    case IntervalOperation.SUBTRACT_INTERVALS:
-                        IntervalUtils.intersectInPlace(outIntervals, divider);
-                        break;
-                    case IntervalOperation.SUBTRACT:
-                    case IntervalOperation.SUBTRACT_BETWEEN:
-                        IntervalUtils.subtract(outIntervals, divider);
-                        break;
-                    // UNION cannot be the first thing at the moment.
-                    default:
-                        throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
+                    case IntervalOperation.INTERSECT, IntervalOperation.INTERSECT_BETWEEN,
+                         IntervalOperation.INTERSECT_INTERVALS, IntervalOperation.SUBTRACT_INTERVALS ->
+                            IntervalUtils.intersectInPlace(outIntervals, divider);
+                    case IntervalOperation.SUBTRACT, IntervalOperation.SUBTRACT_BETWEEN ->
+                            IntervalUtils.subtract(outIntervals, divider);
+                    case IntervalOperation.UNION ->
+                        // Union with previous intervals (used for bracket expansion)
+                            IntervalUtils.unionInPlace(outIntervals, divider);
+                    default ->
+                            throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
                 }
             }
             firstFuncApplied = true;
