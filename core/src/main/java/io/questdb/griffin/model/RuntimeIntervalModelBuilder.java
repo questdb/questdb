@@ -135,14 +135,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        boolean hasBrackets = IntervalUtils.containsBrackets(seq, lo, lim);
-        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink);
-        if (dynamicRangeList.size() == 0) {
-            // For non-bracket intervals, parseBracketInterval returns encoded format (4 longs).
-            // For bracket intervals, it returns simple format (2 longs per interval).
-            if (!hasBrackets) {
-                IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
-            }
+        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
+        if (noDynamicIntervals) {
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
@@ -346,14 +341,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        boolean hasBrackets = IntervalUtils.containsBrackets(seq, lo, lim);
-        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink);
-        if (dynamicRangeList.size() == 0) {
-            // For non-bracket intervals, parseBracketInterval returns encoded format (4 longs).
-            // For bracket intervals, it returns simple format (2 longs per interval).
-            if (!hasBrackets) {
-                IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
-            }
+        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
+        if (noDynamicIntervals) {
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);

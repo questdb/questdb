@@ -64,13 +64,19 @@ public final class IntervalUtils {
         apply(timestampDriver, intervals, lo, hi, period, periodType, count);
     }
 
-    public static boolean containsBrackets(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim; i++) {
-            if (seq.charAt(i) == '[') {
-                return true;
-            }
+    public static void parseAndApplyInterval(
+            TimestampDriver timestampDriver,
+            @Nullable CharSequence seq,
+            LongList out,
+            int position,
+            StringSink sink
+    ) throws SqlException {
+        if (seq != null) {
+            parseBracketInterval(timestampDriver, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, true);
+        } else {
+            encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
+            applyLastEncodedInterval(timestampDriver, out);
         }
-        return false;
     }
 
     public static long decodeIntervalHi(LongList out, int index) {
@@ -371,21 +377,6 @@ public final class IntervalUtils {
         return findInterval(intervals, timestamp) != -1;
     }
 
-    public static void parseAndApplyInterval(
-            TimestampDriver timestampDriver,
-            @Nullable CharSequence seq,
-            LongList out,
-            int position,
-            StringSink sink
-    ) throws SqlException {
-        if (seq != null) {
-            parseBracketInterval(timestampDriver, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink);
-        } else {
-            encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
-        }
-        applyLastEncodedInterval(timestampDriver, out);
-    }
-
     /**
      * Parses interval strings with bracket expansion syntax.
      * <p>
@@ -397,7 +388,12 @@ public final class IntervalUtils {
      *   <li>Multiple groups (cartesian product): {@code 2018-[01,06]-[10,15]} → 4 intervals</li>
      * </ul>
      * <p>
-     * If the input contains no brackets, this method delegates to {@link #parseInterval0}.
+     * Output format depends on input and {@code applyEncoded} parameter:
+     * <ul>
+     *   <li>With brackets: always returns simple format (2 longs per interval)</li>
+     *   <li>Without brackets + applyEncoded=true: returns simple format</li>
+     *   <li>Without brackets + applyEncoded=false: returns encoded format (4 longs)</li>
+     * </ul>
      * <p>
      * This implementation uses recursion with depth limiting and does not allocate
      * intermediate objects. The provided StringSink is used as working storage and
@@ -411,6 +407,7 @@ public final class IntervalUtils {
      * @param out             output list for parsed intervals
      * @param operation       interval operation
      * @param sink            reusable StringSink for building expanded strings (will be cleared)
+     * @param applyEncoded    if true, converts encoded format to simple format for non-bracket intervals
      * @throws SqlException if the interval format is invalid
      */
     public static void parseBracketInterval(
@@ -421,12 +418,15 @@ public final class IntervalUtils {
             int position,
             LongList out,
             short operation,
-            StringSink sink
+            StringSink sink,
+            boolean applyEncoded
     ) throws SqlException {
         // Check for brackets first - if none, delegate directly to parseInterval0
-        // which returns encoded format (4 longs)
         if (!containsBrackets(seq, lo, lim)) {
             parseInterval0(timestampDriver, seq, lo, lim, position, out, operation);
+            if (applyEncoded) {
+                applyLastEncodedInterval(timestampDriver, out);
+            }
             return;
         }
 
@@ -457,6 +457,15 @@ public final class IntervalUtils {
             out.setPos(outSize);
             throw e;
         }
+    }
+
+    private static boolean containsBrackets(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim; i++) {
+            if (seq.charAt(i) == '[') {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
