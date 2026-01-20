@@ -9005,15 +9005,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
+            // lead(j) over() and lead(j) respect nulls over() are identical (respect nulls is default)
+            // so they are deduplicated, resulting in 4 functions instead of 6
             assertQueryAndPlan(
                     "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym = 'X'",
                     """
-                            CachedWindow
-                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]
-                                DeferredSingleSymbolFilterPageFrame
-                                    Index forward scan on: sym deferred: true
-                                      filter: sym='X'
-                                    Frame forward scan on: tab
+                            SelectedRecord
+                                CachedWindow
+                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='X'
+                                        Frame forward scan on: tab
                             """,
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     "ts",
@@ -9021,15 +9024,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
+            // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
             assertQueryAndPlan(
                     "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym = 'X' order by ts desc",
                     """
-                            CachedWindow
-                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]
-                                DeferredSingleSymbolFilterPageFrame
-                                    Index backward scan on: sym deferred: true
-                                      filter: sym='X'
-                                    Frame backward scan on: tab
+                            SelectedRecord
+                                CachedWindow
+                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index backward scan on: sym deferred: true
+                                          filter: sym='X'
+                                        Frame backward scan on: tab
                             """,
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     "ts###desc",
@@ -9037,19 +9042,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
+            // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
+            // Double SelectedRecord: one from ORDER BY sym, one from window function deduplication
             assertQueryAndPlan(
                     "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym IN ('X', 'Y') order by sym",
                     """
                             SelectedRecord
-                                CachedWindow
-                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) over ()]
-                                    FilterOnValues symbolOrder: asc
-                                        Cursor-order scan
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='X'
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='Y'
-                                        Frame forward scan on: tab
+                                SelectedRecord
+                                    CachedWindow
+                                      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                        FilterOnValues symbolOrder: asc
+                                            Cursor-order scan
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='Y'
+                                            Frame forward scan on: tab
                             """,
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     null,
@@ -9107,6 +9115,49 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionArithmeticAsArgumentToAggregate() throws Exception {
+        // Test arithmetic of window functions as argument to regular aggregate
+        // sum(sum(id) OVER () + sum(id) OVER ()) should:
+        // 1. Compute sum(id) OVER () for each row: 6 (1+2+3)
+        // 2. Add them: 6 + 6 = 12 for each row
+        // 3. Sum all those values: 12+12+12 = 36
+        assertQuery(
+                """
+                        result
+                        36.0
+                        """,
+                "SELECT sum(sum(id) OVER () + sum(id) OVER ()) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x as id, timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionArithmeticInsideFunction() throws Exception {
+        // Test two window functions in arithmetic expression inside abs()
+        // This is the original bug case
+        assertQuery(
+                """
+                        result
+                        0.0
+                        0.0
+                        0.0
+                        """,
+                "SELECT abs(sum(x) OVER () - sum(x) OVER ()) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testWindowFunctionArithmeticWithOrderBy() throws Exception {
         // Test window function with ORDER BY and arithmetic: row_number() + 1
         assertQuery(
@@ -9125,6 +9176,92 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") TIMESTAMP(ts) PARTITION BY DAY",
                 null,
                 false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregate() throws Exception {
+        // Test window function as argument to regular aggregate (not window function)
+        // sum(row_number() OVER (order by ts)) should:
+        // 1. Compute row_number() for each row ordered by ts: 1, 2, 3
+        // 2. Sum all those values: 1+2+3 = 6
+        // 3. Return single aggregated result
+        assertQuery(
+                """
+                        result
+                        6
+                        """,
+                "SELECT sum(row_number() OVER (order by ts)) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToCast() throws Exception {
+        // Test window function as direct argument to cast() function
+        assertQuery(
+                """
+                        result
+                        1
+                        2
+                        3
+                        """,
+                "SELECT cast(row_number() OVER (ORDER BY ts) AS int) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToFunction() throws Exception {
+        // Test window function as direct argument to abs() function
+        assertQuery(
+                """
+                        result
+                        1
+                        2
+                        3
+                        """,
+                "SELECT abs(row_number() OVER (ORDER BY ts)) AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToWindowFunction() throws Exception {
+        // Test window function as argument to another window function
+        // sum(row_number() OVER ()) OVER () should:
+        // 1. Compute row_number() for each row: 1, 2, 3
+        // 2. Sum all those values: 1+2+3 = 6
+        // 3. Return 6 for each row
+        assertQuery(
+                """
+                        result
+                        6.0
+                        6.0
+                        6.0
+                        """,
+                "SELECT sum(row_number() OVER ()) OVER () AS result FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
                 true
         );
     }
@@ -10013,6 +10150,232 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 expectedTimestamp,
                 supportsRandomAccess,
                 expectSize
+        );
+    }
+
+    //
+    // Tests for window functions with actual data execution.
+    // These tests verify that window functions work correctly end-to-end,
+    // including cases where window functions are nested inside operations.
+    //
+
+    @Test
+    public void testNestedWindowFunctionsWithColumnAliases() throws Exception {
+        // Test nested window functions where output column aliases conflict with table column names.
+        // The query aliases column 'id' as 'a' and 'b', but the table also has columns 'a' and 'b'.
+        // The inner window functions sum(a) OVER () and sum(b) OVER () should reference the
+        // actual table columns 'a' and 'b', not the output aliases.
+        // sum(a) OVER () = 10 + 20 + 30 = 60 for each row
+        // sum(b) OVER () = 100 + 200 + 300 = 600 for each row
+        // sum(60 + 600) OVER () = 660 * 3 = 1980 for each row
+        assertQuery(
+                """
+                        a\tb\tsum
+                        1\t1\t1980.0
+                        2\t2\t1980.0
+                        3\t3\t1980.0
+                        """,
+                "SELECT id as a, id as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () as sum FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x AS id, " +
+                        "  x * 10 AS a, " +
+                        "  x * 100 AS b, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionWithColumnAliasReference() throws Exception {
+        // Test nested window function where inner function references an output column alias.
+        // SELECT x as x0, sum(sum(x0) OVER ()) OVER () FROM x
+        // x0 is an alias for column x, and sum(x0) OVER () should resolve x0 to the original column x.
+        // sum(x) OVER () = 1+2+3 = 6 for each row
+        // sum(6) OVER () = 6+6+6 = 18 for each row
+        assertQuery(
+                """
+                        x0\tsum
+                        1\t18.0
+                        2\t18.0
+                        3\t18.0
+                        """,
+                "SELECT x as x0, sum(sum(x0) OVER ()) OVER () as sum FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionWithTwoAliasesForSameColumn() throws Exception {
+        // Test nested window function where two output aliases reference the same column.
+        // SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x
+        // The table only has column x. Aliases 'a' and 'b' are output aliases for x.
+        // The inner sum(a) and sum(b) should fail to resolve because a and b are not table columns.
+        // The validation triggers for alias 'b' first because when there are multiple aliases
+        // for the same column (x as a, x as b), the second alias 'b' references the first alias 'a'
+        // in innerVirtualModel, and 'a' is not a table column.
+        assertException(
+                "SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                48,
+                "Invalid column: b"
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionArithmeticWithColumnAndAlias() throws Exception {
+        // Test arithmetic of two nested window functions where one uses column and other uses alias.
+        // SELECT x as a, sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () FROM x
+        // a is an alias for column x.
+        // sum(x) OVER () = 1+2+3 = 6 for each row
+        // sum(6) OVER () = 18 for each row
+        // sum(a) OVER () = sum(x) OVER () = 6 for each row
+        // sum(6) OVER () = 18 for each row
+        // 18 + 18 = 36 for each row
+        assertQuery(
+                """
+                        a\tcolumn
+                        1\t36.0
+                        2\t36.0
+                        3\t36.0
+                        """,
+                "SELECT x as a, sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionInCaseWhenWithColumnAlias() throws Exception {
+        // Test nested window function inside CASE WHEN where inner function references an output column alias.
+        // SELECT x as a, CASE WHEN sum(sum(a) OVER ()) OVER () > 5 THEN 1 ELSE 0 END FROM x
+        // a is an alias for column x, and sum(a) OVER () should resolve a to the original column x.
+        // sum(x) OVER () = 1+2+3 = 6 for each row
+        // sum(6) OVER () = 6+6+6 = 18 for each row
+        // 18 > 5 is true, so CASE returns 1 for each row
+        assertQuery(
+                """
+                        a\tcase
+                        1\t1
+                        2\t1
+                        3\t1
+                        """,
+                "SELECT x as a, CASE WHEN sum(sum(a) OVER ()) OVER () > 5 THEN 1 ELSE 0 END FROM x",
+                "CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionsIntermediateValues() throws Exception {
+        // Diagnostic test to understand what values the intermediate expressions produce
+        // Note: rank() OVER () without ORDER BY returns 1 for all rows (all ties)
+        assertQuery(
+                """
+                        x\trn\trk\tinner_sum
+                        1\t1\t1\t2
+                        2\t2\t1\t3
+                        3\t3\t1\t4
+                        """,
+                "SELECT x, row_number() OVER () as rn, rank() OVER () as rk, row_number() OVER () + rank() OVER () as inner_sum FROM t",
+                "CREATE TABLE t AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,  // supportsRandomAccess
+                true   // expectSize
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionsWithPartitionByColumnReference() throws Exception {
+        // Test nested window functions where the outer window function's PARTITION BY
+        // references a column that must be propagated through multiple inner window models.
+        // This tests that collectReferencedAliases properly traverses WindowExpression's partitionBy.
+        //
+        // Query: SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (PARTITION BY x) FROM t
+        // - row_number() OVER () creates first inner window model
+        // - rank() OVER () creates second inner window model
+        // - sum(...) OVER (PARTITION BY x) is the outer window function
+        // - x must be propagated through both inner window models
+        //
+        // row_number() OVER () = 1, 2, 3 for each row
+        // rank() OVER () = 1, 1, 1 for each row (no ORDER BY, so all ties)
+        // row_number() + rank() = 2, 3, 4 for each row
+        // Since each row has unique x (1, 2, 3), each partition has one row
+        // sum(2) for x=1, sum(3) for x=2, sum(4) for x=3
+        assertQuery(
+                """
+                        x\tsum
+                        1\t2.0
+                        2\t3.0
+                        3\t4.0
+                        """,
+                "SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (PARTITION BY x) as sum FROM t",
+                "CREATE TABLE t AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,  // supportsRandomAccess
+                true   // expectSize
+        );
+    }
+
+    @Test
+    public void testNestedWindowFunctionsWithOrderByColumnReference() throws Exception {
+        // Test nested window functions where the outer window function's ORDER BY
+        // references a column that must be propagated through multiple inner window models.
+        // This tests that collectReferencedAliases properly traverses WindowExpression's orderBy.
+        //
+        // Query: SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t
+        // - row_number() OVER () creates first inner window model
+        // - rank() OVER () creates second inner window model
+        // - sum(...) OVER (ORDER BY x ROWS...) is the outer window function
+        // - x must be propagated through both inner window models
+        //
+        // row_number() OVER () = 1, 2, 3 for each row
+        // rank() OVER () = 1, 1, 1 for each row (no ORDER BY, so all ties)
+        // row_number() + rank() = 2, 3, 4 for each row
+        // Running sum: 2, 2+3=5, 5+4=9
+        assertQuery(
+                """
+                        x\tsum
+                        1\t2.0
+                        2\t5.0
+                        3\t9.0
+                        """,
+                "SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as sum FROM t",
+                "CREATE TABLE t AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,  // supportsRandomAccess
+                true   // expectSize
         );
     }
 
