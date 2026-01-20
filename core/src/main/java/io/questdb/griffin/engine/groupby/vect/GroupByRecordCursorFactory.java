@@ -528,8 +528,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             } catch (Throwable th) {
                 sharedCircuitBreaker.cancel();
-                // Release page frame memory.
-                Misc.freeObjListAndKeepObjects(frameMemoryPools);
                 throw th;
             } finally {
                 // all done? great start consuming the queue we just published
@@ -556,10 +554,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
+                // Release page frame memory now, when no worker is using it.
+                Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
-
-            // Release page frame memory.
-            Misc.freeObjListAndKeepObjects(frameMemoryPools);
 
             if (oomCounter.get() > 0) {
                 resetRostiMemorySize();

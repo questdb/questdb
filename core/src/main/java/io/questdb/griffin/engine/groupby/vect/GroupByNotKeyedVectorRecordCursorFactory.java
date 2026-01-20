@@ -369,8 +369,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             } catch (Throwable th) {
                 sharedCircuitBreaker.cancel();
-                // Release page frame memory.
-                Misc.freeObjListAndKeepObjects(frameMemoryPools);
                 throw th;
             } finally {
                 // all done? great start consuming the queue we just published
@@ -389,10 +387,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         sharedCircuitBreaker,
                         workStealingStrategy
                 );
+                // Release page frame memory now, when no worker is using it.
+                Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
-
-            // Release page frame memory.
-            Misc.freeObjListAndKeepObjects(frameMemoryPools);
 
             toTop();
 
