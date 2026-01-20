@@ -64,21 +64,6 @@ public final class IntervalUtils {
         apply(timestampDriver, intervals, lo, hi, period, periodType, count);
     }
 
-    public static void parseAndApplyInterval(
-            TimestampDriver timestampDriver,
-            @Nullable CharSequence seq,
-            LongList out,
-            int position,
-            StringSink sink
-    ) throws SqlException {
-        if (seq != null) {
-            parseBracketInterval(timestampDriver, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, true);
-        } else {
-            encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
-            applyLastEncodedInterval(timestampDriver, out);
-        }
-    }
-
     public static long decodeIntervalHi(LongList out, int index) {
         return out.getQuick(index + HI_INDEX);
     }
@@ -375,6 +360,21 @@ public final class IntervalUtils {
     // Checks if the timestamp is in the intervals, both sides inclusive.
     public static boolean isInIntervals(LongList intervals, long timestamp) {
         return findInterval(intervals, timestamp) != -1;
+    }
+
+    public static void parseAndApplyInterval(
+            TimestampDriver timestampDriver,
+            @Nullable CharSequence seq,
+            LongList out,
+            int position,
+            StringSink sink
+    ) throws SqlException {
+        if (seq != null) {
+            parseBracketInterval(timestampDriver, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, true);
+        } else {
+            encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
+            applyLastEncodedInterval(timestampDriver, out);
+        }
     }
 
     /**
@@ -912,14 +912,18 @@ public final class IntervalUtils {
             short operation
     ) throws SqlException {
         int writeIndex = out.size();
-        int[] pos = new int[3];
+        int pos0 = 0, pos1 = 0, pos2 = 0;
         int p = -1;
         for (int i = lo; i < lim; i++) {
             if (seq.charAt(i) == ';') {
                 if (p > 1) {
                     throw SqlException.$(position, "Invalid interval format");
                 }
-                pos[++p] = i;
+                switch (++p) {
+                    case 0 -> pos0 = i;
+                    case 1 -> pos1 = i;
+                    case 2 -> pos2 = i;
+                }
             }
         }
 
@@ -948,26 +952,26 @@ public final class IntervalUtils {
                 }
             case 0:
                 // single semicolon, expect a period format after date
-                parseRange(timestampDriver, seq, lo, pos[0], lim, position, operation, out);
+                parseRange(timestampDriver, seq, lo, pos0, lim, position, operation, out);
                 break;
             case 2:
                 // 2018-01-10T10:30:00.000Z;30m;2d;2
                 // means 10:30-11:00 every second day starting 2018-01-10
                 int period;
                 try {
-                    period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);
+                    period = Numbers.parseInt(seq, pos1 + 1, pos2 - 1);
                 } catch (NumericException e) {
                     throw SqlException.$(position, "Period not a number");
                 }
                 int count;
                 try {
-                    count = Numbers.parseInt(seq, pos[2] + 1, lim);
+                    count = Numbers.parseInt(seq, pos2 + 1, lim);
                 } catch (NumericException e) {
                     throw SqlException.$(position, "Count not a number");
                 }
 
-                parseRange(timestampDriver, seq, lo, pos[0], pos[1], position, operation, out);
-                char type = seq.charAt(pos[2] - 1);
+                parseRange(timestampDriver, seq, lo, pos0, pos1, position, operation, out);
+                char type = seq.charAt(pos2 - 1);
                 long low = decodeIntervalLo(out, writeIndex);
                 long hi = decodeIntervalHi(out, writeIndex);
 
