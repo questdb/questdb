@@ -62,6 +62,7 @@ import java.util.function.Consumer;
 import static io.questdb.log.LogAlertSocketWriter.ALERT_PROPS;
 import static io.questdb.log.LogAlertSocketWriter.DEFAULT_ALERT_TPT_FILE;
 
+@SuppressWarnings("resource")
 public class LogAlertSocketWriterTest {
     private static final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
     @ClassRule

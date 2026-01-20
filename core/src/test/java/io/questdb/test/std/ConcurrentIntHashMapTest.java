@@ -89,7 +89,7 @@ public class ConcurrentIntHashMapTest {
         map.put(5, "5");
         map.putIfAbsent(5, "Hello");
         Assert.assertEquals(5, map.size());
-        Assert.assertEquals(map.get(5), "5");
+        Assert.assertEquals("5", map.get(5));
         Assert.assertNull(map.get(42));
 
         ConcurrentIntHashMap.KeySetView<Boolean> ks = ConcurrentIntHashMap.newKeySet(4);

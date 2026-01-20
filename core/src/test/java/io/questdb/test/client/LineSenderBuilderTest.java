@@ -40,6 +40,7 @@ import org.junit.Test;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static org.junit.Assert.fail;
 
+@SuppressWarnings("resource")
 public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @ClassRule
     public static final TlsProxyRule TLS_PROXY = TlsProxyRule.toHostAndPort("localhost", 9002);

@@ -37,6 +37,7 @@ import java.util.UUID;
 import static org.junit.Assert.fail;
 
 
+@SuppressWarnings("resource")
 public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Rule

@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.functions.constants.IntConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class IntConstantTest {
     @Test
     public void testConstant() {

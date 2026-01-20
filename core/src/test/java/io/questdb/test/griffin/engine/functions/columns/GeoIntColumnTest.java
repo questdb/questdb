@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class GeoIntColumnTest {
 
     @Test
@@ -48,6 +49,7 @@ public class GeoIntColumnTest {
         Assert.assertEquals(desc, type, col.getType());
         Assert.assertEquals(desc, column, col.getColumnIndex());
 
+        //noinspection ObjectEquality,ExpressionComparedToItself
         boolean isCached = GeoIntColumn.newInstance(column, type) == GeoIntColumn.newInstance(column, type);
 
         if (column < ColumnUtils.STATIC_COLUMN_COUNT) {

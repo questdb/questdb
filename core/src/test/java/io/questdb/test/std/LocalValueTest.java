@@ -32,6 +32,7 @@ import org.junit.Test;
 
 import java.io.Closeable;
 
+@SuppressWarnings("resource")
 public class LocalValueTest {
 
     @Test

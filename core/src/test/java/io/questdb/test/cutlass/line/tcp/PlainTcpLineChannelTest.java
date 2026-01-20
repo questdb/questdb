@@ -33,6 +33,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.fail;
 
+@SuppressWarnings("resource")
 public class PlainTcpLineChannelTest extends AbstractLineTcpReceiverTest {
     private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
         @Override

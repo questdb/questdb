@@ -82,6 +82,7 @@ import java.util.function.Function;
 import static io.questdb.cairo.AttachDetachStatus.*;
 import static io.questdb.cairo.TableUtils.*;
 
+@SuppressWarnings("resource")
 @RunWith(Parameterized.class)
 public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachPartitionTest {
     private static O3PartitionPurgeJob purgeJob;

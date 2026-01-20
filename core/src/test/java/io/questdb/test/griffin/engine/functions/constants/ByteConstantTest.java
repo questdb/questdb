@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class ByteConstantTest {
     @Test
     public void testConstant() {

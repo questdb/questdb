@@ -49,6 +49,7 @@ import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
+@SuppressWarnings("resource")
 public class O3SplitPartitionTest extends AbstractO3Test {
     protected static final Log LOG = LogFactory.getLog(O3SplitPartitionTest.class);
     private final StringBuilder tstData = new StringBuilder();

@@ -48,6 +48,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicReference;
 
+@SuppressWarnings("resource")
 public class CheckpointFuzzTest extends AbstractFuzzTest {
     private static Path triggerFilePath;
 

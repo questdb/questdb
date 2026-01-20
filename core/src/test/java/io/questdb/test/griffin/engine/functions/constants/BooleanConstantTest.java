@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class BooleanConstantTest {
 
     @Test

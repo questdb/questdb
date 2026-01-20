@@ -120,6 +120,7 @@ import org.junit.Test;
 import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
 import static org.junit.Assert.*;
 
+@SuppressWarnings("resource")
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test

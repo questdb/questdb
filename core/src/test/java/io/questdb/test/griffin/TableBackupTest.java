@@ -62,6 +62,7 @@ import org.junit.rules.TestName;
 import java.io.File;
 import java.io.IOException;
 
+@SuppressWarnings("resource")
 public class TableBackupTest extends AbstractTest {
     private static final int ERRNO_EIO = 5;
     private static final StringSink sink1 = new StringSink();

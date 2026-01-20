@@ -30,6 +30,7 @@ import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class DateFunctionTest {
     // assert that all type casts that are not possible will throw exception
 

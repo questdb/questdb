@@ -54,7 +54,7 @@ public class Utf8SequenceHashSetTest {
         Assert.assertTrue(set.contains(null));
         Assert.assertTrue(set.remove(null) > -1);
         Assert.assertEquals(n, set.size());
-        Assert.assertEquals(set.remove(null), -1);
+        Assert.assertEquals(-1, set.remove(null));
         Assert.assertEquals(n, set.size());
     }
 
@@ -93,7 +93,7 @@ public class Utf8SequenceHashSetTest {
         Assert.assertEquals(n, set.size());
 
         for (int i = 0; i < n; i++) {
-            Assert.assertEquals("at " + i, set.remove(next(rnd, sink)), -1);
+            Assert.assertEquals("at " + i, -1, set.remove(next(rnd, sink)));
         }
 
         Rnd rnd4 = new Rnd();

@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class ShortConstantTest {
     @Test
     public void testConstant() {

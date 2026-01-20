@@ -54,6 +54,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assume.assumeFalse;
 
+@SuppressWarnings("resource")
 public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     private final boolean walEnabled;
 

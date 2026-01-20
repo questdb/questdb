@@ -69,6 +69,7 @@ import java.util.function.Consumer;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
+@SuppressWarnings("resource")
 public class UpdateTest extends AbstractCairoTest {
     private static final long DEFAULT_CIRCUIT_BREAKER_TIMEOUT = 300_000L;
     protected final SCSequence eventSubSequence = new SCSequence();

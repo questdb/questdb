@@ -38,6 +38,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@SuppressWarnings("resource")
 public class AlterTableDropColumnTest extends AbstractCairoTest {
 
     @Test

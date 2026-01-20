@@ -68,6 +68,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(FullFwdPartitionFrameCursorTest.class);
     private static final int WORK_STEALING_BUSY_QUEUE = 2;

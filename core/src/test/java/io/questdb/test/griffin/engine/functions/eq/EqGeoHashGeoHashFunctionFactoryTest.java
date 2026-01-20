@@ -40,6 +40,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
 
     private static final ObjList<Function> args = new ObjList<>(2);

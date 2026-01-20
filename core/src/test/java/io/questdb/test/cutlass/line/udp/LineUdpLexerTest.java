@@ -42,6 +42,7 @@ import org.junit.Test;
 import java.util.HashMap;
 import java.util.Map;
 
+@SuppressWarnings("resource")
 public class LineUdpLexerTest extends AbstractCairoTest {
 
     private final static LineUdpLexer lexer = new LineUdpLexer(4096);

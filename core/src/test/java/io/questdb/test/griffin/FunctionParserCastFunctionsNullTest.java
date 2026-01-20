@@ -41,6 +41,7 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.Collections;
 
+@SuppressWarnings("resource")
 public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest {
 
     private static final FunctionFactory[] CAST_FUNCS = {

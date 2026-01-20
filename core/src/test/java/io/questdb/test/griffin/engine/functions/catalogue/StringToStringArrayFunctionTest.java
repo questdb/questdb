@@ -30,6 +30,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class StringToStringArrayFunctionTest {
 
     @Test

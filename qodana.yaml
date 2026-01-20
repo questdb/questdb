@@ -1,6 +1,14 @@
 version: "1.0"
 linter: jetbrains/qodana-jvm-community:latest
 
+# Use Default profile to include test sources (qodana.recommended excludes tests)
+profile:
+  name: Default
+
+# Enable specific inspections
+include:
+  - name: UnusedImport
+
 # Exclude paths and inspections not applicable for QuestDB
 exclude:
   # Exclude all inspections for vendored/third-party code
@@ -26,3 +34,34 @@ exclude:
   - name: IntegerDivisionInFloatingPointContext
     paths:
       - benchmarks
+  # Exclude noisy style/migration inspections globally
+  - name: JavadocBlankLines
+  - name: TextBlockMigration
+  - name: CodeBlock2Expr
+  - name: EnhancedSwitchMigration
+  - name: ForCanBeForeach
+  - name: HtmlUnknownTag
+  - name: HtmlUnknownAttribute
+  - name: MavenModelInspection
+  - name: JsonStandardCompliance
+  - name: ReassignedToPlainText
+  - name: StringRepeatCanBeUsed
+  # Exclude inspections that produce too many false positives for test code
+  - name: ClassEscapesItsScope
+    paths:
+      - core/src/test
+  - name: SizeReplaceableByIsEmpty
+    paths:
+      - core/src/test
+  - name: ClassCanBeRecord
+    paths:
+      - core/src/test
+  - name: SameParameterValue
+    paths:
+      - core/src/test
+  - name: SameReturnValue
+    paths:
+      - core/src/test
+  - name: BooleanMethodIsAlwaysInverted
+    paths:
+      - core/src/test

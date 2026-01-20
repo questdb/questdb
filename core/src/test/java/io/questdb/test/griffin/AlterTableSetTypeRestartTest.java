@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;

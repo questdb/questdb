@@ -25,7 +25,6 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.ConcurrentPool;
-import io.questdb.mp.ValueHolder;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;

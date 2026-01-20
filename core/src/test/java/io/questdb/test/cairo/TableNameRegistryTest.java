@@ -77,6 +77,7 @@ import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 import static io.questdb.std.Files.FILES_RENAME_OK;
 
+@SuppressWarnings("resource")
 public class TableNameRegistryTest extends AbstractCairoTest {
 
     private static final int FUZZ_APPLY = 3;

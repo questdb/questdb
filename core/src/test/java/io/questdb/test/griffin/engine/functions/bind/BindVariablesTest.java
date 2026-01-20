@@ -68,6 +68,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     private static final FunctionBuilder builder = new FunctionBuilder();

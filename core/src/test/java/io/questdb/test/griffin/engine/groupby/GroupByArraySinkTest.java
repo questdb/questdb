@@ -38,6 +38,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class GroupByArraySinkTest extends AbstractCairoTest {
 
     private static final int TYPE = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1, true);

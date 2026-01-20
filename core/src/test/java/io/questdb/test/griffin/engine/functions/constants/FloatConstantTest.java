@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class FloatConstantTest {
     @Test
     public void testConstant() {

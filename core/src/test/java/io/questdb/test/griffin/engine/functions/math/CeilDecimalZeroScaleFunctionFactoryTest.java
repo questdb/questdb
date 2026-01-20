@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.math;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
-import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.math.CeilDecimalZeroScaleFunctionFactory;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;

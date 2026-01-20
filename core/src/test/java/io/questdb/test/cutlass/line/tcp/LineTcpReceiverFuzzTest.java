@@ -37,6 +37,7 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverFuzzTest.class);

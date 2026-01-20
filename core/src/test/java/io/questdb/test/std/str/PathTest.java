@@ -384,7 +384,7 @@ public class PathTest {
             sink.put(payload1);
             p0.put(sink);
             Assert.assertFalse(p0.isAscii());
-            Assert.assertEquals(p0.capacity(), 16);
+            Assert.assertEquals(16, p0.capacity());
             Assert.assertEquals(payload1, p0.toString());
             final String payload2 = ", mooooooooooooooooooooo: 🐮!";
             sink.clear();

@@ -79,6 +79,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.std.Files.SEPARATOR;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
+@SuppressWarnings("resource")
 public class WalTableFailureTest extends AbstractCairoTest {
 
     @Override

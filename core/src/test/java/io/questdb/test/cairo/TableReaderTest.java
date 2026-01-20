@@ -73,6 +73,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
+@SuppressWarnings("resource")
 public class TableReaderTest extends AbstractCairoTest {
     public static final int DO_NOT_CARE = 0;
     public static final int MUST_NOT_SWITCH = 2;

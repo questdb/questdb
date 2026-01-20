@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.functions.constants.DateConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
+@SuppressWarnings("resource")
 public class DateConstantTest {
     @Test
     public void testConstant() {

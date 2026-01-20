@@ -56,6 +56,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+@SuppressWarnings("resource")
 public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     private final boolean partitioned;
     private final boolean walEnabled;

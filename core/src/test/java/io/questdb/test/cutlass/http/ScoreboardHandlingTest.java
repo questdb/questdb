@@ -35,6 +35,7 @@ import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.*;
 
+@SuppressWarnings("resource")
 public class ScoreboardHandlingTest extends AbstractBootstrapTest {
 
     static String backupRoot;

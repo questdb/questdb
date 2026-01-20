@@ -48,6 +48,7 @@ import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
+@SuppressWarnings("resource")
 public class LineHttpsSenderTest extends AbstractBootstrapTest {
     public static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
     public static final String TRUSTSTORE_PATH = "/keystore/server.keystore";

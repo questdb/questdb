@@ -27,8 +27,6 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
