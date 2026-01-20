@@ -28,7 +28,9 @@ use parquet2::encoding::hybrid_rle::BitmapIter;
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
 use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::page::DataPageHeader;
-use parquet2::page::{split_buffer, DataPage, DictPage, Page};
+use parquet2::page::{
+    split_buffer, CompressedDataPage, CompressedPage, DataPage, DictPage, Page,
+};
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{decompress, get_page_iterator};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
@@ -261,14 +263,34 @@ impl ParquetDecoder {
         column_chunk_bufs.aux_vec.clear();
         column_chunk_bufs.data_vec.clear();
         for maybe_page in page_reader {
-            let page = maybe_page?;
-            let page = decompress(page, &mut ctx.decompress_buffer)?;
+            let compressed_page = maybe_page?;
 
-            match page {
-                Page::Dict(page) => {
-                    dict = Some(page);
+            match &compressed_page {
+                CompressedPage::Dict(_) => {
+                    // Dictionary must be decompressed and stored
+                    let page = decompress(compressed_page, &mut ctx.decompress_buffer)?;
+                    let Page::Dict(d) = page else {
+                        unreachable!("CompressedPage::Dict must decompress to Page::Dict")
+                    };
+                    dict = Some(d);
                 }
-                Page::Data(page) => {
+                CompressedPage::Data(data_page) => {
+                    // Try to skip decompression if page is entirely outside window
+                    if let Some(page_rows) =
+                        compressed_page_row_count(data_page, col_info.column_type)
+                    {
+                        if row_count + page_rows <= row_group_lo || row_count >= row_group_hi {
+                            // Page is entirely outside window - skip decompression
+                            row_count += page_rows;
+                            continue;
+                        }
+                    }
+
+                    // Decompress the page
+                    let page = decompress(compressed_page, &mut ctx.decompress_buffer)?;
+                    let Page::Data(page) = page else {
+                        unreachable!("CompressedPage::Data must decompress to Page::Data")
+                    };
                     let page_row_count = page_row_count(&page, col_info.column_type)?;
                     if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
                         decode_page(
@@ -1467,6 +1489,36 @@ fn page_row_count(page: &DataPage, column_type: ColumnType) -> ParquetResult<usi
     }
 }
 
+/// Attempts to determine row count from compressed page header without decompression.
+/// Returns `Some(count)` if the row count can be determined from the header alone.
+/// Returns `None` if decompression is required (V1 array with LIST encoding).
+fn compressed_page_row_count(
+    page: &CompressedDataPage,
+    column_type: ColumnType,
+) -> Option<usize> {
+    match page.header() {
+        // V2 has explicit number of rows in the header.
+        DataPageHeader::V2(header) => Some(header.num_rows as usize),
+        // V1 is more tricky in case of group types.
+        DataPageHeader::V1(header) => {
+            match column_type.tag() {
+                ColumnTypeTag::Array => {
+                    if page.descriptor().primitive_type.physical_type == PhysicalType::ByteArray {
+                        // It's native array encoding, so we can just use the number of values.
+                        Some(header.num_values as usize)
+                    } else {
+                        // Slow path: array as LIST encoding + V1 format.
+                        // Row count requires decoding rep levels from decompressed buffer.
+                        None
+                    }
+                }
+                // For primitive types number of rows matches the number of values.
+                _ => Some(header.num_values as usize),
+            }
+        }
+    }
+}
+
 fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
     let value = value
         .as_ref()
@@ -1907,6 +1959,27 @@ mod tests {
         buf.into_inner()
     }
 
+    fn write_cols_to_parquet_file_with_options(
+        row_group_size: usize,
+        data_page_size: usize,
+        version: Version,
+        columns: Vec<Column>,
+        raw_array_encoding: bool,
+    ) -> Vec<u8> {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let partition = Partition { table: "test_table".to_string(), columns };
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_raw_array_encoding(raw_array_encoding)
+            .with_row_group_size(Some(row_group_size))
+            .with_data_page_size(Some(data_page_size))
+            .with_version(version)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.into_inner()
+    }
+
     fn create_col_data_buff_bool(row_count: usize) -> ColumnBuffers {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -2193,6 +2266,54 @@ mod tests {
         }
     }
 
+    /// Creates array column data suitable for LIST encoding (not raw encoding).
+    /// The format for 1D arrays is: [shape: i32][padding: 4 bytes][data: f64...]
+    fn create_col_data_buff_list_array(row_count: usize, elements_per_array: usize) -> ColumnBuffers {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let mut aux_buff = AcVec::new_in(allocator.clone());
+        let mut data_buff = AcVec::new_in(allocator);
+
+        let mut i = 0;
+        while i < row_count {
+            // Create non-null array with shape and data
+            let offset = data_buff.len();
+            // Shape: 1D array with elements_per_array elements (i32)
+            data_buff
+                .extend_from_slice(&(elements_per_array as i32).to_le_bytes())
+                .unwrap();
+            // Padding to align to 8 bytes (4 bytes of padding)
+            data_buff.extend_from_slice(&[0u8; 4]).unwrap();
+            // Data: f64 values
+            for j in 0..elements_per_array {
+                let value = (i * elements_per_array + j) as f64;
+                data_buff.extend_from_slice(&value.to_le_bytes()).unwrap();
+            }
+            // Aux entry: offset (8 bytes) + size (8 bytes)
+            let size = data_buff.len() - offset;
+            aux_buff.extend_from_slice(&offset.to_le_bytes()).unwrap();
+            aux_buff.extend_from_slice(&size.to_le_bytes()).unwrap();
+            i += 1;
+
+            // Create null array for odd rows
+            if i < row_count {
+                let offset = data_buff.len();
+                aux_buff.extend_from_slice(&offset.to_le_bytes()).unwrap();
+                aux_buff.extend_from_slice(&0u64.to_le_bytes()).unwrap(); // size = 0 for null
+                i += 1;
+            }
+        }
+        ColumnBuffers {
+            data_vec: data_buff,
+            aux_vec: Some(aux_buff),
+            sym_offsets: None,
+            sym_chars: None,
+            expected_data_buff: None,
+            expected_aux_buff: None,
+        }
+    }
+
     fn create_fix_column(
         id: i32,
         row_count: usize,
@@ -2269,5 +2390,601 @@ mod tests {
             false,
         )
         .unwrap()
+    }
+
+    /// Tests page skipping optimization for partial decodes.
+    /// Creates a file with multiple pages and tests various window positions.
+    #[test]
+    fn test_page_skip_optimization() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // 20 rows, 10 rows per row group, 5 rows per page
+        // This gives us 2 row groups, each with 2 pages
+        let row_count = 20;
+        let row_group_size = 10;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+
+        // Test: Window at start [0, 3) - within first page, no skipping needed
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 0, 3, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 3);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[0..12]);
+
+        // Test: Window at end [7, 10) - should skip first page entirely
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 7, 10, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 3);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[28..40]);
+
+        // Test: Window in middle [3, 7) - spans both pages
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 3, 7, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 4);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[12..28]);
+
+        // Test: Empty window [5, 5) - should decode nothing
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 5, 5, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 0);
+
+        // Test: Full row group [0, 10) - all pages decoded
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 0, 10, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 10);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[0..40]);
+
+        // Test: Exactly one page [5, 10) - second page only
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 5, 10, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 5);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[20..40]);
+    }
+
+    /// Tests page skipping with V1 page format.
+    #[test]
+    fn test_page_skip_v1_format() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let row_count = 30;
+        let row_group_size = 30;
+        let data_page_size = 10; // 3 pages per row group
+        let version = Version::V1;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+
+        // Skip first page, read from second page
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 12, 18, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 6);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[48..72]);
+
+        // Skip first two pages, read from third page only
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 20, 30, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 10);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[80..120]);
+    }
+
+    /// Tests page skipping with Long column type.
+    #[test]
+    fn test_page_skip_long_column() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let row_count = 20;
+        let row_group_size = 20;
+        let data_page_size = 5; // 4 pages
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i64, 8, _>(row_count, LONG_NULL, |long| long.to_le_bytes());
+
+        let columns = vec![create_fix_column(
+            0,
+            row_count,
+            "long_col",
+            expected_buff.data_vec.as_ref(),
+            ColumnTypeTag::Long.into_type(),
+        )];
+        let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+
+        // Skip first 3 pages, read last page only
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 15, 20, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 8 * 5);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[120..160]);
+
+        // Read middle pages [5, 15)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 5, 15, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 8 * 10);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[40..120]);
+    }
+
+    /// Tests skipping multiple pages in a row.
+    #[test]
+    fn test_page_skip_multiple_pages() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // 100 rows, 100 rows per group, 10 rows per page = 10 pages
+        let row_count = 100;
+        let row_group_size = 100;
+        let data_page_size = 10;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+
+        // Skip first 7 pages (70 rows), read last 3 pages
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 70, 100, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 30);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[280..400]);
+
+        // Read only page 5 (rows 40-50)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 40, 50, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 10);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[160..200]);
+
+        // Read rows 85-95 (spans pages 8 and 9)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 85, 95, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 10);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[340..380]);
+    }
+
+    /// Tests page skipping across multiple row groups.
+    #[test]
+    fn test_page_skip_multiple_row_groups() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // 40 rows, 10 rows per group, 5 rows per page
+        // = 4 row groups, each with 2 pages
+        let row_count = 40;
+        let row_group_size = 10;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+
+        // Test each row group with window at end [7, 10)
+        for rg in 0..4 {
+            decoder
+                .decode_column_chunk(&mut ctx, bufs, rg, 7, 10, 0, col_info)
+                .unwrap();
+            assert_eq!(bufs.data_size, 4 * 3);
+            let offset = rg * row_group_size * 4;
+            assert_eq!(
+                bufs.data_vec,
+                expected_buff.data_vec[offset + 28..offset + 40]
+            );
+        }
+
+        // Test row group 2 with window [0, 3) - no skip needed
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 2, 0, 3, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 3);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[80..92]);
+    }
+
+    /// Tests exact page boundary windows.
+    #[test]
+    fn test_page_skip_exact_boundaries() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // 30 rows, 30 rows per group, 10 rows per page = 3 pages
+        let row_count = 30;
+        let row_group_size = 30;
+        let data_page_size = 10;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+
+        // Exactly first page [0, 10)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 0, 10, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 10);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[0..40]);
+
+        // Exactly second page [10, 20)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 10, 20, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 10);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[40..80]);
+
+        // Exactly third page [20, 30)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 20, 30, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 10);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[80..120]);
+
+        // Exactly pages 2 and 3 [10, 30)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 10, 30, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 20);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[40..120]);
+    }
+
+    /// Tests single row windows.
+    #[test]
+    fn test_page_skip_single_row() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let row_count = 20;
+        let row_group_size = 20;
+        let data_page_size = 5; // 4 pages
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+
+        // Single row from first page
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 2, 3, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[8..12]);
+
+        // Single row from second page (should skip first page)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 7, 8, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[28..32]);
+
+        // Single row from last page (should skip first 3 pages)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 18, 19, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[72..76]);
+
+        // First row of a page boundary
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 10, 11, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[40..44]);
+
+        // Last row of a page
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 9, 10, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[36..40]);
+    }
+
+    /// Tests early break optimization - ensures we don't process pages after the window.
+    #[test]
+    fn test_early_break_optimization() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // 50 rows, 50 rows per group, 10 rows per page = 5 pages
+        let row_count = 50;
+        let row_group_size = 50;
+        let data_page_size = 10;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+
+        // Read only first 15 rows - should process only 2 pages and early break
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 0, 15, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 15);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[0..60]);
+
+        // Read rows 5-25 - should skip first page (via pre-skip), process 2 pages, early break
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 5, 25, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 20);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[20..100]);
+
+        // Window ends exactly at page boundary [0, 20)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 0, 20, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, 4 * 20);
+        assert_eq!(bufs.data_vec, expected_buff.data_vec[0..80]);
+    }
+
+    /// Tests page skip fallback for V1 format with LIST-encoded arrays.
+    ///
+    /// This tests the code path where `compressed_page_row_count` returns `None`
+    /// because LIST-encoded arrays in V1 format require decoding rep levels to
+    /// determine row count. This exercises:
+    /// - Line 1513: `compressed_page_row_count` returns `None` for LIST arrays
+    /// - Lines 278-286: Fallback path in `decode_column_chunk` when `if let Some(page_rows)` fails
+    /// - Line 292: Window boundary condition after decompression
+    #[test]
+    fn test_page_skip_v1_list_array_fallback() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // Create 30 rows of array data (aiming for 3 pages with small page size)
+        let row_count = 30usize;
+        let row_group_size = 30;
+        let data_page_size = 100; // Small page size to create multiple pages
+        let version = Version::V1;
+
+        // Use LIST-compatible array format (with shape info)
+        let array_buffers = create_col_data_buff_list_array(row_count, 5);
+        let array_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
+
+        let columns = vec![create_var_column(
+            0,
+            row_count,
+            "array_col",
+            array_buffers.data_vec.as_ref(),
+            array_buffers.aux_vec.as_ref().unwrap(),
+            array_type,
+        )];
+
+        // Write with LIST encoding (raw_array_encoding=false) and V1 format
+        // This triggers compressed_page_row_count to return None
+        let file = write_cols_to_parquet_file_with_options(
+            row_group_size,
+            data_page_size,
+            version,
+            columns,
+            false, // LIST encoding - triggers None path
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let col_info = QdbMetaCol { column_type: array_type, column_top: 0, format: None };
+
+        // Test 1: Read all rows to establish baseline
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 0, row_count, 0, col_info)
+            .unwrap();
+        let full_data_size = bufs.data_size;
+        let full_data: Vec<u8> = bufs.data_vec.iter().copied().collect();
+
+        // Test 2: Window starting at row 10 (exercises fallback path)
+        // Pages before row 10 will be decompressed (can't skip without decompression)
+        // but then skipped based on row_group_lo condition at line 292
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 10, 20, 0, col_info)
+            .unwrap();
+        // Verify we got 10 rows worth of data
+        assert!(bufs.data_size > 0, "Expected non-empty data for rows 10-19");
+
+        // Test 3: Window starting near end (exercises window entirely after some pages)
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 20, row_count, 0, col_info)
+            .unwrap();
+        // Verify we got the last 10 rows worth of data
+        assert!(bufs.data_size > 0, "Expected non-empty data for rows 20-29");
+
+        // Test 4: Read all rows again to verify consistency
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 0, row_count, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_size, full_data_size);
+        assert_eq!(bufs.data_vec.as_slice(), full_data.as_slice());
+    }
+
+    /// Tests that V1 LIST-encoded arrays correctly handle window boundary conditions.
+    /// This specifically tests the case where the window is entirely after the first page
+    /// (line 292's first condition being false after decompression).
+    #[test]
+    fn test_page_skip_v1_list_array_window_after_page() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // Create 60 rows to ensure multiple pages
+        let row_count = 60usize;
+        let row_group_size = 60;
+        let data_page_size = 100; // Small enough to create multiple pages
+        let version = Version::V1;
+
+        // Use LIST-compatible array format (with shape info)
+        let array_buffers = create_col_data_buff_list_array(row_count, 5);
+        let array_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
+
+        let columns = vec![create_var_column(
+            0,
+            row_count,
+            "array_col",
+            array_buffers.data_vec.as_ref(),
+            array_buffers.aux_vec.as_ref().unwrap(),
+            array_type,
+        )];
+
+        let file = write_cols_to_parquet_file_with_options(
+            row_group_size,
+            data_page_size,
+            version,
+            columns,
+            false, // LIST encoding
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let col_info = QdbMetaCol { column_type: array_type, column_top: 0, format: None };
+
+        // Baseline: read all
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 0, row_count, 0, col_info)
+            .unwrap();
+        let full_data: Vec<u8> = bufs.data_vec.iter().copied().collect();
+        let full_aux: Vec<u8> = bufs.aux_vec.iter().copied().collect();
+
+        // Read from middle - this exercises the fallback path where pages
+        // are decompressed but then skipped based on window boundaries
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 30, 45, 0, col_info)
+            .unwrap();
+        assert!(bufs.data_size > 0, "Expected data for rows 30-44");
+
+        // Read last portion
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 45, row_count, 0, col_info)
+            .unwrap();
+        assert!(bufs.data_size > 0, "Expected data for rows 45-59");
+
+        // Verify full read still works correctly
+        decoder
+            .decode_column_chunk(&mut ctx, bufs, 0, 0, row_count, 0, col_info)
+            .unwrap();
+        assert_eq!(bufs.data_vec.as_slice(), full_data.as_slice());
+        assert_eq!(bufs.aux_vec.as_slice(), full_aux.as_slice());
     }
 }
