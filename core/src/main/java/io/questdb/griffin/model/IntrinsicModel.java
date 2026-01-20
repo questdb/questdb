@@ -191,6 +191,10 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.unionIntervals(seq, lo, lim, position);
     }
 
+    public void unionRuntimeTimestamp(Function function) {
+        runtimeIntervalBuilder.unionRuntimeTimestamp(function);
+    }
+
     static {
         INFINITE_INTERVAL = new LongList();
         INFINITE_INTERVAL.add(Long.MIN_VALUE, Long.MAX_VALUE);
