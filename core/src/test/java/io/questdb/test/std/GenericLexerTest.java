@@ -170,14 +170,16 @@ public class GenericLexerTest {
         while ((tok = SqlUtil.fetchNext(lex)) != null) {
             sink.put(tok).put('\n');
         }
-        TestUtils.assertEquals("insert\n" +
-                        "into\n" +
-                        "data\n" +
-                        "values\n" +
-                        "(\n" +
-                        "'{ title: \\\"Title\\\"}'\n" +
-                        ")\n" +
-                        ";\n",
+        TestUtils.assertEquals("""
+                        insert
+                        into
+                        data
+                        values
+                        (
+                        '{ title: \\"Title\\"}'
+                        )
+                        ;
+                        """,
                 sink
         );
     }
@@ -213,13 +215,16 @@ public class GenericLexerTest {
         while ((tok = SqlUtil.fetchNext(lex)) != null) {
             sink.put(tok).put('\n');
         }
-        TestUtils.assertEquals("INSERT\n" +
-                        "INTO\n" +
-                        "\"t\"\"ab\"\n" +
-                        "VALUES\n" +
-                        "(\n" +
-                        "'obrian'\n" +
-                        ")\n;\n",
+        TestUtils.assertEquals("""
+                        INSERT
+                        INTO
+                        "t""ab"
+                        VALUES
+                        (
+                        'obrian'
+                        )
+                        ;
+                        """,
                 sink
         );
     }
@@ -237,13 +242,16 @@ public class GenericLexerTest {
         while ((tok = SqlUtil.fetchNext(lex)) != null) {
             sink.put(tok).put('\n');
         }
-        TestUtils.assertEquals("INSERT\n" +
-                        "INTO\n" +
-                        "tab\n" +
-                        "VALUES\n" +
-                        "(\n" +
-                        "'o''brian'\n" +
-                        ")\n;\n",
+        TestUtils.assertEquals("""
+                        INSERT
+                        INTO
+                        tab
+                        VALUES
+                        (
+                        'o''brian'
+                        )
+                        ;
+                        """,
                 sink
         );
     }
@@ -378,6 +386,29 @@ public class GenericLexerTest {
         lex.defineSymbol("--");
 
         lex.of("a + -- ok, this is a comment \n 'b' * abc");
+
+        StringSink sink = new StringSink();
+        CharSequence token;
+        while ((token = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(token);
+        }
+
+        TestUtils.assertEquals("a+'b'*abc", sink);
+    }
+
+    @Test
+    public void testLineCommentWithUnbalancedQuote() throws SqlException {
+        // Reproducer for https://github.com/questdb/questdb/issues/6671
+        // When a line comment contains an unbalanced single quote, subsequent tokens
+        // should still be parsed correctly after the newline
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("+");
+        lex.defineSymbol("*");
+        lex.defineSymbol("/*");
+        lex.defineSymbol("*/");
+        lex.defineSymbol("--");
+
+        lex.of("a + -- magic '\n 'b' * abc");
 
         StringSink sink = new StringSink();
         CharSequence token;
