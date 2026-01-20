@@ -56,12 +56,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
 
     @Override
     public boolean hasNext() {
-        // Common master cursor iteration logic
-        if (isMasterHasNextPending) {
-            masterHasNext = masterCursor.hasNext();
-            isMasterHasNextPending = false;
-        }
-        if (!masterHasNext) {
+        if (!masterCursor.hasNext()) {
             return false;
         }
 
@@ -77,7 +72,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         if (masterTimestamp >= lookaheadTimestamp) {
             nextSlave(masterTimestamp);
         }
-        isMasterHasNextPending = true;
 
         boolean hasSlave = record.hasSlave();
         origHasSlave = hasSlave;

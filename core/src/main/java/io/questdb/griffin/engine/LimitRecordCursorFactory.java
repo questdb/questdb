@@ -160,7 +160,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private long baseSize;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
-        private boolean isSuspendableOpInProgress;
         private long lo;
         private long remaining;
         private long size;
@@ -177,12 +176,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isBaseSizeKnown()) {
                 sizeCounter.add(remaining);
             } else {
-                if (!isSuspendableOpInProgress) {
-                    counter.set(remaining);
-                    isSuspendableOpInProgress = true;
-                }
+                counter.set(remaining);
                 base.skipRows(counter);
-                isSuspendableOpInProgress = false;
                 sizeCounter.add(remaining - counter.get());
                 counter.clear();
             }
@@ -268,15 +263,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             ensureBoundsResolved();
-            if (!isSuspendableOpInProgress) {
-                isSuspendableOpInProgress = true;
-                base.toTop();
-                counter.set(baseRowsToSkip);
-            }
+            base.toTop();
+            counter.set(baseRowsToSkip);
             if (counter.get() > 0) {
                 base.skipRows(counter);
             }
-            isSuspendableOpInProgress = false;
             remaining = baseRowsToTake;
             counter.clear();
         }
@@ -395,7 +386,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
             baseSize = -1;
             size = -1;
-            isSuspendableOpInProgress = false;
             baseRowsToSkip = -1;
             baseRowsToTake = -1;
             remaining = -1;

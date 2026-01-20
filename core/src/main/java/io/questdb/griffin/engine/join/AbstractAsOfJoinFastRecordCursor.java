@@ -68,10 +68,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
      */
     protected final long slaveTimestampScale;
     /**
-     * Flag indicating if hasNext() on master is pending.
-     */
-    protected boolean isMasterHasNextPending;
-    /**
      * Flag for forward/backward scan through slave's time frames.
      */
     protected boolean isSlaveForwardScan;
@@ -87,10 +83,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
      * The master record cursor.
      */
     protected RecordCursor masterCursor;
-    /**
-     * Flag indicating if master has more records.
-     */
-    protected boolean masterHasNext;
     /**
      * The current master record.
      */
@@ -230,7 +222,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     }
 
     public void skipRows(Counter rowCount) {
-        assert isMasterHasNextPending;
         masterCursor.skipRows(rowCount);
     }
 
@@ -242,7 +233,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         record.hasSlave(false);
         masterCursor.toTop();
         slaveTimeFrameCursor.toTop();
-        isMasterHasNextPending = true;
         isSlaveOpenPending = false;
         isSlaveForwardScan = true;
     }

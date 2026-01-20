@@ -173,11 +173,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
         @Override
         public boolean hasNext() {
-            if (isMasterHasNextPending) {
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            }
-            if (!masterHasNext) {
+            if (!masterCursor.hasNext()) {
                 return false;
             }
 
@@ -198,7 +194,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 unfilteredCursorFrameIndex = timeFrame.getFrameIndex();
             }
 
-            isMasterHasNextPending = true;
             if (!record.hasSlave()) {
                 // the non-filtering algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal
