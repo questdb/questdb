@@ -40,7 +40,7 @@ public class PGMessageProcessingException extends Exception implements Flyweight
     private StringSink message;
     private PGPipelineEntry pe;
 
-    @SuppressWarnings("ConstantValue")
+    @SuppressWarnings({"ConstantValue", "AssertWithSideEffects"})
     public static PGMessageProcessingException instance(@NotNull PGPipelineEntry pe) {
         PGMessageProcessingException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
@@ -55,6 +55,7 @@ public class PGMessageProcessingException extends Exception implements Flyweight
         return message;
     }
 
+    @SuppressWarnings("AssertWithSideEffects")
     @Override
     public StackTraceElement[] getStackTrace() {
         StackTraceElement[] result = EMPTY_STACK_TRACE;
