@@ -195,16 +195,13 @@ public final class IntervalUtils {
         );
     }
 
-    public static int getIntervalType(int timestampType) {
-        assert ColumnType.isTimestamp(timestampType);
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return ColumnType.INTERVAL_TIMESTAMP_MICRO;
-            case ColumnType.TIMESTAMP_NANO:
-                return ColumnType.INTERVAL_TIMESTAMP_NANO;
-            default:
-                return ColumnType.UNDEFINED;
+    public static boolean containsBrackets(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim; i++) {
+            if (seq.charAt(i) == '[') {
+                return true;
+            }
         }
+        return false;
     }
 
     public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
@@ -215,17 +212,13 @@ public final class IntervalUtils {
         return MicrosTimestampDriver.INSTANCE;
     }
 
-    public static int getTimestampTypeByIntervalType(int intervalType) {
-        assert ColumnType.isInterval(intervalType);
-        switch (intervalType) {
-            case ColumnType.INTERVAL_RAW:
-            case ColumnType.INTERVAL_TIMESTAMP_MICRO:
-                return ColumnType.TIMESTAMP_MICRO;
-            case ColumnType.INTERVAL_TIMESTAMP_NANO:
-                return ColumnType.TIMESTAMP_NANO;
-            default:
-                return ColumnType.UNDEFINED;
-        }
+    public static int getIntervalType(int timestampType) {
+        assert ColumnType.isTimestamp(timestampType);
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> ColumnType.INTERVAL_TIMESTAMP_MICRO;
+            case ColumnType.TIMESTAMP_NANO -> ColumnType.INTERVAL_TIMESTAMP_NANO;
+            default -> ColumnType.UNDEFINED;
+        };
     }
 
     /**
@@ -369,9 +362,24 @@ public final class IntervalUtils {
         return findInterval(intervals, timestamp) != -1;
     }
 
-    public static void parseAndApplyInterval(TimestampDriver timestampDriver, @Nullable CharSequence seq, LongList out, int position) throws SqlException {
+    public static int getTimestampTypeByIntervalType(int intervalType) {
+        assert ColumnType.isInterval(intervalType);
+        return switch (intervalType) {
+            case ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO -> ColumnType.TIMESTAMP_MICRO;
+            case ColumnType.INTERVAL_TIMESTAMP_NANO -> ColumnType.TIMESTAMP_NANO;
+            default -> ColumnType.UNDEFINED;
+        };
+    }
+
+    public static void parseAndApplyInterval(
+            TimestampDriver timestampDriver,
+            @Nullable CharSequence seq,
+            LongList out,
+            int position,
+            StringSink sink
+    ) throws SqlException {
         if (seq != null) {
-            parseInterval(timestampDriver, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+            parseBracketInterval(timestampDriver, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink);
         } else {
             encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
         }
@@ -389,7 +397,7 @@ public final class IntervalUtils {
      *   <li>Multiple groups (cartesian product): {@code 2018-[01,06]-[10,15]} → 4 intervals</li>
      * </ul>
      * <p>
-     * If the input contains no brackets, this method delegates to {@link #parseInterval}.
+     * If the input contains no brackets, this method delegates to {@link #parseInterval0}.
      * <p>
      * This implementation uses recursion with depth limiting and does not allocate
      * intermediate objects. The provided StringSink is used as working storage and
@@ -415,6 +423,13 @@ public final class IntervalUtils {
             short operation,
             StringSink sink
     ) throws SqlException {
+        // Check for brackets first - if none, delegate directly to parseInterval0
+        // which returns encoded format (4 longs)
+        if (!containsBrackets(seq, lo, lim)) {
+            parseInterval0(timestampDriver, seq, lo, lim, position, out, operation);
+            return;
+        }
+
         // Find semicolon outside brackets to separate date part from duration suffix
         int dateLim = lim;
         int depth = 0;
@@ -460,90 +475,22 @@ public final class IntervalUtils {
         parseBracketInterval(timestampDriver, seq, lo, lim, position, out, operation, new StringSink());
     }
 
-    public static void parseInterval(
+    /**
+     * Parses a fully-expanded interval string (no brackets) and adds result to output.
+     * Results are unioned with existing intervals in the output list.
+     */
+    private static void parseExpandedInterval(
             TimestampDriver timestampDriver,
-            CharSequence seq,
-            int lo,
-            int lim,
-            int position,
+            CharSequence expanded,
+            int errorPos,
             LongList out,
             short operation
     ) throws SqlException {
-        int writeIndex = out.size();
-        int[] pos = new int[3];
-        int p = -1;
-        for (int i = lo; i < lim; i++) {
-            if (seq.charAt(i) == ';') {
-                if (p > 1) {
-                    throw SqlException.$(position, "Invalid interval format");
-                }
-                pos[++p] = i;
-            }
-        }
-
-        switch (p) {
-            case -1:
-                // no semicolons, just date part, which can be the interval in itself
-                try {
-                    timestampDriver.parseInterval(seq, lo, lim, operation, out);
-                    break;
-                } catch (NumericException ignore) {
-                    // this must be a date then?
-                }
-
-                try {
-                    long timestamp = timestampDriver.parseFloor(seq, lo, lim);
-                    encodeInterval(timestamp, timestamp, operation, out);
-                    break;
-                } catch (NumericException e) {
-                    try {
-                        final long timestamp = Numbers.parseLong(seq);
-                        encodeInterval(timestamp, timestamp, operation, out);
-                        break;
-                    } catch (NumericException e2) {
-                        throw SqlException.$(position, "Invalid date");
-                    }
-                }
-            case 0:
-                // single semicolon, expect a period format after date
-                parseRange(timestampDriver, seq, lo, pos[0], lim, position, operation, out);
-                break;
-            case 2:
-                // 2018-01-10T10:30:00.000Z;30m;2d;2
-                // means 10:30-11:00 every second day starting 2018-01-10
-                int period;
-                try {
-                    period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);
-                } catch (NumericException e) {
-                    throw SqlException.$(position, "Period not a number");
-                }
-                int count;
-                try {
-                    count = Numbers.parseInt(seq, pos[2] + 1, lim);
-                } catch (NumericException e) {
-                    throw SqlException.$(position, "Count not a number");
-                }
-
-                parseRange(timestampDriver, seq, lo, pos[0], pos[1], position, operation, out);
-                char type = seq.charAt(pos[2] - 1);
-                long low = decodeIntervalLo(out, writeIndex);
-                long hi = decodeIntervalHi(out, writeIndex);
-
-                replaceHiLoInterval(low, hi, period, type, count, operation, out);
-                switch (type) {
-                    case PeriodType.YEAR:
-                    case PeriodType.MONTH:
-                    case PeriodType.HOUR:
-                    case PeriodType.MINUTE:
-                    case PeriodType.SECOND:
-                    case PeriodType.DAY:
-                        break;
-                    default:
-                        throw SqlException.$(position, "Unknown period: " + type + " at " + (p - 1));
-                }
-                break;
-            default:
-                throw SqlException.$(position, "Invalid interval format");
+        int divider = out.size();
+        parseInterval0(timestampDriver, expanded, 0, expanded.length(), errorPos, out, operation);
+        applyLastEncodedInterval(timestampDriver, out);
+        if (divider > 0) {
+            unionInPlace(out, divider);
         }
     }
 
@@ -969,22 +916,90 @@ public final class IntervalUtils {
         throw SqlException.$(position, "Unclosed '[' in interval");
     }
 
-    /**
-     * Parses a fully-expanded interval string (no brackets) and adds result to output.
-     * Results are unioned with existing intervals in the output list.
-     */
-    private static void parseExpandedInterval(
+    private static void parseInterval0(
             TimestampDriver timestampDriver,
-            CharSequence expanded,
-            int errorPos,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
             LongList out,
             short operation
     ) throws SqlException {
-        int divider = out.size();
-        parseInterval(timestampDriver, expanded, 0, expanded.length(), errorPos, out, operation);
-        applyLastEncodedInterval(timestampDriver, out);
-        if (divider > 0) {
-            unionInPlace(out, divider);
+        int writeIndex = out.size();
+        int[] pos = new int[3];
+        int p = -1;
+        for (int i = lo; i < lim; i++) {
+            if (seq.charAt(i) == ';') {
+                if (p > 1) {
+                    throw SqlException.$(position, "Invalid interval format");
+                }
+                pos[++p] = i;
+            }
+        }
+
+        switch (p) {
+            case -1:
+                // no semicolons, just date part, which can be the interval in itself
+                try {
+                    timestampDriver.parseInterval(seq, lo, lim, operation, out);
+                    break;
+                } catch (NumericException ignore) {
+                    // this must be a date then?
+                }
+
+                try {
+                    long timestamp = timestampDriver.parseFloor(seq, lo, lim);
+                    encodeInterval(timestamp, timestamp, operation, out);
+                    break;
+                } catch (NumericException e) {
+                    try {
+                        final long timestamp = Numbers.parseLong(seq);
+                        encodeInterval(timestamp, timestamp, operation, out);
+                        break;
+                    } catch (NumericException e2) {
+                        throw SqlException.$(position, "Invalid date");
+                    }
+                }
+            case 0:
+                // single semicolon, expect a period format after date
+                parseRange(timestampDriver, seq, lo, pos[0], lim, position, operation, out);
+                break;
+            case 2:
+                // 2018-01-10T10:30:00.000Z;30m;2d;2
+                // means 10:30-11:00 every second day starting 2018-01-10
+                int period;
+                try {
+                    period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);
+                } catch (NumericException e) {
+                    throw SqlException.$(position, "Period not a number");
+                }
+                int count;
+                try {
+                    count = Numbers.parseInt(seq, pos[2] + 1, lim);
+                } catch (NumericException e) {
+                    throw SqlException.$(position, "Count not a number");
+                }
+
+                parseRange(timestampDriver, seq, lo, pos[0], pos[1], position, operation, out);
+                char type = seq.charAt(pos[2] - 1);
+                long low = decodeIntervalLo(out, writeIndex);
+                long hi = decodeIntervalHi(out, writeIndex);
+
+                replaceHiLoInterval(low, hi, period, type, count, operation, out);
+                switch (type) {
+                    case PeriodType.YEAR:
+                    case PeriodType.MONTH:
+                    case PeriodType.HOUR:
+                    case PeriodType.MINUTE:
+                    case PeriodType.SECOND:
+                    case PeriodType.DAY:
+                        break;
+                    default:
+                        throw SqlException.$(position, "Unknown period: " + type + " at " + (p - 1));
+                }
+                break;
+            default:
+                throw SqlException.$(position, "Invalid interval format");
         }
     }
 

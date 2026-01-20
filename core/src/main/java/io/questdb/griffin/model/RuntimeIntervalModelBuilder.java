@@ -33,6 +33,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 /**
  * Collects the interval during query parsing
@@ -62,6 +63,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private boolean intervalApplied = false;
     private int partitionBy;
     private TimestampDriver timestampDriver;
+    private final StringSink sink = new StringSink();
 
     public RuntimeIntrinsicIntervalModel build() {
         return new RuntimeIntervalModel(timestampDriver, partitionBy, new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
@@ -133,14 +135,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        boolean hasBrackets = IntervalUtils.containsBrackets(seq, lo, lim);
+        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink);
         if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
+            // For non-bracket intervals, parseBracketInterval returns encoded format (4 longs).
+            // For bracket intervals, it returns simple format (2 longs per interval).
+            if (!hasBrackets) {
+                IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
+            }
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
-            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+            // Dynamic mode: interval already encoded in staticIntervals as 4 longs
             dynamicRangeList.add(null);
         }
         intervalApplied = true;
@@ -339,15 +346,20 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);
+        boolean hasBrackets = IntervalUtils.containsBrackets(seq, lo, lim);
+        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink);
         if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
+            // For non-bracket intervals, parseBracketInterval returns encoded format (4 longs).
+            // For bracket intervals, it returns simple format (2 longs per interval).
+            if (!hasBrackets) {
+                IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
+            }
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
-            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+            // Dynamic mode: interval already encoded in staticIntervals as 4 longs
             dynamicRangeList.add(null);
         }
         intervalApplied = true;

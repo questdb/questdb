@@ -1070,7 +1070,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 ColumnType.getTimestampDriver(predicateContext.columnType),
                 intervalEx,
                 intervals,
-                position
+                position,
+                sink
         );
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;

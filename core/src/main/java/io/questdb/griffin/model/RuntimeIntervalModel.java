@@ -41,6 +41,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
 
@@ -50,6 +51,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     // These 2 are incoming model
     private final LongList intervals;
     private final int partitionBy;
+    private final StringSink sink = new StringSink();
     private final TimestampDriver timestampDriver;
     // This used to assemble the result
     private LongList outIntervals;
@@ -338,8 +340,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval) {
         if (strInterval != null) {
             try {
-                IntervalUtils.parseInterval(timestampDriver, strInterval, 0, strInterval.length(), 0, outIntervals, IntervalOperation.INTERSECT);
-                IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
+                IntervalUtils.parseAndApplyInterval(timestampDriver, strInterval, outIntervals, 0, sink);
             } catch (SqlException e) {
                 return true;
             }
