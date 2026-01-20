@@ -1080,6 +1080,7 @@ public final class IntervalUtils {
      * Unions intervals in the range [startIndex, end) with each other.
      * Pre-existing intervals at [0, startIndex) are preserved unchanged.
      * Bracket values may be in any order (e.g., [20,10,15]), so we sort first.
+     * This operates in-place without allocations.
      */
     private static void unionBracketExpandedIntervals(LongList out, int startIndex) {
         int bracketCount = (out.size() - startIndex) / 2;
@@ -1087,38 +1088,43 @@ public final class IntervalUtils {
             return; // Nothing to union
         }
 
-        // Copy bracket intervals to a temp list
-        LongList tempList = new LongList();
-        tempList.add(out, startIndex, out.size());
-
-        // Sort intervals by lo value (simple insertion sort - bracket lists are typically small)
+        // Sort intervals in-place by lo value (insertion sort - bracket lists are typically small)
         for (int i = 1; i < bracketCount; i++) {
-            long lo = tempList.getQuick(2 * i);
-            long hi = tempList.getQuick(2 * i + 1);
+            int idx = startIndex + 2 * i;
+            long lo = out.getQuick(idx);
+            long hi = out.getQuick(idx + 1);
             int j = i - 1;
-            while (j >= 0 && tempList.getQuick(2 * j) > lo) {
-                tempList.setQuick(2 * (j + 1), tempList.getQuick(2 * j));
-                tempList.setQuick(2 * (j + 1) + 1, tempList.getQuick(2 * j + 1));
+            while (j >= 0 && out.getQuick(startIndex + 2 * j) > lo) {
+                int srcIdx = startIndex + 2 * j;
+                int dstIdx = startIndex + 2 * (j + 1);
+                out.setQuick(dstIdx, out.getQuick(srcIdx));
+                out.setQuick(dstIdx + 1, out.getQuick(srcIdx + 1));
                 j--;
             }
-            tempList.setQuick(2 * (j + 1), lo);
-            tempList.setQuick(2 * (j + 1) + 1, hi);
+            int insertIdx = startIndex + 2 * (j + 1);
+            out.setQuick(insertIdx, lo);
+            out.setQuick(insertIdx + 1, hi);
         }
 
-        // Union sorted intervals
-        // unionInPlace(list, divider) unions [0, divider) with [divider, end)
-        // We need to iteratively union until stable
-        int prevSize;
-        do {
-            prevSize = tempList.size();
-            if (tempList.size() > 2) {
-                unionInPlace(tempList, tempList.size() - 2);
-            }
-        } while (tempList.size() < prevSize);
+        // Merge overlapping intervals in-place (single linear pass since sorted)
+        int writeIdx = startIndex + 2;  // First interval is already in place
+        for (int readIdx = startIndex + 2; readIdx < out.size(); readIdx += 2) {
+            long lo = out.getQuick(readIdx);
+            long hi = out.getQuick(readIdx + 1);
+            long prevHi = out.getQuick(writeIdx - 1);
 
-        // Copy result back
-        out.setPos(startIndex);
-        out.add(tempList);
+            if (lo <= prevHi) {
+                // Overlapping with previous interval - extend it
+                out.setQuick(writeIdx - 1, Math.max(hi, prevHi));
+            } else {
+                // Non-overlapping - write new interval
+                out.setQuick(writeIdx, lo);
+                out.setQuick(writeIdx + 1, hi);
+                writeIdx += 2;
+            }
+        }
+
+        out.setPos(writeIdx);
     }
 
     static int append(LongList list, int writePoint, long lo, long hi) {
