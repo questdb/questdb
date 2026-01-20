@@ -500,6 +500,15 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionRangeWithWhitespace() throws SqlException {
+        // Range with whitespace after .. and after range end (exercises L899 and L933)
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-11T00:00:00.000000Z, hi=2018-01-11T23:59:59.999999Z},{lo=2018-01-12T00:00:00.000000Z, hi=2018-01-12T23:59:59.999999Z}]",
+                "2018-01-[10 .. 12 ]"
+        );
+    }
+
+    @Test
     public void testBracketExpansionMixed() throws SqlException {
         // Each value in the bracket becomes a separate interval
         assertBracketInterval(
@@ -552,6 +561,15 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionTrailingCommaWhitespace() throws SqlException {
+        // Tests whitespace loop exiting at bracket end (trailing comma with spaces)
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]",
+                "2018-01-[10,   ]"
+        );
+    }
+
+    @Test
     public void testBracketExpansionNoBrackets() throws SqlException {
         // Should delegate to parseInterval when no brackets
         assertBracketInterval(
@@ -594,6 +612,12 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionErrorNestedBrackets() {
+        // Nested brackets - exercises depth tracking in findMatchingBracket
+        assertBracketIntervalError("2018-01-[[10]]", "Expected number in bracket expansion");
+    }
+
+    @Test
     public void testBracketExpansionErrorEmptyBracket() {
         assertBracketIntervalError("2018-01-[]", "Empty bracket expansion");
     }
@@ -609,8 +633,105 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionErrorNumberOverflow() {
+        // Number too large for int (Integer.MAX_VALUE is 2147483647)
+        assertBracketIntervalError("2018-01-[99999999999]", "Expected number in bracket expansion");
+    }
+
+    @Test
+    public void testBracketExpansionErrorRangeEndOverflow() {
+        // Range end number too large for int
+        assertBracketIntervalError("2018-01-[10..99999999999]", "Expected number after '..'");
+    }
+
+    @Test
+    public void testBracketExpansionErrorDurationPeriodOverflow() {
+        // Duration period number overflow in parseRange
+        assertBracketIntervalError("2018-01-[10,15];999999999999h", "Range not a number");
+    }
+
+    @Test
+    public void testBracketExpansionErrorNegativeDuration() {
+        // Negative duration making hi < low (invalidDate) - via parseInterval path
+        assertBracketIntervalError("2018-01-[10,15]T00:00;-1h", "Invalid date");
+    }
+
+    @Test
+    public void testBracketExpansionErrorNegativeDurationAnyFormat() {
+        // Negative duration via parseAnyFormat path (full ISO format with Z suffix)
+        assertBracketIntervalError("2018-01-[10,15]T00:00:00.000000Z;-1h", "Invalid date");
+    }
+
+    @Test
+    public void testBracketExpansionErrorInvalidDateWithDuration() {
+        // Valid bracket expansion but invalid date that fails both parseInterval and parseAnyFormat
+        assertBracketIntervalError("xyz-[10,15];1h", "Invalid date");
+    }
+
+    @Test
     public void testBracketExpansionErrorMissingRangeEnd() {
         assertBracketIntervalError("2018-01-[10..]", "Expected number after '..'");
+    }
+
+    @Test
+    public void testBracketExpansionErrorSingleDot() {
+        // Single dot (not range ..) - exercises second dot check being false
+        assertBracketIntervalError("2018-01-[10.5]", "Expected ',' or end of bracket");
+    }
+
+    @Test
+    public void testBracketExpansionErrorSemicolonInsideBracket() {
+        // Semicolon inside brackets - exercises depth check for semicolon search
+        assertBracketIntervalError("2018-01-[10;15];1h", "Expected ',' or end of bracket");
+    }
+
+    @Test
+    public void testBracketExpansionErrorTooManyGroups() {
+        // MAX_BRACKET_DEPTH is 8, so 9 bracket groups should fail
+        assertBracketIntervalError(
+                "[1]-[1]-[1]T[1]:[1]:[1].[1][1][1]",
+                "Too many bracket groups"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionWithSpaceSeparator() throws SqlException {
+        // Tests space as date/time separator instead of 'T' (exercises c == ' ' branch)
+        // Space separator produces point timestamps (lo=hi)
+        assertBracketInterval(
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:30:00.000000Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T10:30:00.000000Z}]",
+                "2018-01-[10,15] 10:30"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionHourWithSpaceSeparator() throws SqlException {
+        // Tests bracket in hour position with space separator
+        // Space separator produces point timestamps (lo=hi)
+        assertBracketInterval(
+                "[{lo=2018-01-10T08:30:00.000000Z, hi=2018-01-10T08:30:00.000000Z},{lo=2018-01-10T14:30:00.000000Z, hi=2018-01-10T14:30:00.000000Z}]",
+                "2018-01-10 [08,14]:30"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionMicroseconds() throws SqlException {
+        // Tests bracket in microseconds part (exercises c == '.' branch)
+        // No padding for microseconds field
+        // Note: hi includes 999ns/999999ns to cover the full microsecond interval
+        assertBracketInterval(
+                "[{lo=2018-01-10T10:30:00.100000Z, hi=2018-01-10T10:30:00.100999Z},{lo=2018-01-10T10:30:00.200000Z, hi=2018-01-10T10:30:00.200999Z}]",
+                "2018-01-10T10:30:00.[100,200]"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionYear() throws SqlException {
+        // Tests bracket in year position (exercises dashes == 0, return 0 for no padding)
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2019-01-10T00:00:00.000000Z, hi=2019-01-10T23:59:59.999999Z}]",
+                "[2018,2019]-01-10"
+        );
     }
 
     private void assertBracketInterval(String expected, String interval) throws SqlException {
