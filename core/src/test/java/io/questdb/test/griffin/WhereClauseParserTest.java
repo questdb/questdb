@@ -46,6 +46,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -1000,6 +1001,119 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         assertFilter(m, null);
         Assert.assertEquals("[blah]", keyValueFuncsToString(m.keyValueFuncs));
+    }
+
+    @Test
+    public void testDateaddBetween() throws Exception {
+        // dateadd('m', 30, timestamp) between '2015-05-10T12:00:00.000Z' and '2015-05-10T14:00:00.000Z'
+        // transforms to: timestamp between dateadd('m', -30, '2015-05-10T12:00:00.000Z') and dateadd('m', -30, '2015-05-10T14:00:00.000Z')
+        // which is: timestamp between '2015-05-10T11:30:00.000Z' and '2015-05-10T13:30:00.000Z'
+        IntrinsicModel m = modelOf("dateadd('m', 30, timestamp) between '2015-05-10T12:00:00.000Z' and '2015-05-10T14:00:00.000Z'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T11:30:00.000000Z, hi=2015-05-10T13:30:00.000000Z}]"), intervalToString(m));
+        assertFilter(m, null);
+    }
+
+    @Test
+    public void testDateaddEquals() throws Exception {
+        // dateadd('m', 15, timestamp) = '2015-05-10T15:03:10.000Z'
+        // transforms to: timestamp = dateadd('m', -15, '2015-05-10T15:03:10.000Z')
+        // which is: timestamp = '2015-05-10T14:48:10.000Z'
+        IntrinsicModel m = modelOf("dateadd('m', 15, timestamp) = '2015-05-10T15:03:10.000Z'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T14:48:10.000000Z, hi=2015-05-10T14:48:10.000000Z}]"), intervalToString(m));
+        assertFilter(m, null);
+    }
+
+    @Test
+    public void testDateaddEqualsNegativeStride() throws Exception {
+        // dateadd('m', -15, timestamp) = '2015-05-10T15:03:10.000Z'
+        // transforms to: timestamp = dateadd('m', 15, '2015-05-10T15:03:10.000Z')
+        // which is: timestamp = '2015-05-10T15:18:10.000Z'
+        IntrinsicModel m = modelOf("dateadd('m', -15, timestamp) = '2015-05-10T15:03:10.000Z'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T15:18:10.000000Z, hi=2015-05-10T15:18:10.000000Z}]"), intervalToString(m));
+        assertFilter(m, null);
+    }
+
+    @Test
+    public void testDateaddGreaterThan() throws Exception {
+        // dateadd('d', 1, timestamp) > '2015-05-10T00:00:00.000Z'
+        // transforms to: timestamp > dateadd('d', -1, '2015-05-10T00:00:00.000Z')
+        // which is: timestamp > '2015-05-09T00:00:00.000Z'
+        IntrinsicModel m = modelOf("dateadd('d', 1, timestamp) > '2015-05-10T00:00:00.000Z'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-09T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]"), intervalToString(m));
+        assertFilter(m, null);
+    }
+
+    @Test
+    public void testDateaddGreaterThanOrEqual() throws Exception {
+        // dateadd('h', 2, timestamp) >= '2015-05-10T12:00:00.000Z'
+        // transforms to: timestamp >= dateadd('h', -2, '2015-05-10T12:00:00.000Z')
+        // which is: timestamp >= '2015-05-10T10:00:00.000Z'
+        IntrinsicModel m = modelOf("dateadd('h', 2, timestamp) >= '2015-05-10T12:00:00.000Z'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T10:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]"), intervalToString(m));
+        assertFilter(m, null);
+    }
+
+    @Test
+    public void testDateaddLessThan() throws Exception {
+        // dateadd('d', 1, timestamp) < '2015-05-10T00:00:00.000Z'
+        // transforms to: timestamp < dateadd('d', -1, '2015-05-10T00:00:00.000Z')
+        // which is: timestamp < '2015-05-09T00:00:00.000Z'
+        IntrinsicModel m = modelOf("dateadd('d', 1, timestamp) < '2015-05-10T00:00:00.000Z'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=, hi=2015-05-08T23:59:59.999999Z}]"), intervalToString(m));
+        assertFilter(m, null);
+    }
+
+    @Test
+    public void testDateaddLessThanOrEqual() throws Exception {
+        // dateadd('h', 2, timestamp) <= '2015-05-10T12:00:00.000Z'
+        // transforms to: timestamp <= dateadd('h', -2, '2015-05-10T12:00:00.000Z')
+        // which is: timestamp <= '2015-05-10T10:00:00.000Z'
+        IntrinsicModel m = modelOf("dateadd('h', 2, timestamp) <= '2015-05-10T12:00:00.000Z'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=, hi=2015-05-10T10:00:00.000000Z}]"), intervalToString(m));
+        assertFilter(m, null);
+    }
+
+    @Test
+    public void testDateaddNonConstantStrideNotTransformed() throws Exception {
+        // dateadd with non-constant stride should not be transformed
+        // The predicate stays in the filter
+        IntrinsicModel m = modelOf("dateadd('m', bidSize, timestamp) = '2015-05-10T15:03:10.000Z'");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'2015-05-10T15:03:10.000Z' timestamp bidSize 'm' dateadd =");
+    }
+
+    @Test
+    public void testDateaddNonDesignatedTimestampNotTransformed() throws Exception {
+        // dateadd on a non-designated timestamp column should not be transformed
+        IntrinsicModel m = noDesignatedTimestampNotIdxModelOf("dateadd('m', 15, timestamp) = '2015-05-10T15:03:10.000Z'");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'2015-05-10T15:03:10.000Z' timestamp 15 'm' dateadd =");
+    }
+
+    @Test
+    public void testDateaddRhsComparison() throws Exception {
+        // '2015-05-10T15:03:10.000Z' = dateadd('m', 15, timestamp) (value on LHS)
+        // transforms to: dateadd('m', -15, '2015-05-10T15:03:10.000Z') = timestamp
+        IntrinsicModel m = modelOf("'2015-05-10T15:03:10.000Z' = dateadd('m', 15, timestamp)");
+        Assert.assertTrue(m.hasIntervalFilters());
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T14:48:10.000000Z, hi=2015-05-10T14:48:10.000000Z}]"), intervalToString(m));
+        assertFilter(m, null);
+    }
+
+    @Test
+    public void testDateaddWithFilter() throws Exception {
+        // dateadd('h', 1, timestamp) > '2015-05-10T12:00:00.000Z' and bid > 100
+        IntrinsicModel m = modelOf("dateadd('h', 1, timestamp) > '2015-05-10T12:00:00.000Z' and bid > 100");
+        Assert.assertTrue(m.hasIntervalFilters());
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]"), intervalToString(m));
+        assertFilter(m, "100 bid >");
     }
 
     @Test
@@ -3731,6 +3845,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? metadata : metadataNanos;
             return e.extract(
                     column -> column,
+                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression(seq, queryModel),
                     m,
                     preferredColumn,
@@ -3750,6 +3865,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? noDesignatedTimestampNorIdxMetadata : noDesignatedTimestampNorIdxMetadataNanos;
             return e.extract(
                     column -> column,
+                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression(seq, queryModel),
                     m,
                     null,
@@ -3768,6 +3884,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             return e.extract(
                     column -> column,
+                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression(seq, queryModel),
                     noTimestampMetadata,
                     null,
@@ -3787,6 +3904,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? nonEmptyMetadata : nonEmptyMetadataNanos;
             return e.extract(
                     column -> column,
+                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression("sym = 'X' and ex = 'Y' and mode = 'Z'", queryModel),
                     m,
                     null,
@@ -3910,6 +4028,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? unindexedMetadata : unindexedMetadataNanos;
             return e.extract(
                     column -> column,
+                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression(seq, queryModel),
                     m,
                     preferredColumn,
