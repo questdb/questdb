@@ -2284,6 +2284,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "(row_number() over (order by ts))::string");
     }
 
+    @Test
+    public void testWindowFunctionAsArgumentToWindowFunction() throws SqlException {
+        // Window function as argument to another window function
+        // sum(row_number() OVER ()) OVER ()
+        // Expected RPN: the inner window function is parsed first, then becomes argument to outer
+        x("row_number over () sum over ()",
+                "sum(row_number() OVER ()) OVER ()");
+    }
+
     private void assertFail(String content, int pos, String contains) {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.testParseExpression(content, rpnBuilder);
