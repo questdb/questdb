@@ -187,9 +187,12 @@ public final class WhereClauseParser implements Mutable {
                             executionContext,
                             latestByMultiColumn,
                             reader)) {
-                        stack.push(node.rhs);
+                        // Check if rhs is an OR of timestamp intrinsics
+                        if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs)) {
+                            stack.push(node.rhs);
+                        }
                     }
-                    node = removeAndIntrinsics(
+                    if (removeAndIntrinsics(
                             timestampDriver,
                             translator,
                             model,
@@ -199,7 +202,17 @@ public final class WhereClauseParser implements Mutable {
                             metadata,
                             executionContext,
                             latestByMultiColumn,
-                            reader) ? null : node.lhs;
+                            reader)) {
+                        node = null;
+                    } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs)) {
+                        // lhs was an OR of timestamp intrinsics, successfully extracted
+                        node = null;
+                    } else {
+                        node = node.lhs;
+                    }
+                } else if (isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node)) {
+                    // Entire OR tree was extracted as timestamp intrinsics
+                    node = stack.poll();
                 } else {
                     node = stack.poll();
                 }
@@ -2029,6 +2042,178 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean isTimestamp(ExpressionNode n) {
         return Chars.equalsIgnoreCaseNc(n.token, timestamp);
+    }
+
+    /**
+     * Checks if an expression node is an OR tree where all leaf predicates are
+     * timestamp IN intrinsics that can be unioned together.
+     * <p>
+     * Supports:
+     * - timestamp IN 'value'
+     * - timestamp IN ('value1', 'value2', ...)
+     * - timestamp = 'value'
+     * - Nested OR of the above
+     */
+    private boolean isOrOfTimestampIn(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+
+        if (isOrKeyword(node.token)) {
+            // Recursively check both sides of OR
+            return isOrOfTimestampIn(node.lhs) && isOrOfTimestampIn(node.rhs);
+        }
+
+        // Check for timestamp IN 'value' or timestamp IN ('v1', 'v2', ...)
+        if (isInKeyword(node.token)) {
+            if (node.paramCount < 2) {
+                return false;
+            }
+            ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+            if (col.type != ExpressionNode.LITERAL || !isTimestamp(col)) {
+                return false;
+            }
+            // Check that all values are constants (no functions/bind variables for simplicity)
+            if (node.paramCount == 2) {
+                // Single value: timestamp IN 'value'
+                return node.rhs != null && node.rhs.type == ExpressionNode.CONSTANT;
+            } else {
+                // Multiple values: timestamp IN ('v1', 'v2', ...)
+                for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg.type != ExpressionNode.CONSTANT) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+
+        // Check for timestamp = 'value'
+        if (Chars.equals(node.token, '=')) {
+            if (node.lhs == null || node.rhs == null) {
+                return false;
+            }
+            // Check both orientations: timestamp = 'value' and 'value' = timestamp
+            if (node.lhs.type == ExpressionNode.LITERAL && isTimestamp(node.lhs)
+                    && node.rhs.type == ExpressionNode.CONSTANT) {
+                return true;
+            }
+            return node.rhs.type == ExpressionNode.LITERAL && isTimestamp(node.rhs)
+                    && node.lhs.type == ExpressionNode.CONSTANT;
+        }
+
+        return false;
+    }
+
+    /**
+     * Extracts timestamp intervals from an OR tree and unions them into the model.
+     * Assumes isOrOfTimestampIn() has already returned true for this node.
+     * <p>
+     * Returns true if intervals were successfully extracted and applied.
+     */
+    private boolean extractOrTimestampIntervals(
+            TimestampDriver timestampDriver,
+            IntrinsicModel model,
+            ExpressionNode node,
+            boolean leftFirst
+    ) throws SqlException {
+        if (isOrKeyword(node.token)) {
+            // Process left side, then right side
+            // The first interval uses intersect, subsequent ones use union
+            if (!extractOrTimestampIntervals(timestampDriver, model, node.lhs, leftFirst)) {
+                return false;
+            }
+            // After processing left side, we're no longer "first"
+            if (!extractOrTimestampIntervals(timestampDriver, model, node.rhs, false)) {
+                return false;
+            }
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
+        // Handle timestamp IN 'value' or timestamp IN ('v1', 'v2', ...)
+        if (isInKeyword(node.token)) {
+            if (node.paramCount == 2) {
+                // Single value: timestamp IN 'value' - treat as interval (e.g., '2018-01-01' spans full day)
+                ExpressionNode inArg = node.rhs;
+                if (isNullKeyword(inArg.token)) {
+                    if (leftFirst) {
+                        model.intersectIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    } else {
+                        model.unionIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    }
+                } else {
+                    if (leftFirst) {
+                        model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                    } else {
+                        model.unionIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                    }
+                }
+            } else {
+                // Multiple values: timestamp IN ('v1', 'v2', ...) - treat as points
+                int n = node.args.size() - 1;
+                for (int i = 0; i < n; i++) {
+                    ExpressionNode inListItem = node.args.getQuick(i);
+                    long ts = parseTokenAsTimestamp(timestampDriver, inListItem);
+                    if (leftFirst && i == 0) {
+                        model.intersectIntervals(ts, ts);
+                    } else {
+                        model.unionIntervals(ts, ts);
+                    }
+                }
+            }
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
+        // Handle timestamp = 'value' - parse as point interval [ts, ts]
+        if (Chars.equals(node.token, '=')) {
+            ExpressionNode valueNode;
+            if (node.lhs.type == ExpressionNode.LITERAL && isTimestamp(node.lhs)) {
+                valueNode = node.rhs;
+            } else {
+                valueNode = node.lhs;
+            }
+            long ts = parseTokenAsTimestamp(timestampDriver, valueNode);
+            if (leftFirst) {
+                model.intersectIntervals(ts, ts);
+            } else {
+                model.unionIntervals(ts, ts);
+            }
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Tries to extract timestamp intervals from an OR tree.
+     * Only succeeds if:
+     * - The node is an OR tree consisting entirely of timestamp IN/= predicates
+     * - The model doesn't already have interval filters (to allow union semantics)
+     * <p>
+     * Returns true if extraction was successful.
+     */
+    private boolean tryExtractOrTimestampIntrinsics(
+            TimestampDriver timestampDriver,
+            IntrinsicModel model,
+            ExpressionNode node
+    ) throws SqlException {
+        // Only attempt OR extraction if we don't have existing interval filters
+        // This allows us to use union semantics for the OR branches
+        if (model.hasIntervalFilters()) {
+            return false;
+        }
+
+        // Check if this is an OR tree of timestamp intrinsics
+        if (!isOrOfTimestampIn(node)) {
+            return false;
+        }
+
+        // Extract the intervals with union semantics
+        return extractOrTimestampIntervals(timestampDriver, model, node, true);
     }
 
     // calculates intersect of existing and new set for IN ()
