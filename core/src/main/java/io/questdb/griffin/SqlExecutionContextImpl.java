@@ -180,7 +180,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 ordered,
                 orderByDirection,
                 orderByPos,
-                baseSupportsRandomAccess,
                 framingMode,
                 rowsLo,
                 rowsLoUnit,

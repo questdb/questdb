@@ -146,7 +146,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         this.slaveFactory = slaveFactory;
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
         this.cursor = new AsyncWindowJoinRecordCursor(
-                configuration,
                 groupByFunctions,
                 slaveFactory.getMetadata(),
                 columnIndex,

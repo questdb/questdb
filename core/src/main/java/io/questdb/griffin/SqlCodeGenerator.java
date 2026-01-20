@@ -7032,6 +7032,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 intrinsicModel = whereClauseParser.extract(
                         model,
+                        expressionNodePool,
                         whereClause,
                         metadata,
                         preferredKeyColumn,

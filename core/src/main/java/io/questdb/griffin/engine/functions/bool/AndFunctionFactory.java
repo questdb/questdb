@@ -76,13 +76,11 @@ public class AndFunctionFactory implements FunctionFactory {
             }
         }
 
-        if (leftFunc instanceof AndBooleanFunction) {
-            AndBooleanFunction leftAndFunc = (AndBooleanFunction) leftFunc;
+        if (leftFunc instanceof AndBooleanFunction leftAndFunc) {
             return new TernaryAndBooleanFunction(leftAndFunc.left, leftAndFunc.right, rightFunc);
         }
 
-        if (leftFunc instanceof TernaryAndBooleanFunction) {
-            TernaryAndBooleanFunction leftAndFunc = (TernaryAndBooleanFunction) leftFunc;
+        if (leftFunc instanceof TernaryAndBooleanFunction leftAndFunc) {
             return new QuaternaryAndBooleanFunction(leftAndFunc.left, leftAndFunc.center, leftAndFunc.right, rightFunc);
         }
 

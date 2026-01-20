@@ -685,6 +685,30 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitRightFrameFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            create table x as (
+                              select x id, timestamp_sequence(0,1000000000) as ts
+                              from long_sequence(10)
+                            ) timestamp(ts) partition by hour;"""
+            );
+            execute("alter table x convert partition to parquet where ts >= 0");
+
+            assertSql(
+                    """
+                            id	ts
+                            5	1970-01-01T01:06:40.000000Z
+                            6	1970-01-01T01:23:20.000000Z
+                            7	1970-01-01T01:40:00.000000Z
+                            """,
+                    "x where ts <= '1970-01-01T01:40:00.000000' limit -3"
+            );
+        });
+    }
+
+    @Test
     public void testMixedPartitionsNativeLast() throws Exception {
         assertMemoryLeak(() -> {
             execute(

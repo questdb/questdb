@@ -2497,6 +2497,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedVectGroupByThrowsOnTimeout() throws Exception {
+        // Query owner thread will publish all tasks and then immediately get a CB timeout,
+        // so that if it tries to free shared resources, worker threads will access freed memory => segfault.
+        testParallelGroupByThrowsOnTimeout("select sum(price), avg(quantity) from tab", 2);
+    }
+
+    @Test
     public void testParallelOperationKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -3842,6 +3849,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelVectGroupByThrowsOnTimeout() throws Exception {
+        // Query owner thread will publish all tasks and then immediately get a CB timeout,
+        // so that if it tries to free shared resources, worker threads will access freed memory => segfault.
+        testParallelGroupByThrowsOnTimeout("select id, sum(price) from tab", 2);
+    }
+
+    @Test
     public void testParallelWeightedGroupByAvg() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT round(weighted_avg(adouble, adouble), 14) FROM tab", """
@@ -4159,8 +4173,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     private void testParallelGroupByThrowsOnTimeout(String query, long tripWhenTicks) throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         // Validate parallel GROUP BY factories.
         Assume.assumeTrue(enableParallelGroupBy);
         // The test is very sensitive to sharding threshold and page frame sizes.
@@ -4192,18 +4204,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_DEFAULT);
+                        final NetworkSqlExecutionCircuitBreaker circuitBreaker =
+                                new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_DEFAULT);
                         try {
                             engine.execute(
                                     "CREATE TABLE tab ( " +
                                             "  ts TIMESTAMP, " +
                                             "  price DOUBLE, " +
-                                            "  quantity DOUBLE " +
+                                            "  quantity DOUBLE, " +
+                                            "  id INT " +
                                             ") TIMESTAMP(ts) PARTITION BY DAY;",
                                     sqlExecutionContext
                             );
                             engine.execute(
-                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
+                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100, x % 10 from long_sequence(" + ROW_COUNT + ")",
                                     sqlExecutionContext
                             );
                             if (convertToParquet) {
