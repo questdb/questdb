@@ -3967,7 +3967,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test(time TIMESTAMP, symbol STRING);");
 
-            assertExceptionNoLeakCheck("SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)", 97, "there is no matching function `SUM` with the argument types: (INT, INT)");
+            assertExceptionNoLeakCheck(
+                    "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)",
+                    97,
+                    "there is no matching function `SUM` with the argument types: (INT, INT)"
+            );
         });
     }
 
