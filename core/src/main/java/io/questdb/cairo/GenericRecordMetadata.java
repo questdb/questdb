@@ -81,7 +81,7 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             GenericRecordMetadata metadata = copyOfSansTimestamp(that, columnCount);
             int timestampIndex = that.getTimestampIndex();
             if (timestampIndex < columnCount) {
-                metadata.setTimestampIndex(that.getTimestampIndex());
+                metadata.setTimestampIndex(timestampIndex);
             }
             return metadata;
         }
@@ -105,7 +105,7 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             GenericRecordMetadata metadata = copyOfSansTimestamp(that, columnCount);
             int timestampIndex = that.getTimestampIndex();
             if (timestampIndex < columnCount) {
-                metadata.setTimestampIndex(that.getTimestampIndex());
+                metadata.setTimestampIndex(timestampIndex);
             }
             return metadata;
         }
