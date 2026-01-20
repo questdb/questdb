@@ -58,8 +58,8 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (this.cursor == null) {
-            this.cursor = new PageFrameRecordCursorImpl(
+        if (cursor == null) {
+            cursor = new PageFrameRecordCursorImpl(
                     executionContext.getCairoEngine().getConfiguration(),
                     getMetadata(),
                     new PageFrameRowCursorFactory(ORDER_ASC),
@@ -67,16 +67,16 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
                     null
             );
         }
-        if (this.pageFrameCursor == null) {
-            this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        if (pageFrameCursor == null) {
+            pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
         }
         pageFrameCursor.of(path.$());
         try {
             cursor.of(pageFrameCursor, executionContext);
             return cursor;
-        } catch (Throwable e) {
-            pageFrameCursor.close();
-            throw e;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         }
     }
 

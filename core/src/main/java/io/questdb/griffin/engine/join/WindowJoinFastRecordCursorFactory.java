@@ -982,7 +982,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull SimpleMapValue simpleMapValue,
+                @NotNull SimpleMapValue value,
                 int valueCount
         ) {
             super(
@@ -995,7 +995,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     slaveTimestampType,
                     groupByFunctions,
                     groupByFunctionsUpdater,
-                    simpleMapValue,
+                    value,
                     valueCount
             );
         }
@@ -1209,7 +1209,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull SimpleMapValue simpleMapValue,
+                @NotNull SimpleMapValue value,
                 int valueCount
         ) {
             super(
@@ -1222,7 +1222,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     slaveTimestampType,
                     groupByFunctions,
                     groupByFunctionsUpdater,
-                    simpleMapValue,
+                    value,
                     valueCount
             );
 

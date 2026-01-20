@@ -243,7 +243,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public long preComputedStateSize() {
-            return isValueBuilt ? 1 : 0;
+            return RecordCursor.fromBool(isValueBuilt);
         }
 
         @Override

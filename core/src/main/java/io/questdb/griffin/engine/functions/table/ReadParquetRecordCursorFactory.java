@@ -48,11 +48,16 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (this.cursor == null) {
-            this.cursor = new ReadParquetRecordCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        if (cursor == null) {
+            cursor = new ReadParquetRecordCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
         }
-        cursor.of(path.$());
-        return cursor;
+        try {
+            cursor.of(path.$());
+            return cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override

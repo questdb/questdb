@@ -437,7 +437,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull SimpleMapValue simpleMapValue
+                @NotNull SimpleMapValue value
         ) {
             super(
                     configuration,
@@ -449,7 +449,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     slaveTimestampType,
                     groupByFunctions,
                     groupByFunctionsUpdater,
-                    simpleMapValue
+                    value
             );
         }
 

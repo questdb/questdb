@@ -76,9 +76,4 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
         initTimestamps();
         return baseRecord != null && notKeyedLoop(value);
     }
-
-    @Override
-    public long preComputedStateSize() {
-        return super.preComputedStateSize();
-    }
 }
