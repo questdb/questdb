@@ -66,6 +66,7 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
         return true;
     }
 
+    @SuppressWarnings("ClassEscapesDefinedScope")
     @Override
     protected AbstractLatestByValueRecordCursor createCursorFor(int symbolKey) {
         assert filter != null;

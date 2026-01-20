@@ -125,6 +125,7 @@ public class PGSymbolInBenchmark {
         }
     }
 
+    @SuppressWarnings("Java9ReflectionClassVisibility")
     private static Connection createConnection() throws Exception {
         Class.forName("org.postgresql.Driver");
         Properties properties = new Properties();

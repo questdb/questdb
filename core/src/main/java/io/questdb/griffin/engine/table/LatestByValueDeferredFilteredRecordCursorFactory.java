@@ -61,6 +61,7 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
         super.toPlan(sink);
     }
 
+    @SuppressWarnings("ClassEscapesDefinedScope")
     @Override
     protected AbstractLatestByValueRecordCursor createCursorFor(int symbolKey) {
         if (filter == null) {

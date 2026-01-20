@@ -187,6 +187,7 @@ public class LineProtocolException extends CairoException {
         return this;
     }
 
+    @SuppressWarnings("ConstantValue")
     private static LineProtocolException instance() {
         LineProtocolException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option

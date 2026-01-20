@@ -140,6 +140,7 @@ public class CheckpointStatusFunctionFactory implements FunctionFactory {
                 close();
             }
 
+            @SuppressWarnings("InnerClassMayBeStatic")
             public class CheckpointStatusRecord implements Record {
                 private boolean inProgress;
                 private long startedAt;

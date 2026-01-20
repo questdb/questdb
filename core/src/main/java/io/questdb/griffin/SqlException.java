@@ -135,6 +135,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                         .put(msg);
     }
 
+    @SuppressWarnings("ConstantValue")
     public static SqlException position(int position) {
         SqlException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option

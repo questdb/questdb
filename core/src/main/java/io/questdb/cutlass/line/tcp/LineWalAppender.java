@@ -90,6 +90,7 @@ public class LineWalAppender {
         this.timestampUnit = precision;
     }
 
+    @SuppressWarnings("DefaultNotLastCaseInSwitch")
     private void appendToWal0(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException {
 
         // pass 1: create all columns that do not exist

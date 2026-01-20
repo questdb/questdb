@@ -134,6 +134,7 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
                 .put(']');
     }
 
+    @SuppressWarnings("ConstantValue")
     public static ImplicitCastException instance() {
         ImplicitCastException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option

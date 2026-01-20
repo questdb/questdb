@@ -10,10 +10,19 @@ exclude:
       - core/src/main/java/io/questdb/std/ConcurrentHashMap.java
       - core/src/main/java/io/questdb/std/ConcurrentIntHashMap.java
       - core/src/main/java/io/questdb/std/ConcurrentLongHashMap.java
-  # Inspections to disable globally (false positives or not applicable for QuestDB's design)
-  # QuestDB manages resources manually for zero-GC - not always using try-with-resources
-  - name: AutoCloseableResource
-  # Java 14+ style annotation - not critical
-  - name: MissingSerialAnnotation
-  # Many are intentional in exception handling
-  - name: AssertWithSideEffects
+  # Benchmark code patterns - intentional for measurement
+  - name: MismatchedArrayReadWrite
+    paths:
+      - benchmarks
+  - name: MismatchedCollectionQueryUpdate
+    paths:
+      - benchmarks
+  - name: IgnoreResultOfCall
+    paths:
+      - benchmarks
+  - name: InfiniteLoopStatement
+    paths:
+      - benchmarks
+  - name: IntegerDivisionInFloatingPointContext
+    paths:
+      - benchmarks

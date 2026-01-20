@@ -54,10 +54,12 @@ public abstract class AbstractCountVectorAggregateFunction extends LongFunction 
     /**
      * The distinct function for distinct aggregates.
      */
+    @SuppressWarnings("ClassEscapesDefinedScope")
     protected DistinctFunc distinctFunc;
     /**
      * The key-value function.
      */
+    @SuppressWarnings("ClassEscapesDefinedScope")
     protected KeyValueFunc keyValueFunc;
     /**
      * The value offset in the map.

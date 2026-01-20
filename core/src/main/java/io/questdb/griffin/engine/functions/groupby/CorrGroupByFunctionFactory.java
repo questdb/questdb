@@ -113,6 +113,7 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             return sumXY / Math.sqrt(sumY * sumX);
         }
 
+        @SuppressWarnings("SuspiciousNameCombination")
         @Override
         public Function getLeft() {
             return yFunc;

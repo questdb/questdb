@@ -35,6 +35,7 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
     private static final ThreadLocal<TableReferenceOutOfDateException> tlException = new ThreadLocal<>(TableReferenceOutOfDateException::new);
     private final StringSink message = (StringSink) new StringSink().put(prefix);
 
+    @SuppressWarnings("ConstantValue")
     public static TableReferenceOutOfDateException of(CharSequence outdatedTableName) {
         TableReferenceOutOfDateException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
@@ -44,6 +45,7 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
+    @SuppressWarnings("ConstantValue")
     public static TableReferenceOutOfDateException of(Utf8Sequence outdatedTableName) {
         TableReferenceOutOfDateException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
@@ -53,6 +55,7 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
+    @SuppressWarnings("ConstantValue")
     public static TableReferenceOutOfDateException of(TableToken tableToken) {
         TableReferenceOutOfDateException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
@@ -62,6 +65,7 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
+    @SuppressWarnings("ConstantValue")
     public static TableReferenceOutOfDateException of(
             TableToken tableToken,
             int expectedTableId,
@@ -81,6 +85,7 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
+    @SuppressWarnings("ConstantValue")
     public static TableReferenceOutOfDateException ofOutdatedView(TableToken tableToken, long expectedTxn, long actualTxn) {
         TableReferenceOutOfDateException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option

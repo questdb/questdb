@@ -403,6 +403,7 @@ public final class Unsafe {
         private static Object lookupBase;
         private static long lookupOffset;
 
+        @SuppressWarnings("JavaReflectionMemberAccess") // Method may not exist in older JVMs - caught by ReflectiveOperationException
         @Nullable
         public static MethodHandlesClassDefiner newInstance() {
             if (defineMethod == null) {
@@ -452,6 +453,7 @@ public final class Unsafe {
 
         private static Method defineMethod;
 
+        @SuppressWarnings("JavaReflectionMemberAccess") // Method may not exist in newer JVMs - caught by ReflectiveOperationException
         @Nullable
         public static UnsafeClassDefiner newInstance() {
             if (defineMethod == null) {

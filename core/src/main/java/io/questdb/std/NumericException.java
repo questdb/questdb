@@ -47,6 +47,7 @@ public class NumericException extends RuntimeException implements Sinkable, Flyw
     /**
      * @return a new mutable instance of NumericException
      */
+    @SuppressWarnings("ConstantValue")
     public static NumericException instance() {
         NumericException ex = tlInstance.get();
         // This is to have correct stack trace in local debugging with -ea option

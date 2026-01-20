@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+@SuppressWarnings("ClassEscapesDefinedScope")
 public interface ConcurrentSegmentManipulator<T> {
     T dequeue(ConcurrentQueueSegment.Slot<T>[] slots, int slotsIndex, T item);
 

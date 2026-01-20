@@ -91,6 +91,7 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
         }
     }
 
+    @SuppressWarnings("SuspiciousNameCombination")
     @Override
     public Function getLeft() {
         return yFunc;

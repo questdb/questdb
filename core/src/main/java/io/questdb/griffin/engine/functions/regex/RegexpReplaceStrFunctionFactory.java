@@ -111,6 +111,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             return value;
         }
 
+        @SuppressWarnings("ClassEscapesDefinedScope")
         public CharSequence getStr(Record rec, StringBuilderSink sink) {
             if (matcher == null || replacementStr == null) {
                 return null;
