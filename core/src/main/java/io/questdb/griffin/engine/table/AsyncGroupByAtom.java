@@ -95,6 +95,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final PageFrameFilteredNoRandomAccessMemoryRecord ownerPageFrameFilteredNoRandomAccessMemoryRecord = new PageFrameFilteredNoRandomAccessMemoryRecord();
+    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<MapFragment> perWorkerFragments;
@@ -105,6 +106,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // Initialized lazily.
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
+    private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final ColumnTypes valueTypes;
     // Initialized lazily.
     private DirectLongLongSortedList ownerLongTopKList;
@@ -234,6 +236,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             perWorkerLongTopKLists = new ObjList<>(slotCount);
             perWorkerLongTopKLists.setAll(slotCount, null);
+
+            perWorkerSelectivityStats = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -256,6 +263,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.clearObjList(perWorkerAllocators);
         Misc.clear(ownerLongTopKList);
         Misc.clearObjList(perWorkerLongTopKLists);
+        ownerSelectivityStats.clear();
+        for (int i = 0, n = perWorkerSelectivityStats.size(); i < n; i++) {
+            perWorkerSelectivityStats.getQuick(i).clear();
+        }
     }
 
     @Override
@@ -391,6 +402,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // thread-unsafe
     public ObjList<DirectLongLongSortedList> getPerWorkerLongTopKLists() {
         return perWorkerLongTopKLists;
+    }
+
+    public SelectivityStats getSelectivityStats(int slotId) {
+        if (slotId == -1) {
+            return ownerSelectivityStats;
+        }
+        return perWorkerSelectivityStats.getQuick(slotId);
     }
 
     public int getShardCount() {
@@ -618,6 +636,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
             perWorkerFragments.getQuick(i).shard();
         }
+    }
+
+    public boolean shouldUseLateMateriazliation(int slotId, boolean isParquetFrame) {
+        if (!isParquetFrame) {
+            return false;
+        }
+        if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
+            return false;
+        }
+        return getSelectivityStats(slotId).shouldUseLateMateriazliation();
     }
 
     @Override

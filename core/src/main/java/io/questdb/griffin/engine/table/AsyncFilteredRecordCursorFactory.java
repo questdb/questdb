@@ -263,14 +263,22 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final long frameRowCount = task.getFrameRowCount();
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 
-        final PageFrameMemory frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
+        final boolean useLateMateriazliation = atom.shouldUseLateMateriazliation(filterId, isParquetFrame, task.isCountOnly());
+
+        final PageFrameMemory frameMemory;
+        if (useLateMateriazliation) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
         record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
-        final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
         final Function filter = atom.getFilter(filterId);
         try {
             if (task.isCountOnly()) {
@@ -290,7 +298,10 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                     }
                 }
 
-                if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                if (isParquetFrame) {
+                    atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
+                }
+                if (useLateMateriazliation && task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
                 }
                 task.setFilteredRowCount(rows.size());

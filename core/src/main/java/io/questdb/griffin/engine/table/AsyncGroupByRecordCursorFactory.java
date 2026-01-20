@@ -374,17 +374,25 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final PageFrameSequence<AsyncGroupByAtom> frameSequence = task.getFrameSequence(AsyncGroupByAtom.class);
         final AsyncGroupByAtom atom = frameSequence.getAtom();
 
-        final PageFrameMemory frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        record.init(frameMemory);
-
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean useLateMateriazliation = atom.shouldUseLateMateriazliation(slotId, isParquetFrame);
+
+        final PageFrameMemory frameMemory;
+        if (useLateMateriazliation) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
+        record.init(frameMemory);
+
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledFilter();
@@ -399,7 +407,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
-            if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, false)) {
+
+            atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+            if (useLateMateriazliation && task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, false)) {
                 PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = atom.getPageFrameFilteredMemoryRecord(slotId);
                 filteredMemoryRecord.of(frameMemory, record, atom.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;

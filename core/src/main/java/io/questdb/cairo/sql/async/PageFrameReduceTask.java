@@ -184,6 +184,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return isOutOfMemory;
     }
 
+    public boolean isParquetFrame() {
+        return frameSequence.getPageFrameAddressCache().getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+    }
+
     public void of(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
         this.frameSequence = frameSequence;
         final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();

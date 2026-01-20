@@ -52,8 +52,10 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final IntList columnTypes;
     private final Function filter;
     private final IntHashSet filterUsedColumnIndexes;
+    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
+    private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
 
@@ -69,9 +71,15 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         this.filterUsedColumnIndexes = filterUsedColumnIndexes;
         this.perWorkerFilters = perWorkerFilters;
         if (perWorkerFilters != null) {
-            perWorkerLocks = new PerWorkerLocks(configuration, perWorkerFilters.size());
+            final int slotCount = perWorkerFilters.size();
+            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            perWorkerSelectivityStats = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
+            }
         } else {
             perWorkerLocks = null;
+            perWorkerSelectivityStats = null;
         }
         this.columnTypes = columnTypes;
         this.preTouchEnabled = preTouchEnabled;
@@ -92,6 +100,13 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
 
     public IntHashSet getFilterUsedColumnIndexes() {
         return filterUsedColumnIndexes;
+    }
+
+    public SelectivityStats getSelectivityStats(int slotId) {
+        if (slotId == -1 || perWorkerSelectivityStats == null) {
+            return ownerSelectivityStats;
+        }
+        return perWorkerSelectivityStats.getQuick(slotId);
     }
 
     @Override
@@ -223,6 +238,19 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         if (perWorkerLocks != null) {
             perWorkerLocks.releaseSlot(filterId);
         }
+    }
+
+    public boolean shouldUseLateMateriazliation(int slotId, boolean isParquetFrame, boolean isCountOnly) {
+        if (!isParquetFrame) {
+            return false;
+        }
+        if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
+            return false;
+        }
+        if (isCountOnly) {
+            return true;
+        }
+        return getSelectivityStats(slotId).shouldUseLateMateriazliation();
     }
 
     @Override

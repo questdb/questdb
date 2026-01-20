@@ -312,7 +312,17 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final PageFrameSequence<AsyncJitFilterAtom> frameSequence = task.getFrameSequence(AsyncJitFilterAtom.class);
         final AsyncJitFilterAtom atom = frameSequence.getAtom();
 
-        final PageFrameMemory frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean useLateMateriazliation = atom.shouldUseLateMateriazliation(filterId, isParquetFrame, task.isCountOnly());
+
+        final PageFrameMemory frameMemory;
+        if (useLateMateriazliation) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
         record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
@@ -320,8 +330,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         if (frameMemory.hasColumnTops()) {
             // Use Java-based filter in case of a page frame with column tops.
-            final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
-            final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
             final Function filter = atom.getFilter(filterId);
             try {
                 if (task.isCountOnly()) {
@@ -340,7 +348,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                             rows.add(r);
                         }
                     }
-                    if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
+
+                    if (isParquetFrame) {
+                        atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
+                    }
+                    if (useLateMateriazliation && task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
                         record.init(frameMemory);
                     }
                     task.setFilteredRowCount(rows.size());
@@ -352,41 +364,49 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         // Use JIT-compiled filter.
+        try {
+            task.populateJitData();
+            final DirectLongList dataAddresses = task.getDataAddresses();
+            final DirectLongList auxAddresses = task.getAuxAddresses();
 
-        task.populateJitData();
-        final DirectLongList dataAddresses = task.getDataAddresses();
-        final DirectLongList auxAddresses = task.getAuxAddresses();
+            if (task.isCountOnly()) {
+                final long filteredRowCount = atom.compiledCountOnlyFilter.call(
+                        dataAddresses.getAddress(),
+                        dataAddresses.size(),
+                        auxAddresses.getAddress(),
+                        atom.bindVarMemory.getAddress(),
+                        atom.bindVarFunctions.size(),
+                        frameRowCount
+                );
+                task.setFilteredRowCount(filteredRowCount);
+                // Update selectivity stats for this slot
+                atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
+            } else { // normal filter task
+                final long filteredRowCount = atom.compiledFilter.call(
+                        dataAddresses.getAddress(),
+                        dataAddresses.size(),
+                        auxAddresses.getAddress(),
+                        atom.bindVarMemory.getAddress(),
+                        atom.bindVarFunctions.size(),
+                        rows.getAddress(),
+                        frameRowCount
+                );
+                // Update selectivity stats for this slot
+                atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
+                // If late materialization was used, now load remaining columns for filtered rows
+                if (useLateMateriazliation && task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                    record.init(frameMemory);
+                }
+                rows.setPos(filteredRowCount);
+                task.setFilteredRowCount(rows.size());
 
-        if (task.isCountOnly()) {
-            final long filteredRowCount = atom.compiledCountOnlyFilter.call(
-                    dataAddresses.getAddress(),
-                    dataAddresses.size(),
-                    auxAddresses.getAddress(),
-                    atom.bindVarMemory.getAddress(),
-                    atom.bindVarFunctions.size(),
-                    frameRowCount
-            );
-            task.setFilteredRowCount(filteredRowCount);
-        } else { // normal filter task
-            final long filteredRowCount = atom.compiledFilter.call(
-                    dataAddresses.getAddress(),
-                    dataAddresses.size(),
-                    auxAddresses.getAddress(),
-                    atom.bindVarMemory.getAddress(),
-                    atom.bindVarFunctions.size(),
-                    rows.getAddress(),
-                    frameRowCount
-            );
-            if (task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
-                record.init(frameMemory);
+                // Pre-touch native columns, if asked.
+                if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
+                    atom.preTouchColumns(record, rows, frameRowCount);
+                }
             }
-            rows.setPos(filteredRowCount);
-            task.setFilteredRowCount(rows.size());
-
-            // Pre-touch native columns, if asked.
-            if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
-                atom.preTouchColumns(record, rows, frameRowCount);
-            }
+        } finally {
+            atom.releaseFilter(filterId);
         }
     }
 

@@ -68,12 +68,14 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final SimpleMapValue ownerMapValue;
     private final PageFrameFilteredNoRandomAccessMemoryRecord ownerPageFrameFilteredNoRandomAccessMemoryRecord = new PageFrameFilteredNoRandomAccessMemoryRecord();
+    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SimpleMapValue> perWorkerMapValues;
+    private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
     public AsyncGroupByNotKeyedAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -135,6 +137,11 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 perWorkerAllocators = null;
             }
 
+            perWorkerSelectivityStats = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
+            }
+
             clear();
         } catch (Throwable th) {
             close();
@@ -161,6 +168,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
         Misc.clear(ownerAllocator);
         Misc.clearObjList(perWorkerAllocators);
+        ownerSelectivityStats.clear();
+        for (int i = 0, n = perWorkerSelectivityStats.size(); i < n; i++) {
+            perWorkerSelectivityStats.getQuick(i).clear();
+        }
     }
 
     @Override
@@ -235,6 +246,13 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return perWorkerMapValues;
     }
 
+    public SelectivityStats getSelectivityStats(int slotId) {
+        if (slotId == -1) {
+            return ownerSelectivityStats;
+        }
+        return perWorkerSelectivityStats.getQuick(slotId);
+    }
+
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         if (ownerFilter != null) {
@@ -297,6 +315,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 perWorkerAllocators.getQuick(i).reopen();
             }
         }
+    }
+
+    public boolean shouldUseLateMateriazliation(int slotId, boolean isParquetFrame) {
+        if (!isParquetFrame) {
+            return false;
+        }
+        if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
+            return false;
+        }
+        return getSelectivityStats(slotId).shouldUseLateMateriazliation();
     }
 
     @Override
