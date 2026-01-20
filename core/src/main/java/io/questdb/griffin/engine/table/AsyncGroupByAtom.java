@@ -264,9 +264,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.clear(ownerLongTopKList);
         Misc.clearObjList(perWorkerLongTopKLists);
         ownerSelectivityStats.clear();
-        for (int i = 0, n = perWorkerSelectivityStats.size(); i < n; i++) {
-            perWorkerSelectivityStats.getQuick(i).clear();
-        }
+        Misc.clearObjList(perWorkerSelectivityStats);
     }
 
     @Override
@@ -638,14 +636,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public boolean shouldUseLateMateriazliation(int slotId, boolean isParquetFrame) {
+    public boolean shoulduseLateMaterialization(int slotId, boolean isParquetFrame) {
         if (!isParquetFrame) {
             return false;
         }
         if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
             return false;
         }
-        return getSelectivityStats(slotId).shouldUseLateMateriazliation();
+        return getSelectivityStats(slotId).shoulduseLateMaterialization();
     }
 
     @Override

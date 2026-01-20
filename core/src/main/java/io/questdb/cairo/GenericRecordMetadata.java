@@ -97,6 +97,15 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return metadata;
     }
 
+    public static GenericRecordMetadata deepCopyOf(RecordMetadata that, int columnCount) {
+        if (that != null) {
+            GenericRecordMetadata metadata = copyOfSansTimestamp(that, columnCount);
+            metadata.setTimestampIndex(that.getTimestampIndex());
+            return metadata;
+        }
+        return null;
+    }
+
     public static GenericRecordMetadata deepCopyOf(RecordMetadata that) {
         if (that != null) {
             GenericRecordMetadata metadata = new GenericRecordMetadata();

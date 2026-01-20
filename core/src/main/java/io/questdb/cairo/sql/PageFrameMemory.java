@@ -34,7 +34,16 @@ import io.questdb.std.IntHashSet;
  */
 public interface PageFrameMemory {
 
-    boolean fillOtherColumns(IntHashSet excludedColumnIndexes, DirectLongList rows, boolean fillWithNulls);
+    /**
+     * Populates remaining columns (those not in filterColumnIndexes) for filtered rows.
+     * Used for late materialization in Parquet partitions.
+     *
+     * @param filterColumnIndexes columns already loaded (filter columns)
+     * @param filteredRows        rows that passed the filter
+     * @param fillWithNulls       whether to fill missing columns with nulls
+     * @return true if columns were populated, false if no action was needed
+     */
+    boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls);
 
     /**
      * Returns aux (index) vector address for a var-size column.

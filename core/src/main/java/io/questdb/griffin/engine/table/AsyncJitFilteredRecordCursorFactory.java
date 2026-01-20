@@ -315,10 +315,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
         final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMateriazliation = atom.shouldUseLateMateriazliation(filterId, isParquetFrame, task.isCountOnly());
+        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
 
         final PageFrameMemory frameMemory;
-        if (useLateMateriazliation) {
+        if (useLateMaterialization) {
             frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
         } else {
             frameMemory = task.populateFrameMemory();
@@ -352,7 +352,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     if (isParquetFrame) {
                         atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
                     }
-                    if (useLateMateriazliation && task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                    if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
                         record.init(frameMemory);
                     }
                     task.setFilteredRowCount(rows.size());
@@ -394,7 +394,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 // Update selectivity stats for this slot
                 atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
                 // If late materialization was used, now load remaining columns for filtered rows
-                if (useLateMateriazliation && task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
                 }
                 rows.setPos(filteredRowCount);

@@ -3800,7 +3800,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
 
                                 if (!isLastWindowJoin) {
-                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(joinMetadata, splitIndex);
+                                    final GenericRecordMetadata metadata = GenericRecordMetadata.deepCopyOf(joinMetadata, splitIndex);
                                     for (int j = 0, m = outerProjectionMetadata.getColumnCount(); j < m; j++) {
                                         metadata.add(outerProjectionMetadata.getColumnMetadata(j));
                                     }
@@ -3888,7 +3888,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (columnIndex == null) {
                                                 factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
                                             } else {
-                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
+                                                GenericRecordMetadata metadata = GenericRecordMetadata.deepCopyOf(masterMetadata);
                                                 for (int k = 0, m = aggregateCols.size(); k < m; k++) {
                                                     metadata.add(new TableColumnMetadata(aggregateCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
                                                 }
@@ -3942,6 +3942,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     ObjList<Function> bindVarFunctions = null;
                                     Function masterFilter = null;
                                     ExpressionNode masterFilterExpr = null;
+                                    IntHashSet masterFilterUsedColumnIndexes = null;
                                     if (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()) {
                                         RecordCursorFactory filterFactory = master;
                                         master = master.getBaseFactory();
@@ -3950,6 +3951,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         bindVarFunctions = filterFactory.getBindVarFunctions();
                                         masterFilter = filterFactory.getFilter();
                                         masterFilterExpr = filterFactory.getStealFilterExpr();
+                                        masterFilterUsedColumnIndexes = new IntHashSet();
+                                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), masterFilterExpr, masterFilterUsedColumnIndexes);
                                         filterFactory.halfClose();
                                     }
 
@@ -3999,6 +4002,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterFilterExpr,
                                                         master.getMetadata()
                                                 ),
+                                                masterFilterUsedColumnIndexes,
                                                 allVectorized,
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
@@ -4045,6 +4049,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterFilterExpr,
                                                         master.getMetadata()
                                                 ),
+                                                masterFilterUsedColumnIndexes,
                                                 allVectorized,
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
@@ -4757,6 +4762,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     ObjList<Function> bindVarFunctions = null;
                                     Function filter = null;
                                     ExpressionNode filterExpr = null;
+                                    IntHashSet filterUsedColumnIndexes = null;
                                     if (recordCursorFactory.supportsFilterStealing()) {
                                         baseFactory = recordCursorFactory.getBaseFactory();
                                         compiledFilter = recordCursorFactory.getCompiledFilter();
@@ -4764,6 +4770,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         bindVarFunctions = recordCursorFactory.getBindVarFunctions();
                                         filter = recordCursorFactory.getFilter();
                                         filterExpr = recordCursorFactory.getStealFilterExpr();
+                                        filterUsedColumnIndexes = new IntHashSet();
+                                        collectColumnIndexes(sqlNodeStack, baseFactory.getMetadata(), filterExpr, filterUsedColumnIndexes);
                                         recordCursorFactory.halfClose();
                                     }
 
@@ -4778,6 +4786,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             baseFactory,
                                             reduceTaskFactory,
                                             filter,
+                                            filterUsedColumnIndexes,
                                             compileWorkerFilterConditionally(
                                                     executionContext,
                                                     filter,

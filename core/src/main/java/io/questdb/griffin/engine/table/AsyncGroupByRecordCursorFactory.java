@@ -380,10 +380,10 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMateriazliation = atom.shouldUseLateMateriazliation(slotId, isParquetFrame);
+        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
 
         final PageFrameMemory frameMemory;
-        if (useLateMateriazliation) {
+        if (useLateMaterialization) {
             frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
         } else {
             frameMemory = task.populateFrameMemory();
@@ -409,7 +409,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            if (useLateMateriazliation && task.fillFrameMemory(atom.getFilterUsedColumnIndexes(), rows, false)) {
+            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, false)) {
                 PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = atom.getPageFrameFilteredMemoryRecord(slotId);
                 filteredMemoryRecord.of(frameMemory, record, atom.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;

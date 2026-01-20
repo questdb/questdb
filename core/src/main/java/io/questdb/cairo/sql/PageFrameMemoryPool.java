@@ -312,18 +312,19 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetDecoder.of(frameDecoder);
         }
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-        if (parquetMetadata.getColumnCount() < addressCache.getColumnCount()) {
+        int readParquetColumnCount = addressCache.getColumnIndexes().size();
+        if (parquetMetadata.getColumnCount() < readParquetColumnCount) {
             throw CairoException.nonCritical().put("parquet column count is less than number of queried table columns [parquetColumnCount=")
                     .put(parquetMetadata.getColumnCount())
                     .put(", columnCount=")
-                    .put(addressCache.getColumnCount());
+                    .put(readParquetColumnCount);
         }
 
         parquetColumns.reopen();
         parquetColumns.clear();
         fromParquetColumnIndexes.clear();
         fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
-        for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
+        for (int i = 0; i < readParquetColumnCount; i++) {
             final int parquetColumnIndex = addressCache.getColumnIndexes().getQuick(i);
             final int columnType = addressCache.getColumnTypes().getQuick(i);
             parquetColumns.add(parquetColumnIndex);
@@ -338,18 +339,19 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetDecoder.of(frameDecoder);
         }
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-        if (parquetMetadata.getColumnCount() < addressCache.getColumnCount()) {
+        int readParquetColumnCount = addressCache.getColumnIndexes().size();
+        if (parquetMetadata.getColumnCount() < readParquetColumnCount) {
             throw CairoException.nonCritical().put("parquet column count is less than number of queried table columns [parquetColumnCount=")
                     .put(parquetMetadata.getColumnCount())
                     .put(", columnCount=")
-                    .put(addressCache.getColumnCount());
+                    .put(readParquetColumnCount);
         }
 
         parquetColumns.reopen();
         parquetColumns.clear();
         fromParquetColumnIndexes.clear();
         fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
-        for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
+        for (int i = 0; i < readParquetColumnCount; i++) {
             if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
                 final int parquetColumnIndex = addressCache.getColumnIndexes().getQuick(i);
                 final int columnType = addressCache.getColumnTypes().getQuick(i);
@@ -380,24 +382,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             pageSizes = null;
             auxPageSizes = null;
             currentRowGroupBuffer = null;
-        }
-
-        @Override
-        public boolean fillOtherColumns(IntHashSet excludedColumnIndexes, DirectLongList rows, boolean fillWithNulls) {
-            assert frameFormat == PartitionFormat.PARQUET;
-            if (excludedColumnIndexes.size() == addressCache.getColumnCount()) {
-                return false;
-            }
-
-            openParquet(frameIndex, excludedColumnIndexes, false);
-            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-            if (rows.size() != 0) {
-                currentRowGroupBuffer.decodeRemainingColumns(parquetDecoder, excludedColumnIndexes.size(), parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi, rows, fillWithNulls);
-                return true;
-            }
-            return false;
         }
 
         @Override
@@ -468,6 +452,24 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 if (pageAddresses.get(columnOffset + i) == 0 && auxPageAddresses.get(columnOffset + i) == 0) {
                     return true;
                 }
+            }
+            return false;
+        }
+
+        @Override
+        public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
+            assert frameFormat == PartitionFormat.PARQUET;
+            if (filterColumnIndexes.size() == addressCache.getColumnCount()) {
+                return false;
+            }
+
+            openParquet(frameIndex, filterColumnIndexes, false);
+            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+            if (filteredRows.size() != 0) {
+                currentRowGroupBuffer.decodeRemainingColumns(parquetDecoder, filterColumnIndexes.size(), parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi, filteredRows, fillWithNulls);
+                return true;
             }
             return false;
         }

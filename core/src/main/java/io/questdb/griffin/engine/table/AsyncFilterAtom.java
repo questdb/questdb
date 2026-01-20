@@ -87,6 +87,12 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     }
 
     @Override
+    public void clear() {
+        ownerSelectivityStats.clear();
+        Misc.clearObjList(perWorkerSelectivityStats);
+    }
+
+    @Override
     public void close() {
         Misc.freeObjList(perWorkerFilters);
     }
@@ -240,7 +246,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         }
     }
 
-    public boolean shouldUseLateMateriazliation(int slotId, boolean isParquetFrame, boolean isCountOnly) {
+    public boolean shoulduseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
         if (!isParquetFrame) {
             return false;
         }
@@ -250,7 +256,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         if (isCountOnly) {
             return true;
         }
-        return getSelectivityStats(slotId).shouldUseLateMateriazliation();
+        return getSelectivityStats(slotId).shoulduseLateMaterialization();
     }
 
     @Override

@@ -102,13 +102,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         Misc.free(frameMemoryPool);
     }
 
-    public boolean fillFrameMemory(IntHashSet excludeColumns, DirectLongList list, boolean fillWithNulls) {
-        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET) {
-            return frameMemory.fillOtherColumns(excludeColumns, list, fillWithNulls);
-        }
-        return false;
-    }
-
     /**
      * Returns list of pointers to aux vectors (var-size columns only).
      */
@@ -252,6 +245,13 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
                 filteredRows.setCapacity(rowCount);
             }
         }
+    }
+
+    public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
+        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET) {
+            return frameMemory.populateRemainingColumns(filterColumnIndexes, filteredRows, fillWithNulls);
+        }
+        return false;
     }
 
     public void releaseFrameMemory() {
