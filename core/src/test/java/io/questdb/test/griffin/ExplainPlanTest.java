@@ -8556,15 +8556,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // TODO: this should use interval scan with two ranges !
+    @Test
     public void testSelectStaticTsInterval3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'", """
-                Async JIT Filter workers: 1
-                  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999])
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
+                """
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: tab
+                              intervals: [("2020-03-01T00:00:00.000000Z","2020-03-01T23:59:59.999999Z"),("2020-03-10T00:00:00.000000Z","2020-03-10T23:59:59.999999Z")]
+                        """);
     }
 
     @Test // ranges don't overlap so result is empty
