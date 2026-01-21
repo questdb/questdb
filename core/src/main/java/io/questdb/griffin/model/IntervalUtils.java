@@ -31,7 +31,6 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -50,6 +49,13 @@ public final class IntervalUtils {
      * Maximum recursion depth for bracket expansion (one level per bracket group).
      */
     private static final int MAX_BRACKET_DEPTH = 8;
+    // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
+    // Two sinks are needed because expandTimeListBracket can trigger nested recursion:
+    //   parseBracketInterval -> expandBracketsRecursive (uses tlSink1)
+    //                        -> expandTimeListBracket
+    //                        -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
+    private static final ThreadLocal<StringSink> tlSink1 = ThreadLocal.withInitial(StringSink::new);
+    private static final ThreadLocal<StringSink> tlSink2 = ThreadLocal.withInitial(StringSink::new);
 
     public static void applyLastEncodedInterval(TimestampDriver timestampDriver, LongList intervals) {
         int index = intervals.size() - 4;
@@ -411,8 +417,6 @@ public final class IntervalUtils {
      * @param out             output list for parsed intervals
      * @param operation       interval operation
      * @param sink            reusable StringSink for building expanded strings (will be cleared).
-     *                        IMPORTANT: must not be {@code Misc.getThreadLocalSink()} as this method
-     *                        uses the thread-local sink internally for expansion, which would cause aliasing.
      * @param applyEncoded    if true, converts encoded format to simple format for non-bracket intervals
      * @throws SqlException if the interval format is invalid
      */
@@ -554,9 +558,8 @@ public final class IntervalUtils {
             parseLim = sink.length();
         }
 
-        // Use a separate sink for bracket expansion
-        StringSink expansionSink = Misc.getThreadLocalSink();
-
+        StringSink expansionSink = tlSink1.get();
+        expansionSink.clear();
         try {
             boolean hadTimeListBracket = expandBracketsRecursive(
                     timestampDriver,
@@ -975,17 +978,17 @@ public final class IntervalUtils {
             }
         }
 
+        // Save sink state before modifications
+        int startLen = sink.length();
+
         if (bracketStart < 0) {
-            // No more brackets - append remaining text and parse
-            int sinkLen = sink.length();
+            // No more brackets - parse the accumulated expansion
+            // Note: sink always has content here (at minimum the expanded bracket value)
             sink.put(seq, pos, fullLim);
             parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
-            sink.clear(sinkLen);
+            sink.clear(startLen);
             return false; // No time list bracket processed
         }
-
-        // Save sink state before adding prefix
-        int startLen = sink.length();
 
         // Copy text before bracket
         sink.put(seq, pos, bracketStart);
@@ -998,9 +1001,21 @@ public final class IntervalUtils {
         // vs numeric expansion (no ':', e.g., [09,14])
         if (isTimeListBracket(seq, bracketStart, bracketEnd)) {
             expandTimeListBracket(
-                    timestampDriver, seq, bracketStart, bracketEnd, fullLim,
-                    errorPos, out, operation, sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion,
-                    globalTzSeq, globalTzLo, globalTzHi
+                    timestampDriver,
+                    seq,
+                    bracketStart,
+                    bracketEnd,
+                    fullLim,
+                    errorPos,
+                    out,
+                    operation,
+                    sink,
+                    afterPrefixLen,
+                    applyEncoded,
+                    outSizeBeforeExpansion,
+                    globalTzSeq,
+                    globalTzLo,
+                    globalTzHi
             );
             sink.clear(startLen);
             return true; // Time list bracket was processed
@@ -1130,8 +1145,6 @@ public final class IntervalUtils {
      * @param out                    output list for parsed intervals
      * @param operation              interval operation
      * @param sink                   reusable StringSink for building expanded strings.
-     *                               IMPORTANT: must not be {@code Misc.getThreadLocalSink()} as this method
-     *                               uses the thread-local sink internally, which would cause aliasing.
      * @param applyEncoded           if true, converts to simple format
      * @param outSizeBeforeExpansion size of out before expansion started
      */
@@ -1291,22 +1304,19 @@ public final class IntervalUtils {
                         }
                     }
 
-                    // Copy to thread-local sink to avoid String allocation
-                    StringSink elementWithSuffix = Misc.getThreadLocalSink();
-                    elementWithSuffix.put(sink);
-                    sink.clear();
-
+                    StringSink expansionSink = tlSink1.get();
+                    expansionSink.clear();
                     boolean hadTimeListBracket = expandBracketsRecursive(
                             timestampDriver,
-                            elementWithSuffix,
+                            sink,
                             0,
                             0,
                             dateLim,
-                            elementWithSuffix.length(),
+                            sink.length(),
                             errorPos,
                             out,
                             operation,
-                            sink,
+                            expansionSink,
                             0,
                             applyEncoded,
                             outSizeBeforeExpansion,
@@ -1373,7 +1383,6 @@ public final class IntervalUtils {
             int globalTzHi
     ) throws SqlException {
         int i = bracketStart + 1;
-        int elementCount = 0;
 
         // Check once if suffix contains brackets that need expansion (same for all elements)
         boolean suffixHasBrackets = false;
@@ -1382,6 +1391,13 @@ public final class IntervalUtils {
                 suffixHasBrackets = true;
                 break;
             }
+        }
+
+        // Allocate recursion sink once outside the loop (only if needed)
+        StringSink recursionSink = null;
+        if (suffixHasBrackets) {
+            recursionSink = tlSink2.get();
+            recursionSink.clear();
         }
 
         while (i < bracketEnd) {
@@ -1448,22 +1464,14 @@ public final class IntervalUtils {
                     }
                 }
 
-                // Copy sink content to a new StringSink to avoid aliasing with thread-local
-                // (thread-local sink may already be in use by outer call)
-                StringSink expandedSink = new StringSink();
-                expandedSink.put(sink);
-
-                // Use another new StringSink for recursion working buffer
-                StringSink recursionSink = new StringSink();
-
                 // Recursively expand brackets in the suffix
                 expandBracketsRecursive(
                         timestampDriver,
-                        expandedSink,
+                        sink,
                         0,              // intervalStart
                         0,              // pos
                         expandedDateLim,
-                        expandedSink.length(),
+                        sink.length(),
                         errorPos,
                         out,
                         operation,
@@ -1491,16 +1499,11 @@ public final class IntervalUtils {
 
             // Reset sink to prefix for next element
             sink.clear(sinkPrefixLen);
-            elementCount++;
 
-            // Skip comma
-            if (i < bracketEnd && seq.charAt(i) == ',') {
+            // Skip comma (if i < bracketEnd, we exited the element loop at a comma)
+            if (i < bracketEnd) {
                 i++;
             }
-        }
-
-        if (elementCount == 0) {
-            throw SqlException.$(errorPos, "Empty time list bracket");
         }
     }
 
@@ -1563,24 +1566,6 @@ public final class IntervalUtils {
     }
 
     /**
-     * Checks if a bracket contains a time list (has ':' in content).
-     * Time list brackets contain full time values like [09:00,14:30] vs numeric expansion like [09,14].
-     *
-     * @param seq          the input string
-     * @param bracketStart position of the opening '['
-     * @param bracketEnd   position of the closing ']'
-     * @return true if this is a time list bracket, false if it's numeric expansion
-     */
-    private static boolean isTimeListBracket(CharSequence seq, int bracketStart, int bracketEnd) {
-        for (int i = bracketStart + 1; i < bracketEnd; i++) {
-            if (seq.charAt(i) == ':') {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Determines if a string starting with '[' is a date list or field expansion.
      * <p>
      * A date list: [2025-01-01,2025-01-05] or [2025-01-01]T09:30
@@ -1622,6 +1607,24 @@ public final class IntervalUtils {
     }
 
     /**
+     * Checks if a bracket contains a time list (has ':' in content).
+     * Time list brackets contain full time values like [09:00,14:30] vs numeric expansion like [09,14].
+     *
+     * @param seq          the input string
+     * @param bracketStart position of the opening '['
+     * @param bracketEnd   position of the closing ']'
+     * @return true if this is a time list bracket, false if it's numeric expansion
+     */
+    private static boolean isTimeListBracket(CharSequence seq, int bracketStart, int bracketEnd) {
+        for (int i = bracketStart + 1; i < bracketEnd; i++) {
+            if (seq.charAt(i) == ':') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Parses a fully-expanded interval string (no brackets) and adds result to output.
      * In static mode (applyEncoded=true), results are converted to 2-long format.
      * Union of bracket-expanded intervals is done at the end of parseBracketInterval.
@@ -1633,7 +1636,7 @@ public final class IntervalUtils {
      */
     private static void parseExpandedInterval(
             TimestampDriver timestampDriver,
-            CharSequence expanded,
+            CharSequence seq,
             int errorPos,
             LongList out,
             short operation,
@@ -1643,7 +1646,7 @@ public final class IntervalUtils {
         if (applyEncoded) {
             // Static mode: convert to 2-long format
             // Union is done at the end of bracket expansion in parseBracketInterval
-            parseInterval0(timestampDriver, expanded, 0, expanded.length(), errorPos, out, operation);
+            parseInterval0(timestampDriver, seq, 0, seq.length(), errorPos, out, operation);
             applyLastEncodedInterval(timestampDriver, out);
         } else {
             // Dynamic mode: keep 4-long format
@@ -1658,7 +1661,7 @@ public final class IntervalUtils {
                 // This achieves: (A OR B OR C...) AND previous
                 effectiveOp = isFirstInterval ? operation : IntervalOperation.UNION;
             }
-            parseInterval0(timestampDriver, expanded, 0, expanded.length(), errorPos, out, effectiveOp);
+            parseInterval0(timestampDriver, seq, 0, seq.length(), errorPos, out, effectiveOp);
         }
     }
 
