@@ -1375,6 +1375,15 @@ public final class IntervalUtils {
         int i = bracketStart + 1;
         int elementCount = 0;
 
+        // Check once if suffix contains brackets that need expansion (same for all elements)
+        boolean suffixHasBrackets = false;
+        for (int j = bracketEnd + 1; j < fullLim; j++) {
+            if (seq.charAt(j) == '[') {
+                suffixHasBrackets = true;
+                break;
+            }
+        }
+
         while (i < bracketEnd) {
             // Skip whitespace
             while (i < bracketEnd && Character.isWhitespace(seq.charAt(i))) {
@@ -1425,16 +1434,7 @@ public final class IntervalUtils {
 
             // Build full timestamp: prefix + time element (without @tz) + suffix after bracket
             sink.put(seq, elemStart, timeEnd);          // time value (e.g., "09:00")
-            sink.put(seq, bracketEnd + 1, fullLim);     // suffix (e.g., ";6h" or ":[00,30];1h")
-
-            // Check if suffix contains brackets that need expansion
-            boolean suffixHasBrackets = false;
-            for (int j = bracketEnd + 1; j < fullLim; j++) {
-                if (seq.charAt(j) == '[') {
-                    suffixHasBrackets = true;
-                    break;
-                }
-            }
+            sink.put(seq, bracketEnd + 1, fullLim);     // suffix (e.g., ";6h")
 
             if (suffixHasBrackets) {
                 // Suffix has brackets - need recursive expansion
