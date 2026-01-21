@@ -34,6 +34,9 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -463,8 +466,9 @@ public final class IntervalUtils {
             return;
         }
 
-        // Single scan: detect brackets and find semicolon position
+        // Single scan: detect brackets, find semicolon and timezone marker positions
         int dateLim = lim;
+        int semicolonPos = -1;
         int depth = 0;
         boolean hasBrackets = false;
         for (int i = lo; i < lim; i++) {
@@ -475,37 +479,102 @@ public final class IntervalUtils {
             } else if (c == ']') {
                 depth--;
             } else if (c == ';' && depth == 0) {
+                semicolonPos = i;
                 dateLim = i;
                 break;
             }
         }
 
+        // Find timezone marker (@ before semicolon, outside brackets)
+        int tzMarkerPos = findTimezoneMarker(seq, lo, semicolonPos >= 0 ? semicolonPos : lim);
+        int tzLo = -1;
+        int tzHi = -1;
+        int effectiveDateLim = dateLim;
+        int effectiveLim = lim;
+
+        if (tzMarkerPos >= 0) {
+            // Extract timezone bounds
+            tzLo = tzMarkerPos + 1;
+            tzHi = semicolonPos >= 0 ? semicolonPos : lim;
+            // Adjust date limit to exclude timezone
+            effectiveDateLim = tzMarkerPos;
+            // Build the interval string without timezone but with duration suffix
+            // e.g., "2024-01-01T08:00@Europe/London;1h" -> "2024-01-01T08:00;1h"
+            if (semicolonPos >= 0) {
+                // Has duration suffix - we need to reconstruct the string
+                sink.clear();
+                sink.put(seq, lo, tzMarkerPos);
+                sink.put(seq, semicolonPos, lim);
+                effectiveLim = sink.length();
+                effectiveDateLim = tzMarkerPos - lo; // Position in sink
+            } else {
+                effectiveLim = tzMarkerPos;
+            }
+        }
+
+        int outSize = out.size();
+
         if (!hasBrackets) {
-            parseInterval0(timestampDriver, seq, lo, lim, position, out, operation);
+            if (tzMarkerPos >= 0 && semicolonPos >= 0) {
+                // Parse from reconstructed sink
+                parseInterval0(timestampDriver, sink, 0, effectiveLim, position, out, operation);
+            } else if (tzMarkerPos >= 0) {
+                // No semicolon, just truncate at timezone marker
+                parseInterval0(timestampDriver, seq, lo, effectiveLim, position, out, operation);
+            } else {
+                parseInterval0(timestampDriver, seq, lo, lim, position, out, operation);
+            }
             if (applyEncoded) {
                 applyLastEncodedInterval(timestampDriver, out);
+            }
+            // Apply timezone conversion if present
+            if (tzMarkerPos >= 0) {
+                applyTimezoneToIntervals(timestampDriver, out, outSize, seq, tzLo, tzHi, position, applyEncoded);
             }
             return;
         }
 
-        int outSize = out.size();
         sink.clear();
+        CharSequence parseSeq = seq;
+        int parseLo = lo;
+        int parseDateLim = effectiveDateLim;
+        int parseLim = lim;
+
+        if (tzMarkerPos >= 0) {
+            // Reconstruct the string without timezone
+            sink.put(seq, lo, tzMarkerPos);
+            if (semicolonPos >= 0) {
+                sink.put(seq, semicolonPos, lim);
+            }
+            parseSeq = sink;
+            parseLo = 0;
+            parseDateLim = tzMarkerPos - lo;
+            parseLim = sink.length();
+        }
+
+        // Use a separate sink for bracket expansion
+        StringSink expansionSink = Misc.getThreadLocalSink();
+
         try {
             expandBracketsRecursive(
                     timestampDriver,
-                    seq,
-                    lo,
-                    lo,
-                    dateLim,
-                    lim,
+                    parseSeq,
+                    parseLo,
+                    parseLo,
+                    parseDateLim,
+                    parseLim,
                     position,
                     out,
                     operation,
-                    sink,
+                    expansionSink,
                     0,
                     applyEncoded,
                     outSize
             );
+            // Apply timezone conversion if present (before union)
+            if (tzMarkerPos >= 0) {
+                applyTimezoneToIntervals(timestampDriver, out, outSize, seq, tzLo, tzHi, position, applyEncoded);
+            }
             // In static mode, union all bracket-expanded intervals with each other
             // (they were added without union during expansion)
             if (applyEncoded && out.size() > outSize + 2) {
@@ -987,8 +1056,27 @@ public final class IntervalUtils {
             throw SqlException.$(errorPos, "Empty date list");
         }
 
-        // The suffix is everything after the closing bracket (like T09:30;1h)
+        // The suffix is everything after the closing bracket (like T09:30;1h or T09:30@Europe/London;1h)
         int suffixStart = listEnd + 1;
+
+        // Check for global timezone in suffix (applies to elements without per-element timezone)
+        int globalTzMarker = findTimezoneMarker(seq, suffixStart, lim);
+        int globalTzLo = -1;
+        int globalTzHi = -1;
+        int effectiveSuffixLim = lim;
+
+        if (globalTzMarker >= 0) {
+            globalTzLo = globalTzMarker + 1;
+            // Find where timezone ends (at ';' or end of string)
+            int semicolonPos = -1;
+            for (int j = globalTzMarker + 1; j < lim; j++) {
+                if (seq.charAt(j) == ';') {
+                    semicolonPos = j;
+                    break;
+                }
+            }
+            globalTzHi = semicolonPos >= 0 ? semicolonPos : lim;
+        }
 
         // Parse comma-separated date elements, respecting nested brackets
         int elementStart = contentStart;
@@ -1016,10 +1104,44 @@ public final class IntervalUtils {
                     throw SqlException.$(errorPos, "Empty element in date list");
                 }
 
-                // Build the full interval string: element + suffix
+                // Check if element has per-date timezone (e.g., "2024-01-01@Europe/London")
+                int elemTzMarker = findTimezoneMarker(seq, elementStart, elementEnd);
+                int elemTzLo = -1;
+                int elemTzHi = -1;
+                int effectiveElementEnd = elementEnd;
+
+                // Determine which timezone to use: per-element takes precedence over global
+                int activeTzLo = -1;
+                int activeTzHi = -1;
+
+                if (elemTzMarker >= 0) {
+                    // Per-element timezone
+                    elemTzLo = elemTzMarker + 1;
+                    elemTzHi = elementEnd;
+                    effectiveElementEnd = elemTzMarker;
+                    activeTzLo = elemTzLo;
+                    activeTzHi = elemTzHi;
+                } else if (globalTzMarker >= 0) {
+                    // Use global timezone from suffix
+                    activeTzLo = globalTzLo;
+                    activeTzHi = globalTzHi;
+                }
+
+                // Remember output size before parsing this element
+                int outSizeBeforeElement = out.size();
+
+                // Build the full interval string: element (without tz) + suffix (without tz)
                 sink.clear();
-                sink.put(seq, elementStart, elementEnd);
-                sink.put(seq, suffixStart, lim);
+                sink.put(seq, elementStart, effectiveElementEnd);
+                if (globalTzMarker >= 0) {
+                    // Add suffix without timezone: part before @ and part after timezone (;duration)
+                    sink.put(seq, suffixStart, globalTzMarker);
+                    if (globalTzHi < lim) {
+                        sink.put(seq, globalTzHi, lim);
+                    }
+                } else {
+                    sink.put(seq, suffixStart, lim);
+                }
 
                 // Check if the combined string contains brackets that need expansion
                 // This includes brackets in the element part AND in the suffix part
@@ -1071,6 +1193,11 @@ public final class IntervalUtils {
                     parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
                 }
 
+                // Apply timezone conversion if present (per-element or global)
+                if (activeTzLo >= 0) {
+                    applyTimezoneToIntervals(timestampDriver, out, outSizeBeforeElement, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+                }
+
                 elementStart = i + 1;
             }
         }
@@ -1100,7 +1227,7 @@ public final class IntervalUtils {
      * Field expansion: [1]-[1]-[1]T... or [2018,2019]-01-10
      * <p>
      * The key difference: after the closing ']' that matches the opening '[':
-     * - Date list: followed by end-of-string, 'T', ';', or whitespace
+     * - Date list: followed by end-of-string, 'T', ';', '@' (timezone), or whitespace
      * - Field expansion: followed by '-', ':', '.', or digit (part of date format)
      *
      * @param seq string that starts with '['
@@ -1124,9 +1251,9 @@ public final class IntervalUtils {
                         return true;
                     }
                     char next = seq.charAt(i + 1);
-                    // Date list: followed by T, ;, or whitespace
-                    // Field expansion: followed by -, :, ., or digit
-                    return next == 'T' || next == ';' || Character.isWhitespace(next);
+                    // Date list: followed by T, ;, @ (timezone marker), or whitespace
+                    // Field expansion: followed by -, :, ., or digit (part of date format)
+                    return next == 'T' || next == ';' || next == '@' || Character.isWhitespace(next);
                 }
             }
         }
@@ -1374,5 +1501,147 @@ public final class IntervalUtils {
 
     static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
         replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
+    }
+
+    /**
+     * Finds the position of '@' timezone marker in the string, respecting brackets.
+     * The '@' must be outside brackets and before any ';' (duration suffix).
+     * Searches backwards to find the LAST '@' before ';' to handle edge cases.
+     *
+     * @param seq the input string
+     * @param lo  start index
+     * @param lim end index (stop at ';' if found)
+     * @return position of '@' or -1 if not found
+     */
+    private static int findTimezoneMarker(CharSequence seq, int lo, int lim) {
+        // First find where ';' is (if any) to set the effective limit
+        int effectiveLim = lim;
+        int depth = 0;
+        for (int i = lo; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (c == ';' && depth == 0) {
+                effectiveLim = i;
+                break;
+            }
+        }
+
+        // Now search backwards for '@' outside brackets
+        depth = 0;
+        for (int i = effectiveLim - 1; i >= lo; i--) {
+            char c = seq.charAt(i);
+            if (c == ']') {
+                depth++;
+            } else if (c == '[') {
+                depth--;
+            } else if (c == '@' && depth == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Converts local timestamps (lo, hi) to UTC using the specified timezone.
+     * Handles both numeric offsets (+03:00) and named timezones (Europe/London).
+     * For DST gaps, adjusts the timestamp to avoid non-existent times.
+     *
+     * @param timestampDriver the timestamp driver
+     * @param lo              local lo timestamp
+     * @param hi              local hi timestamp
+     * @param tz              timezone string
+     * @param tzLo            start index in tz
+     * @param tzHi            end index in tz
+     * @param position        position for error reporting
+     * @return array of [utcLo, utcHi]
+     * @throws SqlException if timezone is invalid
+     */
+    private static long[] convertToUtc(
+            TimestampDriver timestampDriver,
+            long lo,
+            long hi,
+            CharSequence tz,
+            int tzLo,
+            int tzHi,
+            int position
+    ) throws SqlException {
+        try {
+            long l = Dates.parseOffset(tz, tzLo, tzHi);
+            if (l != Long.MIN_VALUE) {
+                // Numeric offset - convert minutes to timestamp units
+                long offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
+                // Local time - offset = UTC time
+                return new long[]{lo - offset, hi - offset};
+            }
+
+            // Named timezone - get timezone rules
+            TimeZoneRules tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, tzLo, tzHi)),
+                    timestampDriver.getTZRuleResolution()
+            );
+
+            // Handle DST gaps for lo
+            long adjustedLo = lo;
+            long gapDuration = tzRules.getDstGapOffset(lo);
+            if (gapDuration != 0) {
+                // lo is in a DST gap - adjust forward past the gap
+                adjustedLo = lo + gapDuration;
+            }
+
+            // Handle DST gaps for hi
+            long adjustedHi = hi;
+            gapDuration = tzRules.getDstGapOffset(hi);
+            if (gapDuration != 0) {
+                // hi is in a DST gap - adjust forward past the gap
+                adjustedHi = hi + gapDuration;
+            }
+
+            return new long[]{
+                    timestampDriver.toUTC(adjustedLo, tzRules),
+                    timestampDriver.toUTC(adjustedHi, tzRules)
+            };
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid timezone: ").put(tz, tzLo, tzHi);
+        }
+    }
+
+    /**
+     * Applies timezone conversion to all intervals in the output list from outSizeBeforeConversion to end.
+     * This converts local timestamps to UTC.
+     *
+     * @param timestampDriver       the timestamp driver
+     * @param out                   the interval list
+     * @param outSizeBeforeConversion size of output before intervals that need conversion
+     * @param tz                    timezone string
+     * @param tzLo                  start index in tz
+     * @param tzHi                  end index in tz
+     * @param position              position for error reporting
+     * @param isStaticMode          true if intervals are in 2-long format, false if 4-long format
+     */
+    private static void applyTimezoneToIntervals(
+            TimestampDriver timestampDriver,
+            LongList out,
+            int outSizeBeforeConversion,
+            CharSequence tz,
+            int tzLo,
+            int tzHi,
+            int position,
+            boolean isStaticMode
+    ) throws SqlException {
+        int stride = isStaticMode ? 2 : 4;
+        int currentSize = out.size();
+
+        for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
+            long lo = out.getQuick(i);
+            long hi = out.getQuick(i + 1);
+
+            long[] utcTimes = convertToUtc(timestampDriver, lo, hi, tz, tzLo, tzHi, position);
+
+            out.setQuick(i, utcTimes[0]);
+            out.setQuick(i + 1, utcTimes[1]);
+        }
     }
 }
