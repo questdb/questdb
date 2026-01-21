@@ -298,6 +298,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
+        if (updatedTableToken.isMatView() && matViewGraph.getViewDefinition(updatedTableToken) == null) {
+            throw CairoException.nonCritical().put("materialized view has not been registered yet [name=").put(updatedTableToken.getTableName()).put(']');
+        }
         tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
         if (token.isWal()) {
             tableSequencerAPI.applyRename(updatedTableToken);
