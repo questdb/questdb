@@ -421,6 +421,7 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
 
     @Override
     public void setRowIndex(long rowIndex) {
+        this.rowIndex = rowIndex;
         cursor++;
     }
 

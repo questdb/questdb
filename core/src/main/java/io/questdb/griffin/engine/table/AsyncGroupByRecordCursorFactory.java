@@ -408,7 +408,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
 
-            atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+            if (isParquetFrame) {
+                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+            }
             if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, false)) {
                 PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = atom.getPageFrameFilteredMemoryRecord(slotId);
                 filteredMemoryRecord.of(frameMemory, record, atom.getFilterUsedColumnIndexes());
