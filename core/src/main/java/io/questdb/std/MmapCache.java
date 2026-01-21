@@ -101,74 +101,11 @@ public final class MmapCache {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
-        // Fast path: check cache under lock
-        synchronized (this) {
-            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
-            if (fdMapIndex < 0) {
-                MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
-                if (record.length >= len) {
-                    assert record.count > 0 : "found a record with zero reference count in mmap cache [fd=" + fd + "]";
-                    record.count++;
-                    mmapReuseCount++;
-                    return record.address;
-                }
-            }
-        }
-        // Cache miss, need to create new mapping. Perform actual mmap outside the lock.
-        long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
-        if (address == FilesFacade.MAP_FAILED) {
-            return address;
-        }
-
-        // We'll need these if we make a redundant mapping and need to unmap it:
-        long redundantAddress;
-        long redundantLen;
-        int redundantTag;
-        long returnAddress;
-
-        // Re-acquire lock and update cache
-        synchronized (this) {
-            // Re-check: someone else might have added a mapping while we were mapping
-            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
-            if (fdMapIndex >= 0) {
-                // We're alone -- use our mapping and return right away
-                MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
-                mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
-                mmapAddrCache.put(address, record);
-                return address;
-            }
-
-            // Race condition -- both we and another thread created a mapping. Decide which one
-            // to keep. We can't keep the existing one if it's too small.
-            MmapCacheRecord existingRecord = mmapFileCache.valueAt(fdMapIndex);
-            if (existingRecord.length < len) {
-                // Existing mapping is too small - replace with ours
-                MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
-                mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
-                mmapAddrCache.put(address, record);
-                return address;
-            }
-
-            // Existing mapping is fine - use it, discard ours
-            existingRecord.count++;
-            mmapReuseCount++;
-            redundantAddress = address;
-            redundantLen = len;
-            redundantTag = memoryTag;
-            returnAddress = existingRecord.address;
-        }
-
-        // We lost the race, clean up redundant mapping outside the lock
-        int result = Files.munmap0(redundantAddress, redundantLen);
-        if (result != -1) {
-            Unsafe.recordMemAlloc(-redundantLen, redundantTag);
+        if (Files.ASYNC_MUNMAP_ENABLED) {
+            return cacheMmapOptimistic(fd, mmapCacheKey, len, memoryTag);
         } else {
-            throw CairoException.critical(Os.errno())
-                    .put("munmap of redundant mapping failed [address=").put(redundantAddress)
-                    .put(", len=").put(redundantLen)
-                    .put(", memoryTag=").put(redundantTag).put(']');
+            return cacheMmapPessimistic(fd, mmapCacheKey, len, memoryTag);
         }
-        return returnAddress;
     }
 
     /**
@@ -395,6 +332,108 @@ public final class MmapCache {
                     .$(", errno=").$(errno)
                     .I$();
         }
+    }
+
+    private long cacheMmapOptimistic(int fd, long mmapCacheKey, long len, int memoryTag) {
+        // Fast path: check cache under lock
+        synchronized (this) {
+            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
+            if (fdMapIndex < 0) {
+                MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
+                if (record.length >= len) {
+                    assert record.count > 0 : "found a record with zero reference count in mmap cache [fd=" + fd + "]";
+                    record.count++;
+                    mmapReuseCount++;
+                    return record.address;
+                }
+            }
+        }
+        // Cache miss, need to create new mapping. Perform actual mmap outside the lock.
+        long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
+        if (address == FilesFacade.MAP_FAILED) {
+            return address;
+        }
+
+        // We'll need these if we make a redundant mapping and need to unmap it:
+        long redundantAddress;
+        long redundantLen;
+        int redundantTag;
+        long returnAddress;
+
+        // Re-acquire lock and update cache
+        synchronized (this) {
+            // Re-check: someone else might have added a mapping while we were mapping
+            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
+            if (fdMapIndex >= 0) {
+                // We're alone -- use our mapping and return right away
+                MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
+                mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
+                mmapAddrCache.put(address, record);
+                return address;
+            }
+
+            // Race condition -- both we and another thread created a mapping. Decide which one
+            // to keep. We can't keep the existing one if it's too small.
+            MmapCacheRecord existingRecord = mmapFileCache.valueAt(fdMapIndex);
+            if (existingRecord.length < len) {
+                // Existing mapping is too small - replace with ours
+                MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
+                mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
+                mmapAddrCache.put(address, record);
+                return address;
+            }
+
+            // Existing mapping is fine - use it, discard ours
+            existingRecord.count++;
+            mmapReuseCount++;
+            redundantAddress = address;
+            redundantLen = len;
+            redundantTag = memoryTag;
+            returnAddress = existingRecord.address;
+        }
+
+        // We lost the race, clean up redundant mapping outside the lock
+        int result = Files.munmap0(redundantAddress, redundantLen);
+        if (result != -1) {
+            Unsafe.recordMemAlloc(-redundantLen, redundantTag);
+        } else {
+            throw CairoException.critical(Os.errno())
+                    .put("munmap of redundant mapping failed [address=").put(redundantAddress)
+                    .put(", len=").put(redundantLen)
+                    .put(", memoryTag=").put(redundantTag).put(']');
+        }
+        return returnAddress;
+    }
+
+    private long cacheMmapPessimistic(int fd, long mmapCacheKey, long len, int memoryTag) {
+        synchronized (this) {
+            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
+            if (fdMapIndex < 0) {
+                MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
+                if (record.length >= len) {
+                    assert record.count > 0 : "found a record with zero reference count in mmap cache [fd=" + fd + "]";
+                    record.count++;
+                    mmapReuseCount++;
+                    return record.address;
+                }
+            }
+
+            // Cache RO maps only.
+            long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
+
+            if (address == FilesFacade.MAP_FAILED) {
+                return address;
+            }
+            // Cache the mmap record
+            MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
+            mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
+
+            // Point the returned address to the correct offset
+            mmapAddrCache.put(address, record);
+
+            return address;
+        }
+
     }
 
     private MmapCacheRecord createMmapCacheRecord(int fd, long fileCacheKey, long len, long address, int memoryTag) {
