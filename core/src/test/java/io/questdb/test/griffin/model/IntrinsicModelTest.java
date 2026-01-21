@@ -1473,7 +1473,7 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testTimezoneZ() throws SqlException {
+    public void testTimezoneZ() {
         // Test @Z - potential NPE if getZoneRules returns null
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
