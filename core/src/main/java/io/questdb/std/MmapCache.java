@@ -162,6 +162,11 @@ public final class MmapCache {
         int result = Files.munmap0(redundantAddress, redundantLen);
         if (result != -1) {
             Unsafe.recordMemAlloc(-redundantLen, redundantTag);
+        } else {
+            throw CairoException.critical(Os.errno())
+                    .put("munmap of redundant mapping failed [address=").put(redundantAddress)
+                    .put(", len=").put(redundantLen)
+                    .put(", memoryTag=").put(redundantTag).put(']');
         }
         return returnAddress;
     }
