@@ -192,14 +192,11 @@ public final class IntervalUtils {
 
     public static int getIntervalType(int timestampType) {
         assert ColumnType.isTimestamp(timestampType);
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return ColumnType.INTERVAL_TIMESTAMP_MICRO;
-            case ColumnType.TIMESTAMP_NANO:
-                return ColumnType.INTERVAL_TIMESTAMP_NANO;
-            default:
-                return ColumnType.UNDEFINED;
-        }
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> ColumnType.INTERVAL_TIMESTAMP_MICRO;
+            case ColumnType.TIMESTAMP_NANO -> ColumnType.INTERVAL_TIMESTAMP_NANO;
+            default -> ColumnType.UNDEFINED;
+        };
     }
 
     public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
@@ -212,15 +209,11 @@ public final class IntervalUtils {
 
     public static int getTimestampTypeByIntervalType(int intervalType) {
         assert ColumnType.isInterval(intervalType);
-        switch (intervalType) {
-            case ColumnType.INTERVAL_RAW:
-            case ColumnType.INTERVAL_TIMESTAMP_MICRO:
-                return ColumnType.TIMESTAMP_MICRO;
-            case ColumnType.INTERVAL_TIMESTAMP_NANO:
-                return ColumnType.TIMESTAMP_NANO;
-            default:
-                return ColumnType.UNDEFINED;
-        }
+        return switch (intervalType) {
+            case ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO -> ColumnType.TIMESTAMP_MICRO;
+            case ColumnType.INTERVAL_TIMESTAMP_NANO -> ColumnType.TIMESTAMP_NANO;
+            default -> ColumnType.UNDEFINED;
+        };
     }
 
     /**

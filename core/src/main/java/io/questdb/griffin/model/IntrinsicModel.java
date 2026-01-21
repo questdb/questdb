@@ -187,6 +187,10 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.union(lo, hi);
     }
 
+    public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        runtimeIntervalBuilder.unionIntervals(seq, lo, lim, position);
+    }
+
     static {
         INFINITE_INTERVAL = new LongList();
         INFINITE_INTERVAL.add(Long.MIN_VALUE, Long.MAX_VALUE);
