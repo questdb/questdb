@@ -92,8 +92,9 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         }
 
         // slow path: we need to start/continue the backward scan
-        if (rowIndex == -1) {
+        if (rowIndex < 0) {
             // oops, previously we've scanned the slave table until the very start
+            // or the row index was never initialized (Long.MIN_VALUE)
             return Long.MIN_VALUE;
         }
 

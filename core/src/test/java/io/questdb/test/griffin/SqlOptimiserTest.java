@@ -5868,4 +5868,75 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             return (QueryModel) model;
         }
     }
+
+    @Test
+    public void testWindowFunctionDeduplicationWhenNestedInExpression() throws Exception {
+        // This test verifies that when a window function appears first inside an expression
+        // (e.g., abs(row_number() over(...))) and then as a top-level window column
+        // (e.g., row_number() over(...)), they are properly deduplicated.
+        // Bug: replaceIfWindowFunction() (called via emitWindowFunctions) adds window functions
+        // to windowModel but doesn't register them in windowFunctionHashMap, causing
+        // findDuplicateWindowFunction() to miss them when processing later identical windows.
+        assertMemoryLeak(() -> {
+            execute("create table t ( x int, ts timestamp) timestamp(ts);");
+            execute("insert into t select x, x::timestamp from long_sequence(3)");
+
+            // Case 1: Window function nested in expression appears BEFORE the same top-level window function
+            // If deduplication works correctly, there should be only ONE window function in the plan
+            String q1 = "select abs(row_number() over(order by x)), row_number() over(order by x) from t";
+
+            assertPlanNoLeakCheck(
+                    q1,
+                    """
+                            VirtualRecord
+                              functions: [abs(row_number),row_number]
+                                CachedWindow
+                                  orderedFunctions: [[x] => [row_number()]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+
+            // Verify the result is correct
+            assertSql("""
+                    abs\trow_number
+                    1\t1
+                    2\t2
+                    3\t3
+                    """, q1);
+
+            // Case 2: Same test but with partition by clause
+            String q2 = "select abs(row_number() over(partition by x order by ts)), row_number() over(partition by x order by ts) from t";
+
+            assertPlanNoLeakCheck(
+                    q2,
+                    """
+                            VirtualRecord
+                              functions: [abs(row_number),row_number]
+                                Window
+                                  functions: [row_number() over (partition by [x])]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+
+            // Case 3: Multiple nested window functions that are the same
+            String q3 = "select abs(row_number() over(order by x)) + abs(row_number() over(order by x)), row_number() over(order by x) from t";
+
+            assertPlanNoLeakCheck(
+                    q3,
+                    """
+                            VirtualRecord
+                              functions: [abs(row_number)+abs(row_number),row_number]
+                                CachedWindow
+                                  orderedFunctions: [[x] => [row_number()]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+        });
+    }
 }

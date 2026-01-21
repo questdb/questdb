@@ -136,6 +136,15 @@ public class FunctionFactoryCache {
         return name != null && groupByFunctionNames.contains(name);
     }
 
+    /**
+     * Returns true if the function is a pure window function (like row_number, rank)
+     * that cannot be used as an aggregate. Functions like sum, count, avg that can
+     * be both aggregate and window functions return false.
+     */
+    public boolean isPureWindowFunction(CharSequence name) {
+        return isWindow(name) && !isGroupBy(name);
+    }
+
     public boolean isRuntimeConstant(CharSequence name) {
         return name != null && runtimeConstantFunctionNames.contains(name);
     }
