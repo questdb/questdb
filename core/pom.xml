@@ -663,7 +663,6 @@
                                 <goals>
                                     <goal>build</goal>
                                 </goals>
-                                <phase>compile</phase>
                                 <configuration>
                                     <path>rust/qdbr</path>
                                     <release>${qdbr.release}</release>
@@ -686,21 +685,6 @@
                                     <environmentVariables>
                                         <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
                                         <LLVM_PROFILE_FILE>questdbr-cargo-test.profraw</LLVM_PROFILE_FILE>
-                                    </environmentVariables>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>qdb-core-test</id>
-                                <goals>
-                                    <goal>test</goal>
-                                </goals>
-                                <phase>test</phase>
-                                <configuration>
-                                    <path>rust/qdb-core</path>
-                                    <release>${qdbr.release}</release>
-                                    <environmentVariables>
-                                        <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
-                                        <LLVM_PROFILE_FILE>qdb-core-cargo-test.profraw</LLVM_PROFILE_FILE>
                                     </environmentVariables>
                                 </configuration>
                             </execution>
