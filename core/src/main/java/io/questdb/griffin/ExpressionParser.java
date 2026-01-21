@@ -425,20 +425,6 @@ public class ExpressionParser {
         }
 
         if (nextTok != null && SqlKeywords.isOverKeyword(nextTok)) {
-            // Check if window function is nested inside a function call (not allowed)
-            // Allowed: standalone, arithmetic expressions, CASE branches
-            // Not allowed: window function as argument to another function (e.g., cast(winfunc() over() as int))
-            for (int i = 0, n = opStack.size(); i < n; i++) {
-                ExpressionNode stackNode = opStack.peek(i);
-                // Check for function calls: LITERAL followed by CONTROL '('
-                if (stackNode.type == ExpressionNode.CONTROL && Chars.equals(stackNode.token, '(') && i + 1 < n) {
-                    ExpressionNode prevNode = opStack.peek(i + 1);
-                    if (prevNode.type == ExpressionNode.LITERAL && !SqlKeywords.isCaseKeyword(prevNode.token)) {
-                        // This is a function call containing the window function
-                        throw SqlException.$(lexer.lastTokenPosition(), "window function is not allowed as an argument to another function");
-                    }
-                }
-            }
             // This is a window function - parse the OVER clause
             // First, update node to be a function
             node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);

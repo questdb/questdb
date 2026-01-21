@@ -2,7 +2,7 @@ pub mod dict_decoder;
 pub mod dict_slicer;
 pub mod rle;
 
-use crate::allocator::{AcVec, AcVecSetLen};
+use crate::allocator::{AcVec, AcVecSetLen, AllocFailure};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
 use parquet2::encoding::hybrid_rle::BitmapIter;
@@ -12,6 +12,38 @@ use std::ptr;
 /// Trait for types that can receive bytes (used by DataPageSlicer)
 pub trait ByteSink {
     fn extend_from_slice(&mut self, data: &[u8]) -> ParquetResult<()>;
+    fn extend_from_slice_safe(&mut self, data: &[u8]) -> ParquetResult<()>;
+}
+
+pub struct SliceSink<'a>(pub &'a mut [u8]);
+
+impl ByteSink for SliceSink<'_> {
+    #[inline]
+    fn extend_from_slice(&mut self, data: &[u8]) -> ParquetResult<()> {
+        self.0[..data.len()].copy_from_slice(data);
+        Ok(())
+    }
+
+    #[inline]
+    fn extend_from_slice_safe(&mut self, data: &[u8]) -> ParquetResult<()> {
+        self.0[..data.len()].copy_from_slice(data);
+        Ok(())
+    }
+}
+
+pub trait Converter<const N: usize> {
+    fn convert<S: ByteSink>(input: &[u8], output: &mut S);
+}
+
+pub struct DaysToMillisConverter;
+
+impl Converter<8> for DaysToMillisConverter {
+    #[inline]
+    fn convert<S: ByteSink>(input: &[u8], output: &mut S) {
+        let days_since_epoch = unsafe { ptr::read_unaligned(input.as_ptr() as *const i32) };
+        let date = days_since_epoch as i64 * 24 * 60 * 60 * 1000;
+        let _ = output.extend_from_slice(&date.to_le_bytes());
+    }
 }
 
 impl ByteSink for AcVec<u8> {
@@ -24,6 +56,18 @@ impl ByteSink for AcVec<u8> {
         }
         Ok(())
     }
+
+    #[inline]
+    fn extend_from_slice_safe(&mut self, data: &[u8]) -> ParquetResult<()> {
+        AcVec::extend_from_slice(self, data).map_err(|_| {
+            fmt_err!(
+                OutOfMemory(Some(AllocFailure::OutOfMemory {
+                    requested_size: data.len()
+                })),
+                "AcVec capacity overflow"
+            )
+        })
+    }
 }
 
 impl ByteSink for Vec<u8> {
@@ -35,6 +79,12 @@ impl ByteSink for Vec<u8> {
             ptr::copy_nonoverlapping(data.as_ptr(), self.as_mut_ptr().add(len), data.len());
             self.set_len(len + data.len());
         }
+        Ok(())
+    }
+
+    #[inline]
+    fn extend_from_slice_safe(&mut self, data: &[u8]) -> ParquetResult<()> {
+        Vec::extend_from_slice(self, data);
         Ok(())
     }
 }
@@ -160,11 +210,7 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
                     let bytes = val.to_le_bytes();
                     dest.extend_from_slice(&bytes[..N])?;
                 }
-                Some(Err(_)) => {
-                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
-                    dest.extend_from_slice(&self.error_value)?;
-                }
-                None => {
+                Some(Err(_)) | None => {
                     self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
                     dest.extend_from_slice(&self.error_value)?;
                 }
@@ -232,12 +278,10 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
         dest.extend_from_slice(res)
     }
 
+    #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            let len = self.lengths[self.index] as usize;
-            dest.extend_from_slice(&self.data[self.pos..self.pos + len])?;
-            self.pos += len;
-            self.index += 1;
+            self.next_into(dest)?;
         }
         Ok(())
     }
@@ -348,7 +392,7 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
                             &self.data[self.data_offset..self.data_offset + suffix_len],
                         );
                         self.data_offset += suffix_len;
-                        dest.extend_from_slice(&self.last_value)
+                        dest.extend_from_slice_safe(&self.last_value)
                     }
                     None => {
                         self.error = Err(fmt_err!(Layout, "not enough suffix values to iterate"));
@@ -363,36 +407,10 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
         }
     }
 
+    #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            if self.error.is_err() {
-                return Ok(());
-            }
-            match self.prefix.next() {
-                Some(prefix_len) => {
-                    let prefix_len = prefix_len as usize;
-                    match self.suffix.next() {
-                        Some(suffix_len) => {
-                            let suffix_len = suffix_len as usize;
-                            self.last_value.truncate(prefix_len);
-                            self.last_value.extend_from_slice(
-                                &self.data[self.data_offset..self.data_offset + suffix_len],
-                            );
-                            self.data_offset += suffix_len;
-                            dest.extend_from_slice(&self.last_value)?;
-                        }
-                        None => {
-                            self.error =
-                                Err(fmt_err!(Layout, "not enough suffix values to iterate"));
-                            return Ok(());
-                        }
-                    }
-                }
-                None => {
-                    self.error = Err(fmt_err!(Layout, "not enough prefix values to iterate"));
-                    return Ok(());
-                }
-            }
+            self.next_into(dest)?;
         }
         Ok(())
     }
@@ -478,11 +496,7 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
     #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            let len = unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) }
-                as usize;
-            self.pos += size_of::<u32>();
-            dest.extend_from_slice(&self.data[self.pos..self.pos + len])?;
-            self.pos += len;
+            self.next_into(dest)?;
         }
         Ok(())
     }
@@ -602,30 +616,31 @@ impl<'a> BooleanBitmapSlicer<'a> {
     }
 }
 
-pub struct ValueConvertSlicer<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> {
+pub struct ValueConvertSlicer<const N: usize, T: DataPageSlicer, C: Converter<N>> {
     inner_slicer: T,
-    converter: F,
     error: ParquetResult<()>,
     buffer: [u8; N],
+    _converter: std::marker::PhantomData<C>,
 }
 
-impl<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> DataPageSlicer
-    for ValueConvertSlicer<N, T, F>
+impl<const N: usize, T: DataPageSlicer, C: Converter<N>> DataPageSlicer
+    for ValueConvertSlicer<N, T, C>
 {
     #[inline]
     fn next(&mut self) -> &[u8] {
         let slice = self.inner_slicer.next();
-        (self.converter)(slice, &mut self.buffer);
+        C::convert(slice, &mut SliceSink(&mut self.buffer));
         &self.buffer
     }
 
     #[inline]
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
         let slice = self.inner_slicer.next();
-        (self.converter)(slice, &mut self.buffer);
-        dest.extend_from_slice(&self.buffer)
+        C::convert(slice, dest);
+        Ok(())
     }
 
+    #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
             self.next_into(dest)?;
@@ -650,13 +665,13 @@ impl<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> DataPageSlic
     }
 }
 
-impl<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> ValueConvertSlicer<N, T, F> {
-    pub fn new(inner_slicer: T, converter: F) -> Self {
+impl<const N: usize, T: DataPageSlicer, C: Converter<N>> ValueConvertSlicer<N, T, C> {
+    pub fn new(inner_slicer: T) -> Self {
         Self {
             inner_slicer,
-            converter,
             error: Ok(()),
             buffer: [0; N],
+            _converter: std::marker::PhantomData,
         }
     }
 }

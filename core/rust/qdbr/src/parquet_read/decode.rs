@@ -15,8 +15,9 @@ use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
 use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
 use crate::parquet_read::slicer::{
-    BooleanBitmapSlicer, DataPageFixedSlicer, DataPageSlicer, DeltaBinaryPackedSlicer,
-    DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
+    BooleanBitmapSlicer, DataPageFixedSlicer, DataPageSlicer, DaysToMillisConverter,
+    DeltaBinaryPackedSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer,
+    ValueConvertSlicer,
 };
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, DecodeContext, ParquetDecoder, RowGroupBuffers,
@@ -994,15 +995,8 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_hi,
                         rows_filter,
                         &mut FixedLongColumnSink::new(
-                            &mut ValueConvertSlicer::<8, _, _>::new(
+                            &mut ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(
                                 DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
-                                |int_val: &[u8], buff: &mut [u8; 8]| {
-                                    let days_since_epoch = unsafe {
-                                        ptr::read_unaligned(int_val.as_ptr() as *const i32)
-                                    };
-                                    let date = days_since_epoch as i64 * 24 * 60 * 60 * 1000;
-                                    buff.copy_from_slice(&date.to_le_bytes());
-                                },
                             ),
                             bufs,
                             &LONG_NULL,
@@ -1930,15 +1924,8 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedLongColumnSink::new(
-                            &mut ValueConvertSlicer::<8, _, _>::new(
+                            &mut ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(
                                 DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                                |int_val: &[u8], buff: &mut [u8; 8]| {
-                                    let days_since_epoch = unsafe {
-                                        ptr::read_unaligned(int_val.as_ptr() as *const i32)
-                                    };
-                                    let date = days_since_epoch as i64 * 24 * 60 * 60 * 1000;
-                                    buff.copy_from_slice(&date.to_le_bytes());
-                                },
                             ),
                             bufs,
                             &LONG_NULL,

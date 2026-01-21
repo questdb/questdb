@@ -21,7 +21,6 @@
 macro_rules! unpack_impl {
     ($t:ty, $bytes:literal, $bits:tt) => {
         #[inline]
-        #[allow(unsafe_code)]
         pub fn unpack<const NUM_BITS: usize>(input: &[u8], output: &mut [$t; $bits]) {
             if NUM_BITS == 0 {
                 for out in output {

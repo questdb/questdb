@@ -61,36 +61,36 @@ impl<'a, T: Unpackable> Decoder<'a, T> {
 
 impl<'a, T: Unpackable> Decoder<'a, T> {
     #[inline]
-    pub fn skip(&mut self, count: usize) {
-        if count == 0 || self.remaining == 0 {
-            return;
+    pub fn advance(&mut self, n: usize) -> usize {
+        let n = n.min(self.remaining);
+        if n == 0 {
+            return 0;
         }
 
-        let count = count.min(self.remaining);
-        self.remaining -= count;
+        self.remaining -= n;
 
-        let in_current_block = T::Unpacked::LENGTH - self.current_pack_index;
+        let left_in_pack = T::Unpacked::LENGTH - self.current_pack_index;
 
-        if count < in_current_block {
-            self.current_pack_index += count;
-            return;
-        }
+        if n < left_in_pack {
+            self.current_pack_index += n;
+        } else {
+            let mut to_skip = n - left_in_pack;
 
-        let after_current = count - in_current_block;
+            let packs_to_skip = to_skip / T::Unpacked::LENGTH;
+            for _ in 0..packs_to_skip {
+                self.packed.next();
+            }
+            to_skip %= T::Unpacked::LENGTH;
 
-        let full_blocks_to_skip = after_current / T::Unpacked::LENGTH;
-        let final_index = after_current % T::Unpacked::LENGTH;
-
-        if full_blocks_to_skip > 0 {
-            self.packed.nth(full_blocks_to_skip - 1);
-        }
-
-        if self.remaining > 0 {
             if let Some(packed) = self.packed.next() {
                 decode_pack::<T>(packed, self.num_bits, &mut self.unpacked);
+                self.current_pack_index = to_skip;
+            } else {
+                self.current_pack_index = 0;
             }
         }
-        self.current_pack_index = final_index;
+
+        n
     }
 }
 
