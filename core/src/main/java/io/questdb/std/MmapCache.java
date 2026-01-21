@@ -121,9 +121,9 @@ public final class MmapCache {
         }
 
         // We'll need these if we make a redundant mapping and need to unmap it:
-        long redundantAddress = 0;
-        long redundantLen = 0;
-        int redundantTag = 0;
+        long redundantAddress;
+        long redundantLen;
+        int redundantTag;
         long returnAddress;
 
         // Re-acquire lock and update cache
@@ -158,14 +158,11 @@ public final class MmapCache {
             returnAddress = existingRecord.address;
         }
 
-        // Clean up redundant mapping outside the lock (if we lost the race)
-        if (redundantAddress != 0) {
-            int result = Files.munmap0(redundantAddress, redundantLen);
-            if (result != -1) {
-                Unsafe.recordMemAlloc(-redundantLen, redundantTag);
-            }
+        // We lost the race, clean up redundant mapping outside the lock
+        int result = Files.munmap0(redundantAddress, redundantLen);
+        if (result != -1) {
+            Unsafe.recordMemAlloc(-redundantLen, redundantTag);
         }
-
         return returnAddress;
     }
 
