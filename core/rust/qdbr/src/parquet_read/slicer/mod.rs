@@ -591,9 +591,7 @@ impl DataPageSlicer for BooleanBitmapSlicer<'_> {
     }
 
     fn skip(&mut self, count: usize) {
-        for _ in 0..count {
-            self.bitmap_iter.next();
-        }
+        self.bitmap_iter.advance(count);
     }
 
     fn count(&self) -> usize {
