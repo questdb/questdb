@@ -398,7 +398,7 @@ public final class MmapCache {
             // will do it sync with the potential to throw CairoException
             unmap0(redundantAddress, redundantLen, redundantTag);
         } catch (CairoException e) {
-            LOG.error().$("failed to unmap redundant mapping after losing race [message=").$(e.getMessage()).I$();
+            LOG.critical().$("failed to unmap redundant mapping after losing race [message=").$(e.getMessage()).I$();
         }
         return returnAddress;
     }
