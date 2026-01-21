@@ -410,7 +410,9 @@ public final class IntervalUtils {
      * @param position        position for error reporting
      * @param out             output list for parsed intervals
      * @param operation       interval operation
-     * @param sink            reusable StringSink for building expanded strings (will be cleared)
+     * @param sink            reusable StringSink for building expanded strings (will be cleared).
+     *                        IMPORTANT: must not be {@code Misc.getThreadLocalSink()} as this method
+     *                        uses the thread-local sink internally for expansion, which would cause aliasing.
      * @param applyEncoded    if true, converts encoded format to simple format for non-bracket intervals
      * @throws SqlException if the interval format is invalid
      */
@@ -1007,7 +1009,9 @@ public final class IntervalUtils {
      * @param errorPos               position for error reporting
      * @param out                    output list for parsed intervals
      * @param operation              interval operation
-     * @param sink                   reusable StringSink for building expanded strings
+     * @param sink                   reusable StringSink for building expanded strings.
+     *                               IMPORTANT: must not be {@code Misc.getThreadLocalSink()} as this method
+     *                               uses the thread-local sink internally, which would cause aliasing.
      * @param applyEncoded           if true, converts to simple format
      * @param outSizeBeforeExpansion size of out before expansion started
      */
@@ -1063,7 +1067,6 @@ public final class IntervalUtils {
         int globalTzMarker = findTimezoneMarker(seq, suffixStart, lim);
         int globalTzLo = -1;
         int globalTzHi = -1;
-        int effectiveSuffixLim = lim;
 
         if (globalTzMarker >= 0) {
             globalTzLo = globalTzMarker + 1;
@@ -1106,8 +1109,8 @@ public final class IntervalUtils {
 
                 // Check if element has per-date timezone (e.g., "2024-01-01@Europe/London")
                 int elemTzMarker = findTimezoneMarker(seq, elementStart, elementEnd);
-                int elemTzLo = -1;
-                int elemTzHi = -1;
+                int elemTzLo;
+                int elemTzHi;
                 int effectiveElementEnd = elementEnd;
 
                 // Determine which timezone to use: per-element takes precedence over global
@@ -1547,7 +1550,16 @@ public final class IntervalUtils {
     /**
      * Converts local timestamps (lo, hi) to UTC using the specified timezone.
      * Handles both numeric offsets (+03:00) and named timezones (Europe/London).
-     * For DST gaps, adjusts the timestamp to avoid non-existent times.
+     * <p>
+     * <b>DST gap handling:</b> When the lo timestamp falls within a DST gap (a period that
+     * doesn't exist in local time, e.g., 2:30 AM on spring-forward day), both lo and hi are
+     * adjusted forward by the same offset to preserve the interval width. For example, if
+     * clocks jump from 2:00 AM to 3:00 AM, a query for the minute 2:30 AM will be adjusted
+     * to the minute 3:00 AM (both lo and hi shift by 30 minutes).
+     * This behavior is consistent with {@code TimestampFloorFromOffsetFunctionFactory}.
+     * <p>
+     * <b>DST overlap handling:</b> When a local timestamp falls within a DST overlap (a period
+     * that occurs twice, e.g., during fall-back), the daylight saving timezone offset is used.
      *
      * @param timestampDriver the timestamp driver
      * @param lo              local lo timestamp
@@ -1583,20 +1595,20 @@ public final class IntervalUtils {
                     timestampDriver.getTZRuleResolution()
             );
 
-            // Handle DST gaps for lo
+            // Handle DST gaps - use lo's gap offset for both lo and hi to preserve interval width
             long adjustedLo = lo;
+            long adjustedHi = hi;
             long gapDuration = tzRules.getDstGapOffset(lo);
             if (gapDuration != 0) {
-                // lo is in a DST gap - adjust forward past the gap
+                // lo is in a DST gap - adjust both lo and hi forward by the same amount
                 adjustedLo = lo + gapDuration;
-            }
-
-            // Handle DST gaps for hi
-            long adjustedHi = hi;
-            gapDuration = tzRules.getDstGapOffset(hi);
-            if (gapDuration != 0) {
-                // hi is in a DST gap - adjust forward past the gap
                 adjustedHi = hi + gapDuration;
+            } else {
+                // lo is not in a gap, but hi might be (edge case: interval spans gap boundary)
+                gapDuration = tzRules.getDstGapOffset(hi);
+                if (gapDuration != 0) {
+                    adjustedHi = hi + gapDuration;
+                }
             }
 
             return new long[]{
