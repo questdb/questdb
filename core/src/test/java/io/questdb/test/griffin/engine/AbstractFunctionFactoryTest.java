@@ -315,7 +315,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         });
     }
 
-    @Deprecated
     protected Invocation call(Object... args) throws SqlException {
         return callCustomised(false, true, args);
     }
@@ -566,6 +565,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
+        @SuppressWarnings("unused")
         public void andAssertDecimal256(long hh, long hl, long lh, long ll, int scale) {
             Decimal256 decimal256 = new Decimal256();
             function1.getDecimal256(record, decimal256);
@@ -577,6 +577,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
+        @SuppressWarnings("unused")
         public void andAssertDecimal256Null() {
             Decimal256 decimal256 = new Decimal256();
             function1.getDecimal256(record, decimal256);
