@@ -376,7 +376,13 @@ public final class MmapCache {
             // to keep. We can't keep the existing one if it's too small.
             MmapCacheRecord existingRecord = mmapFileCache.valueAt(fdMapIndex);
             if (existingRecord.length < len) {
-                // Existing mapping is too small - replace with ours
+                // Existing mapping is too small - replace it with ours.
+                // There are two caches: file cache and address cache. We'll put the entry
+                // with our larger mapping into the file cache, so it gets used from now on.
+                // However, some threads may already have grabbed the smaller mapping, and
+                // are using it. Once all its users are done with it and unmap it, that will
+                // remove it from the address cache. Therefore, we add our address to the
+                // address cache, and leave the other one there as well.
                 MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
                 mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
                 mmapAddrCache.put(address, record);
