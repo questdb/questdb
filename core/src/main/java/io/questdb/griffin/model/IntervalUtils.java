@@ -1766,22 +1766,12 @@ public final class IntervalUtils {
             short operation,
             LongList out
     ) throws SqlException {
-        char type = seq.charAt(lim - 1);
-        int period;
-        try {
-            period = Numbers.parseInt(seq, p + 1, lim - 1);
-        } catch (NumericException e) {
-            throw SqlException.$(position, "Range not a number");
-        }
         try {
             int index = out.size();
             timestampDriver.parseInterval(seq, lo, p, operation, out);
             long low = decodeIntervalLo(out, index);
             long hi = decodeIntervalHi(out, index);
-            hi = timestampDriver.add(hi, type, period);
-            if (hi < low) {
-                throw SqlException.invalidDate(position);
-            }
+            hi = addDuration(timestampDriver, hi, seq, p + 1, lim, position);
             replaceHiLoInterval(low, hi, operation, out);
             return;
         } catch (NumericException ignore) {
@@ -1789,14 +1779,60 @@ public final class IntervalUtils {
         }
         try {
             long loMicros = timestampDriver.parseAnyFormat(seq, lo, p);
-            long hiMicros = timestampDriver.add(loMicros, type, period);
-            if (hiMicros < loMicros) {
-                throw SqlException.invalidDate(position);
-            }
+            long hiMicros = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position);
             encodeInterval(loMicros, hiMicros, operation, out);
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }
+    }
+
+    /**
+     * Adds a duration string to a timestamp. Supports multi-unit format like "5h3m31s".
+     * Supported units: y (years), M (months), w (weeks), d (days), h (hours),
+     * m (minutes), s (seconds), T (millis), u (micros), n (nanos).
+     *
+     * @param timestampDriver the timestamp driver
+     * @param timestamp       the base timestamp
+     * @param seq             the duration string
+     * @param lo              start position in seq
+     * @param lim             end position in seq
+     * @param position        position for error reporting
+     * @return the new timestamp after adding the duration
+     */
+    private static long addDuration(
+            TimestampDriver timestampDriver,
+            long timestamp,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position
+    ) throws SqlException {
+        int numStart = lo;
+        for (int i = lo; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c >= '0' && c <= '9') {
+                continue;
+            }
+            // Found a unit character
+            if (i == numStart) {
+                throw SqlException.$(position, "Expected number before unit '").put(c).put('\'');
+            }
+            int period;
+            try {
+                period = Numbers.parseInt(seq, numStart, i);
+            } catch (NumericException e) {
+                throw SqlException.$(position, "Duration not a number");
+            }
+            timestamp = timestampDriver.add(timestamp, c, period);
+            if (timestamp == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "Invalid duration unit: " + c);
+            }
+            numStart = i + 1;
+        }
+        if (numStart < lim) {
+            throw SqlException.$(position, "Missing unit at end of duration");
+        }
+        return timestamp;
     }
 
     /**

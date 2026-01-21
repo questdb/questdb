@@ -125,8 +125,8 @@ public class IntrinsicModelTest {
 
     @Test
     public void testBracketExpansionErrorDurationPeriodOverflow() {
-        // Duration period number overflow in parseRange
-        assertBracketIntervalError("2018-01-[10,15];999999999999h", "Range not a number");
+        // Duration period number overflow in addDuration
+        assertBracketIntervalError("2018-01-[10,15];999999999999h", "Duration not a number");
     }
 
     @Test
@@ -147,14 +147,32 @@ public class IntrinsicModelTest {
 
     @Test
     public void testBracketExpansionErrorNegativeDuration() {
-        // Negative duration making hi < low (invalidDate) - via parseInterval path
-        assertBracketIntervalError("2018-01-[10,15]T00:00;-1h", "Invalid date");
+        // Negative duration - '-' is not a valid start for a duration segment
+        assertBracketIntervalError("2018-01-[10,15]T00:00;-1h", "Expected number before unit");
     }
 
     @Test
     public void testBracketExpansionErrorNegativeDurationAnyFormat() {
-        // Negative duration via parseAnyFormat path (full ISO format with Z suffix)
-        assertBracketIntervalError("2018-01-[10,15]T00:00:00.000000Z;-1h", "Invalid date");
+        // Negative duration via parseAnyFormat path - same error
+        assertBracketIntervalError("2018-01-[10,15]T00:00:00.000000Z;-1h", "Expected number before unit");
+    }
+
+    @Test
+    public void testBracketExpansionErrorDurationMissingUnit() {
+        // Multi-unit duration with missing unit at end
+        assertBracketIntervalError("2024-01-15T10:00;1h30", "Missing unit at end of duration");
+    }
+
+    @Test
+    public void testBracketExpansionErrorDurationInvalidUnit() {
+        // Invalid duration unit character
+        assertBracketIntervalError("2024-01-15T10:00;1x", "Invalid duration unit");
+    }
+
+    @Test
+    public void testBracketExpansionErrorDurationMissingNumber() {
+        // Missing number before unit
+        assertBracketIntervalError("2024-01-15T10:00;h", "Expected number before unit");
     }
 
     @Test
@@ -362,6 +380,46 @@ public class IntrinsicModelTest {
         assertBracketInterval(
                 "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:30:59.999999Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T11:30:59.999999Z}]",
                 "2018-01-[10,15]T10:30;1h"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionWithMultiUnitDuration() throws SqlException {
+        // Multi-unit duration: 1h30m = 1 hour 30 minutes
+        // 10:00 + 1h30m = 11:30:59.999999
+        assertBracketInterval(
+                "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T11:30:59.999999Z}]",
+                "2024-01-15T10:00;1h30m"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionWithMultiUnitDurationComplex() throws SqlException {
+        // Complex multi-unit duration: 2h15m30s
+        // 10:00:00 + 2h15m30s = 12:15:30.999999
+        assertBracketInterval(
+                "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T12:15:30.999999Z}]",
+                "2024-01-15T10:00:00;2h15m30s"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionWithMultiUnitDurationSubSecond() throws SqlException {
+        Assume.assumeFalse(ColumnType.isTimestampNano(timestampType.getTimestampType()));
+        // Sub-second units: 1s500T (1 second 500 millis)
+        // 10:00:00.000000 (exact) + 1s500T = 10:00:01.500000
+        assertBracketInterval(
+                "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T10:00:01.500000Z}]",
+                "2024-01-15T10:00:00.000000;1s500T"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionWithMultiUnitDurationDaysHours() throws SqlException {
+        // Days and hours: 1d12h = 1 day 12 hours = 36 hours
+        assertBracketInterval(
+                "[{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-16T12:00:59.999999Z}]",
+                "2024-01-15T00:00;1d12h"
         );
     }
 
@@ -589,8 +647,8 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateListErrorNegativeDuration() {
-        // '[2025-01-01]T09:30;-5m' produces negative duration error
-        assertBracketIntervalError("[2025-01-01]T09:30;-5m", "Invalid date");
+        // '[2025-01-01]T09:30;-5m' - negative duration not supported
+        assertBracketIntervalError("[2025-01-01]T09:30;-5m", "Expected number before unit");
     }
 
     @Test
