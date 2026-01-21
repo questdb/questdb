@@ -265,8 +265,8 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncMarkoutGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -311,6 +311,7 @@ import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.HorizonJoinContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
@@ -453,7 +454,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
-    private final MarkoutContext markoutContext = new MarkoutContext();
     private final MarkoutHorizonContext markoutHorizonContext = new MarkoutHorizonContext();
     private final LongList prefixes = new LongList();
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -644,7 +644,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         whereClauseParser.clear();
         symbolEstimator.clear();
         intListPool.clear();
-        markoutContext.clear();
         markoutHorizonContext.clear();
     }
 
@@ -904,6 +903,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return perThreadKeyFunctions;
     }
 
+    /**
+     * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
+     * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
+     *
+     * @param model            the parent model containing join models
+     * @param horizonJoinIndex the index of the HORIZON JOIN model
+     * @return the HorizonJoinContext or null if not found
+     */
+    private static HorizonJoinContext findHorizonOffsetContext(QueryModel model, int horizonJoinIndex) {
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        // Look for the synthetic offset model before the HORIZON JOIN model
+        for (int i = horizonJoinIndex - 1; i >= 0; i--) {
+            QueryModel jm = joinModels.getQuick(i);
+            if (isHorizonOffsetModel(jm)) {
+                return jm.getHorizonJoinContext();
+            }
+        }
+        return null;
+    }
+
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -915,6 +934,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private static int getViewPosition(ExpressionNode viewExpr) {
         return viewExpr != null ? viewExpr.position : 0;
+    }
+
+    /**
+     * Checks if the model is a synthetic horizon offset model.
+     * This model is created by the parser for HORIZON JOIN and represents the virtual
+     * table with offset/timestamp columns. It has no table name and has a non-empty HorizonJoinContext.
+     */
+    private static boolean isHorizonOffsetModel(QueryModel model) {
+        return model.getTableNameExpr() == null
+                && model.getNestedModel() == null
+                && model.getHorizonJoinContext().getAlias() != null;
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -931,14 +961,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
         if (tolerance != null) {
-            int k = TimestampSamplerFactory.findIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
+            int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
             assert tolerance.token.length() > k;
             char unit = tolerance.token.charAt(k);
             TimestampDriver timestampDriver = getTimestampDriver(getHigherPrecisionTimestampType(leftTimestamp, rightTimestampType));
             long multiplier;
             switch (unit) {
                 case 'n':
-                    toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", Integer.MAX_VALUE, unit);
+                    toleranceInterval = TimestampSamplerFactory.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", Integer.MAX_VALUE, unit);
                     return timestampDriver.fromNanos(toleranceInterval);
                 case 'U':
                     multiplier = timestampDriver.fromMicros(1);
@@ -965,7 +995,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw SqlException.$(tolerance.position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
             }
             int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
-            toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
+            toleranceInterval = TimestampSamplerFactory.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
             toleranceInterval *= multiplier;
         }
         return toleranceInterval;
@@ -1318,6 +1348,63 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    /**
+     * Computes the array of offset values from HorizonJoinContext RANGE or LIST configuration.
+     * Offsets are in microseconds (matching QuestDB's default timestamp precision).
+     */
+    private LongList computeHorizonOffsets(
+            HorizonJoinContext context,
+            RecordMetadata masterMetadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
+
+        if (context.getMode() == HorizonJoinContext.MODE_RANGE) {
+            // RANGE FROM <from> TO <to> STEP <step>
+            long from = evalHorizonTimeValue(context.getRangeFrom(), timestampDriver);
+            long to = evalHorizonTimeValue(context.getRangeTo(), timestampDriver);
+            long step = evalHorizonTimeValue(context.getRangeStep(), timestampDriver);
+
+            if (step <= 0) {
+                throw SqlException.position(context.getRangeStepPosition()).put("STEP must be positive");
+            }
+            if (from > to) {
+                throw SqlException.position(context.getRangeFromPosition()).put("FROM must be less than or equal to TO");
+            }
+
+            int count = (int) ((to - from) / step) + 1;
+            LongList offsets = new LongList(count);
+            for (int i = 0; i < count; i++) {
+                offsets.add(from + i * step);
+            }
+            return offsets;
+        } else if (context.getMode() == HorizonJoinContext.MODE_LIST) {
+            // LIST (offset1, offset2, ...)
+            ObjList<ExpressionNode> listOffsets = context.getListOffsets();
+            LongList offsets = new LongList(listOffsets.size());
+            for (int i = 0, n = listOffsets.size(); i < n; i++) {
+                ExpressionNode expr = listOffsets.getQuick(i);
+                Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
+                try {
+                    if (!func.isConstant()) {
+                        throw SqlException.position(expr.position).put("LIST offset must be a constant");
+                    }
+                    long offsetValue = func.getLong(null);
+                    // Validate monotonically increasing
+                    if (offsets.size() > 0 && offsetValue <= offsets.getLast()) {
+                        throw SqlException.position(expr.position).put("LIST offsets must be monotonically increasing");
+                    }
+                    offsets.add(offsetValue);
+                } finally {
+                    Misc.free(func);
+                }
+            }
+            return offsets;
+        } else {
+            throw SqlException.position(context.getAliasPosition()).put("HORIZON JOIN requires RANGE or LIST");
+        }
+    }
+
     @NotNull
     private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
@@ -1585,6 +1672,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    /**
+     * Creates join metadata for HORIZON JOIN combining master, horizon pseudo-table, and slave columns.
+     */
+    private JoinRecordMetadata createHorizonJoinMetadata(
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            CharSequence horizonAlias,
+            CharSequence slaveAlias,
+            RecordMetadata slaveMetadata
+    ) {
+        // Create metadata with master columns + horizon columns (offset, timestamp) + slave columns
+        JoinRecordMetadata metadata = new JoinRecordMetadata(
+                configuration,
+                masterMetadata.getColumnCount() + 2 + slaveMetadata.getColumnCount()
+        );
+
+        // Add master columns
+        for (int i = 0, n = masterMetadata.getColumnCount(); i < n; i++) {
+            metadata.add(masterAlias, masterMetadata.getColumnMetadata(i));
+        }
+
+        // Add horizon pseudo-table columns (offset and timestamp)
+        metadata.add(horizonAlias, new TableColumnMetadata("offset", ColumnType.LONG));
+        metadata.add(horizonAlias, new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP));
+
+        // Add slave columns
+        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+            metadata.add(slaveAlias, slaveMetadata.getColumnMetadata(i));
+        }
+
+        // Set timestamp index from master
+        int masterTsIdx = masterMetadata.getTimestampIndex();
+        if (masterTsIdx >= 0) {
+            metadata.setTimestampIndex(masterTsIdx);
+        }
+
+        return metadata;
+    }
+
     @NotNull
     private JoinRecordMetadata createJoinMetadata(
             CharSequence masterAlias,
@@ -1745,84 +1871,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Detects the markout curve pattern: GROUP BY on top of ASOF JOIN, where the ASOF master is a MarkoutHorizon.
-     * The expected query structure is:
-     * <pre>
-     * SELECT ... GROUP BY dt
-     * FROM horizon ASOF JOIN prices ON ...
-     * WHERE horizon = (SELECT ... FROM master CROSS JOIN long_sequence() ORDER BY markout_ts)
-     * </pre>
-     *
-     * @param model The GROUP BY query model
-     * @return MarkoutCurveInfo if pattern is detected, null otherwise
-     */
-    private MarkoutContext detectMarkoutCurvePattern(QueryModel model) {
-        // Check for markout_curve hint
-        if (!SqlHints.hasMarkoutCurveHint(model)) {
-            return null;
-        }
-
-        // Find the ASOF JOIN in the nested model hierarchy
-        QueryModel asOfJoinModel = findAsofJoinModel(model.getNestedModel());
-        if (asOfJoinModel == null) {
-            return null;
-        }
-
-        // Get the join models - first is master, second is slave (with ASOF join type)
-        ObjList<QueryModel> joinModels = asOfJoinModel.getJoinModels();
-        if (joinModels.size() != 2) {
-            return null;
-        }
-
-        QueryModel asOfMasterModel = joinModels.getQuick(0);
-        QueryModel asOfSlaveModel = joinModels.getQuick(1);
-
-        // Verify the second model has ASOF join type
-        if (asOfSlaveModel.getJoinType() != QueryModel.JOIN_ASOF) {
-            return null;
-        }
-
-        // Find the CROSS JOIN with markout_horizon hint in the ASOF master model
-        QueryModel crossJoinModel = findMarkoutHorizonCrossJoin(asOfMasterModel);
-        if (crossJoinModel == null) {
-            return null;
-        }
-
-        ObjList<QueryModel> crossJoinModels = crossJoinModel.getJoinModels();
-        if (crossJoinModels.size() != 2) {
-            return null;
-        }
-
-        QueryModel crossMasterModel = crossJoinModels.getQuick(0);
-        QueryModel crossSlaveModel = crossJoinModels.getQuick(1);
-
-        // Verify the second model has CROSS join type
-        if (crossSlaveModel.getJoinType() != QueryModel.JOIN_CROSS) {
-            return null;
-        }
-
-        // Get the JoinContext from the ASOF slave model (contains join key info)
-        JoinContext asOfJoinContext = asOfSlaveModel.getJoinContext();
-
-        // TODO: Extract timestamp and sequence column indices from the models
-        // For now, we'll need to get these during factory generation
-        int masterTimestampColumnIndex = -1;  // Will be resolved later
-        int sequenceColumnIndex = -1;         // Will be resolved later
-
-        return markoutContext.of(
-                asOfJoinModel,
-                asOfMasterModel,
-                asOfSlaveModel,
-                crossJoinModel,
-                crossMasterModel,
-                crossSlaveModel,
-                asOfJoinContext,
-                masterTimestampColumnIndex,
-                sequenceColumnIndex
-        );
-    }
-
-    /**
      * Attempts to detect the "markout horizon" pattern in a cross-join with ORDER BY.
      * <p>
      * The pattern consists of:
@@ -1952,6 +2000,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return markoutHorizonContext.of(timestampColumnIndex, slaveColumnIndex);
     }
 
+    /**
+     * Evaluates a horizon interval literal (e.g., "5s", "-2m", "+10h").
+     */
+    private long evalHorizonTimeValue(
+            ExpressionNode expr,
+            TimestampDriver timestampDriver
+    ) throws SqlException {
+        CharSequence token = expr.token;
+        int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, expr.position);
+        char unit = token.charAt(unitIndex);
+        long value = TimestampSamplerFactory.parseInterval(token, unitIndex, expr.position);
+        return switch (unit) {
+            case 'n' -> timestampDriver.fromNanos(value);
+            case 'U' -> timestampDriver.fromMicros(value);
+            case 'T' -> timestampDriver.fromMillis(value);
+            case 's' -> timestampDriver.fromSeconds(value);
+            case 'm' -> timestampDriver.fromMinutes((int) value);
+            case 'h' -> timestampDriver.fromHours((int) value);
+            case 'd' -> timestampDriver.fromDays((int) value);
+            default -> throw SqlException.$(expr.position, "unsupported HORIZON time unit [unit=").put(unit).put(']');
+        };
+    }
+
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
         final ObjList<Function> result = new ObjList<>();
         for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
@@ -1960,68 +2031,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return result;
-    }
-
-    /**
-     * Finds an ASOF JOIN model in the nested model hierarchy.
-     */
-    private QueryModel findAsofJoinModel(QueryModel model) {
-        while (model != null) {
-            ObjList<QueryModel> joinModels = model.getJoinModels();
-            if (joinModels.size() > 1) {
-                // Check if any of the join models is an ASOF join
-                for (int i = 1; i < joinModels.size(); i++) {
-                    if (joinModels.getQuick(i).getJoinType() == QueryModel.JOIN_ASOF) {
-                        return model;
-                    }
-                }
-            }
-            model = model.getNestedModel();
-        }
-        return null;
-    }
-
-    /**
-     * Finds a CROSS JOIN with the markout_horizon hint in the model hierarchy.
-     */
-    private QueryModel findMarkoutHorizonCrossJoin(QueryModel model) {
-        while (model != null) {
-            ObjList<QueryModel> joinModels = model.getJoinModels();
-            if (joinModels.size() > 1) {
-                // Check for CROSS JOIN
-                for (int i = 1; i < joinModels.size(); i++) {
-                    QueryModel joinModel = joinModels.getQuick(i);
-                    if (joinModel.getJoinType() == QueryModel.JOIN_CROSS) {
-                        // Check for markout_horizon hint
-                        QueryModel masterModel = joinModels.getQuick(0);
-                        CharSequence masterAlias = masterModel.getName();
-                        CharSequence slaveAlias = joinModel.getName();
-                        if (SqlHints.hasMarkoutHorizonHint(model, masterAlias, slaveAlias)) {
-                            return model;
-                        }
-                    }
-                }
-            }
-            model = model.getNestedModel();
-        }
-        return null;
-    }
-
-    /**
-     * Finds the column index in the sequence metadata that represents the offset value.
-     * For long_sequence, this is typically the first (and only) column.
-     */
-    private int findSequenceColumnIndex(RecordMetadata sequenceMetadata) {
-        // For long_sequence(n, start, step), the output is a single LONG column
-        // Look for the first LONG column
-        for (int i = 0, n = sequenceMetadata.getColumnCount(); i < n; i++) {
-            int type = sequenceMetadata.getColumnType(i);
-            if (ColumnType.tagOf(type) == ColumnType.LONG) {
-                return i;
-            }
-        }
-        // Fallback to first column if no LONG found
-        return sequenceMetadata.getColumnCount() > 0 ? 0 : -1;
     }
 
     private ObjList<Function> generateCastFunctions(
@@ -2933,8 +2942,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 coerceRuntimeConstantType(fillToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", fillTo.position);
             }
 
-            int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position, "sample");
-            long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
+            int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(fillStride.token, fillStride.position, "sample");
+            long samplingInterval = TimestampSamplerFactory.parsePositiveInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
             assert samplingInterval > 0;
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
@@ -3140,6 +3149,308 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return tableFactory;
+    }
+
+    /**
+     * Generates the AsyncMarkoutGroupByRecordCursorFactory for HORIZON JOIN.
+     */
+    private RecordCursorFactory generateHorizonJoinFactory(
+            QueryModel joinModel,
+            QueryModel parentModel,
+            HorizonJoinContext horizonContext,
+            RecordCursorFactory masterFactory,
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            RecordCursorFactory slaveFactory,
+            QueryModel slaveModel,
+            RecordMetadata slaveMetadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // Compute offsets from RANGE or LIST clause
+        final LongList offsets = computeHorizonOffsets(horizonContext, masterMetadata, executionContext);
+
+        // Check if master factory supports page frames - required for parallel execution
+        CompiledFilter compiledFilter = null;
+        MemoryCARW bindVarMemory = null;
+        ObjList<Function> bindVarFunctions = null;
+        Function filter = null;
+        boolean supportsParallelism = masterFactory.supportsPageFrameCursor();
+
+        if (!supportsParallelism && masterFactory.supportsFilterStealing()) {
+            RecordCursorFactory filterFactory = masterFactory;
+            masterFactory = masterFactory.getBaseFactory();
+            assert masterFactory.supportsPageFrameCursor();
+            compiledFilter = filterFactory.getCompiledFilter();
+            bindVarMemory = filterFactory.getBindVarMemory();
+            bindVarFunctions = filterFactory.getBindVarFunctions();
+            filter = filterFactory.getFilter();
+            supportsParallelism = true;
+            filterFactory.halfClose();
+        }
+
+        if (!supportsParallelism) {
+            throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                    .put("HORIZON JOIN master table must support page frames");
+        }
+
+        // Check slave factory supports TimeFrameCursor for parallel cursor creation
+        if (!slaveFactory.supportsTimeFrameCursor()) {
+            throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                    .put("HORIZON JOIN slave table must support time frame cursors");
+        }
+
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        final int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
+        final int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+
+        if (masterTimestampColumnIndex == -1) {
+            throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                    .put("HORIZON JOIN master table must have a designated timestamp");
+        }
+
+        // Create the inner join metadata (master + horizon columns + slave)
+        // The horizon pseudo-table has two columns: offset (LONG) and timestamp (same type as master)
+        if (horizonContext.getAlias() == null) {
+            throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                    .put("HORIZON JOIN requires alias for RANGE/LIST to be specified");
+        }
+        final CharSequence horizonAlias = horizonContext.getAlias().token;
+        final CharSequence slaveAlias = slaveModel.getAlias() != null ? slaveModel.getAlias().token : slaveModel.getName();
+        final RecordMetadata innerMetadata = createHorizonJoinMetadata(
+                masterAlias,
+                masterMetadata,
+                horizonAlias,
+                slaveAlias,
+                slaveMetadata
+        );
+
+        // Prepare GROUP BY functions using the join result metadata
+        final int timestampIndex = getTimestampIndex(parentModel, innerMetadata);
+        keyTypes.clear();
+        valueTypes.clear();
+        listColumnFilterA.clear();
+
+        final int columnCount = parentModel.getColumns().size();
+        final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+        tempInnerProjectionFunctions.clear();
+        tempOuterProjectionFunctions.clear();
+        final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
+        final IntList projectionFunctionFlags = new IntList(columnCount);
+
+        GroupByUtils.assembleGroupByFunctions(
+                functionParser,
+                sqlNodeStack,
+                parentModel,
+                executionContext,
+                innerMetadata,
+                timestampIndex,
+                true,
+                groupByFunctions,
+                groupByFunctionPositions,
+                tempOuterProjectionFunctions,
+                tempInnerProjectionFunctions,
+                recordFunctionPositions,
+                projectionFunctionFlags,
+                outerProjectionMetadata,
+                valueTypes,
+                keyTypes,
+                listColumnFilterA,
+                null,
+                validateSampleByFillType,
+                parentModel.getColumns()
+        );
+
+        // Check if parallel execution is supported
+        ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
+        if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
+            throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                    .put("HORIZON JOIN GROUP BY functions must support parallelism");
+        }
+
+        // Compile per-worker GROUP BY functions
+        ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
+                executionContext,
+                parentModel,
+                groupByFunctions,
+                workerCount,
+                innerMetadata
+        );
+
+        // If null (thread-safe functions), create per-worker lists that reuse owner functions
+        if (perWorkerGroupByFunctions == null) {
+            perWorkerGroupByFunctions = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
+                perWorkerGroupByFunctions.add(groupByFunctions);
+            }
+        }
+
+        final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
+        final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
+
+        // Build column mappings from innerMetadata to source records (master, horizon, slave)
+        // These mappings are needed by MarkoutRecord to route column accesses
+        final int baseColumnCount = innerMetadata.getColumnCount();
+        final int[] columnSources = new int[baseColumnCount];
+        final int[] columnIndices = new int[baseColumnCount];
+
+        for (int i = 0; i < baseColumnCount; i++) {
+            final CharSequence fullName = innerMetadata.getColumnName(i);
+
+            // Parse "tableAlias.columnName" format
+            int dotIndex = Chars.indexOf(fullName, '.');
+            if (dotIndex > 0) {
+                CharSequence tableAlias = fullName.subSequence(0, dotIndex);
+                CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
+                if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
+                    columnSources[i] = MarkoutRecord.SOURCE_MASTER;
+                    columnIndices[i] = masterMetadata.getColumnIndexQuiet(columnName);
+                    continue;
+                }
+                if (Chars.equalsIgnoreCase(tableAlias, horizonAlias)) {
+                    columnSources[i] = MarkoutRecord.SOURCE_SEQUENCE;
+                    // offset column is 0, timestamp column is 1
+                    columnIndices[i] = Chars.equalsIgnoreCase(columnName, "offset") ? 0 : 1;
+                    continue;
+                }
+                if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
+                    columnSources[i] = MarkoutRecord.SOURCE_SLAVE;
+                    columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
+                    continue;
+                }
+                throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
+            }
+            // No alias prefix - try matching by name in priority order
+            // Horizon columns first (offset, timestamp)
+            if (Chars.equalsIgnoreCase(fullName, "offset")) {
+                columnSources[i] = MarkoutRecord.SOURCE_SEQUENCE;
+                columnIndices[i] = 0;
+                continue;
+            }
+            int idx = slaveMetadata.getColumnIndexQuiet(fullName);
+            if (idx >= 0) {
+                columnSources[i] = MarkoutRecord.SOURCE_SLAVE;
+                columnIndices[i] = idx;
+                continue;
+            }
+            idx = masterMetadata.getColumnIndexQuiet(fullName);
+            if (idx >= 0) {
+                columnSources[i] = MarkoutRecord.SOURCE_MASTER;
+                columnIndices[i] = idx;
+                continue;
+            }
+            throw SqlException.$(0, "failed to resolve column: ").put(fullName);
+        }
+
+        // Create keyCopier for GROUP BY key population
+        final RecordSink groupByKeyCopier = RecordSinkFactory.getInstance(configuration, asm, innerMetadata, listColumnFilterA);
+
+        // Process ASOF join key information for the join lookup
+        ArrayColumnTypes asofJoinKeyTypes = null;
+        RecordSink masterKeyCopier = null;
+        RecordSink slaveKeyCopier = null;
+
+        JoinContext asOfJoinContext = slaveModel.getJoinContext();
+        if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
+            // Process join context to get key types and column filters
+            // listColumnFilterA -> slave columns
+            // listColumnFilterB -> master columns
+            lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asOfJoinContext.aNames, slaveMetadata);
+            lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
+
+            // Build ASOF join key types and configure symbol/string handling
+            asofJoinKeyTypes = new ArrayColumnTypes();
+            BitSet asofWriteSymbolAsString = new BitSet();
+            BitSet asOfWriteStringAsVarcharA = new BitSet();
+            BitSet asOfWriteStringAsVarcharB = new BitSet();
+
+            for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+                final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
+                final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+                final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
+                final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+
+                // For SYMBOL columns from different tables, write as STRING for comparison
+                if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
+                    asofJoinKeyTypes.add(ColumnType.VARCHAR);
+                    if (ColumnType.isVarchar(columnTypeA)) {
+                        asOfWriteStringAsVarcharB.set(columnIndexB);
+                    } else {
+                        asOfWriteStringAsVarcharA.set(columnIndexA);
+                    }
+                    asofWriteSymbolAsString.set(columnIndexA);
+                    asofWriteSymbolAsString.set(columnIndexB);
+                } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
+                    // Different tables have different symbol tables, so write as STRING
+                    asofJoinKeyTypes.add(ColumnType.STRING);
+                    asofWriteSymbolAsString.set(columnIndexA);
+                    asofWriteSymbolAsString.set(columnIndexB);
+                } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
+                    asofJoinKeyTypes.add(columnTypeB);
+                    asofWriteSymbolAsString.set(columnIndexA);
+                    asofWriteSymbolAsString.set(columnIndexB);
+                } else {
+                    asofJoinKeyTypes.add(columnTypeA);
+                }
+            }
+
+            // Create key copiers with proper symbol/varchar handling
+            masterKeyCopier = RecordSinkFactory.getInstance(
+                    configuration,
+                    asm,
+                    masterMetadata,
+                    listColumnFilterB,
+                    asofWriteSymbolAsString,
+                    asOfWriteStringAsVarcharB,
+                    writeTimestampAsNanosB
+            );
+            slaveKeyCopier = RecordSinkFactory.getInstance(
+                    configuration,
+                    asm,
+                    slaveMetadata,
+                    listColumnFilterA,
+                    asofWriteSymbolAsString,
+                    asOfWriteStringAsVarcharA,
+                    writeTimestampAsNanosA
+            );
+        }
+
+        return new AsyncHorizonJoinRecordCursorFactory(
+                configuration,
+                executionContext.getCairoEngine(),
+                executionContext.getMessageBus(),
+                outerProjectionMetadata,
+                innerMetadata,
+                masterFactory,
+                slaveFactory,
+                offsets,
+                masterTimestampColumnIndex,
+                groupByFunctions,
+                perWorkerGroupByFunctions,
+                new ObjList<>(tempOuterProjectionFunctions),
+                keyTypesCopy,
+                valueTypesCopy,
+                asofJoinKeyTypes,
+                masterKeyCopier,
+                slaveKeyCopier,
+                slaveTimestampIndex,
+                groupByKeyCopier,
+                columnSources,
+                columnIndices,
+                compiledFilter,
+                bindVarMemory,
+                bindVarFunctions,
+                filter,
+                compileWorkerFilterConditionally(
+                        executionContext,
+                        filter,
+                        workerCount,
+                        null,
+                        masterMetadata
+                ),
+                workerCount,
+                asm,
+                reduceTaskFactory
+        );
     }
 
     private RecordCursorFactory generateIntersectOrExceptAllFactory(
@@ -3631,6 +3942,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ObjList<GroupByFunction> groupByFunctions = null;
                 boolean closeSlaveOnFailure = true;
                 try {
+                    // Skip synthetic horizon offset model - it's handled as part of HORIZON JOIN
+                    if (isHorizonOffsetModel(slaveModel)) {
+                        continue;
+                    }
+
                     // compile
                     slave = generateQuery(slaveModel, executionContext, index > 0);
 
@@ -4201,6 +4517,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join must be a table, not sub-query");
                                 }
                                 break;
+                            case JOIN_HORIZON:
+                                // Find the synthetic offset model (previous join model with HorizonJoinContext)
+                                HorizonJoinContext horizonContext = findHorizonOffsetContext(model, index);
+                                if (horizonContext == null) {
+                                    throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                                            .put("HORIZON JOIN requires offset configuration (RANGE or LIST)");
+                                }
+
+                                // Get parent model for GROUP BY context (may be null for implicit aggregation)
+                                // If parentModel is null, we'll use the join model itself which contains the SELECT columns
+                                QueryModel parentModel = horizonContext.getParentModel();
+                                if (parentModel == null) {
+                                    parentModel = model;
+                                }
+
+                                // Validate both sides have timestamps (required for ASOF semantics)
+                                validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
+
+                                // Process join context for key-based matching (similar to ASOF JOIN)
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+
+                                // Create the AsyncMarkoutGroupByRecordCursorFactory
+                                // This returns the complete factory with GROUP BY aggregation
+                                return generateHorizonJoinFactory(
+                                        model,
+                                        parentModel,
+                                        horizonContext,
+                                        master,
+                                        masterAlias,
+                                        masterMetadata,
+                                        slave,
+                                        slaveModel,
+                                        slaveMetadata,
+                                        executionContext
+                                );
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
@@ -4718,374 +5070,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
-        }
-    }
-
-    /**
-     * Generates the AsyncMarkoutGroupByRecordCursorFactory for the markout curve pattern.
-     *
-     * @param model            The GROUP BY query model
-     * @param curveInfo        The detected markout curve pattern info
-     * @param executionContext The execution context
-     * @return The factory, or null if generation failed
-     */
-    private RecordCursorFactory generateMarkoutCurveGroupBy(
-            QueryModel model,
-            MarkoutContext curveInfo,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        RecordCursorFactory nestedFactory = null;
-        RecordCursorFactory masterFactory = null;
-        RecordCursorFactory slaveFactory = null;
-        RecordCursorFactory sequenceFactory = null;
-
-        try {
-            // Generate the nested factory (ASOF JOIN over MarkoutHorizon) to get the correct metadata
-            // This metadata represents what the GROUP BY query was written against
-            nestedFactory = generateSubQuery(model, executionContext);
-            RecordMetadata baseMetadata = nestedFactory.getMetadata();
-
-            // Generate component factories for parallel execution
-            // Generate without processing joins to get just the base table factories
-            masterFactory = generateQuery(curveInfo.crossMasterModel, executionContext, false);
-
-            // Check if master factory supports page frames - required for parallel execution
-            // Try to steal the filter from the nested factory if possible
-            CompiledFilter compiledFilter = null;
-            MemoryCARW bindVarMemory = null;
-            ObjList<Function> bindVarFunctions = null;
-            Function filter = null;
-            boolean supportsParallelism = masterFactory.supportsPageFrameCursor();
-
-            if (!supportsParallelism && masterFactory.supportsFilterStealing()) {
-                RecordCursorFactory filterFactory = masterFactory;
-                masterFactory = masterFactory.getBaseFactory();
-                assert masterFactory.supportsPageFrameCursor();
-                compiledFilter = filterFactory.getCompiledFilter();
-                bindVarMemory = filterFactory.getBindVarMemory();
-                bindVarFunctions = filterFactory.getBindVarFunctions();
-                filter = filterFactory.getFilter();
-                supportsParallelism = true;
-                filterFactory.halfClose();
-            }
-
-            if (!supportsParallelism) {
-                Misc.free(nestedFactory);
-                Misc.free(masterFactory);
-                return null;
-            }
-
-            sequenceFactory = generateQuery(curveInfo.crossSlaveModel, executionContext, false);
-
-            // Generate slave factory for ASOF JOIN processing
-            // The factory must support TimeFrameCursor for parallel cursor creation
-            slaveFactory = generateQuery(curveInfo.asOfSlaveModel, executionContext, true);
-            if (!slaveFactory.supportsTimeFrameCursor()) {
-                Misc.free(nestedFactory);
-                Misc.free(masterFactory);
-                Misc.free(slaveFactory);
-                Misc.free(sequenceFactory);
-                return null;
-            }
-
-            int workerCount = executionContext.getSharedQueryWorkerCount();
-
-            // Get timestamp index from master
-            RecordMetadata masterMetadata = masterFactory.getMetadata();
-            int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
-            RecordMetadata sequenceMetadata = sequenceFactory.getMetadata();
-            if (masterTimestampColumnIndex == -1) {
-                Misc.free(nestedFactory);
-                Misc.free(masterFactory);
-                Misc.free(slaveFactory);
-                Misc.free(sequenceFactory);
-                return null;
-            }
-
-            // Prepare GROUP BY functions using the ASOF JOIN result metadata
-            // This is the metadata the GROUP BY query was written against
-            final int timestampIndex = getTimestampIndex(model, nestedFactory);
-            keyTypes.clear();
-            valueTypes.clear();
-            listColumnFilterA.clear();
-
-            final int columnCount = model.getColumns().size();
-            final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-            tempInnerProjectionFunctions.clear();
-            tempOuterProjectionFunctions.clear();
-            final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
-            final IntList projectionFunctionFlags = new IntList(columnCount);
-
-            GroupByUtils.assembleGroupByFunctions(
-                    functionParser,
-                    sqlNodeStack,
-                    model,
-                    executionContext,
-                    baseMetadata,
-                    timestampIndex,
-                    true,
-                    groupByFunctions,
-                    groupByFunctionPositions,
-                    tempOuterProjectionFunctions,
-                    tempInnerProjectionFunctions,
-                    recordFunctionPositions,
-                    projectionFunctionFlags,
-                    outerProjectionMetadata,
-                    valueTypes,
-                    keyTypes,
-                    listColumnFilterA,
-                    null,
-                    validateSampleByFillType,
-                    model.getColumns()
-            );
-
-            // Check if parallel execution is supported
-            ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
-            if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
-                Misc.free(nestedFactory);
-                Misc.free(masterFactory);
-                Misc.free(slaveFactory);
-                Misc.free(sequenceFactory);
-                return null;
-            }
-
-            // Compile per-worker GROUP BY functions
-            ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
-                    executionContext,
-                    model,
-                    groupByFunctions,
-                    workerCount,
-                    baseMetadata
-            );
-
-            // If null (thread-safe functions), create empty per-worker lists that will reuse owner functions
-            if (perWorkerGroupByFunctions == null) {
-                perWorkerGroupByFunctions = new ObjList<>(workerCount);
-                for (int i = 0; i < workerCount; i++) {
-                    perWorkerGroupByFunctions.add(groupByFunctions);
-                }
-            }
-
-            final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
-            final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
-
-            // Get slave metadata (needed for column mapping and ASOF join processing)
-            final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-
-            // Build column mappings from baseMetadata to source records (master, sequence, slave)
-            // These mappings are needed by MarkoutRecord to route column accesses
-            final int baseColumnCount = baseMetadata.getColumnCount();
-            final int[] columnSources = new int[baseColumnCount];
-            final int[] columnIndices = new int[baseColumnCount];
-
-            // Get table aliases from the query models
-            final CharSequence masterAlias = curveInfo.crossMasterModel.getAlias() != null
-                    ? curveInfo.crossMasterModel.getAlias().token : null;
-            final CharSequence sequenceAlias = curveInfo.crossSlaveModel.getAlias() != null
-                    ? curveInfo.crossSlaveModel.getAlias().token : null;
-            final CharSequence slaveAlias = curveInfo.asOfSlaveModel.getAlias() != null
-                    ? curveInfo.asOfSlaveModel.getAlias().token : null;
-
-            for (int i = 0; i < baseColumnCount; i++) {
-                final CharSequence fullName = baseMetadata.getColumnName(i);
-
-                // Parse "tableAlias.columnName" format
-                int dotIndex = Chars.indexOf(fullName, '.');
-                if (dotIndex > 0) {
-                    CharSequence tableAlias = fullName.subSequence(0, dotIndex);
-                    CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
-                    if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
-                        columnSources[i] = 0; // SOURCE_MASTER
-                        columnIndices[i] = masterMetadata.getColumnIndexQuiet(columnName);
-                        continue;
-                    }
-                    if (sequenceAlias != null && Chars.equalsIgnoreCase(tableAlias, sequenceAlias)) {
-                        columnSources[i] = 1; // SOURCE_SEQUENCE
-                        columnIndices[i] = sequenceMetadata.getColumnIndexQuiet(columnName);
-                        continue;
-                    }
-                    if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
-                        columnSources[i] = 2; // SOURCE_SLAVE
-                        columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
-                        continue;
-                    }
-                    throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
-                }
-                // No alias prefix - try matching by name in priority order
-                int idx = sequenceMetadata.getColumnIndexQuiet(fullName);
-                if (idx >= 0) {
-                    columnSources[i] = 1; // SOURCE_SEQUENCE
-                    columnIndices[i] = idx;
-                    continue;
-                }
-                idx = slaveMetadata.getColumnIndexQuiet(fullName);
-                if (idx >= 0) {
-                    columnSources[i] = 2; // SOURCE_SLAVE
-                    columnIndices[i] = idx;
-                    continue;
-                }
-                idx = masterMetadata.getColumnIndexQuiet(fullName);
-                if (idx >= 0) {
-                    columnSources[i] = 0; // SOURCE_MASTER
-                    columnIndices[i] = idx;
-                    continue;
-                }
-                throw SqlException.$(0, "failed to resolve column: ").put(fullName);
-            }
-
-            // Find the sequence column index by looking at which GROUP BY key column comes from the sequence.
-            // This is the column that will be used for grouping and for computing horizon timestamps.
-            // listColumnFilterA contains the GROUP BY key column indices (from assembleGroupByFunctions).
-            int sequenceColumnIndex = -1;
-            for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-                int keyColIdx = listColumnFilterA.getColumnIndexFactored(i);
-                if (columnSources[keyColIdx] == MarkoutRecord.SOURCE_SEQUENCE) {
-                    sequenceColumnIndex = columnIndices[keyColIdx];
-                    break;
-                }
-            }
-            if (sequenceColumnIndex == -1) {
-                // Fallback to findSequenceColumnIndex if no GROUP BY key column comes from sequence
-                sequenceColumnIndex = findSequenceColumnIndex(sequenceMetadata);
-            }
-            if (sequenceColumnIndex == -1) {
-                Misc.free(nestedFactory);
-                Misc.free(masterFactory);
-                Misc.free(slaveFactory);
-                Misc.free(sequenceFactory);
-                return null;
-            }
-
-            // Create keyCopier for GROUP BY key population from the CombinedRecord
-            // Note: listColumnFilterA contains the GROUP BY key column indices (from assembleGroupByFunctions)
-            // We need to save it before it gets overwritten by ASOF join key processing
-            final RecordSink groupByKeyCopier = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, listColumnFilterA);
-
-            // Process ASOF join key information for the join lookup
-            int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-            ArrayColumnTypes asofJoinKeyTypes = null;
-            RecordSink masterKeyCopier = null;
-            RecordSink slaveKeyCopier = null;
-            BitSet asofWriteSymbolAsString;
-
-            JoinContext asOfJoinContext = curveInfo.asOfJoinContext;
-            if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
-                // Process join context to get key types and column filters
-                // listColumnFilterA -> slave columns
-                // listColumnFilterB -> master columns
-                lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asOfJoinContext.aNames, slaveMetadata);
-                lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
-
-                // Build ASOF join key types and configure symbol/string handling
-                // Create fresh BitSets - don't reuse the ones from GROUP BY setup
-                asofJoinKeyTypes = new ArrayColumnTypes();
-                asofWriteSymbolAsString = new BitSet();
-                BitSet asOfWriteStringAsVarcharA = new BitSet();
-                BitSet asOfWriteStringAsVarcharB = new BitSet();
-
-                for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-                    final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
-                    final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
-                    final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
-                    final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
-
-                    // For SYMBOL columns from different tables, write as STRING for comparison
-                    if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
-                        asofJoinKeyTypes.add(ColumnType.VARCHAR);
-                        if (ColumnType.isVarchar(columnTypeA)) {
-                            asOfWriteStringAsVarcharB.set(columnIndexB);
-                        } else {
-                            asOfWriteStringAsVarcharA.set(columnIndexA);
-                        }
-                        asofWriteSymbolAsString.set(columnIndexA);
-                        asofWriteSymbolAsString.set(columnIndexB);
-                    } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
-                        // Different tables have different symbol tables, so write as STRING
-                        asofJoinKeyTypes.add(ColumnType.STRING);
-                        asofWriteSymbolAsString.set(columnIndexA);
-                        asofWriteSymbolAsString.set(columnIndexB);
-                    } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
-                        asofJoinKeyTypes.add(columnTypeB);
-                        asofWriteSymbolAsString.set(columnIndexA);
-                        asofWriteSymbolAsString.set(columnIndexB);
-                    } else {
-                        asofJoinKeyTypes.add(columnTypeA);
-                    }
-                }
-
-                // Create key copiers with proper symbol/varchar handling
-                masterKeyCopier = RecordSinkFactory.getInstance(
-                        configuration,
-                        asm,
-                        masterMetadata,
-                        listColumnFilterB,
-                        asofWriteSymbolAsString,
-                        asOfWriteStringAsVarcharB,
-                        writeTimestampAsNanosB
-                );
-                slaveKeyCopier = RecordSinkFactory.getInstance(
-                        configuration,
-                        asm,
-                        slaveMetadata,
-                        listColumnFilterA,
-                        asofWriteSymbolAsString,
-                        asOfWriteStringAsVarcharA,
-                        writeTimestampAsNanosA
-                );
-            }
-
-            // Copy the metadata before closing the nested factory (needed for toPlan)
-            RecordMetadata innerProjectionMetadata = GenericRecordMetadata.copyOf(baseMetadata);
-
-            // Close the nested factory - we don't need it for execution, only for metadata
-            Misc.free(nestedFactory);
-            nestedFactory = null;
-
-            return new AsyncMarkoutGroupByRecordCursorFactory(
-                    configuration,
-                    executionContext.getCairoEngine(),
-                    executionContext.getMessageBus(),
-                    outerProjectionMetadata,
-                    innerProjectionMetadata,
-                    masterFactory,
-                    slaveFactory,
-                    sequenceFactory,
-                    masterTimestampColumnIndex,
-                    sequenceColumnIndex,
-                    groupByFunctions,
-                    perWorkerGroupByFunctions,
-                    new ObjList<>(tempOuterProjectionFunctions),
-                    keyTypesCopy,
-                    valueTypesCopy,
-                    asofJoinKeyTypes,
-                    masterKeyCopier,
-                    slaveKeyCopier,
-                    slaveTimestampIndex,
-                    groupByKeyCopier,
-                    columnSources,
-                    columnIndices,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    filter,
-                    compileWorkerFilterConditionally(
-                            executionContext,
-                            filter,
-                            workerCount,
-                            null,
-                            masterMetadata
-                    ),
-                    workerCount,
-                    asm,
-                    reduceTaskFactory
-            );
-
-        } catch (Throwable th) {
-            Misc.free(nestedFactory);
-            Misc.free(masterFactory);
-            Misc.free(slaveFactory);
-            Misc.free(sequenceFactory);
-            throw th;
         }
     }
 
@@ -6069,16 +6053,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
             return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
-        }
-
-        // Check for markout curve pattern (GROUP BY on ASOF JOIN over MarkoutHorizon)
-        MarkoutContext curveInfo = detectMarkoutCurvePattern(model);
-        if (curveInfo != null && executionContext.isParallelGroupByEnabled()) {
-            final RecordCursorFactory markoutFactory = generateMarkoutCurveGroupBy(model, curveInfo, executionContext);
-            if (markoutFactory != null) {
-                return markoutFactory;
-            }
-            // Fall through to standard GROUP BY if markout factory creation failed
         }
 
         RecordCursorFactory factory = null;
@@ -8565,58 +8539,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Information extracted from detecting the markout curve pattern.
-     * The pattern is: GROUP BY on top of ASOF JOIN, where the ASOF master is a MarkoutHorizon (CROSS JOIN).
-     */
-    private static class MarkoutContext implements Mutable {
-        JoinContext asOfJoinContext;   // Join context from the ASOF JOIN (contains join key info)
-        QueryModel asOfJoinModel;      // The model containing the ASOF JOIN
-        QueryModel asOfMasterModel;    // Master model of the ASOF JOIN (contains MarkoutHorizon)
-        QueryModel asOfSlaveModel;     // Slave model of the ASOF JOIN (prices table)
-        QueryModel crossJoinModel;     // The CROSS JOIN model within the ASOF master
-        QueryModel crossMasterModel;   // Master of the CROSS JOIN (base master table)
-        QueryModel crossSlaveModel;    // Slave of the CROSS JOIN (sequence/long_sequence)
-        int masterTimestampColumnIndex = -1;
-        int sequenceColumnIndex = -1;
-
-        @Override
-        public void clear() {
-            this.asOfJoinModel = null;
-            this.asOfMasterModel = null;
-            this.asOfSlaveModel = null;
-            this.crossJoinModel = null;
-            this.crossMasterModel = null;
-            this.crossSlaveModel = null;
-            this.asOfJoinContext = null;
-            this.masterTimestampColumnIndex = -1;
-            this.sequenceColumnIndex = -1;
-        }
-
-        MarkoutContext of(
-                QueryModel asOfJoinModel,
-                QueryModel asOfMasterModel,
-                QueryModel asOfSlaveModel,
-                QueryModel crossJoinModel,
-                QueryModel crossMasterModel,
-                QueryModel crossSlaveModel,
-                JoinContext asOfJoinContext,
-                int masterTimestampColumnIndex,
-                int sequenceColumnIndex
-        ) {
-            this.asOfJoinModel = asOfJoinModel;
-            this.asOfMasterModel = asOfMasterModel;
-            this.asOfSlaveModel = asOfSlaveModel;
-            this.crossJoinModel = crossJoinModel;
-            this.crossMasterModel = crossMasterModel;
-            this.crossSlaveModel = crossSlaveModel;
-            this.asOfJoinContext = asOfJoinContext;
-            this.masterTimestampColumnIndex = masterTimestampColumnIndex;
-            this.sequenceColumnIndex = sequenceColumnIndex;
-            return this;
-        }
-    }
-
-    /**
      * Container class to hold the detected parameters of a markout horizon pattern.
      */
     private static class MarkoutHorizonContext implements Mutable {
@@ -8737,6 +8659,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         joinsRequiringTimestamp[JOIN_SPLICE] = true;
         joinsRequiringTimestamp[JOIN_LT] = true;
         joinsRequiringTimestamp[JOIN_WINDOW] = true;
+        joinsRequiringTimestamp[JOIN_HORIZON] = true;
     }
 
     static {

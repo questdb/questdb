@@ -58,13 +58,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 /**
  * Cursor for parallel markout GROUP BY using PageFrameSequence.
  */
-class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
-    private static final Log LOG = LogFactory.getLog(AsyncMarkoutGroupByRecordCursor.class);
+class AsyncHorizonJoinRecordCursor implements RecordCursor {
+    private static final Log LOG = LogFactory.getLog(AsyncHorizonJoinRecordCursor.class);
 
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
-    private final RecordCursorFactory sequenceFactory;
     private final RecordCursorFactory slaveFactory;
     private final LongList slavePartitionTimestamps = new LongList();
     // Slave time frame cache data
@@ -73,23 +72,20 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     private final LongList slaveTimeFrameRowCounts = new LongList();
     private final MarkoutSymbolTableSource symbolTableSource;
     private int frameLimit;
-    private PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence;
+    private PageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
     private boolean isDataMapBuilt;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
     private MapRecordCursor mapCursor;
-    private RecordCursor sequenceCursor;
     private TablePageFrameCursor slavePageFrameCursor;
 
-    public AsyncMarkoutGroupByRecordCursor(
+    public AsyncHorizonJoinRecordCursor(
             ObjList<Function> recordFunctions,
-            RecordCursorFactory sequenceFactory,
             RecordCursorFactory slaveFactory,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes
     ) {
         this.recordFunctions = recordFunctions;
-        this.sequenceFactory = sequenceFactory;
         this.slaveFactory = slaveFactory;
         this.recordA = new VirtualRecord(recordFunctions);
         this.recordB = new VirtualRecord(recordFunctions);
@@ -110,7 +106,6 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         if (isOpen) {
             isOpen = false;
             mapCursor = Misc.free(mapCursor);
-            sequenceCursor = Misc.free(sequenceCursor);
             slavePageFrameCursor = Misc.free(slavePageFrameCursor);
             Misc.free(slaveTimeFrameAddressCache);
 
@@ -235,7 +230,7 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
             throwTimeoutException();
         }
 
-        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
+        final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
 
         // Merge all per-worker maps into the owner map
         final Map dataMap = atom.mergeOwnerMap();
@@ -308,17 +303,13 @@ class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         }
     }
 
-    void of(PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
-        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
+    void of(PageFrameSequence<AsyncHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+        final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
         this.frameSequence = frameSequence;
-
-        // Materialize sequence cursor
-        this.sequenceCursor = sequenceFactory.getCursor(executionContext);
-        atom.materializeSequenceCursor(sequenceCursor, executionContext.getCircuitBreaker());
 
         // Get slave page frame cursor for time frame initialization
         this.slavePageFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);

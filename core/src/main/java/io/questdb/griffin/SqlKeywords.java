@@ -866,6 +866,17 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 's';
     }
 
+    public static boolean isHorizonKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'h'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'z'
+                && (tok.charAt(5) | 32) == 'o'
+                && (tok.charAt(6) | 32) == 'n';
+    }
+
     public static boolean isIfKeyword(CharSequence tok) {
         return tok.length() == 2
                 && (tok.charAt(0) | 32) == 'i'
@@ -2001,6 +2012,14 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'a'
                 && (tok.charAt(3) | 32) == 'r'
                 && (tok.charAt(4) | 32) == 't';
+    }
+
+    public static boolean isStepKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 't'
+                && (tok.charAt(2) | 32) == 'e'
+                && (tok.charAt(3) | 32) == 'p';
     }
 
     public static boolean isSumKeyword(CharSequence tok) {

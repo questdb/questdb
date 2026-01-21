@@ -36,8 +36,6 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -77,7 +75,7 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * 2. Per-worker aggregation maps and group by functions
  * 3. Per-worker ASOF join maps for symbol -> rowId mappings
  */
-public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -108,19 +106,18 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final ObjList<SingleRecordSink> perWorkerSlaveSinkTargets;
     private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     private final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
-    private final int sequenceColumnIndex;
-    private final LongList sequenceOffsetValues = new LongList();
+    private final LongList sequenceOffsetValues;
+    private final long sequenceRowCount;
     private final RecordSink slaveKeyCopier;
     private final int slaveTimestampIndex;
     private long ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
-    private long sequenceRowCount;
 
-    public AsyncMarkoutGroupByAtom(
+    public AsyncHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory slaveFactory,
             int masterTimestampColumnIndex,
-            int sequenceColumnIndex,
+            @NotNull LongList offsets,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
@@ -146,7 +143,8 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
-            this.sequenceColumnIndex = sequenceColumnIndex;
+            this.sequenceOffsetValues = offsets;
+            this.sequenceRowCount = offsets.size();
 
             // Filter resources
             this.compiledFilter = compiledFilter;
@@ -261,10 +259,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     @Override
     public void clear() {
-        // Clear sequence data
-        sequenceOffsetValues.clear();
-        sequenceRowCount = 0;
-
         // Clear aggregation resources
         Misc.free(ownerMap);
         Misc.freeObjListAndKeepObjects(perWorkerMaps);
@@ -553,22 +547,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         // Clear previous master row's first offset ASOF positions
         ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
         perWorkerPrevFirstOffsetAsOfRowIds.setAll(perWorkerPrevFirstOffsetAsOfRowIds.size(), Long.MIN_VALUE);
-    }
-
-    /**
-     * Materialize the sequence cursor (offset records) and cache offset values.
-     * Must be called once before dispatching tasks.
-     */
-    public void materializeSequenceCursor(RecordCursor sequenceCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-        sequenceOffsetValues.clear();
-
-        Record sequenceRecord = sequenceCursor.getRecord();
-        while (sequenceCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            long offsetValue = sequenceRecord.getLong(sequenceColumnIndex);
-            sequenceOffsetValues.add(offsetValue);
-        }
-        sequenceRowCount = sequenceOffsetValues.size();
     }
 
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {

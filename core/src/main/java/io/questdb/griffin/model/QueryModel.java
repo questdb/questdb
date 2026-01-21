@@ -65,10 +65,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_CROSS_LEFT = 8;
     public static final int JOIN_CROSS_RIGHT = 11;
     public static final int JOIN_FULL_OUTER = 10;
+    public static final int JOIN_HORIZON = 13;
     public static final int JOIN_INNER = 1;
     public static final int JOIN_LEFT_OUTER = 2;
     public static final int JOIN_LT = 6;
-    public static final int JOIN_MAX = JOIN_CROSS_FULL;
+    public static final int JOIN_MAX = JOIN_HORIZON;
     public static final int JOIN_NONE = 0;
     public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
@@ -88,6 +89,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_VIRTUAL = 2;
     public static final int SELECT_MODEL_WINDOW = 3;
     public static final int SELECT_MODEL_WINDOW_JOIN = 8;
+    public static final int SELECT_MODEL_HORIZON_JOIN = 9;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_EXCEPT_ALL = 3;
     public static final int SET_OPERATION_INTERSECT = 4;
@@ -155,6 +157,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
+    private final HorizonJoinContext horizonJoinContext = new HorizonJoinContext();
     private final WindowJoinContext windowJoinContext = new WindowJoinContext();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     // used for the parallel sample by rewrite. In the future, if we deprecate original SAMPLE BY, then these will
@@ -265,6 +268,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         ObjList<QueryModel> ms = model.getJoinModels();
         return ms.size() > 1 && ms.get(ms.size() - 1).getJoinType() == JOIN_WINDOW;
+    }
+
+    // Horizon join must be the only join in the query level; no other join types can be combined with it.
+    // This constraint is enforced at the SQL parser stage.
+    public static boolean isHorizonJoin(QueryModel model) {
+        if (model == null) {
+            return false;
+        }
+        ObjList<QueryModel> ms = model.getJoinModels();
+        return ms.size() > 1 && ms.get(ms.size() - 1).getJoinType() == JOIN_HORIZON;
     }
 
     /**
@@ -521,6 +534,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         forceBackwardScan = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
+        horizonJoinContext.clear();
         windowJoinContext.clear();
         pivotGroupByColumns.clear();
         pivotForColumns.clear();
@@ -1012,6 +1026,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<CharSequence> getWildcardColumnNames() {
         return wildcardColumnNames;
+    }
+
+    public HorizonJoinContext getHorizonJoinContext() {
+        return horizonJoinContext;
     }
 
     public WindowJoinContext getWindowJoinContext() {
@@ -1850,6 +1868,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             case JOIN_LT:
                                 sink.putAscii(" lt join ");
                                 break;
+                            case JOIN_HORIZON:
+                                sink.putAscii(" horizon join ");
+                                break;
                             default:
                                 sink.putAscii(" join ");
                                 break;
@@ -1946,6 +1967,32 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                 sink.putAscii(" include prevailing");
                             } else {
                                 sink.putAscii(" exclude prevailing");
+                            }
+                        }
+
+                        HorizonJoinContext hjc = model.getHorizonJoinContext();
+                        if (model.joinType == JOIN_HORIZON) {
+                            if (hjc.getMode() == HorizonJoinContext.MODE_RANGE) {
+                                sink.putAscii(" range from ");
+                                hjc.getRangeFrom().toSink(sink);
+                                sink.putAscii(" to ");
+                                hjc.getRangeTo().toSink(sink);
+                                sink.putAscii(" step ");
+                                hjc.getRangeStep().toSink(sink);
+                            } else if (hjc.getMode() == HorizonJoinContext.MODE_LIST) {
+                                sink.putAscii(" list (");
+                                ObjList<ExpressionNode> offsets = hjc.getListOffsets();
+                                for (int k = 0, z = offsets.size(); k < z; k++) {
+                                    if (k > 0) {
+                                        sink.putAscii(", ");
+                                    }
+                                    offsets.getQuick(k).toSink(sink);
+                                }
+                                sink.putAscii(")");
+                            }
+                            if (hjc.getAlias() != null) {
+                                sink.putAscii(" as ");
+                                hjc.getAlias().toSink(sink);
                             }
                         }
 
@@ -2204,5 +2251,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, "select-cursor");
         modelTypeName.extendAndSet(SELECT_MODEL_SHOW, "show");
         modelTypeName.extendAndSet(SELECT_MODEL_WINDOW_JOIN, "select-window-join");
+        modelTypeName.extendAndSet(SELECT_MODEL_HORIZON_JOIN, "select-horizon-join");
     }
 }

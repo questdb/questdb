@@ -58,6 +58,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -69,26 +70,24 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilt
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 /**
- * Factory for parallel markout query execution using PageFrameSequence.
- * <p>
- * This factory creates the infrastructure for parallelizing:
- * Master -> MarkoutHorizon (CROSS JOIN time_offset_sequence) -> ASOF JOIN slave -> GROUP BY time_offset
+ * Factory for parallel markout horizon query execution using PageFrameSequence.
  */
-public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final PageFrameReducer FILTER_AND_REDUCE = AsyncMarkoutGroupByRecordCursorFactory::filterAndReduce;
-    private static final PageFrameReducer REDUCE = AsyncMarkoutGroupByRecordCursorFactory::reduce;
+public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final PageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinRecordCursorFactory::filterAndReduce;
+    private static final PageFrameReducer REDUCE = AsyncHorizonJoinRecordCursorFactory::reduce;
     private final SCSequence collectSubSeq = new SCSequence();
-    private final AsyncMarkoutGroupByRecordCursor cursor;
-    private final PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence;
+    private final AsyncHorizonJoinRecordCursor cursor;
+    private final PageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
     // Combined metadata (master + sequence + slave) used for GROUP BY function column references in toPlan
     private final RecordMetadata markoutMetadata;
     private final RecordCursorFactory masterFactory;
+    // Pre-computed offset values (in microseconds)
+    private final LongList offsets;
     private final ObjList<Function> recordFunctions;
-    private final RecordCursorFactory sequenceFactory;
     private final RecordCursorFactory slaveFactory;
     private final int workerCount;
 
-    public AsyncMarkoutGroupByRecordCursorFactory(
+    public AsyncHorizonJoinRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull CairoEngine engine,
             @NotNull MessageBus messageBus,
@@ -96,9 +95,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             @NotNull RecordMetadata markoutMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
-            @NotNull RecordCursorFactory sequenceFactory,
+            @NotNull LongList offsets,
             int masterTimestampColumnIndex,
-            int sequenceColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
@@ -125,16 +123,16 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             this.markoutMetadata = markoutMetadata;
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
-            this.sequenceFactory = sequenceFactory;
+            this.offsets = offsets;
             this.recordFunctions = recordFunctions;
             this.workerCount = workerCount;
 
-            final AsyncMarkoutGroupByAtom atom = new AsyncMarkoutGroupByAtom(
+            final AsyncHorizonJoinAtom atom = new AsyncHorizonJoinAtom(
                     asm,
                     configuration,
                     slaveFactory,
                     masterTimestampColumnIndex,
-                    sequenceColumnIndex,
+                    offsets,
                     keyTypes,
                     valueTypes,
                     asOfJoinKeyTypes,
@@ -165,9 +163,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
 
-            this.cursor = new AsyncMarkoutGroupByRecordCursor(
+            this.cursor = new AsyncHorizonJoinRecordCursor(
                     recordFunctions,
-                    sequenceFactory,
                     slaveFactory,
                     columnSources,
                     columnIndexes
@@ -179,7 +176,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    public PageFrameSequence<AsyncMarkoutGroupByAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncHorizonJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
     }
 
@@ -207,6 +204,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             sink.type("Async Markout GroupBy");
         }
         sink.meta("workers").val(workerCount);
+        sink.meta("offsets").val(offsets.size());
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         // GroupByFunctions reference columns from the combined markout metadata (master + sequence + slave)
         sink.setMetadata(markoutMetadata);
@@ -214,7 +212,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         sink.setMetadata(null);
         sink.child(masterFactory);
         sink.child(slaveFactory);
-        sink.child(sequenceFactory);
     }
 
     @Override
@@ -257,8 +254,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             return;
         }
 
-        final PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence = task.getFrameSequence(AsyncMarkoutGroupByAtom.class);
-        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
+        final PageFrameSequence<AsyncHorizonJoinAtom> frameSequence = task.getFrameSequence(AsyncHorizonJoinAtom.class);
+        final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
 
         final long sequenceRowCount = atom.getSequenceRowCount();
         if (sequenceRowCount == 0) {
@@ -360,7 +357,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
     private static long processMarkoutRow(
             PageFrameMemoryRecord masterRecord,
             long masterRowId,
-            AsyncMarkoutGroupByAtom atom,
+            AsyncHorizonJoinAtom atom,
             MarkoutTimeFrameHelper slaveTimeFrameHelper,
             Map asOfJoinMap,
             RecordSink masterKeyCopier,
@@ -512,8 +509,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             return;
         }
 
-        final PageFrameSequence<AsyncMarkoutGroupByAtom> frameSequence = task.getFrameSequence(AsyncMarkoutGroupByAtom.class);
-        final AsyncMarkoutGroupByAtom atom = frameSequence.getAtom();
+        final PageFrameSequence<AsyncHorizonJoinAtom> frameSequence = task.getFrameSequence(AsyncHorizonJoinAtom.class);
+        final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
 
         final long sequenceRowCount = atom.getSequenceRowCount();
         if (sequenceRowCount == 0) {
@@ -595,7 +592,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         Misc.free(frameSequence);
         Misc.free(cursor);
         Misc.free(masterFactory);
-        Misc.free(sequenceFactory);
         Misc.free(slaveFactory);
         Misc.freeObjList(recordFunctions);
     }
