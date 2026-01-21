@@ -966,7 +966,7 @@ public final class IntervalUtils {
             int globalTzHi            // end of global timezone in globalTzSeq (-1 if none)
     ) throws SqlException {
         if (depth > MAX_BRACKET_DEPTH) {
-            throw SqlException.$(errorPos, "Too many bracket groups (max " + MAX_BRACKET_DEPTH + ")");
+            throw SqlException.$(errorPos, "Too many bracket groups (max ").put(MAX_BRACKET_DEPTH).put(')');
         }
 
         // Find first bracket starting from pos
@@ -1089,7 +1089,7 @@ public final class IntervalUtils {
                     throw SqlException.$(errorPos, "Expected number after '..'");
                 }
                 if (rangeEnd < value) {
-                    throw SqlException.$(errorPos, "Range must be ascending: " + value + ".." + rangeEnd);
+                    throw SqlException.$(errorPos, "Range must be ascending: ").put(value).put("..").put(rangeEnd);
                 }
             }
 
@@ -1748,7 +1748,7 @@ public final class IntervalUtils {
                     case PeriodType.DAY:
                         break;
                     default:
-                        throw SqlException.$(position, "Unknown period: " + type + " at " + (p - 1));
+                        throw SqlException.$(position, "Unknown period: ").put(type).put(" at ").put(p - 1);
                 }
                 break;
             default:
@@ -1825,7 +1825,7 @@ public final class IntervalUtils {
             }
             timestamp = timestampDriver.add(timestamp, c, period);
             if (timestamp == Numbers.LONG_NULL) {
-                throw SqlException.$(position, "Invalid duration unit: " + c);
+                throw SqlException.$(position, "Invalid duration unit: ").put(c);
             }
             numStart = i + 1;
         }
