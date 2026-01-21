@@ -176,23 +176,40 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        if count == 0 {
-            return Ok(());
-        }
+        match count {
+            0 => Ok(()),
+            1 => self.push_null(),
+            2 => {
+                self.push_null()?;
+                self.push_null()
+            }
+            3 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            4 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            _ => {
+                const ELEM: usize = size_of::<i32>();
+                let base = self.buffers.data_vec.len();
 
-        const ELEM: usize = size_of::<i32>();
-        let base = self.buffers.data_vec.len();
-
-        // Fill data_vec with 0xff bytes (-1i32 per null)
-        unsafe {
-            ptr::write_bytes(
-                self.buffers.data_vec.as_mut_ptr().add(base),
-                0xff,
-                count * ELEM,
-            );
-            self.buffers.data_vec.set_len(base + count * ELEM);
+                // Fill data_vec with 0xff bytes (-1i32 per null)
+                unsafe {
+                    ptr::write_bytes(
+                        self.buffers.data_vec.as_mut_ptr().add(base),
+                        0xff,
+                        count * ELEM,
+                    );
+                    self.buffers.data_vec.set_len(base + count * ELEM);
+                }
+                write_offset_sequence(&mut self.buffers.aux_vec, base + ELEM, ELEM, count)
+            }
         }
-        write_offset_sequence(&mut self.buffers.aux_vec, base + ELEM, ELEM, count)
     }
 
     fn skip(&mut self, count: usize) {
@@ -270,23 +287,40 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        if count == 0 {
-            return Ok(());
-        }
+        match count {
+            0 => Ok(()),
+            1 => self.push_null(),
+            2 => {
+                self.push_null()?;
+                self.push_null()
+            }
+            3 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            4 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            _ => {
+                const ELEM: usize = size_of::<i64>();
+                let base = self.buffers.data_vec.len();
 
-        const ELEM: usize = size_of::<i64>();
-        let base = self.buffers.data_vec.len();
-
-        // Fill data_vec with 0xff bytes (-1i64 per null)
-        unsafe {
-            ptr::write_bytes(
-                self.buffers.data_vec.as_mut_ptr().add(base),
-                0xff,
-                count * ELEM,
-            );
-            self.buffers.data_vec.set_len(base + count * ELEM);
+                // Fill data_vec with 0xff bytes (-1i64 per null)
+                unsafe {
+                    ptr::write_bytes(
+                        self.buffers.data_vec.as_mut_ptr().add(base),
+                        0xff,
+                        count * ELEM,
+                    );
+                    self.buffers.data_vec.set_len(base + count * ELEM);
+                }
+                write_offset_sequence(&mut self.buffers.aux_vec, base + ELEM, ELEM, count)
+            }
         }
-        write_offset_sequence(&mut self.buffers.aux_vec, base + ELEM, ELEM, count)
     }
 
     fn skip(&mut self, count: usize) {

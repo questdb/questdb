@@ -22,8 +22,6 @@
  *
  ******************************************************************************/
 
-use std::{mem, ptr};
-
 use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -33,6 +31,7 @@ use parquet2::read::levels::get_bit_width;
 use parquet2::statistics::ParquetStatistics;
 use parquet2::write::Version;
 use qdb_core::col_driver::ArrayAuxEntry;
+use std::mem;
 
 use crate::parquet_write::util;
 use parquet2::encoding::{delta_bitpacked, Encoding};
@@ -742,27 +741,48 @@ pub fn append_array_nulls(
     data_mem: &[u8],
     count: usize,
 ) -> ParquetResult<()> {
-    if count == 0 {
-        return Ok(());
-    }
-
-    // 8 bytes offset + 8 bytes null header
-    const ENTRY_SIZE: usize = 16;
-    let mut null_entry = [0u8; ENTRY_SIZE];
-    null_entry[..8].copy_from_slice(&data_mem.len().to_le_bytes());
-
-    let total_bytes = count * ENTRY_SIZE;
-    let base = aux_mem.len();
-    aux_mem.reserve(total_bytes)?;
-
-    unsafe {
-        let dst = aux_mem.as_mut_ptr().add(base);
-        for i in 0..count {
-            ptr::copy_nonoverlapping(null_entry.as_ptr(), dst.add(i * ENTRY_SIZE), ENTRY_SIZE);
+    match count {
+        0 => Ok(()),
+        1 => append_array_null(aux_mem, data_mem),
+        2 => {
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)
         }
-        aux_mem.set_len(base + total_bytes);
+        3 => {
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)
+        }
+        4 => {
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)
+        }
+        _ => {
+            const ENTRY_SIZE: usize = 16; // 8 bytes offset + 8 bytes header
+
+            let mut null_entry = [0u8; ENTRY_SIZE];
+            null_entry[..8].copy_from_slice(&data_mem.len().to_le_bytes());
+
+            let base = aux_mem.len();
+            let total_bytes = count * ENTRY_SIZE;
+
+            aux_mem.reserve(total_bytes)?;
+            unsafe {
+                let ptr = aux_mem.as_mut_ptr().add(base);
+                for i in 0..count {
+                    std::ptr::copy_nonoverlapping(
+                        null_entry.as_ptr(),
+                        ptr.add(i * ENTRY_SIZE),
+                        ENTRY_SIZE,
+                    );
+                }
+                AcVecSetLen::set_len(aux_mem, base + total_bytes);
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
