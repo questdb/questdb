@@ -743,6 +743,105 @@ public class IntrinsicModelTest {
         );
     }
 
+    // ==================== TIME LIST BRACKET TESTS ====================
+
+    @Test
+    public void testTimeListBracketErrorEmptyElement() {
+        // Empty element in time list
+        assertBracketIntervalError("2024-01-15T[09:00,,14:30];6h", "Empty element in time list");
+    }
+
+    @Test
+    public void testTimeListBracketMixedTimezone() throws SqlException {
+        // Time list with mixed: some per-element, some using global
+        // T[09:00@UTC,14:30]@+02:00;1h
+        // 09:00@UTC = 09:00 UTC, 14:30@+02:00 = 12:30 UTC
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z},{lo=2024-01-15T12:30:00.000000Z, hi=2024-01-15T13:30:59.999999Z}]",
+                "2024-01-15T[09:00@UTC,14:30]@+02:00;1h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketOverlappingMerged() throws SqlException {
+        // When time list intervals overlap, they get merged (correct behavior)
+        // T[09:00,10:30];2h creates intervals 09:00-11:00 and 10:30-12:30 which overlap
+        // These get merged into a single interval 09:00-12:30
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T12:30:59.999999Z}]",
+                "2024-01-15T[09:00,10:30];2h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketPerElementTimezone() throws SqlException {
+        // Time list with per-element timezones
+        // T[09:00@+05:00,08:00@+02:00];1h
+        // 09:00 in +05:00 = 04:00 UTC, 08:00 in +02:00 = 06:00 UTC
+        assertBracketInterval(
+                "[{lo=2024-01-15T04:00:00.000000Z, hi=2024-01-15T05:00:59.999999Z},{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z}]",
+                "2024-01-15T[09:00@+05:00,08:00@+02:00];1h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketSimple() throws SqlException {
+        // Simple time list: T[09:00,18:00];1h (non-overlapping intervals)
+        // Creates intervals at 09:00-10:00 and 18:00-19:00
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T19:00:59.999999Z}]",
+                "2024-01-15T[09:00,18:00];1h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketThreeTimes() throws SqlException {
+        // Three time values (non-overlapping)
+        assertBracketInterval(
+                "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T09:00:59.999999Z},{lo=2024-01-15T12:00:00.000000Z, hi=2024-01-15T13:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T19:00:59.999999Z}]",
+                "2024-01-15T[08:00,12:00,18:00];1h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketWithDayExpansion() throws SqlException {
+        // Combination: day expansion + time list
+        // 2024-01-[15,16]T[09:00,18:00];1h = 4 intervals (2 days × 2 times, non-overlapping)
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T19:00:59.999999Z},{lo=2024-01-16T09:00:00.000000Z, hi=2024-01-16T10:00:59.999999Z},{lo=2024-01-16T18:00:00.000000Z, hi=2024-01-16T19:00:59.999999Z}]",
+                "2024-01-[15,16]T[09:00,18:00];1h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketWithGlobalTimezone() throws SqlException {
+        // Time list with global timezone (applied to all elements)
+        // T[09:00,18:00]@+02:00;1h (non-overlapping)
+        // Both times in +02:00 offset: 09:00 = 07:00 UTC, 18:00 = 16:00 UTC
+        assertBracketInterval(
+                "[{lo=2024-01-15T07:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z},{lo=2024-01-15T16:00:00.000000Z, hi=2024-01-15T17:00:59.999999Z}]",
+                "2024-01-15T[09:00,18:00]@+02:00;1h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketWithWhitespace() throws SqlException {
+        // Time list with whitespace around values
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T19:00:59.999999Z}]",
+                "2024-01-15T[ 09:00 , 18:00 ];1h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketWithoutDuration() throws SqlException {
+        // Time list without duration (minute-level precision)
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T18:00:59.999999Z}]",
+                "2024-01-15T[09:00,18:00]"
+        );
+    }
+
     @Test
     public void testIntersectContain2() {
         final TimestampDriver timestampDriver = timestampType.getDriver();

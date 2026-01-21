@@ -558,7 +558,7 @@ public final class IntervalUtils {
         StringSink expansionSink = Misc.getThreadLocalSink();
 
         try {
-            expandBracketsRecursive(
+            boolean hadTimeListBracket = expandBracketsRecursive(
                     timestampDriver,
                     parseSeq,
                     parseLo,
@@ -571,10 +571,14 @@ public final class IntervalUtils {
                     expansionSink,
                     0,
                     applyEncoded,
-                    outSize
+                    outSize,
+                    seq,          // globalTzSeq - original sequence with timezone
+                    tzLo,         // globalTzLo
+                    tzHi          // globalTzHi
             );
-            // Apply timezone conversion if present (before union)
-            if (tzMarkerPos >= 0) {
+            // Apply timezone conversion if present AND no time list brackets were processed
+            // (time list brackets handle their own timezone internally)
+            if (tzMarkerPos >= 0 && !hadTimeListBracket) {
                 applyTimezoneToIntervals(timestampDriver, out, outSize, seq, tzLo, tzHi, position, applyEncoded);
             }
             // In static mode, union all bracket-expanded intervals with each other
@@ -937,8 +941,10 @@ public final class IntervalUtils {
      * The sink accumulates the expanded string as recursion proceeds. Each call restores
      * the sink to its entry state before returning, allowing the parent to continue
      * iterating through other values.
+     *
+     * @return true if any time list brackets were processed, false otherwise
      */
-    private static void expandBracketsRecursive(
+    private static boolean expandBracketsRecursive(
             TimestampDriver timestampDriver,
             CharSequence seq,
             int intervalStart, // start of interval in seq (for pad width calculation)
@@ -951,7 +957,10 @@ public final class IntervalUtils {
             StringSink sink,
             int depth,
             boolean applyEncoded,
-            int outSizeBeforeExpansion
+            int outSizeBeforeExpansion,
+            CharSequence globalTzSeq, // original sequence containing timezone (for applying global TZ)
+            int globalTzLo,           // start of global timezone in globalTzSeq (-1 if none)
+            int globalTzHi            // end of global timezone in globalTzSeq (-1 if none)
     ) throws SqlException {
         if (depth > MAX_BRACKET_DEPTH) {
             throw SqlException.$(errorPos, "Too many bracket groups (max " + MAX_BRACKET_DEPTH + ")");
@@ -972,7 +981,7 @@ public final class IntervalUtils {
             sink.put(seq, pos, fullLim);
             parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
             sink.clear(sinkLen);
-            return;
+            return false; // No time list bracket processed
         }
 
         // Save sink state before adding prefix
@@ -985,8 +994,23 @@ public final class IntervalUtils {
         // Find closing bracket
         int bracketEnd = findMatchingBracket(seq, bracketStart, dateLim, errorPos);
 
+        // Check if bracket contains time list (has ':' inside, e.g., [09:00,14:30])
+        // vs numeric expansion (no ':', e.g., [09,14])
+        if (isTimeListBracket(seq, bracketStart, bracketEnd)) {
+            expandTimeListBracket(
+                    timestampDriver, seq, bracketStart, bracketEnd, dateLim, fullLim,
+                    errorPos, out, operation, sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion,
+                    globalTzSeq, globalTzLo, globalTzHi
+            );
+            sink.clear(startLen);
+            return true; // Time list bracket was processed
+        }
+
         // Determine zero-padding width based on position in timestamp
         int padWidth = determinePadWidth(seq, intervalStart, bracketStart);
+
+        // Track if any time list bracket was found in recursive calls
+        boolean foundTimeListBracket = false;
 
         // Iterate through values in bracket without allocating collections
         int i = bracketStart + 1;
@@ -1051,10 +1075,13 @@ public final class IntervalUtils {
             // Expand range (or single value if value == rangeEnd)
             for (int v = value; v <= rangeEnd; v++) {
                 appendPaddedInt(sink, v, padWidth);
-                expandBracketsRecursive(
+                if (expandBracketsRecursive(
                         timestampDriver, seq, intervalStart, bracketEnd + 1, dateLim, fullLim,
-                        errorPos, out, operation, sink, depth + 1, applyEncoded, outSizeBeforeExpansion
-                );
+                        errorPos, out, operation, sink, depth + 1, applyEncoded, outSizeBeforeExpansion,
+                        globalTzSeq, globalTzLo, globalTzHi
+                )) {
+                    foundTimeListBracket = true;
+                }
                 sink.clear(afterPrefixLen);
             }
 
@@ -1081,6 +1108,7 @@ public final class IntervalUtils {
 
         // Restore sink to entry state
         sink.clear(startLen);
+        return foundTimeListBracket;
     }
 
     /**
@@ -1262,7 +1290,7 @@ public final class IntervalUtils {
                     elementWithSuffix.put(sink);
                     sink.clear();
 
-                    expandBracketsRecursive(
+                    boolean hadTimeListBracket = expandBracketsRecursive(
                             timestampDriver,
                             elementWithSuffix,
                             0,
@@ -1275,20 +1303,143 @@ public final class IntervalUtils {
                             sink,
                             0,
                             applyEncoded,
-                            outSizeBeforeExpansion
+                            outSizeBeforeExpansion,
+                            seq,           // globalTzSeq - for time list TZ fallback
+                            activeTzLo,    // globalTzLo
+                            activeTzHi     // globalTzHi
                     );
+                    // If time list brackets were processed, they handled TZ internally
+                    if (hadTimeListBracket) {
+                        activeTzLo = -1; // Clear to skip TZ application below
+                    }
                 } else {
                     // No brackets - parse directly
                     parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
                 }
 
-                // Apply timezone conversion if present (per-element or global)
+                // Apply timezone conversion if present (per-element or global) and NOT already handled by time list
                 if (activeTzLo >= 0) {
                     applyTimezoneToIntervals(timestampDriver, out, outSizeBeforeElement, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
                 }
 
                 elementStart = i + 1;
             }
+        }
+    }
+
+    /**
+     * Expands a time list bracket where each element is a full time value.
+     * Example: [09:00,14:30,16:00] expands to 3 intervals.
+     * Supports per-element timezones: [09:00@Asia/Tokyo,08:00@Europe/London]
+     * If no per-element timezone, falls back to global timezone if provided.
+     *
+     * @param timestampDriver        timestamp driver for parsing
+     * @param seq                    the full input string
+     * @param bracketStart           position of the opening '['
+     * @param bracketEnd             position of the closing ']'
+     * @param dateLim                end of date part (before semicolon)
+     * @param fullLim                end of entire string (including duration suffix)
+     * @param errorPos               position for error reporting
+     * @param out                    output list for parsed intervals
+     * @param operation              interval operation
+     * @param sink                   reusable StringSink containing the prefix (e.g., "2024-01-15T")
+     * @param sinkPrefixLen          length of prefix to preserve in sink
+     * @param applyEncoded           if true, converts to simple format
+     * @param outSizeBeforeExpansion size of out before expansion started
+     * @param globalTzSeq            original sequence containing timezone (for applying global TZ)
+     * @param globalTzLo             start of global timezone in globalTzSeq (-1 if none)
+     * @param globalTzHi             end of global timezone in globalTzSeq (-1 if none)
+     */
+    private static void expandTimeListBracket(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int bracketStart,
+            int bracketEnd,
+            int dateLim,
+            int fullLim,
+            int errorPos,
+            LongList out,
+            short operation,
+            StringSink sink,
+            int sinkPrefixLen,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion,
+            CharSequence globalTzSeq,
+            int globalTzLo,
+            int globalTzHi
+    ) throws SqlException {
+        int i = bracketStart + 1;
+        int elementCount = 0;
+
+        while (i < bracketEnd) {
+            // Skip whitespace
+            while (i < bracketEnd && Character.isWhitespace(seq.charAt(i))) {
+                i++;
+            }
+            if (i >= bracketEnd) {
+                break;
+            }
+
+            // Find element end (comma or bracket end)
+            int elemStart = i;
+            while (i < bracketEnd && seq.charAt(i) != ',') {
+                i++;
+            }
+            int elemEnd = i;
+
+            // Trim trailing whitespace from element
+            while (elemEnd > elemStart && Character.isWhitespace(seq.charAt(elemEnd - 1))) {
+                elemEnd--;
+            }
+
+            if (elemStart >= elemEnd) {
+                throw SqlException.$(errorPos, "Empty element in time list");
+            }
+
+            // Check for per-element timezone (@)
+            int tzMarker = -1;
+            for (int j = elemStart; j < elemEnd; j++) {
+                if (seq.charAt(j) == '@') {
+                    tzMarker = j;
+                    break;
+                }
+            }
+
+            int timeEnd = tzMarker >= 0 ? tzMarker : elemEnd;
+            int tzLo = tzMarker >= 0 ? tzMarker + 1 : -1;
+            int tzHi = tzMarker >= 0 ? elemEnd : -1;
+
+            // Remember output size before parsing this element
+            int outSizeBeforeElement = out.size();
+
+            // Build full timestamp: prefix + time element (without @tz) + suffix after bracket
+            sink.put(seq, elemStart, timeEnd);          // time value (e.g., "09:00")
+            sink.put(seq, bracketEnd + 1, fullLim);     // suffix (e.g., ";6h")
+
+            // Parse the interval
+            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+
+            // Apply timezone: per-element takes precedence, then global fallback
+            if (tzLo >= 0) {
+                // Per-element timezone
+                applyTimezoneToIntervals(timestampDriver, out, outSizeBeforeElement, seq, tzLo, tzHi, errorPos, applyEncoded);
+            } else if (globalTzLo >= 0) {
+                // Global timezone as fallback
+                applyTimezoneToIntervals(timestampDriver, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos, applyEncoded);
+            }
+
+            // Reset sink to prefix for next element
+            sink.clear(sinkPrefixLen);
+            elementCount++;
+
+            // Skip comma
+            if (i < bracketEnd && seq.charAt(i) == ',') {
+                i++;
+            }
+        }
+
+        if (elementCount == 0) {
+            throw SqlException.$(errorPos, "Empty time list bracket");
         }
     }
 
@@ -1348,6 +1499,24 @@ public final class IntervalUtils {
             }
         }
         return -1;
+    }
+
+    /**
+     * Checks if a bracket contains a time list (has ':' in content).
+     * Time list brackets contain full time values like [09:00,14:30] vs numeric expansion like [09,14].
+     *
+     * @param seq          the input string
+     * @param bracketStart position of the opening '['
+     * @param bracketEnd   position of the closing ']'
+     * @return true if this is a time list bracket, false if it's numeric expansion
+     */
+    private static boolean isTimeListBracket(CharSequence seq, int bracketStart, int bracketEnd) {
+        for (int i = bracketStart + 1; i < bracketEnd; i++) {
+            if (seq.charAt(i) == ':') {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
