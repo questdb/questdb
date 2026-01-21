@@ -100,7 +100,7 @@ public class GroupByFunctionsUpdaterBenchmark {
         bytecodeUpdater = GroupByFunctionsUpdaterFactory.getInstance(bytecodeClass, functionsForBytecode);
 
         // Create loop-based updater
-        simpleUpdater = new SimpleGroupByFunctionUpdater();
+        simpleUpdater = new GroupByFunctionsUpdaterFactory.SimpleGroupByFunctionUpdater();
         simpleUpdater.setFunctions(functionsForSimple);
 
         // Create map value and record for benchmarks
@@ -125,44 +125,6 @@ public class GroupByFunctionsUpdaterBenchmark {
     public long testSimpleUpdateNew() {
         simpleUpdater.updateNew(mapValue, record, 42L);
         return mapValue.getLong(0);
-    }
-
-    // copy of GroupByFunctionsUpdaterFactory's simple updater
-    private static class SimpleGroupByFunctionUpdater implements GroupByFunctionsUpdater {
-        private ObjList<GroupByFunction> groupByFunctions;
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                groupByFunctions.getQuick(i).merge(destValue, srcValue);
-            }
-        }
-
-        @Override
-        public void setFunctions(ObjList<GroupByFunction> groupByFunctions) {
-            this.groupByFunctions = groupByFunctions;
-        }
-
-        @Override
-        public void updateEmpty(MapValue value) {
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                groupByFunctions.getQuick(i).setEmpty(value);
-            }
-        }
-
-        @Override
-        public void updateExisting(MapValue value, Record record, long rowId) {
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                groupByFunctions.getQuick(i).computeNext(value, record, rowId);
-            }
-        }
-
-        @Override
-        public void updateNew(MapValue value, Record record, long rowId) {
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                groupByFunctions.getQuick(i).computeFirst(value, record, rowId);
-            }
-        }
     }
 
     private static class TestGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {

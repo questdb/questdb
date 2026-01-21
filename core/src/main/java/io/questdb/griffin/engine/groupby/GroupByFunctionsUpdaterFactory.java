@@ -307,9 +307,9 @@ public class GroupByFunctionsUpdaterFactory {
     }
 
     /**
-     * Used when the number of group by functions is large.
+     * Used when the number of group by functions is large. Kept public for benchmarking purposes.
      */
-    private static class SimpleGroupByFunctionUpdater implements GroupByFunctionsUpdater {
+    public static class SimpleGroupByFunctionUpdater implements GroupByFunctionsUpdater {
         private ObjList<GroupByFunction> groupByFunctions;
 
         @Override
