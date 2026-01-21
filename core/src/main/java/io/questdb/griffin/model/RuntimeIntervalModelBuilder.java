@@ -379,6 +379,27 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        if (isEmptySet()) {
+            return;
+        }
+
+        if (dynamicRangeList.size() > 0) {
+            throw new UnsupportedOperationException();
+        }
+
+        // Parse and expand the interval string (may produce multiple pairs for periodic intervals)
+        int size = staticIntervals.size();
+        IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
+
+        // Union all newly added pairs with existing intervals
+        if (intervalApplied) {
+            IntervalUtils.unionInPlace(staticIntervals, size);
+        }
+        intervalApplied = true;
+    }
+
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
         if (isEmptySet()) {
             return;

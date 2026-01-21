@@ -444,6 +444,22 @@ public class SqlUtil {
             if (lineComment) {
                 if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
                     lineComment = false;
+                } else {
+                    // Check if token contains a newline (can happen with unbalanced quotes in comments)
+                    for (int i = 0, n = cs.length(); i < n; i++) {
+                        char c = cs.charAt(i);
+                        if (c == '\n' || c == '\r') {
+                            // Found newline inside token - reposition lexer to after newline
+                            int newPos = lexer.lastTokenPosition() + i + 1;
+                            // Skip \r\n sequence
+                            if (c == '\r' && i + 1 < n && cs.charAt(i + 1) == '\n') {
+                                newPos++;
+                            }
+                            lexer.backTo(newPos, null);
+                            lineComment = false;
+                            break;
+                        }
+                    }
                 }
                 continue;
             }
@@ -511,6 +527,22 @@ public class SqlUtil {
             if (lineComment) {
                 if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
                     lineComment = false;
+                } else {
+                    // Check if token contains a newline (can happen with unbalanced quotes in comments)
+                    for (int i = 0, n = cs.length(); i < n; i++) {
+                        char c = cs.charAt(i);
+                        if (c == '\n' || c == '\r') {
+                            // Found newline inside token - reposition lexer to after newline
+                            int newPos = lexer.lastTokenPosition() + i + 1;
+                            // Skip \r\n sequence
+                            if (c == '\r' && i + 1 < n && cs.charAt(i + 1) == '\n') {
+                                newPos++;
+                            }
+                            lexer.backTo(newPos, null);
+                            lineComment = false;
+                            break;
+                        }
+                    }
                 }
                 continue;
             }
