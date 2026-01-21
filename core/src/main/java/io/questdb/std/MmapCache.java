@@ -393,14 +393,12 @@ public final class MmapCache {
         }
 
         // We lost the race, clean up redundant mapping outside the lock
-        int result = Files.munmap0(redundantAddress, redundantLen);
-        if (result != -1) {
-            Unsafe.recordMemAlloc(-redundantLen, redundantTag);
-        } else {
-            throw CairoException.critical(Os.errno())
-                    .put("munmap of redundant mapping failed [address=").put(redundantAddress)
-                    .put(", len=").put(redundantLen)
-                    .put(", memoryTag=").put(redundantTag).put(']');
+        try {
+            // This submits an async unmap operation, and only in an extreme (unmap queue full) case
+            // will do it sync with the potential to throw CairoException
+            unmap0(redundantAddress, redundantLen, redundantTag);
+        } catch (CairoException e) {
+            LOG.error().$("failed to unmap redundant mapping after losing race [message=").$(e.getMessage()).I$();
         }
         return returnAddress;
     }
