@@ -113,6 +113,12 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionErrorCountNotANumber() {
+        // Invalid count in repeating interval format (exercises line 1242)
+        assertBracketIntervalError("2018-01-10T10:30;30m;2d;X", "Count not a number");
+    }
+
+    @Test
     public void testBracketExpansionErrorDescendingRange() {
         assertBracketIntervalError("2018-01-[15..10]", "Range must be ascending");
     }
@@ -158,49 +164,6 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testBracketExpansionErrorTooManySemicolons() {
-        // 4 semicolons triggers "Invalid interval format" (exercises line 1192)
-        assertBracketIntervalError("2018-01-10;1h;1d;2;extra", "Invalid interval format");
-    }
-
-    @Test
-    public void testBracketExpansionRawTimestamp() throws SqlException {
-        // Raw long timestamp (exercises line 1219 - Numbers.parseLong fallback)
-        // 1234567890000000 microseconds = 2009-02-13T23:31:30.000000Z
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "1234567890000000";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        Assert.assertEquals(1234567890000000L, out.getQuick(0));
-        Assert.assertEquals(1234567890000000L, out.getQuick(1));
-    }
-
-    @Test
-    public void testBracketExpansionErrorPeriodNotANumber() {
-        // Invalid period in repeating interval format (exercises line 1236)
-        assertBracketIntervalError("2018-01-10T10:30;30m;Xd;2", "Period not a number");
-    }
-
-    @Test
-    public void testBracketExpansionErrorCountNotANumber() {
-        // Invalid count in repeating interval format (exercises line 1242)
-        assertBracketIntervalError("2018-01-10T10:30;30m;2d;X", "Count not a number");
-    }
-
-    @Test
-    public void testBracketExpansionErrorUnknownPeriodType() {
-        // Unknown period type 'w' (exercises line 1260)
-        assertBracketIntervalError("2018-01-10T10:30;30m;2w;3", "Unknown period");
-    }
-
-    @Test
-    public void testBracketExpansionErrorTwoSemicolons() {
-        // Exactly 2 semicolons is invalid format (exercises line 1264)
-        assertBracketIntervalError("2018-01-10T10:30;30m;2d", "Invalid interval format");
-    }
-
-    @Test
     public void testBracketExpansionErrorNonNumeric() {
         assertBracketIntervalError("2018-01-[abc]", "Expected number in bracket expansion");
     }
@@ -209,6 +172,12 @@ public class IntrinsicModelTest {
     public void testBracketExpansionErrorNumberOverflow() {
         // Number too large for int (Integer.MAX_VALUE is 2147483647)
         assertBracketIntervalError("2018-01-[99999999999]", "Expected number in bracket expansion");
+    }
+
+    @Test
+    public void testBracketExpansionErrorPeriodNotANumber() {
+        // Invalid period in repeating interval format (exercises line 1236)
+        assertBracketIntervalError("2018-01-10T10:30;30m;Xd;2", "Period not a number");
     }
 
     @Test
@@ -239,8 +208,26 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionErrorTooManySemicolons() {
+        // 4 semicolons triggers "Invalid interval format" (exercises line 1192)
+        assertBracketIntervalError("2018-01-10;1h;1d;2;extra", "Invalid interval format");
+    }
+
+    @Test
+    public void testBracketExpansionErrorTwoSemicolons() {
+        // Exactly 2 semicolons is invalid format (exercises line 1264)
+        assertBracketIntervalError("2018-01-10T10:30;30m;2d", "Invalid interval format");
+    }
+
+    @Test
     public void testBracketExpansionErrorUnclosedBracket() {
         assertBracketIntervalError("2018-01-[10,15", "Unclosed '[' in interval");
+    }
+
+    @Test
+    public void testBracketExpansionErrorUnknownPeriodType() {
+        // Unknown period type 'w' (exercises line 1260)
+        assertBracketIntervalError("2018-01-10T10:30;30m;2w;3", "Unknown period");
     }
 
     @Test
@@ -318,6 +305,19 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionRawTimestamp() throws SqlException {
+        // Raw long timestamp (exercises line 1219 - Numbers.parseLong fallback)
+        // 1234567890000000 microseconds = 2009-02-13T23:31:30.000000Z
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "1234567890000000";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        Assert.assertEquals(1234567890000000L, out.getQuick(0));
+        Assert.assertEquals(1234567890000000L, out.getQuick(1));
+    }
+
+    @Test
     public void testBracketExpansionSingleValue() throws SqlException {
         assertBracketInterval(
                 "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]",
@@ -340,6 +340,19 @@ public class IntrinsicModelTest {
                 "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]",
                 "2018-01-[10,15]"
         );
+    }
+
+    @Test
+    public void testBracketExpansionWithApplyEncodedFalse() throws SqlException {
+        // Test field expansion path with applyEncoded=false (exercises line 510 branch)
+        // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2018-01-[10,15]";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        // 2 intervals * 4 longs = 8
+        Assert.assertEquals(8, out.size());
     }
 
     @Test
@@ -390,6 +403,18 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testBracketExpansionWithSubtractApplyEncodedFalse() throws SqlException {
+        // Test SUBTRACT operation with applyEncoded=false (exercises line 1167)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2018-01-[10,15]";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.SUBTRACT, false);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        // 2 intervals * 4 longs = 8
+        Assert.assertEquals(8, out.size());
+    }
+
+    @Test
     public void testBracketExpansionWithTime() throws SqlException {
         assertBracketInterval(
                 "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:30:59.999999Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T10:30:59.999999Z}]",
@@ -430,55 +455,6 @@ public class IntrinsicModelTest {
                 "[{lo=2018-05-01T00:00:00.000000Z, hi=2018-05-31T23:59:59.999999Z}]",
                 "2018-[5]"
         );
-    }
-
-    @Test
-    public void testBracketExpansionWithApplyEncodedFalse() throws SqlException {
-        // Test field expansion path with applyEncoded=false (exercises line 510 branch)
-        // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2018-01-[10,15]";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // 2 intervals * 4 longs = 8
-        Assert.assertEquals(8, out.size());
-    }
-
-    @Test
-    public void testDateListWithApplyEncodedFalse() throws SqlException {
-        // Test date list path with applyEncoded=false (exercises line 455 branch)
-        // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[2025-01-01,2025-01-05]";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // 2 intervals * 4 longs = 8
-        Assert.assertEquals(8, out.size());
-    }
-
-    @Test
-    public void testBracketExpansionWithSubtractApplyEncodedFalse() throws SqlException {
-        // Test SUBTRACT operation with applyEncoded=false (exercises line 1167)
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2018-01-[10,15]";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.SUBTRACT, false);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // 2 intervals * 4 longs = 8
-        Assert.assertEquals(8, out.size());
-    }
-
-    @Test
-    public void testNoBracketsWithApplyEncodedFalse() throws SqlException {
-        // Test no-brackets path with applyEncoded=false (exercises line 484 branch)
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2025-01-15";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        Assert.assertEquals(4, out.size());
     }
 
     @Test
@@ -596,8 +572,6 @@ public class IntrinsicModelTest {
         assertBracketIntervalError("[]", "Empty date list");
     }
 
-    // ==================== Bracket Expansion Tests ====================
-
     @Test
     public void testDateListErrorInvalidDayInNestedExpansion() {
         // '[2025-01-[32..35]]' produces invalid day error
@@ -609,6 +583,8 @@ public class IntrinsicModelTest {
         // '[,2025-01-01]' produces error
         assertBracketIntervalError("[,2025-01-01]", "Empty element in date list");
     }
+
+    // ==================== Bracket Expansion Tests ====================
 
     @Test
     public void testDateListErrorNegativeDuration() {
@@ -635,9 +611,12 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testWhitespaceOnlyInput() {
-        // All whitespace input (exercises line 426 - firstNonSpace reaches lim)
-        assertBracketIntervalError("   ", "Invalid date");
+    public void testDateListOverlappingIntervals() throws SqlException {
+        // Duplicate dates should be merged into one interval (exercises line 1350)
+        assertBracketInterval(
+                "[{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z}]",
+                "[2025-01-05,2025-01-05,2025-01-05]"
+        );
     }
 
     @Test
@@ -678,12 +657,16 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testDateListOverlappingIntervals() throws SqlException {
-        // Duplicate dates should be merged into one interval (exercises line 1350)
-        assertBracketInterval(
-                "[{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z}]",
-                "[2025-01-05,2025-01-05,2025-01-05]"
-        );
+    public void testDateListWithApplyEncodedFalse() throws SqlException {
+        // Test date list path with applyEncoded=false (exercises line 455 branch)
+        // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2025-01-01,2025-01-05]";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        // 2 intervals * 4 longs = 8
+        Assert.assertEquals(8, out.size());
     }
 
     @Test
@@ -851,6 +834,17 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testNoBracketsWithApplyEncodedFalse() throws SqlException {
+        // Test no-brackets path with applyEncoded=false (exercises line 484 branch)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2025-01-15";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        Assert.assertEquals(4, out.size());
+    }
+
+    @Test
     public void testParseLongInterval22() throws Exception {
         assertShortInterval(
                 "[{lo=2015-03-12T10:00:00.000000Z, hi=2015-03-12T10:05:00.999999Z},{lo=2015-03-12T10:30:00.000000Z, hi=2015-03-12T10:35:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z},{lo=2015-03-12T11:30:00.000000Z, hi=2015-03-12T11:35:00.999999Z},{lo=2015-03-12T12:00:00.000000Z, hi=2015-03-12T12:05:00.999999Z},{lo=2015-03-12T12:30:00.000000Z, hi=2015-03-12T12:35:00.999999Z},{lo=2015-03-12T13:00:00.000000Z, hi=2015-03-12T13:05:00.999999Z},{lo=2015-03-12T13:30:00.000000Z, hi=2015-03-12T13:35:00.999999Z},{lo=2015-03-12T14:00:00.000000Z, hi=2015-03-12T14:05:00.999999Z},{lo=2015-03-12T14:30:00.000000Z, hi=2015-03-12T14:35:00.999999Z}]",
@@ -930,12 +924,12 @@ public class IntrinsicModelTest {
         assertShortInterval("[{lo=2016-03-01T00:00:00.000000Z, hi=2016-03-31T23:59:59.999999Z}]", "2016-03");
     }
 
-    // ==================== Date List Tests ====================
-
     @Test
     public void testParseShortInterval3() throws Exception {
         assertShortInterval("[{lo=2016-03-21T00:00:00.000000Z, hi=2016-03-21T23:59:59.999999Z}]", "2016-03-21");
     }
+
+    // ==================== Date List Tests ====================
 
     @Test
     public void testParseShortInterval32() throws Exception {
@@ -1024,6 +1018,498 @@ public class IntrinsicModelTest {
         assertIntervalError("20-");
     }
 
+    @Test
+    public void testTimezoneAtSignInsideBracketsIgnored() {
+        // Test that @ inside brackets is NOT treated as timezone marker - exercises L1543 depth check
+        // The string "2024-01-[15@00,16]" has @ inside brackets - should fail as invalid bracket content
+        // not as invalid timezone
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-[15@00,16]";
+        try {
+            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            Assert.fail("Expected SqlException for invalid bracket content");
+        } catch (SqlException e) {
+            // Should fail parsing the bracket content, not as "invalid timezone"
+            Assert.assertFalse("Error should not mention timezone", e.getMessage().contains("timezone"));
+        }
+    }
+
+    @Test
+    public void testTimezoneBracketExpansionWithTimezoneAndDuration() throws SqlException {
+        // Test combination: bracket expansion + timezone + duration
+        // 2024-01-[15,16]T08:00@+02:00;1h
+        // For each date: 08:00 in +02:00 = 06:00 UTC, duration extends hi by 1h
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-[15,16]T08:00@+02:00;1h";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(4, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T07:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T07:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneDateListGlobalTimezone() throws SqlException {
+        // Date list with global timezone applied to all elements
+        // [2024-01-15,2024-01-16]T08:00@+02:00
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2024-01-15,2024-01-16]T08:00@+02:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(4, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneDateListGlobalTimezoneWithDuration() throws SqlException {
+        // Date list with global timezone AND duration suffix - tests L1077 branch
+        // [2024-01-15,2024-01-16]T08:00@+02:00;1h
+        // 08:00 in +02:00 = 06:00 UTC, ;1h extends hi by 1 hour to 07:00:59 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2024-01-15,2024-01-16]T08:00@+02:00;1h";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(4, out.size()); // 2 dates, each with 1 interval (duration extends hi, doesn't add intervals)
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T07:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T07:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneDateListMixedTimezones() throws SqlException {
+        // Date list with mixed: some per-element, some using global
+        // [2024-01-15@UTC,2024-01-16]T08:00@+03:00
+        // First: has own timezone UTC -> 08:00 UTC
+        // Second: uses global +03:00 -> 05:00 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2024-01-15@UTC,2024-01-16]T08:00@+03:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(4, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z},{lo=2024-01-16T05:00:00.000000000Z, hi=2024-01-16T05:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z},{lo=2024-01-16T05:00:00.000000Z, hi=2024-01-16T05:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    // =====================================================
+    // Timezone tests
+    // =====================================================
+
+    @Test
+    public void testTimezoneDateListPerElementNamedTimezone() throws SqlException {
+        // Date list with per-element named timezones
+        // [2024-01-15@Europe/London,2024-07-15@Europe/London]T08:00
+        // Winter: 08:00 in UTC+0 = 08:00 UTC
+        // Summer: 08:00 in UTC+1 = 07:00 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2024-01-15@Europe/London,2024-07-15@Europe/London]T08:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(4, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z},{lo=2024-07-15T07:00:00.000000000Z, hi=2024-07-15T07:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z},{lo=2024-07-15T07:00:00.000000Z, hi=2024-07-15T07:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneDateListPerElementTimezone() throws SqlException {
+        // Date list with per-element timezones
+        // [2024-01-15@+02:00,2024-01-16@+05:00]T08:00
+        // First: 08:00 in +02:00 = 06:00 UTC
+        // Second: 08:00 in +05:00 = 03:00 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2024-01-15@+02:00,2024-01-16@+05:00]T08:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(4, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T03:00:00.000000000Z, hi=2024-01-16T03:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T03:00:00.000000Z, hi=2024-01-16T03:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneDateListWithBracketExpansion() throws SqlException {
+        // Date list element with bracket expansion and timezone
+        // [2024-01-[15,16]@+02:00]T08:00
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2024-01-[15,16]@+02:00]T08:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(4, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneDstGapAdjustment() throws SqlException {
+        // Test DST gap handling - exercises L1602-1604 (lo and hi adjustment)
+        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM
+        // So 2:30 AM doesn't exist - both lo and hi are adjusted forward by the same gap offset
+        // to preserve interval width
+        // lo (2:30:00) -> 3:00:00 EDT = 07:00:00 UTC
+        // hi (2:30:59.999999) -> 3:00:59.999999 EDT = 07:00:59.999999 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-03-10T02:30@America/New_York";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-03-10T07:00:00.000000000Z, hi=2024-03-10T07:00:59.999999999Z}]"
+                : "[{lo=2024-03-10T07:00:00.000000Z, hi=2024-03-10T07:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneDstGapHiOnlyInGap() throws SqlException {
+        // Test edge case: lo is before DST gap, hi is in the gap - exercises L1610
+        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM
+        // Using ;2m duration to extend interval from 01:59 into the gap
+        // lo = 01:59:00 EST = 06:59:00 UTC (not in gap, unchanged)
+        // hi falls in gap and gets adjusted forward
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-03-10T01:59@America/New_York;2m";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-03-10T06:59:00.000000000Z, hi=2024-03-10T07:03:59.999999998Z}]"
+                : "[{lo=2024-03-10T06:59:00.000000Z, hi=2024-03-10T07:03:59.999998Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneDstOverlapFallBack() throws SqlException {
+        // Test DST overlap (fall back) - Nov 3, 2024 in America/New_York
+        // At 2:00 AM EDT, clocks fall back to 1:00 AM EST
+        // So 1:30 AM occurs twice - the code uses daylight time (EDT) offset
+        // 1:30 AM EDT = 05:30 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-11-03T01:30@America/New_York";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        // During overlap, daylight time (EDT = UTC-4) is used
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-11-03T05:30:00.000000000Z, hi=2024-11-03T05:30:59.999999999Z}]"
+                : "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneEmpty() {
+        // Test empty timezone after @ - should throw error
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@";
+        try {
+            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            Assert.fail("Expected SqlException for empty timezone");
+        } catch (SqlException e) {
+            Assert.assertTrue("Error should mention invalid timezone", e.getMessage().contains("invalid timezone"));
+        }
+    }
+
+    @Test
+    public void testTimezoneExtremeNegativeOffset() throws SqlException {
+        // Test extreme negative offset -12:00
+        // 08:00 in -12:00 = 08:00 + 12:00 = 20:00 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@-12:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T20:00:00.000000000Z, hi=2024-01-15T20:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T20:00:00.000000Z, hi=2024-01-15T20:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneExtremePositiveOffset() throws SqlException {
+        // Test extreme positive offset +14:00 (e.g., Pacific/Kiritimati)
+        // 08:00 in +14:00 = 08:00 - 14:00 = -06:00 = previous day 18:00 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@+14:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-14T18:00:00.000000000Z, hi=2024-01-14T18:00:59.999999999Z}]"
+                : "[{lo=2024-01-14T18:00:00.000000Z, hi=2024-01-14T18:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneGMT() throws SqlException {
+        // GMT timezone
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@GMT";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneIncompleteOffset() {
+        // Test incomplete offsets - potential NPE cases
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String[] testCases = {"2024-01-15T08:00@+", "2024-01-15T08:00@-", "2024-01-15T08:00@+:", "2024-01-15T08:00@+00"};
+        for (String interval : testCases) {
+            LongList out = new LongList();
+            try {
+                parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+                // If it succeeds without error, that's also fine
+            } catch (SqlException e) {
+                // Expected - invalid timezone
+            } catch (NullPointerException e) {
+                Assert.fail("NPE for input '" + interval + "' - need null check");
+            }
+        }
+    }
+
+    @Test
+    public void testTimezoneInvalid() {
+        // Test invalid timezone name - should throw error
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@InvalidZone";
+        try {
+            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            Assert.fail("Expected SqlException for invalid timezone");
+        } catch (SqlException e) {
+            Assert.assertTrue("Error should mention invalid timezone", e.getMessage().contains("invalid timezone"));
+        }
+    }
+
+    @Test
+    public void testTimezoneInvalidTimezone() {
+        // Invalid timezone should throw error
+        assertBracketIntervalError("2024-01-15T08:00@InvalidTz", "invalid timezone");
+    }
+
+    @Test
+    public void testTimezoneMalformedOffset() {
+        // Test malformed offset @+03:x0 - might bypass numeric parsing and cause NPE
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@+02:x0";
+        try {
+            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            Assert.fail("Expected SqlException for malformed timezone");
+        } catch (SqlException e) {
+            // Expected - invalid timezone
+            Assert.assertTrue("Error should mention invalid timezone", e.getMessage().contains("invalid timezone"));
+        } catch (NullPointerException e) {
+            Assert.fail("NPE for malformed offset - need null check");
+        }
+    }
+
+    @Test
+    public void testTimezoneNamedTimezone() throws SqlException {
+        // Simple timestamp with named timezone Europe/London
+        // 2024-01-15T08:00 in Europe/London (winter, UTC+0) = 2024-01-15T08:00:00Z in UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@Europe/London";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneNamedTimezoneSummer() throws SqlException {
+        // Named timezone in summer (Europe/London is UTC+1 in July)
+        // 2024-07-15T08:00 in Europe/London (summer, UTC+1) = 2024-07-15T07:00:00Z in UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-07-15T08:00@Europe/London";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-07-15T07:00:00.000000000Z, hi=2024-07-15T07:00:59.999999999Z}]"
+                : "[{lo=2024-07-15T07:00:00.000000Z, hi=2024-07-15T07:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneNegativeOffset() throws SqlException {
+        // Test negative UTC offset - 08:00 in -05:00 = 13:00 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@-05:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T13:00:00.000000000Z, hi=2024-01-15T13:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T13:00:00.000000Z, hi=2024-01-15T13:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneRangeExpansion() throws SqlException {
+        // Range expansion with timezone
+        // 2024-01-[15..17]T08:00@+02:00
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-[15..17]T08:00@+02:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(6, out.size()); // Three intervals
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z},{lo=2024-01-17T06:00:00.000000000Z, hi=2024-01-17T06:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:00:59.999999Z},{lo=2024-01-17T06:00:00.000000Z, hi=2024-01-17T06:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneSimpleNegativeOffset() throws SqlException {
+        // Simple timestamp with negative offset -05:00
+        // 2024-01-15T08:00 in -05:00 = 2024-01-15T13:00:00Z in UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@-05:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T13:00:00.000000000Z, hi=2024-01-15T13:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T13:00:00.000000Z, hi=2024-01-15T13:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneSimpleNumericOffset() throws SqlException {
+        // Simple timestamp with numeric offset +03:00
+        // 2024-01-15T08:00 in +03:00 = 2024-01-15T05:00:00Z in UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@+03:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T05:00:00.000000000Z, hi=2024-01-15T05:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T05:00:00.000000Z, hi=2024-01-15T05:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneUTC() throws SqlException {
+        // UTC timezone (should be no-op essentially)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@UTC";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneWithBracketExpansion() throws SqlException {
+        // Bracket expansion with timezone
+        // 2024-01-[15,16]T08:00@+02:00 -> two intervals in UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-[15,16]T08:00@+02:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(4, out.size()); // Two intervals, 2 longs each
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneWithBracketExpansionAndDuration() throws SqlException {
+        // Bracket expansion with timezone and duration
+        // 2024-01-[15,16]T08:00@+02:00;1h
+        // 08:00 is minute-level, so hi = 08:00:59, then +1h = 09:00:59
+        // Convert to UTC: lo = 08:00 - 2h = 06:00, hi = 09:00:59 - 2h = 07:00:59
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-[15,16]T08:00@+02:00;1h";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(4, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T07:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T07:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneWithDurationSuffix() throws SqlException {
+        // Timezone before duration suffix
+        // 2024-01-15T08:00@+03:00;1h
+        // 08:00 is minute-level, so hi = 08:00:59, then +1h = 09:00:59
+        // Convert to UTC: lo = 08:00 - 3h = 05:00, hi = 09:00:59 - 3h = 06:00:59
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@+03:00;1h";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T05:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T05:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testTimezoneZ() throws SqlException {
+        // Test @Z - potential NPE if getZoneRules returns null
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@Z";
+        try {
+            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            // If it succeeds, Z should be treated as UTC
+            Assert.assertEquals(2, out.size());
+        } catch (SqlException e) {
+            // Also acceptable if it throws invalid timezone
+            Assert.assertTrue("Error should mention invalid timezone", e.getMessage().contains("invalid timezone"));
+        } catch (NullPointerException e) {
+            Assert.fail("NPE indicates getZoneRules returned null - need null check");
+        }
+    }
+
+    @Test
+    public void testTimezoneZeroOffset() throws SqlException {
+        // Test +00:00 offset - should be same as UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-15T08:00@+00:00";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
+                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testWhitespaceOnlyInput() {
+        // All whitespace input (exercises line 426 - firstNonSpace reaches lim)
+        assertBracketIntervalError("   ", "Invalid date");
+    }
+
     private void assertBracketInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -1071,439 +1557,6 @@ public class IntrinsicModelTest {
                         : expected,
                 intervalToString(timestampType.getDriver(), out)
         );
-    }
-
-    // =====================================================
-    // Timezone tests
-    // =====================================================
-
-    @Test
-    public void testTimezoneSimpleNumericOffset() throws SqlException {
-        // Simple timestamp with numeric offset +03:00
-        // 2024-01-15T08:00 in +03:00 = 2024-01-15T05:00:00Z in UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@+03:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T05:00:00.000000000Z, hi=2024-01-15T05:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T05:00:00.000000Z, hi=2024-01-15T05:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneSimpleNegativeOffset() throws SqlException {
-        // Simple timestamp with negative offset -05:00
-        // 2024-01-15T08:00 in -05:00 = 2024-01-15T13:00:00Z in UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@-05:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T13:00:00.000000000Z, hi=2024-01-15T13:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T13:00:00.000000Z, hi=2024-01-15T13:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneNamedTimezone() throws SqlException {
-        // Simple timestamp with named timezone Europe/London
-        // 2024-01-15T08:00 in Europe/London (winter, UTC+0) = 2024-01-15T08:00:00Z in UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@Europe/London";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneNamedTimezoneSummer() throws SqlException {
-        // Named timezone in summer (Europe/London is UTC+1 in July)
-        // 2024-07-15T08:00 in Europe/London (summer, UTC+1) = 2024-07-15T07:00:00Z in UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-07-15T08:00@Europe/London";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-07-15T07:00:00.000000000Z, hi=2024-07-15T07:00:59.999999999Z}]"
-                : "[{lo=2024-07-15T07:00:00.000000Z, hi=2024-07-15T07:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneWithBracketExpansion() throws SqlException {
-        // Bracket expansion with timezone
-        // 2024-01-[15,16]T08:00@+02:00 -> two intervals in UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-[15,16]T08:00@+02:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(4, out.size()); // Two intervals, 2 longs each
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneWithDurationSuffix() throws SqlException {
-        // Timezone before duration suffix
-        // 2024-01-15T08:00@+03:00;1h
-        // 08:00 is minute-level, so hi = 08:00:59, then +1h = 09:00:59
-        // Convert to UTC: lo = 08:00 - 3h = 05:00, hi = 09:00:59 - 3h = 06:00:59
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@+03:00;1h";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T05:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T05:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneWithBracketExpansionAndDuration() throws SqlException {
-        // Bracket expansion with timezone and duration
-        // 2024-01-[15,16]T08:00@+02:00;1h
-        // 08:00 is minute-level, so hi = 08:00:59, then +1h = 09:00:59
-        // Convert to UTC: lo = 08:00 - 2h = 06:00, hi = 09:00:59 - 2h = 07:00:59
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-[15,16]T08:00@+02:00;1h";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(4, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T07:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T07:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneDateListGlobalTimezone() throws SqlException {
-        // Date list with global timezone applied to all elements
-        // [2024-01-15,2024-01-16]T08:00@+02:00
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[2024-01-15,2024-01-16]T08:00@+02:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(4, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneAtSignInsideBracketsIgnored() {
-        // Test that @ inside brackets is NOT treated as timezone marker - exercises L1543 depth check
-        // The string "2024-01-[15@00,16]" has @ inside brackets - should fail as invalid bracket content
-        // not as invalid timezone
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-[15@00,16]";
-        try {
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            Assert.fail("Expected SqlException for invalid bracket content");
-        } catch (SqlException e) {
-            // Should fail parsing the bracket content, not as "invalid timezone"
-            Assert.assertFalse("Error should not mention timezone", e.getMessage().contains("timezone"));
-        }
-    }
-
-    @Test
-    public void testTimezoneDateListGlobalTimezoneWithDuration() throws SqlException {
-        // Date list with global timezone AND duration suffix - tests L1077 branch
-        // [2024-01-15,2024-01-16]T08:00@+02:00;1h
-        // 08:00 in +02:00 = 06:00 UTC, ;1h extends hi by 1 hour to 07:00:59 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[2024-01-15,2024-01-16]T08:00@+02:00;1h";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(4, out.size()); // 2 dates, each with 1 interval (duration extends hi, doesn't add intervals)
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T07:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T07:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneDateListPerElementTimezone() throws SqlException {
-        // Date list with per-element timezones
-        // [2024-01-15@+02:00,2024-01-16@+05:00]T08:00
-        // First: 08:00 in +02:00 = 06:00 UTC
-        // Second: 08:00 in +05:00 = 03:00 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[2024-01-15@+02:00,2024-01-16@+05:00]T08:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(4, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T03:00:00.000000000Z, hi=2024-01-16T03:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T03:00:00.000000Z, hi=2024-01-16T03:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneDstGapAdjustment() throws SqlException {
-        // Test DST gap handling - exercises L1602-1604 (lo and hi adjustment)
-        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM
-        // So 2:30 AM doesn't exist - both lo and hi are adjusted forward by the same gap offset
-        // to preserve interval width
-        // lo (2:30:00) -> 3:00:00 EDT = 07:00:00 UTC
-        // hi (2:30:59.999999) -> 3:00:59.999999 EDT = 07:00:59.999999 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-03-10T02:30@America/New_York";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-03-10T07:00:00.000000000Z, hi=2024-03-10T07:00:59.999999999Z}]"
-                : "[{lo=2024-03-10T07:00:00.000000Z, hi=2024-03-10T07:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneDstGapHiOnlyInGap() throws SqlException {
-        // Test edge case: lo is before DST gap, hi is in the gap - exercises L1610
-        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM
-        // Using ;2m duration to extend interval from 01:59 into the gap
-        // lo = 01:59:00 EST = 06:59:00 UTC (not in gap, unchanged)
-        // hi falls in gap and gets adjusted forward
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-03-10T01:59@America/New_York;2m";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-03-10T06:59:00.000000000Z, hi=2024-03-10T07:03:59.999999998Z}]"
-                : "[{lo=2024-03-10T06:59:00.000000Z, hi=2024-03-10T07:03:59.999998Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneNegativeOffset() throws SqlException {
-        // Test negative UTC offset - 08:00 in -05:00 = 13:00 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@-05:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T13:00:00.000000000Z, hi=2024-01-15T13:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T13:00:00.000000Z, hi=2024-01-15T13:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneInvalid() {
-        // Test invalid timezone name - should throw error
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@InvalidZone";
-        try {
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            Assert.fail("Expected SqlException for invalid timezone");
-        } catch (SqlException e) {
-            Assert.assertTrue("Error should mention invalid timezone", e.getMessage().contains("invalid timezone"));
-        }
-    }
-
-    @Test
-    public void testTimezoneEmpty() {
-        // Test empty timezone after @ - should throw error
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@";
-        try {
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            Assert.fail("Expected SqlException for empty timezone");
-        } catch (SqlException e) {
-            Assert.assertTrue("Error should mention invalid timezone", e.getMessage().contains("invalid timezone"));
-        }
-    }
-
-    @Test
-    public void testTimezoneDstOverlapFallBack() throws SqlException {
-        // Test DST overlap (fall back) - Nov 3, 2024 in America/New_York
-        // At 2:00 AM EDT, clocks fall back to 1:00 AM EST
-        // So 1:30 AM occurs twice - the code uses daylight time (EDT) offset
-        // 1:30 AM EDT = 05:30 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-11-03T01:30@America/New_York";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        // During overlap, daylight time (EDT = UTC-4) is used
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-11-03T05:30:00.000000000Z, hi=2024-11-03T05:30:59.999999999Z}]"
-                : "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneZeroOffset() throws SqlException {
-        // Test +00:00 offset - should be same as UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@+00:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneExtremePositiveOffset() throws SqlException {
-        // Test extreme positive offset +14:00 (e.g., Pacific/Kiritimati)
-        // 08:00 in +14:00 = 08:00 - 14:00 = -06:00 = previous day 18:00 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@+14:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-14T18:00:00.000000000Z, hi=2024-01-14T18:00:59.999999999Z}]"
-                : "[{lo=2024-01-14T18:00:00.000000Z, hi=2024-01-14T18:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneExtremeNegativeOffset() throws SqlException {
-        // Test extreme negative offset -12:00
-        // 08:00 in -12:00 = 08:00 + 12:00 = 20:00 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@-12:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T20:00:00.000000000Z, hi=2024-01-15T20:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T20:00:00.000000Z, hi=2024-01-15T20:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneBracketExpansionWithTimezoneAndDuration() throws SqlException {
-        // Test combination: bracket expansion + timezone + duration
-        // 2024-01-[15,16]T08:00@+02:00;1h
-        // For each date: 08:00 in +02:00 = 06:00 UTC, duration extends hi by 1h
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-[15,16]T08:00@+02:00;1h";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(4, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T07:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T07:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneDateListMixedTimezones() throws SqlException {
-        // Date list with mixed: some per-element, some using global
-        // [2024-01-15@UTC,2024-01-16]T08:00@+03:00
-        // First: has own timezone UTC -> 08:00 UTC
-        // Second: uses global +03:00 -> 05:00 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[2024-01-15@UTC,2024-01-16]T08:00@+03:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(4, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z},{lo=2024-01-16T05:00:00.000000000Z, hi=2024-01-16T05:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z},{lo=2024-01-16T05:00:00.000000Z, hi=2024-01-16T05:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneDateListPerElementNamedTimezone() throws SqlException {
-        // Date list with per-element named timezones
-        // [2024-01-15@Europe/London,2024-07-15@Europe/London]T08:00
-        // Winter: 08:00 in UTC+0 = 08:00 UTC
-        // Summer: 08:00 in UTC+1 = 07:00 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[2024-01-15@Europe/London,2024-07-15@Europe/London]T08:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(4, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z},{lo=2024-07-15T07:00:00.000000000Z, hi=2024-07-15T07:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z},{lo=2024-07-15T07:00:00.000000Z, hi=2024-07-15T07:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneInvalidTimezone() {
-        // Invalid timezone should throw error
-        assertBracketIntervalError("2024-01-15T08:00@InvalidTz", "invalid timezone");
-    }
-
-    @Test
-    public void testTimezoneUTC() throws SqlException {
-        // UTC timezone (should be no-op essentially)
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@UTC";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneGMT() throws SqlException {
-        // GMT timezone
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-15T08:00@GMT";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(2, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneDateListWithBracketExpansion() throws SqlException {
-        // Date list element with bracket expansion and timezone
-        // [2024-01-[15,16]@+02:00]T08:00
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[2024-01-[15,16]@+02:00]T08:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(4, out.size());
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
-    public void testTimezoneRangeExpansion() throws SqlException {
-        // Range expansion with timezone
-        // 2024-01-[15..17]T08:00@+02:00
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-01-[15..17]T08:00@+02:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals(6, out.size()); // Three intervals
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z},{lo=2024-01-17T06:00:00.000000000Z, hi=2024-01-17T06:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:00:59.999999Z},{lo=2024-01-17T06:00:00.000000Z, hi=2024-01-17T06:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
     }
 
     private void assertIntervalError(String interval) {

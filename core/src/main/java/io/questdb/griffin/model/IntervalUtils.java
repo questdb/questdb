@@ -804,6 +804,92 @@ public final class IntervalUtils {
         }
     }
 
+    /**
+     * Applies timezone conversion to all intervals in the output list from outSizeBeforeConversion to end.
+     * This converts local timestamps to UTC. Handles both numeric offsets (+03:00) and named
+     * timezones (Europe/London).
+     * <p>
+     * <b>DST gap handling:</b> When the lo timestamp falls within a DST gap (a period that
+     * doesn't exist in local time, e.g., 2:30 AM on spring-forward day), both lo and hi are
+     * adjusted forward by the same offset to preserve the interval width. For example, if
+     * clocks jump from 2:00 AM to 3:00 AM, a query for the minute 2:30 AM will be adjusted
+     * to the minute 3:00 AM (both lo and hi shift by 30 minutes).
+     * This behavior is consistent with {@code TimestampFloorFromOffsetFunctionFactory}.
+     * <p>
+     * <b>DST overlap handling:</b> When a local timestamp falls within a DST overlap (a period
+     * that occurs twice, e.g., during fall-back), the daylight saving timezone offset is used.
+     *
+     * @param timestampDriver         the timestamp driver
+     * @param out                     the interval list
+     * @param outSizeBeforeConversion size of output before intervals that need conversion
+     * @param tz                      timezone string
+     * @param tzLo                    start index in tz
+     * @param tzHi                    end index in tz
+     * @param position                position for error reporting
+     * @param isStaticMode            true if intervals are in 2-long format, false if 4-long format
+     */
+    private static void applyTimezoneToIntervals(
+            TimestampDriver timestampDriver,
+            LongList out,
+            int outSizeBeforeConversion,
+            CharSequence tz,
+            int tzLo,
+            int tzHi,
+            int position,
+            boolean isStaticMode
+    ) throws SqlException {
+        int stride = isStaticMode ? 2 : 4;
+        int currentSize = out.size();
+
+        // Pre-parse timezone once outside the loop to avoid repeated parsing
+        long numericOffset;
+        TimeZoneRules tzRules;
+
+        try {
+            long l = Dates.parseOffset(tz, tzLo, tzHi);
+            if (l != Long.MIN_VALUE) {
+                // Numeric offset - convert minutes to timestamp units
+                numericOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
+                // Numeric offset - simple subtraction loop
+                for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
+                    out.setQuick(i, out.getQuick(i) - numericOffset);
+                    out.setQuick(i + 1, out.getQuick(i + 1) - numericOffset);
+                }
+            } else {
+                // Named timezone - get timezone rules
+                tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                        Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, tzLo, tzHi)),
+                        timestampDriver.getTZRuleResolution()
+                );
+                // Named timezone - handle DST gaps
+                for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
+                    long lo = out.getQuick(i);
+                    long hi = out.getQuick(i + 1);
+
+                    long adjustedLo = lo;
+                    long adjustedHi = hi;
+                    long gapDuration = tzRules.getDstGapOffset(lo);
+                    if (gapDuration != 0) {
+                        // lo is in a DST gap - adjust both lo and hi forward by the same amount
+                        adjustedLo = lo + gapDuration;
+                        adjustedHi = hi + gapDuration;
+                    } else {
+                        // lo is not in a gap, but hi might be (edge case: interval spans gap boundary)
+                        gapDuration = tzRules.getDstGapOffset(hi);
+                        if (gapDuration != 0) {
+                            adjustedHi = hi + gapDuration;
+                        }
+                    }
+
+                    out.setQuick(i, timestampDriver.toUTC(adjustedLo, tzRules));
+                    out.setQuick(i + 1, timestampDriver.toUTC(adjustedHi, tzRules));
+                }
+            }
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid timezone: ").put(tz, tzLo, tzHi);
+        }
+    }
+
     private static int determinePadWidth(CharSequence seq, int lo, int bracketStart) {
         // Determine field width based on bracket position in timestamp
         // Count separators before bracket to determine which field we're in
@@ -1224,6 +1310,47 @@ public final class IntervalUtils {
     }
 
     /**
+     * Finds the position of '@' timezone marker in the string, respecting brackets.
+     * The '@' must be outside brackets and before any ';' (duration suffix).
+     * Searches backwards to find the LAST '@' before ';' to handle edge cases.
+     *
+     * @param seq the input string
+     * @param lo  start index
+     * @param lim end index (stop at ';' if found)
+     * @return position of '@' or -1 if not found
+     */
+    private static int findTimezoneMarker(CharSequence seq, int lo, int lim) {
+        // First find where ';' is (if any) to set the effective limit
+        int effectiveLim = lim;
+        int depth = 0;
+        for (int i = lo; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (c == ';' && depth == 0) {
+                effectiveLim = i;
+                break;
+            }
+        }
+
+        // Now search backwards for '@' outside brackets
+        depth = 0;
+        for (int i = effectiveLim - 1; i >= lo; i--) {
+            char c = seq.charAt(i);
+            if (c == ']') {
+                depth++;
+            } else if (c == '[') {
+                depth--;
+            } else if (c == '@' && depth == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Determines if a string starting with '[' is a date list or field expansion.
      * <p>
      * A date list: [2025-01-01,2025-01-05] or [2025-01-01]T09:30
@@ -1504,138 +1631,5 @@ public final class IntervalUtils {
 
     static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
         replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
-    }
-
-    /**
-     * Finds the position of '@' timezone marker in the string, respecting brackets.
-     * The '@' must be outside brackets and before any ';' (duration suffix).
-     * Searches backwards to find the LAST '@' before ';' to handle edge cases.
-     *
-     * @param seq the input string
-     * @param lo  start index
-     * @param lim end index (stop at ';' if found)
-     * @return position of '@' or -1 if not found
-     */
-    private static int findTimezoneMarker(CharSequence seq, int lo, int lim) {
-        // First find where ';' is (if any) to set the effective limit
-        int effectiveLim = lim;
-        int depth = 0;
-        for (int i = lo; i < lim; i++) {
-            char c = seq.charAt(i);
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-            } else if (c == ';' && depth == 0) {
-                effectiveLim = i;
-                break;
-            }
-        }
-
-        // Now search backwards for '@' outside brackets
-        depth = 0;
-        for (int i = effectiveLim - 1; i >= lo; i--) {
-            char c = seq.charAt(i);
-            if (c == ']') {
-                depth++;
-            } else if (c == '[') {
-                depth--;
-            } else if (c == '@' && depth == 0) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /**
-     * Applies timezone conversion to all intervals in the output list from outSizeBeforeConversion to end.
-     * This converts local timestamps to UTC. Handles both numeric offsets (+03:00) and named
-     * timezones (Europe/London).
-     * <p>
-     * <b>DST gap handling:</b> When the lo timestamp falls within a DST gap (a period that
-     * doesn't exist in local time, e.g., 2:30 AM on spring-forward day), both lo and hi are
-     * adjusted forward by the same offset to preserve the interval width. For example, if
-     * clocks jump from 2:00 AM to 3:00 AM, a query for the minute 2:30 AM will be adjusted
-     * to the minute 3:00 AM (both lo and hi shift by 30 minutes).
-     * This behavior is consistent with {@code TimestampFloorFromOffsetFunctionFactory}.
-     * <p>
-     * <b>DST overlap handling:</b> When a local timestamp falls within a DST overlap (a period
-     * that occurs twice, e.g., during fall-back), the daylight saving timezone offset is used.
-     *
-     * @param timestampDriver       the timestamp driver
-     * @param out                   the interval list
-     * @param outSizeBeforeConversion size of output before intervals that need conversion
-     * @param tz                    timezone string
-     * @param tzLo                  start index in tz
-     * @param tzHi                  end index in tz
-     * @param position              position for error reporting
-     * @param isStaticMode          true if intervals are in 2-long format, false if 4-long format
-     */
-    private static void applyTimezoneToIntervals(
-            TimestampDriver timestampDriver,
-            LongList out,
-            int outSizeBeforeConversion,
-            CharSequence tz,
-            int tzLo,
-            int tzHi,
-            int position,
-            boolean isStaticMode
-    ) throws SqlException {
-        int stride = isStaticMode ? 2 : 4;
-        int currentSize = out.size();
-
-        // Pre-parse timezone once outside the loop to avoid repeated parsing
-        long numericOffset = Long.MIN_VALUE;
-        TimeZoneRules tzRules = null;
-
-        try {
-            long l = Dates.parseOffset(tz, tzLo, tzHi);
-            if (l != Long.MIN_VALUE) {
-                // Numeric offset - convert minutes to timestamp units
-                numericOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
-            } else {
-                // Named timezone - get timezone rules
-                tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                        Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, tzLo, tzHi)),
-                        timestampDriver.getTZRuleResolution()
-                );
-            }
-        } catch (NumericException e) {
-            throw SqlException.$(position, "invalid timezone: ").put(tz, tzLo, tzHi);
-        }
-
-        for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
-            long lo = out.getQuick(i);
-            long hi = out.getQuick(i + 1);
-
-            long utcLo, utcHi;
-
-            if (numericOffset != Long.MIN_VALUE) {
-                // Numeric offset - simple subtraction, no allocation
-                utcLo = lo - numericOffset;
-                utcHi = hi - numericOffset;
-            } else {
-                // Named timezone - handle DST gaps
-                long adjustedLo = lo;
-                long adjustedHi = hi;
-                long gapDuration = tzRules.getDstGapOffset(lo);
-                if (gapDuration != 0) {
-                    // lo is in a DST gap - adjust both lo and hi forward by the same amount
-                    adjustedLo = lo + gapDuration;
-                    adjustedHi = hi + gapDuration;
-                } else {
-                    // lo is not in a gap, but hi might be (edge case: interval spans gap boundary)
-                    gapDuration = tzRules.getDstGapOffset(hi);
-                    if (gapDuration != 0) {
-                        adjustedHi = hi + gapDuration;
-                    }
-                }
-                utcLo = timestampDriver.toUTC(adjustedLo, tzRules);
-                utcHi = timestampDriver.toUTC(adjustedHi, tzRules);
-            }
-
-            out.setQuick(i, utcLo);
-            out.setQuick(i + 1, utcHi);
-        }
     }
 }
