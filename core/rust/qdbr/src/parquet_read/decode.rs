@@ -844,8 +844,8 @@ impl ParquetDecoder {
 }
 
 /// Decode a filtered data page.
-/// - `FILL_NULLS = false`: skip rows not in filter, output `rows_filter.len()` rows
-/// - `FILL_NULLS = true`: fill nulls for rows not in filter, output `row_hi - row_lo` rows
+/// - `FILL_NULLS = false`: skip rows not in filter
+/// - `FILL_NULLS = true`: fill nulls for rows not in filter
 #[allow(clippy::too_many_arguments)]
 pub fn decode_page_filtered<const FILL_NULLS: bool>(
     page: &DataPage,
@@ -2683,22 +2683,18 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     let run_end_in_page = current_row + length;
 
                     if FILL_NULLS {
-                        // Skip runs before our output range
                         if run_end_in_page <= row_lo {
                             sink.skip(count_ones_in_bitmap(values, 0, length));
                             current_row += length;
                             continue;
                         }
-                        // Stop if we've passed our output range
                         if current_row >= row_hi {
                             break;
                         }
                     } else {
-                        // Early exit when filter exhausted
                         if filter_idx >= filter_len {
                             return sink.result();
                         }
-                        // Skip runs before first filter row
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
                             sink.skip(count_ones_in_bitmap(values, 0, length));
@@ -2707,7 +2703,6 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                     }
 
-                    // Process this run
                     let mut bit_offset = if FILL_NULLS && current_row < row_lo {
                         let skip_bits = row_lo - current_row;
                         sink.skip(count_ones_in_bitmap(values, 0, skip_bits));
@@ -2769,7 +2764,6 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                     }
 
-                    // Skip remaining values in this run
                     if bit_offset < length {
                         sink.skip(count_ones_in_bitmap(
                             values,
@@ -2785,7 +2779,6 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     let run_end_in_page = current_row + length;
 
                     if FILL_NULLS {
-                        // Skip runs before our output range
                         if run_end_in_page <= row_lo {
                             if is_set {
                                 sink.skip(length);
@@ -2793,16 +2786,13 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                             current_row += length;
                             continue;
                         }
-                        // Stop if we've passed our output range
                         if current_row >= row_hi {
                             break;
                         }
                     } else {
-                        // Early exit when filter exhausted
                         if filter_idx >= filter_len {
                             return sink.result();
                         }
-                        // Skip runs before first filter row
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
                             if is_set {
@@ -2813,7 +2803,6 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                     }
 
-                    // Process this run
                     let mut row_offset = if FILL_NULLS && current_row < row_lo {
                         let skip_rows = row_lo - current_row;
                         if is_set {
@@ -2874,7 +2863,6 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                     }
 
-                    // Skip remaining values
                     if is_set && row_offset < length {
                         sink.skip(length - row_offset);
                     }
