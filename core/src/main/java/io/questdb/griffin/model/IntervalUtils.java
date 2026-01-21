@@ -998,7 +998,7 @@ public final class IntervalUtils {
         // vs numeric expansion (no ':', e.g., [09,14])
         if (isTimeListBracket(seq, bracketStart, bracketEnd)) {
             expandTimeListBracket(
-                    timestampDriver, seq, bracketStart, bracketEnd, dateLim, fullLim,
+                    timestampDriver, seq, bracketStart, bracketEnd, fullLim,
                     errorPos, out, operation, sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion,
                     globalTzSeq, globalTzLo, globalTzHi
             );
@@ -1039,6 +1039,12 @@ public final class IntervalUtils {
                 value = Numbers.parseInt(seq, numStart, i);
             } catch (NumericException e) {
                 throw SqlException.$(errorPos, "Expected number in bracket expansion");
+            }
+
+            // Check for military time format (e.g., [0900,1430] instead of [09:00,14:30])
+            // If prefix ends with 'T' and value >= 100, user likely meant military time
+            if (afterPrefixLen > 0 && sink.charAt(afterPrefixLen - 1) == 'T' && value >= 100) {
+                throw SqlException.$(errorPos, "Military time format not supported in bracket expansion. Use colons: [09:00,14:30] instead of [0900,1430]");
             }
 
             // Skip whitespace
@@ -1337,7 +1343,6 @@ public final class IntervalUtils {
      * @param seq                    the full input string
      * @param bracketStart           position of the opening '['
      * @param bracketEnd             position of the closing ']'
-     * @param dateLim                end of date part (before semicolon)
      * @param fullLim                end of entire string (including duration suffix)
      * @param errorPos               position for error reporting
      * @param out                    output list for parsed intervals
@@ -1355,7 +1360,6 @@ public final class IntervalUtils {
             CharSequence seq,
             int bracketStart,
             int bracketEnd,
-            int dateLim,
             int fullLim,
             int errorPos,
             LongList out,
@@ -1396,6 +1400,13 @@ public final class IntervalUtils {
                 throw SqlException.$(errorPos, "Empty element in time list");
             }
 
+            // Check for nested brackets in element (not supported)
+            for (int j = elemStart; j < elemEnd; j++) {
+                if (seq.charAt(j) == '[') {
+                    throw SqlException.$(errorPos, "Nested brackets not supported in time list. Use separate expansions: T[09:00,09:30] instead of T[09:[00,30]]");
+                }
+            }
+
             // Check for per-element timezone (@)
             int tzMarker = -1;
             for (int j = elemStart; j < elemEnd; j++) {
@@ -1414,10 +1425,60 @@ public final class IntervalUtils {
 
             // Build full timestamp: prefix + time element (without @tz) + suffix after bracket
             sink.put(seq, elemStart, timeEnd);          // time value (e.g., "09:00")
-            sink.put(seq, bracketEnd + 1, fullLim);     // suffix (e.g., ";6h")
+            sink.put(seq, bracketEnd + 1, fullLim);     // suffix (e.g., ";6h" or ":[00,30];1h")
 
-            // Parse the interval
-            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+            // Check if suffix contains brackets that need expansion
+            boolean suffixHasBrackets = false;
+            for (int j = bracketEnd + 1; j < fullLim; j++) {
+                if (seq.charAt(j) == '[') {
+                    suffixHasBrackets = true;
+                    break;
+                }
+            }
+
+            if (suffixHasBrackets) {
+                // Suffix has brackets - need recursive expansion
+                // Find where the date part ends (before semicolon) in the expanded string
+                int expandedLen = sink.length();
+                int expandedDateLim = expandedLen;
+                for (int j = 0; j < expandedLen; j++) {
+                    if (sink.charAt(j) == ';') {
+                        expandedDateLim = j;
+                        break;
+                    }
+                }
+
+                // Copy sink content to a new StringSink to avoid aliasing with thread-local
+                // (thread-local sink may already be in use by outer call)
+                StringSink expandedSink = new StringSink();
+                expandedSink.put(sink);
+
+                // Use another new StringSink for recursion working buffer
+                StringSink recursionSink = new StringSink();
+
+                // Recursively expand brackets in the suffix
+                expandBracketsRecursive(
+                        timestampDriver,
+                        expandedSink,
+                        0,              // intervalStart
+                        0,              // pos
+                        expandedDateLim,
+                        expandedSink.length(),
+                        errorPos,
+                        out,
+                        operation,
+                        recursionSink,
+                        0,              // depth
+                        applyEncoded,
+                        outSizeBeforeExpansion,
+                        globalTzSeq,
+                        tzLo >= 0 ? -1 : globalTzLo,  // Skip global TZ if per-element TZ
+                        tzLo >= 0 ? -1 : globalTzHi
+                );
+            } else {
+                // No brackets in suffix - parse directly
+                parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+            }
 
             // Apply timezone: per-element takes precedence, then global fallback
             if (tzLo >= 0) {
@@ -1770,8 +1831,8 @@ public final class IntervalUtils {
             long hi = out.getQuick(readIdx + 1);
             long prevHi = out.getQuick(writeIdx - 1);
 
-            if (lo <= prevHi) {
-                // Overlapping with previous interval - extend it
+            if (lo <= prevHi + 1) {
+                // Overlapping or adjacent to previous interval - extend it
                 out.setQuick(writeIdx - 1, Math.max(hi, prevHi));
             } else {
                 // Non-overlapping - write new interval

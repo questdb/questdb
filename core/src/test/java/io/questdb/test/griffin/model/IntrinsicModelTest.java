@@ -262,9 +262,9 @@ public class IntrinsicModelTest {
 
     @Test
     public void testBracketExpansionMixed() throws SqlException {
-        // Each value in the bracket becomes a separate interval
+        // Adjacent day intervals are merged: 5, 10-12 merged, 20
         assertBracketInterval(
-                "[{lo=2018-01-05T00:00:00.000000Z, hi=2018-01-05T23:59:59.999999Z},{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-11T00:00:00.000000Z, hi=2018-01-11T23:59:59.999999Z},{lo=2018-01-12T00:00:00.000000Z, hi=2018-01-12T23:59:59.999999Z},{lo=2018-01-20T00:00:00.000000Z, hi=2018-01-20T23:59:59.999999Z}]",
+                "[{lo=2018-01-05T00:00:00.000000Z, hi=2018-01-05T23:59:59.999999Z},{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-12T23:59:59.999999Z},{lo=2018-01-20T00:00:00.000000Z, hi=2018-01-20T23:59:59.999999Z}]",
                 "2018-01-[5,10..12,20]"
         );
     }
@@ -288,9 +288,9 @@ public class IntrinsicModelTest {
 
     @Test
     public void testBracketExpansionRange() throws SqlException {
-        // Range expands to individual intervals for each value
+        // Range expands to intervals that are merged when adjacent
         assertBracketInterval(
-                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-11T00:00:00.000000Z, hi=2018-01-11T23:59:59.999999Z},{lo=2018-01-12T00:00:00.000000Z, hi=2018-01-12T23:59:59.999999Z}]",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-12T23:59:59.999999Z}]",
                 "2018-01-[10..12]"
         );
     }
@@ -298,8 +298,9 @@ public class IntrinsicModelTest {
     @Test
     public void testBracketExpansionRangeWithWhitespace() throws SqlException {
         // Range with whitespace after .. and after range end (exercises L899 and L933)
+        // Adjacent day intervals are merged into one continuous interval
         assertBracketInterval(
-                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-11T00:00:00.000000Z, hi=2018-01-11T23:59:59.999999Z},{lo=2018-01-12T00:00:00.000000Z, hi=2018-01-12T23:59:59.999999Z}]",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-12T23:59:59.999999Z}]",
                 "2018-01-[10 .. 12 ]"
         );
     }
@@ -700,18 +701,18 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateListWithMultipleNestedExpansions() throws SqlException {
-        // '[2025-12-[30,31],2026-01-[02,03]]' produces 4 intervals (Dec 30, 31, Jan 2, 3)
+        // '[2025-12-[30,31],2026-01-[02,03]]' - adjacent days merged: Dec 30-31, Jan 2-3
         assertBracketInterval(
-                "[{lo=2025-12-30T00:00:00.000000Z, hi=2025-12-30T23:59:59.999999Z},{lo=2025-12-31T00:00:00.000000Z, hi=2025-12-31T23:59:59.999999Z},{lo=2026-01-02T00:00:00.000000Z, hi=2026-01-02T23:59:59.999999Z},{lo=2026-01-03T00:00:00.000000Z, hi=2026-01-03T23:59:59.999999Z}]",
+                "[{lo=2025-12-30T00:00:00.000000Z, hi=2025-12-31T23:59:59.999999Z},{lo=2026-01-02T00:00:00.000000Z, hi=2026-01-03T23:59:59.999999Z}]",
                 "[2025-12-[30,31],2026-01-[02,03]]"
         );
     }
 
     @Test
     public void testDateListWithNestedExpansion() throws SqlException {
-        // '[2025-12-31,2026-01-[03..05]]' produces 4 intervals (Dec 31, Jan 3, 4, 5)
+        // '[2025-12-31,2026-01-[03..05]]' - Dec 31 separate, Jan 3-5 merged
         assertBracketInterval(
-                "[{lo=2025-12-31T00:00:00.000000Z, hi=2025-12-31T23:59:59.999999Z},{lo=2026-01-03T00:00:00.000000Z, hi=2026-01-03T23:59:59.999999Z},{lo=2026-01-04T00:00:00.000000Z, hi=2026-01-04T23:59:59.999999Z},{lo=2026-01-05T00:00:00.000000Z, hi=2026-01-05T23:59:59.999999Z}]",
+                "[{lo=2025-12-31T00:00:00.000000Z, hi=2025-12-31T23:59:59.999999Z},{lo=2026-01-03T00:00:00.000000Z, hi=2026-01-05T23:59:59.999999Z}]",
                 "[2025-12-31,2026-01-[03..05]]"
         );
     }
@@ -736,9 +737,9 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateListWithWhitespace() throws SqlException {
-        // '[ 2025-01-01 , 2025-01-02 ]' - whitespace inside brackets is handled
+        // '[ 2025-01-01 , 2025-01-02 ]' - whitespace inside brackets, adjacent days merged
         assertBracketInterval(
-                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-01T23:59:59.999999Z},{lo=2025-01-02T00:00:00.000000Z, hi=2025-01-02T23:59:59.999999Z}]",
+                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-02T23:59:59.999999Z}]",
                 "[ 2025-01-01 , 2025-01-02 ]"
         );
     }
@@ -839,6 +840,70 @@ public class IntrinsicModelTest {
         assertBracketInterval(
                 "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T18:00:59.999999Z}]",
                 "2024-01-15T[09:00,18:00]"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketWithSeconds() throws SqlException {
+        // Time list with full time values including seconds
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:30.000000Z, hi=2024-01-15T09:00:30.999999Z},{lo=2024-01-15T14:30:45.000000Z, hi=2024-01-15T14:30:45.999999Z}]",
+                "2024-01-15T[09:00:30,14:30:45]"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketSingleTime() throws SqlException {
+        // Single time in time list bracket (edge case)
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z}]",
+                "2024-01-15T[09:00];1h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketWithDateExpansionAndTimezone() throws SqlException {
+        // Date expansion + time list + global timezone
+        // 2024-01-[15,16]T[09:00,18:00]@+02:00;1h = 4 intervals
+        // Times in +02:00: 09:00 = 07:00 UTC, 18:00 = 16:00 UTC
+        assertBracketInterval(
+                "[{lo=2024-01-15T07:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z},{lo=2024-01-15T16:00:00.000000Z, hi=2024-01-15T17:00:59.999999Z},{lo=2024-01-16T07:00:00.000000Z, hi=2024-01-16T08:00:59.999999Z},{lo=2024-01-16T16:00:00.000000Z, hi=2024-01-16T17:00:59.999999Z}]",
+                "2024-01-[15,16]T[09:00,18:00]@+02:00;1h"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketEmptyBracketIsNumericExpansion() {
+        // Empty bracket T[] has no ':' inside, so it's treated as numeric expansion
+        // This documents current behavior: error message is "Empty bracket expansion" not "Empty time list bracket"
+        assertBracketIntervalError("2024-01-15T[];1h", "Empty bracket expansion");
+    }
+
+    @Test
+    public void testTimeListBracketNestedBracketsInElementFails() {
+        // Nested brackets inside time list elements are not supported
+        // Provides actionable error message guiding users to use separate expansions
+        assertBracketIntervalError("2024-01-15T[09:[00,30],14:30]", "Nested brackets not supported in time list");
+    }
+
+    @Test
+    public void testTimeListBracketWithSuffixExpansion() throws SqlException {
+        // Time list bracket with suffix expansion: [09:00,14:30]:[00,30]
+        // Should create 4 intervals: 09:00:00, 09:00:30, 14:30:00, 14:30:30
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:00:00.999999Z},{lo=2024-01-15T09:00:30.000000Z, hi=2024-01-15T09:00:30.999999Z},{lo=2024-01-15T14:30:00.000000Z, hi=2024-01-15T14:30:00.999999Z},{lo=2024-01-15T14:30:30.000000Z, hi=2024-01-15T14:30:30.999999Z}]",
+                "2024-01-15T[09:00,14:30]:[00,30]"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketAdjacentIntervals() throws SqlException {
+        // Test adjacent intervals: 09:00 (covers 09:00:00.000000-09:00:59.999999)
+        // and 09:01 (covers 09:01:00.000000-09:01:59.999999) are exactly adjacent.
+        // These should be merged into a single interval.
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:01:59.999999Z}]",
+                "2024-01-15T[09:00,09:01]"
         );
     }
 
@@ -1607,6 +1672,34 @@ public class IntrinsicModelTest {
     public void testWhitespaceOnlyInput() {
         // All whitespace input (exercises line 426 - firstNonSpace reaches lim)
         assertBracketIntervalError("   ", "Invalid date");
+    }
+
+    @Test
+    public void testTimeListBracketMixedFormats() throws SqlException {
+        // Mixed time formats work: "09:00" (minute precision) and "14" (hour only)
+        // The parser accepts partial times, so "14" becomes "14:00:00" to "14:59:59"
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:00:59.999999Z},{lo=2024-01-15T14:00:00.000000Z, hi=2024-01-15T14:59:59.999999Z}]",
+                "2024-01-15T[09:00,14]"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketMixedFormats2() throws SqlException {
+        // Mixed time formats: "09" (hour only) and "14:29" (hour:minute)
+        // "09" becomes hour interval 09:00:00 to 09:59:59
+        // "14:29" becomes minute interval 14:29:00 to 14:29:59
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:59:59.999999Z},{lo=2024-01-15T14:29:00.000000Z, hi=2024-01-15T14:29:59.999999Z}]",
+                "2024-01-15T[09,14:29]"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketMilitaryTimeFormatNotSupported() {
+        // Military time without colons [0900,1430] is NOT supported
+        // Provides actionable error message guiding users to use colons
+        assertBracketIntervalError("2024-01-15T[0900,1430]", "Military time format not supported");
     }
 
     private void assertBracketInterval(String expected, String interval) throws SqlException {
