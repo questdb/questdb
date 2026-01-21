@@ -1548,8 +1548,9 @@ public final class IntervalUtils {
     }
 
     /**
-     * Converts local timestamps (lo, hi) to UTC using the specified timezone.
-     * Handles both numeric offsets (+03:00) and named timezones (Europe/London).
+     * Applies timezone conversion to all intervals in the output list from outSizeBeforeConversion to end.
+     * This converts local timestamps to UTC. Handles both numeric offsets (+03:00) and named
+     * timezones (Europe/London).
      * <p>
      * <b>DST gap handling:</b> When the lo timestamp falls within a DST gap (a period that
      * doesn't exist in local time, e.g., 2:30 AM on spring-forward day), both lo and hi are
@@ -1560,69 +1561,6 @@ public final class IntervalUtils {
      * <p>
      * <b>DST overlap handling:</b> When a local timestamp falls within a DST overlap (a period
      * that occurs twice, e.g., during fall-back), the daylight saving timezone offset is used.
-     *
-     * @param timestampDriver the timestamp driver
-     * @param lo              local lo timestamp
-     * @param hi              local hi timestamp
-     * @param tz              timezone string
-     * @param tzLo            start index in tz
-     * @param tzHi            end index in tz
-     * @param position        position for error reporting
-     * @return array of [utcLo, utcHi]
-     * @throws SqlException if timezone is invalid
-     */
-    private static long[] convertToUtc(
-            TimestampDriver timestampDriver,
-            long lo,
-            long hi,
-            CharSequence tz,
-            int tzLo,
-            int tzHi,
-            int position
-    ) throws SqlException {
-        try {
-            long l = Dates.parseOffset(tz, tzLo, tzHi);
-            if (l != Long.MIN_VALUE) {
-                // Numeric offset - convert minutes to timestamp units
-                long offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
-                // Local time - offset = UTC time
-                return new long[]{lo - offset, hi - offset};
-            }
-
-            // Named timezone - get timezone rules
-            TimeZoneRules tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, tzLo, tzHi)),
-                    timestampDriver.getTZRuleResolution()
-            );
-
-            // Handle DST gaps - use lo's gap offset for both lo and hi to preserve interval width
-            long adjustedLo = lo;
-            long adjustedHi = hi;
-            long gapDuration = tzRules.getDstGapOffset(lo);
-            if (gapDuration != 0) {
-                // lo is in a DST gap - adjust both lo and hi forward by the same amount
-                adjustedLo = lo + gapDuration;
-                adjustedHi = hi + gapDuration;
-            } else {
-                // lo is not in a gap, but hi might be (edge case: interval spans gap boundary)
-                gapDuration = tzRules.getDstGapOffset(hi);
-                if (gapDuration != 0) {
-                    adjustedHi = hi + gapDuration;
-                }
-            }
-
-            return new long[]{
-                    timestampDriver.toUTC(adjustedLo, tzRules),
-                    timestampDriver.toUTC(adjustedHi, tzRules)
-            };
-        } catch (NumericException e) {
-            throw SqlException.$(position, "invalid timezone: ").put(tz, tzLo, tzHi);
-        }
-    }
-
-    /**
-     * Applies timezone conversion to all intervals in the output list from outSizeBeforeConversion to end.
-     * This converts local timestamps to UTC.
      *
      * @param timestampDriver       the timestamp driver
      * @param out                   the interval list
@@ -1646,14 +1584,58 @@ public final class IntervalUtils {
         int stride = isStaticMode ? 2 : 4;
         int currentSize = out.size();
 
+        // Pre-parse timezone once outside the loop to avoid repeated parsing
+        long numericOffset = Long.MIN_VALUE;
+        TimeZoneRules tzRules = null;
+
+        try {
+            long l = Dates.parseOffset(tz, tzLo, tzHi);
+            if (l != Long.MIN_VALUE) {
+                // Numeric offset - convert minutes to timestamp units
+                numericOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
+            } else {
+                // Named timezone - get timezone rules
+                tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                        Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, tzLo, tzHi)),
+                        timestampDriver.getTZRuleResolution()
+                );
+            }
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid timezone: ").put(tz, tzLo, tzHi);
+        }
+
         for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
             long lo = out.getQuick(i);
             long hi = out.getQuick(i + 1);
 
-            long[] utcTimes = convertToUtc(timestampDriver, lo, hi, tz, tzLo, tzHi, position);
+            long utcLo, utcHi;
 
-            out.setQuick(i, utcTimes[0]);
-            out.setQuick(i + 1, utcTimes[1]);
+            if (numericOffset != Long.MIN_VALUE) {
+                // Numeric offset - simple subtraction, no allocation
+                utcLo = lo - numericOffset;
+                utcHi = hi - numericOffset;
+            } else {
+                // Named timezone - handle DST gaps
+                long adjustedLo = lo;
+                long adjustedHi = hi;
+                long gapDuration = tzRules.getDstGapOffset(lo);
+                if (gapDuration != 0) {
+                    // lo is in a DST gap - adjust both lo and hi forward by the same amount
+                    adjustedLo = lo + gapDuration;
+                    adjustedHi = hi + gapDuration;
+                } else {
+                    // lo is not in a gap, but hi might be (edge case: interval spans gap boundary)
+                    gapDuration = tzRules.getDstGapOffset(hi);
+                    if (gapDuration != 0) {
+                        adjustedHi = hi + gapDuration;
+                    }
+                }
+                utcLo = timestampDriver.toUTC(adjustedLo, tzRules);
+                utcHi = timestampDriver.toUTC(adjustedHi, tzRules);
+            }
+
+            out.setQuick(i, utcLo);
+            out.setQuick(i + 1, utcHi);
         }
     }
 }
