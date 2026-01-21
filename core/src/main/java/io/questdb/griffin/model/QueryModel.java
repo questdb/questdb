@@ -115,6 +115,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
+    // Tracks next sequence number for alias generation to achieve O(1) amortized complexity
+    private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
@@ -492,6 +494,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         topDownColumns.clear();
         topDownNameSet.clear();
         aliasToColumnMap.clear();
+        aliasSequenceMap.clear();
         // TODO: replace booleans with an enum-like type: UPDATE/MAT_VIEW/INSERT_AS_SELECT/SELECT
         //  default is SELECT
         isUpdateModel = false;
@@ -674,6 +677,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public LowerCaseCharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
         return aliasToColumnMap;
+    }
+
+    public LowerCaseCharSequenceIntHashMap getAliasSequenceMap() {
+        return aliasSequenceMap;
     }
 
     public LowerCaseCharSequenceObjHashMap<CharSequence> getAliasToColumnNameMap() {
