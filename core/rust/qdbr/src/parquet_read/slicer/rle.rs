@@ -165,48 +165,10 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
         }
     }
 
+    #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            if self.inner.error.is_some() {
-                dest.extend_from_slice(self.inner.error_value)?;
-                continue;
-            }
-
-            if let Some(idx) = self.inner.data.next() {
-                if idx < self.dict.len() {
-                    dest.extend_from_slice(self.dict.get_dict_value(idx))?;
-                } else {
-                    self.inner.error = Some(fmt_err!(
-                        Layout,
-                        "index {} is out of dict bounds {}",
-                        idx,
-                        self.dict.len()
-                    ));
-                    dest.extend_from_slice(self.inner.error_value)?;
-                }
-            } else {
-                match self.decode() {
-                    Ok(()) => {
-                        if let Some(idx) = self.inner.data.next() {
-                            if idx < self.dict.len() {
-                                dest.extend_from_slice(self.dict.get_dict_value(idx))?;
-                            } else {
-                                self.inner.error = Some(fmt_err!(
-                                    Layout,
-                                    "index {} is out of dict bounds {}",
-                                    idx,
-                                    self.dict.len()
-                                ));
-                                dest.extend_from_slice(self.inner.error_value)?;
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        self.inner.error = Some(err);
-                        dest.extend_from_slice(self.inner.error_value)?;
-                    }
-                }
-            }
+            self.next_into(dest)?;
         }
         Ok(())
     }

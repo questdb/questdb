@@ -160,11 +160,7 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
                     let bytes = val.to_le_bytes();
                     dest.extend_from_slice(&bytes[..N])?;
                 }
-                Some(Err(_)) => {
-                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
-                    dest.extend_from_slice(&self.error_value)?;
-                }
-                None => {
+                Some(Err(_)) | None => {
                     self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
                     dest.extend_from_slice(&self.error_value)?;
                 }
@@ -232,12 +228,10 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
         dest.extend_from_slice(res)
     }
 
+    #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            let len = self.lengths[self.index] as usize;
-            dest.extend_from_slice(&self.data[self.pos..self.pos + len])?;
-            self.pos += len;
-            self.index += 1;
+            self.next_into(dest)?;
         }
         Ok(())
     }
@@ -475,11 +469,7 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
     #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            let len = unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) }
-                as usize;
-            self.pos += size_of::<u32>();
-            dest.extend_from_slice(&self.data[self.pos..self.pos + len])?;
-            self.pos += len;
+            self.next_into(dest)?;
         }
         Ok(())
     }

@@ -21,7 +21,6 @@
 macro_rules! unpack_impl {
     ($t:ty, $bytes:literal, $bits:tt) => {
         #[inline]
-        #[allow(unsafe_code)]
         pub fn unpack<const NUM_BITS: usize>(input: &[u8], output: &mut [$t; $bits]) {
             if NUM_BITS == 0 {
                 for out in output {
@@ -99,8 +98,6 @@ unpack!(unpack64, u64, 8, 64);
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_basic() {
         let input = [0xFF; 4096];
