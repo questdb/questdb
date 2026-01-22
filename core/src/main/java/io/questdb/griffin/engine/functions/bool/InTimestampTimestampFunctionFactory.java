@@ -147,30 +147,17 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             long val;
             int funcType = func.getType();
-            switch (ColumnType.tagOf(funcType)) {
-                case ColumnType.DATE:
-                    val = driver.fromDate(func.getDate(null));
-                    break;
-                case ColumnType.TIMESTAMP:
-                    val = driver.from(func.getTimestamp(null), funcType);
-                    break;
-                case ColumnType.LONG:
-                case ColumnType.INT:
-                    val = func.getTimestamp(null);
-                    break;
-                case ColumnType.STRING:
-                case ColumnType.SYMBOL:
-                case ColumnType.NULL:
-                    val = parseFloorOrDie(driver, func.getStrA(null), argPositions.getQuick(i));
-                    break;
-                case ColumnType.VARCHAR:
-                    val = parseFloorOrDie(driver, func.getVarcharA(null), argPositions.getQuick(i));
-                    break;
-                default:
-                    throw SqlException.inconvertibleTypes(argPositions.getQuick(i), func.getType(),
-                            ColumnType.nameOf(func.getType()), timestampType,
-                            ColumnType.nameOf(timestampType));
-            }
+            val = switch (ColumnType.tagOf(funcType)) {
+                case ColumnType.DATE -> driver.fromDate(func.getDate(null));
+                case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(null), funcType);
+                case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(null);
+                case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.NULL ->
+                        parseFloorOrDie(driver, func.getStrA(null), argPositions.getQuick(i));
+                case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(null), argPositions.getQuick(i));
+                default -> throw SqlException.inconvertibleTypes(argPositions.getQuick(i), func.getType(),
+                        ColumnType.nameOf(func.getType()), timestampType,
+                        ColumnType.nameOf(timestampType));
+            };
             res.setQuick(i - 1, val);
         }
 
@@ -369,25 +356,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 Function func = args.getQuick(i);
                 long val = Numbers.LONG_NULL;
                 int funcType = func.getType();
-                switch (ColumnType.tagOf(funcType)) {
-                    case ColumnType.DATE:
-                        val = driver.fromDate(func.getDate(null));
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        val = driver.from(func.getTimestamp(null), funcType);
-                        break;
-                    case ColumnType.LONG:
-                    case ColumnType.INT:
-                        val = func.getTimestamp(null);
-                        break;
-                    case ColumnType.STRING:
-                    case ColumnType.SYMBOL:
-                        val = parseFloorOrDie(driver, func.getStrA(null));
-                        break;
-                    case ColumnType.VARCHAR:
-                        val = parseFloorOrDie(driver, func.getVarcharA(null));
-                        break;
-                }
+                val = switch (ColumnType.tagOf(funcType)) {
+                    case ColumnType.DATE -> driver.fromDate(func.getDate(null));
+                    case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(null), funcType);
+                    case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(null);
+                    case ColumnType.STRING, ColumnType.SYMBOL -> parseFloorOrDie(driver, func.getStrA(null));
+                    case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(null));
+                    default -> val;
+                };
                 timestampValues.add(val);
             }
         }
@@ -494,25 +470,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 Function func = args.getQuick(i);
                 long val = Numbers.LONG_NULL;
                 int funcType = func.getType();
-                switch (ColumnType.tagOf(funcType)) {
-                    case ColumnType.DATE:
-                        val = driver.fromDate(func.getDate(rec));
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        val = driver.from(func.getTimestamp(rec), funcType);
-                        break;
-                    case ColumnType.LONG:
-                    case ColumnType.INT:
-                        val = func.getTimestamp(rec);
-                        break;
-                    case ColumnType.STRING:
-                    case ColumnType.SYMBOL:
-                        val = parseFloorOrDie(driver, func.getStrA(rec));
-                        break;
-                    case ColumnType.VARCHAR:
-                        val = parseFloorOrDie(driver, func.getVarcharA(rec));
-                        break;
-                }
+                val = switch (ColumnType.tagOf(funcType)) {
+                    case ColumnType.DATE -> driver.fromDate(func.getDate(rec));
+                    case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(rec), funcType);
+                    case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(rec);
+                    case ColumnType.STRING, ColumnType.SYMBOL -> parseFloorOrDie(driver, func.getStrA(rec));
+                    case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(rec));
+                    default -> val;
+                };
                 if (val == ts) {
                     return !negated;
                 }

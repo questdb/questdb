@@ -2618,7 +2618,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from (trades limit 5) t " +
-                            "window join (select * from prices where ts in '2023-01-01T09:03:00.000000Z' or ts = '2023-01-01T09:07:00.000000Z' or ts = '2023-01-01T09:08:00.000000Z') p " +
+                            "window join (select * from prices where ts in '2023-01-01T09:03:00.000000Z' or ts = '2023-01-01T09:07:00.000000Z' and ts = '2023-01-01T09:08:00.000000Z') p " +
                             "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "order by t.ts, t.sym;",
