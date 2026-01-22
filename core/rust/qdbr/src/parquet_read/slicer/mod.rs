@@ -92,6 +92,7 @@ impl ByteSink for Vec<u8> {
 pub trait DataPageSlicer {
     fn next(&mut self) -> &[u8];
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()>;
+    /// Only called by fixed-size column decoders.
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()>;
     fn skip(&mut self, count: usize);
     fn count(&self) -> usize;
@@ -192,11 +193,7 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
                 let bytes = val.to_le_bytes();
                 dest.extend_from_slice(&bytes[..N])
             }
-            Some(Err(_)) => {
-                self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
-                dest.extend_from_slice(&self.error_value)
-            }
-            None => {
+            Some(Err(_)) | None => {
                 self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
                 dest.extend_from_slice(&self.error_value)
             }
@@ -205,16 +202,7 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
 
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            match self.decoder.next() {
-                Some(Ok(val)) => {
-                    let bytes = val.to_le_bytes();
-                    dest.extend_from_slice(&bytes[..N])?;
-                }
-                Some(Err(_)) | None => {
-                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
-                    dest.extend_from_slice(&self.error_value)?;
-                }
-            }
+            self.next_into::<S>(dest)?;
         }
         Ok(())
     }
