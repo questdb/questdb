@@ -92,4 +92,31 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
             }
         });
     }
-}
+
+    @Test
+    public void testLtJoinWithTimestampInOnClauseThrowsSqlException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("DROP TABLE IF EXISTS t1");
+            execute("DROP TABLE IF EXISTS t2");
+
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL, val INT) timestamp(ts) partition by DAY");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL INDEX, val INT) timestamp(ts) partition by DAY");
+
+            execute("INSERT INTO t1 VALUES ('2024-01-01T10:00:00.000000Z', 1, 'A', 10)");
+            execute("INSERT INTO t2 VALUES ('2024-01-01T10:00:00.000000Z', 2, 'A', 20)");
+
+            try {
+                execute(
+                        "SELECT t1.ts, sub.isum FROM t1 LT JOIN (" +
+                                "  SELECT ts, sum(i) as isum, s FROM t2 SAMPLE BY 1us ALIGN TO CALENDAR" +
+                                ") sub ON (t1.s = sub.s) AND (t1.ts = sub.ts)"
+                );
+                Assert.fail("Expected SqlException due to timestamp in join key");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "Expected error mentioning timestamp, got: " + e.getMessage(),
+                        e.getMessage().toLowerCase().contains("timestamp")
+                );
+            }
+        });
+    }
