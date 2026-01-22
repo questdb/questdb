@@ -48,70 +48,73 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLateMaterializationAllTypesLowSelectivity() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
-        TestUtils.execute(
-                pool,
-                (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
-                            """
-                                    create table x as (
-                                      select
-                                        x id,
-                                        rnd_boolean() a_boolean,
-                                        rnd_byte() a_byte,
-                                        rnd_short() a_short,
-                                        rnd_char() a_char,
-                                        rnd_int(-10, 10, 0) an_int,
-                                        rnd_long(-10, 10, 0) a_long,
-                                        rnd_float() a_float,
-                                        rnd_double() a_double,
-                                        rnd_symbol('a','b','c') a_symbol,
-                                        rnd_str('hello', 'world', '!') a_string,
-                                        rnd_varchar('ганьба','слава','добрий') a_varchar,
-                                        rnd_bin(1, 8, 0) a_bin,
-                                        rnd_ipv4() a_ip,
-                                        rnd_uuid4() a_uuid,
-                                        rnd_long256() a_long256,
-                                        rnd_geohash(4) a_geo_byte,
-                                        rnd_geohash(16) a_geo_int,
-                                        cast(timestamp_sequence(0,1000000) as date) a_date,
-                                        timestamp_sequence(0, 60000000) as ts
-                                      from long_sequence(2000)
-                                    ) timestamp(ts) partition by day;""",
-                            sqlExecutionContext
-                    );
+    public void testAggregatesNotKeyed() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_long), avg(an_int), count(a_date) from x where id%12=3");
+    }
 
-                    final StringSink sink1 = new StringSink();
-                    final StringSink sink2 = new StringSink();
-                    final StringSink sink3 = new StringSink();
-                    final StringSink sink4 = new StringSink();
-                    final StringSink sink5 = new StringSink();
-                    final StringSink sink6 = new StringSink();
-                    final StringSink sink7 = new StringSink();
+    @Test
+    public void testAggregatesWithGroupByBySymbol() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_long), avg(an_int), count(a_date),a_symbol from x where id%13=5 order by a_symbol");
+    }
 
-                    CharSequence query1 = generateRndInListSql("id");
-                    engine.print("x where id in (499)", sink1, sqlExecutionContext);
-                    engine.print(query1, sink2, sqlExecutionContext);
-                    engine.print("select sum(a_long), avg(an_int), count(a_date) from x where id%12=3", sink3, sqlExecutionContext);
-                    engine.print("select sum(a_long), avg(an_int), count(a_date),a_symbol  from x where id%13=5 order by a_symbol", sink4, sqlExecutionContext);
-                    engine.print("x where a_symbol = 'sym1'", sink5, sqlExecutionContext);
-                    engine.print("select count() from x where id%11=5", sink6, sqlExecutionContext);
-                    engine.print("select sum(a_long) from x where id%11=5", sink7, sqlExecutionContext);
+    @Test
+    public void testCountBooleanAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select last(a_boolean) from x where id%13=2");
+    }
 
-                    engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
+    @Test
+    public void testCountDistinctSymbolAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select count_distinct(a_symbol) from x where id%12=9");
+    }
 
-                    TestUtils.assertSql(engine, sqlExecutionContext, "x where id in (499)", sink, sink1);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query1, sink, sink2);
-                    TestUtils.assertSql(engine, sqlExecutionContext, "select sum(a_long), avg(an_int), count(a_date) from x where id%12=3", sink, sink3);
-                    TestUtils.assertSql(engine, sqlExecutionContext, "select sum(a_long), avg(an_int), count(a_date),a_symbol  from x where id%13=5 order by a_symbol", sink, sink4);
-                    TestUtils.assertSql(engine, sqlExecutionContext, "x where a_symbol = 'sym1'", sink, sink5);
-                    TestUtils.assertSql(engine, sqlExecutionContext, "select count() from x where id%11=5", sink, sink6);
-                    TestUtils.assertSql(engine, sqlExecutionContext, "select sum(a_long) from x where id%11=5", sink, sink7);
-                },
-                configuration,
-                LOG
-        );
+    @Test
+    public void testCountOnly() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select count() from x where id%11=5");
+    }
+
+    @Test
+    public void testFirstCharAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_char) from x where id in (199, 199, 201, 202)");
+    }
+
+    @Test
+    public void testFirstDoubleAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_double) from x where id%23=7");
+    }
+
+    @Test
+    public void testFirstFloatAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_float) from x where id%19=4");
+    }
+
+    @Test
+    public void testFirstGeoHashByteAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_geo_byte) from x where id%19 < 2");
+    }
+
+    @Test
+    public void testFirstGeoHashIntAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_geo_int) from x where id%37=9");
+    }
+
+    @Test
+    public void testFirstIpv4Aggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_ip) from x where id%29=11");
+    }
+
+    @Test
+    public void testFirstStringAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_string) from x where id%12=3");
+    }
+
+    @Test
+    public void testFirstUuidAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_uuid) from x where id%15=0");
+    }
+
+    @Test
+    public void testLastVarcharAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select last(a_varchar) from x where id%31 between 10 and 12");
     }
 
     @Test
@@ -137,9 +140,13 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
                     CharSequence query = generateRndInListSql("filter_col");
                     final StringSink expected = new StringSink();
+                    CharSequence query1 = "select first(base64(a_bin, 100)), last(base64(a_bin, 100)) from x where filter_col%13=7 group by a_string order by a_string";
+                    final StringSink expected1 = new StringSink();
                     engine.print(query, expected, sqlExecutionContext);
+                    engine.print(query1, expected1, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
                     TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query1, sink, expected1);
                 },
                 configuration,
                 LOG
@@ -191,7 +198,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                             """
                                     insert into x
                                     select x, cast(x as int), timestamp_sequence(0, 60000000)
-                                    from long_sequence(500);""",
+                                    from long_sequence(2000);""",
                             sqlExecutionContext
                     );
 
@@ -547,9 +554,13 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
                     final StringSink expected = new StringSink();
                     final CharSequence query = generateRndInListSql("filter_col");
+                    final StringSink expected1 = new StringSink();
+                    final CharSequence query1 = ("select first(an_array), last(an_array) from x where filter_col%13=7 group by a_string order by a_string");
                     engine.print(query, expected, sqlExecutionContext);
+                    engine.print(query1, expected1, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
                     TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query1, sink, expected1);
                 },
                 configuration,
                 LOG
@@ -629,6 +640,41 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testMaxTimestampAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select max(ts) from x where id%41=17");
+    }
+
+    @Test
+    public void testMinDateAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select min(a_date) from x where id % 21 in(3, 17)");
+    }
+
+    @Test
+    public void testRandomInListFilterOnId() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity(generateRndInListSql("id"));
+    }
+
+    @Test
+    public void testSumByteAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_byte) from x where id%9=1");
+    }
+
+    @Test
+    public void testSumLong256Aggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_long256) from x where id%31=15");
+    }
+
+    @Test
+    public void testSumShortAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_short) from x where id%17=8");
+    }
+
+    @Test
+    public void testSymbolEqualityFilter() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("x where a_symbol = 'a'");
+    }
+
     private StringSink generateRndInListSql(CharSequence column) {
         sql.clear();
         final int inListCount = 1 + rnd.nextInt(80);
@@ -641,5 +687,49 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         }
         sql.put(")");
         return sql;
+    }
+
+    private void testLateMaterializationAllTypesLowSelectivity(CharSequence query) throws Exception {
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            """
+                                    create table x as (
+                                      select
+                                        x id,
+                                        rnd_boolean() a_boolean,
+                                        rnd_byte() a_byte,
+                                        rnd_short() a_short,
+                                        rnd_char() a_char,
+                                        rnd_int(-10, 10, 0) an_int,
+                                        rnd_long(-10, 10, 0) a_long,
+                                        rnd_float() a_float,
+                                        rnd_double() a_double,
+                                        rnd_symbol('a','b','c','d', 'e','f','g','h','i','j','k') a_symbol,
+                                        rnd_str('hello', 'world', '!') a_string,
+                                        rnd_varchar('💗❤️','❤️😊','🙏') a_varchar,
+                                        rnd_bin(1, 8, 0) a_bin,
+                                        rnd_ipv4() a_ip,
+                                        rnd_uuid4() a_uuid,
+                                        rnd_long256() a_long256,
+                                        rnd_geohash(4) a_geo_byte,
+                                        rnd_geohash(16) a_geo_int,
+                                        cast(timestamp_sequence(0,1000000) as date) a_date,
+                                        timestamp_sequence(0, 60000000) as ts
+                                      from long_sequence(2000)
+                                    ) timestamp(ts) partition by day;""",
+                            sqlExecutionContext
+                    );
+
+                    final StringSink expected = new StringSink();
+                    engine.print(query, expected, sqlExecutionContext);
+                    engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                },
+                configuration,
+                LOG
+        );
     }
 }

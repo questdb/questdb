@@ -553,15 +553,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
-    private @NotNull DirectByteSequenceView bsView(int columnIndex) {
-        DirectByteSequenceView view = bsViews.getQuiet(columnIndex);
-        if (view != null) {
-            return view;
-        }
-        bsViews.extendAndSet(columnIndex, view = new DirectByteSequenceView());
-        return view;
-    }
-
     private @NotNull DirectString csViewA(int columnIndex) {
         DirectString view = csViewsA.getQuiet(columnIndex);
         if (view != null) {
@@ -641,6 +632,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         arrayBuffers.extendAndSet(columnIndex, array = new BorrowedArray());
         return array;
+    }
+
+    protected @NotNull DirectByteSequenceView bsView(int columnIndex) {
+        DirectByteSequenceView view = bsViews.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
+        }
+        bsViews.extendAndSet(columnIndex, view = new DirectByteSequenceView());
+        return view;
     }
 
     protected BinarySequence getBin(long base, long offset, long dataLim, DirectByteSequenceView view) {

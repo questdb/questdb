@@ -31,6 +31,7 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -105,6 +106,31 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
         return array;
     }
 
+    @Override
+    public BinarySequence getBin(int columnIndex) {
+        final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
+        if (dataPageAddress != 0) {
+            final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
+            final long auxPageLim = auxPageSizes.get(columnOffset + columnIndex);
+            final long auxOffset = rowIndex(columnIndex) << 3;
+            if (auxPageLim < auxOffset + 8) {
+                throw CairoException.critical(0)
+                        .put("binary is outside of file boundary [auxOffset=")
+                        .put(auxOffset)
+                        .put(", auxPageLim=")
+                        .put(auxPageLim)
+                        .put(']');
+            }
+            final long dataPageLim = pageSizes.get(columnOffset + columnIndex);
+            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
+            return getBin(dataPageAddress, dataOffset, dataPageLim, bsView(columnIndex));
+        }
+        return NullMemoryCMR.INSTANCE.getBin(0);
+    }
+
+    // Note: This method is only called by {@link PageFrameMemoryPool#preTouchColumns},
+    // which only operates on native format partitions (not Parquet). As a result,
+    // this code path is not reachable and nor cna be test converged.
     @Override
     public long getBinLen(int columnIndex) {
         final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
@@ -388,12 +414,6 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
             return getSymbolTable(columnIndex).valueBOf(key);
         }
         return null;
-    }
-
-    @Override
-    public long getUpdateRowId() {
-        assert false : "should never be called";
-        return rowIdOffset + rowIndex;
     }
 
     @Override
