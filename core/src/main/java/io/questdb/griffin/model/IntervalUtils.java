@@ -390,7 +390,7 @@ public final class IntervalUtils {
      * timezone support, and duration suffixes. This method is the main entry point for parsing
      * complex interval expressions that can expand to multiple disjoint time intervals.
      *
-     * <h2>Supported Features</h2>
+     * <h3>Supported Features</h3>
      * <ul>
      *   <li><b>Bracket Expansion:</b> {@code [a,b,c]} for comma-separated values,
      *       {@code [a..b]} for inclusive ranges</li>
@@ -401,7 +401,7 @@ public final class IntervalUtils {
      *   <li><b>Cartesian Product:</b> Multiple bracket groups combine all possibilities</li>
      * </ul>
      *
-     * <h2>Bracket Expansion Examples</h2>
+     * <h3>Bracket Expansion Examples</h3>
      * <pre>{@code
      * // Comma-separated values - expands to days 10, 15, 20 of January 2024
      * "2024-01-[10,15,20]"
@@ -419,7 +419,7 @@ public final class IntervalUtils {
      * "2024-01-[10,15]T10:30;1h"
      * }</pre>
      *
-     * <h2>Date List Examples</h2>
+     * <h3>Date List Examples</h3>
      * <pre>{@code
      * // Non-contiguous dates
      * "[2024-01-15,2024-03-20,2024-06-01]"
@@ -431,7 +431,7 @@ public final class IntervalUtils {
      * "[2024-01-15,2024-01-20]T09:30;6h30m"
      * }</pre>
      *
-     * <h2>Time List Examples</h2>
+     * <h3>Time List Examples</h3>
      * <pre>{@code
      * // Multiple times on same day (note: colon inside bracket = time list)
      * "2024-01-15T[09:00,14:30,18:00];1h"  // Three 1-hour intervals
@@ -443,7 +443,7 @@ public final class IntervalUtils {
      * "2024-01-15T[09:00@UTC,14:30@Europe/London];1h"
      * }</pre>
      *
-     * <h2>Timezone Examples</h2>
+     * <h3>Timezone Examples</h3>
      * <pre>{@code
      * // Numeric offset: 08:00 in UTC+3 = 05:00 UTC
      * "2024-01-15T08:00@+03:00"
@@ -456,7 +456,7 @@ public final class IntervalUtils {
      * "2024-01-[15..19]T09:30@America/New_York;6h30m"
      * }</pre>
      *
-     * <h2>Multi-Unit Duration Examples</h2>
+     * <h3>Multi-Unit Duration Examples</h3>
      * <pre>{@code
      * // Single unit (traditional)
      * "2024-01-15T09:00;1h"
@@ -470,7 +470,7 @@ public final class IntervalUtils {
      * //                  m(minutes), s(seconds), T(milliseconds), u(microseconds), n(nanoseconds)
      * }</pre>
      *
-     * <h2>Output Format</h2>
+     * <h3>Output Format</h3>
      * <p>Intervals are appended to the {@code out} list. In static mode ({@code applyEncoded=true}),
      * each interval is stored as 2 longs: {@code [lo, hi]}. In dynamic mode ({@code applyEncoded=false}),
      * each interval is stored as 4 longs: {@code [lo, hi, operation|periodType|adjustment, period|count]}.
