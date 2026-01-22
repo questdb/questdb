@@ -93,6 +93,21 @@ public final class IntervalUtils {
         MicrosFormatUtils.append0(sink, day);
     }
 
+    /**
+     * Formats a timestamp as "YYYY-MM-DDTHH:MM" into the given sink.
+     * Used for $now which preserves time component at minute precision.
+     */
+    public static void appendDateTime(TimestampDriver timestampDriver, long timestamp, CharSink<?> sink) {
+        appendDate(timestampDriver, timestamp, sink);
+        sink.putAscii('T');
+        int hour = timestampDriver.getHourOfDay(timestamp);
+        int minute = timestampDriver.getMinuteOfHour(timestamp);
+
+        MicrosFormatUtils.append0(sink, hour);
+        sink.putAscii(':');
+        MicrosFormatUtils.append0(sink, minute);
+    }
+
     public static void applyLastEncodedInterval(TimestampDriver timestampDriver, LongList intervals) {
         int index = intervals.size() - 4;
         long lo = decodeIntervalLo(intervals, index);
@@ -729,7 +744,9 @@ public final class IntervalUtils {
                 applyLastEncodedInterval(timestampDriver, out);
                 // Apply day filter BEFORE timezone conversion (based on local day-of-week)
                 if (dayFilterMask != 0) {
-                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask);
+                    // Only expand if date is imprecise (year/month only)
+                    boolean expandMultiDay = !hasDatePrecision(effectiveSeq, effectiveSeqLo, effectiveDateLim);
+                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask, expandMultiDay);
                 }
             } else if (dayFilterMask != 0) {
                 // Dynamic mode: store day filter mask for runtime evaluation
@@ -785,7 +802,9 @@ public final class IntervalUtils {
             // Apply day filter BEFORE timezone conversion (based on local day-of-week)
             if (dayFilterMask != 0) {
                 if (applyEncoded) {
-                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask);
+                    // Only expand if date is imprecise (year/month only)
+                    boolean expandMultiDay = !hasDatePrecision(parseSeq, parseLo, parseDateLim);
+                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask, expandMultiDay);
                 } else {
                     // Dynamic mode: store day filter mask for runtime evaluation
                     setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
@@ -1123,40 +1142,513 @@ public final class IntervalUtils {
 
     /**
      * Applies a day-of-week filter to intervals in the output list.
-     * Removes intervals where the lo timestamp's day of week doesn't match the filter.
-     * Works in-place, compacting the list. Intervals must be in 2-long (static) format.
+     * For multi-day intervals, optionally expands them into individual days and filters each day.
+     * For single-day intervals, checks if the day matches the filter.
+     * Uses a variable stride algorithm to jump directly to matching days, avoiding
+     * iteration over non-matching days.
      *
      * @param timestampDriver the timestamp driver for day-of-week calculation
      * @param out             the interval list to filter
      * @param startIndex      index to start filtering from
      * @param dayFilterMask   bitmask of allowed days (bit 0 = Monday, bit 6 = Sunday)
+     * @param expandMultiDay  if true, expand multi-day intervals into individual matching days;
+     *                        if false, just filter based on start day (for precise dates with duration)
      */
     private static void applyDayFilter(
             TimestampDriver timestampDriver,
             LongList out,
             int startIndex,
-            int dayFilterMask
+            int dayFilterMask,
+            boolean expandMultiDay
     ) {
         assert dayFilterMask != 0; // Callers must check dayFilterMask != 0 before calling
 
-        int writeIdx = startIndex;
+        int originalSize = out.size();
 
-        for (int readIdx = startIndex; readIdx < out.size(); readIdx += 2) {
+        // Pass 1: Count total output intervals using strides (no day-by-day iteration)
+        int totalIntervals = 0;
+        for (int readIdx = startIndex; readIdx < originalSize; readIdx += 2) {
             long lo = out.getQuick(readIdx);
-            int dayOfWeek = timestampDriver.getDayOfWeek(lo); // 1=Monday, 7=Sunday
-            int dayBit = 1 << (dayOfWeek - 1);
+            long hi = out.getQuick(readIdx + 1);
 
-            if ((dayFilterMask & dayBit) != 0) {
-                // Day matches filter - keep this interval
-                if (writeIdx != readIdx) {
-                    out.setQuick(writeIdx, out.getQuick(readIdx));
-                    out.setQuick(writeIdx + 1, out.getQuick(readIdx + 1));
+            long loDay = timestampDriver.startOfDay(lo, 0);
+            long hiDay = timestampDriver.startOfDay(hi, 0);
+
+            if (loDay == hiDay || !expandMultiDay) {
+                // Single day OR precise date with duration - just check if start day matches
+                int dayOfWeek = timestampDriver.getDayOfWeek(lo) - 1; // 0-6
+                if ((dayFilterMask & (1 << dayOfWeek)) != 0) {
+                    totalIntervals++;
                 }
-                writeIdx += 2;
+            } else {
+                // Multi-day imprecise interval (year/month) - count matching days using strides
+                totalIntervals += countMatchingDays(timestampDriver, loDay, hiDay, dayFilterMask);
             }
         }
 
-        out.setPos(writeIdx);
+        // Write expanded intervals at end of list, then copy back
+        // This avoids overwriting data we haven't read yet
+        out.setPos(originalSize + totalIntervals * 2);
+
+        int writeIdx = originalSize;
+        for (int readIdx = startIndex; readIdx < originalSize; readIdx += 2) {
+            long lo = out.getQuick(readIdx);
+            long hi = out.getQuick(readIdx + 1);
+
+            long loDay = timestampDriver.startOfDay(lo, 0);
+            long hiDay = timestampDriver.startOfDay(hi, 0);
+
+            if (loDay == hiDay || !expandMultiDay) {
+                // Single day OR precise date with duration - keep entire interval if start day matches
+                int dayOfWeek = timestampDriver.getDayOfWeek(lo) - 1; // 0-6
+                if ((dayFilterMask & (1 << dayOfWeek)) != 0) {
+                    out.setQuick(writeIdx++, lo);
+                    out.setQuick(writeIdx++, hi);
+                }
+            } else {
+                // Multi-day imprecise interval (year/month) - expand using strides
+                // For imprecise dates: lo is at midnight, hi is at end of last day
+                // No clamping needed since currentDay is always within [loDay, hiDay]
+                int startDow = timestampDriver.getDayOfWeek(loDay) - 1; // 0-6
+                long currentDay = timestampDriver.addDays(loDay, daysToFirstMatch(startDow, dayFilterMask));
+
+                while (currentDay <= hiDay) {
+                    out.setQuick(writeIdx++, currentDay);
+                    out.setQuick(writeIdx++, timestampDriver.endOfDay(currentDay));
+
+                    int currentDow = timestampDriver.getDayOfWeek(currentDay) - 1;
+                    currentDay = timestampDriver.addDays(currentDay, nextMatchingDayStride(currentDow, dayFilterMask));
+                }
+            }
+        }
+
+        // Copy from temp area back to start
+        for (int i = 0; i < totalIntervals * 2; i++) {
+            out.setQuick(startIndex + i, out.getQuick(originalSize + i));
+        }
+        out.setPos(startIndex + totalIntervals * 2);
+    }
+
+    /**
+     * Counts matching days in a date range using O(1) mathematical computation.
+     * Both loDay and hiDay must be at start of day (midnight).
+     */
+    private static int countMatchingDays(
+            TimestampDriver timestampDriver,
+            long loDay,
+            long hiDay,
+            int dayFilterMask
+    ) {
+        // Total days in range (inclusive)
+        int totalDays = (int) ((hiDay - loDay) / timestampDriver.fromDays(1)) + 1;
+
+        // Full weeks contribute Integer.bitCount(mask) matching days each
+        int fullWeeks = totalDays / 7;
+        int matchingDaysPerWeek = Integer.bitCount(dayFilterMask);
+        int count = fullWeeks * matchingDaysPerWeek;
+
+        // Handle remainder days (partial week starting from same dow as loDay)
+        int remainderDays = totalDays % 7;
+        if (remainderDays > 0) {
+            int startDow = timestampDriver.getDayOfWeek(loDay) - 1; // 0-6
+            int remainderMask = createDayRangeMask(startDow, remainderDays);
+            count += Integer.bitCount(dayFilterMask & remainderMask);
+        }
+
+        return count;
+    }
+
+    /**
+     * Creates a bitmask for a contiguous range of days-of-week.
+     * Handles wrap-around from Sunday (6) back to Monday (0).
+     *
+     * @param startDow starting day of week (0=Monday, 6=Sunday)
+     * @param length   number of consecutive days
+     * @return bitmask with bits set for each day in the range
+     */
+    private static int createDayRangeMask(int startDow, int length) {
+        if (startDow + length <= 7) {
+            // No wrap: bits from startDow to startDow + length - 1
+            return ((1 << length) - 1) << startDow;
+        } else {
+            // Wrap around: bits from startDow to 6, plus bits from 0 to wrap point
+            int highBits = ((1 << (7 - startDow)) - 1) << startDow;
+            int lowBits = (1 << (startDow + length - 7)) - 1;
+            return highBits | lowBits;
+        }
+    }
+
+    /**
+     * Computes days from startDow to the first matching day in the mask.
+     * Returns 0 if startDow itself matches.
+     * Uses bit manipulation to avoid array allocation.
+     */
+    private static int daysToFirstMatch(int startDow, int dayFilterMask) {
+        // If current day matches, return 0
+        if ((dayFilterMask & (1 << startDow)) != 0) {
+            return 0;
+        }
+        // Otherwise find next matching day
+        return nextMatchingDayStride(startDow, dayFilterMask);
+    }
+
+    /**
+     * Expands a date list in the format: [date1,date2,...]suffix
+     * Each date element can contain field expansion brackets.
+     * The suffix (like T09:30;1h) is appended to each date.
+     *
+     * @param timestampDriver        timestamp driver for parsing
+     * @param seq                    input string starting with '['
+     * @param lo                     position of the opening '['
+     * @param lim                    end of string
+     * @param errorPos               position for error reporting
+     * @param out                    output list for parsed intervals
+     * @param operation              interval operation
+     * @param sink                   reusable StringSink for building expanded strings.
+     * @param applyEncoded           if true, converts to simple format
+     * @param outSizeBeforeExpansion size of out before expansion started
+     * @param dayFilterMask          bitmask for day-of-week filter (0 if not specified)
+     * @param nowTimestamp           timestamp to use for resolving date variables ($today, $now, etc.)
+     */
+    private static void expandDateList(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int errorPos,
+            LongList out,
+            short operation,
+            StringSink sink,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion,
+            int dayFilterMask,
+            long nowTimestamp
+    ) throws SqlException {
+        // lo points to '[' - find the matching ']' for the date list
+        int depth = 1;
+        int listEnd = -1;
+        for (int i = lo + 1; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+                if (depth == 0) {
+                    listEnd = i;
+                    break;
+                }
+            }
+        }
+
+        if (listEnd < 0) {
+            throw SqlException.$(errorPos, "Unclosed '[' in date list");
+        }
+
+        // Check for empty brackets
+        int contentStart = lo + 1;
+        int contentEnd = listEnd;
+
+        // Skip leading whitespace in content
+        while (contentStart < contentEnd && Character.isWhitespace(seq.charAt(contentStart))) {
+            contentStart++;
+        }
+
+        if (contentStart >= contentEnd) {
+            throw SqlException.$(errorPos, "Empty date list");
+        }
+
+        // The suffix is everything after the closing bracket (like T09:30;1h or T09:30@Europe/London;1h)
+        int suffixStart = listEnd + 1;
+
+        // Check for global timezone in suffix (applies to elements without per-element timezone)
+        int globalTzMarker = findTimezoneMarker(seq, suffixStart, lim);
+        int globalTzLo = -1;
+        int globalTzHi = -1;
+
+        if (globalTzMarker >= 0) {
+            globalTzLo = globalTzMarker + 1;
+            // Find where timezone ends (at ';' or end of string)
+            int semicolonPos = -1;
+            for (int j = globalTzMarker + 1; j < lim; j++) {
+                if (seq.charAt(j) == ';') {
+                    semicolonPos = j;
+                    break;
+                }
+            }
+            globalTzHi = semicolonPos >= 0 ? semicolonPos : lim;
+        }
+
+        // Parse comma-separated date elements, respecting nested brackets
+        int elementStart = contentStart;
+
+        for (int i = contentStart; i <= contentEnd; i++) {
+            char c = i < contentEnd ? seq.charAt(i) : ','; // Treat end as virtual comma
+
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                // Found element boundary
+                int elementEnd = i;
+
+                // Trim whitespace from element
+                while (elementStart < elementEnd && Character.isWhitespace(seq.charAt(elementStart))) {
+                    elementStart++;
+                }
+                while (elementEnd > elementStart && Character.isWhitespace(seq.charAt(elementEnd - 1))) {
+                    elementEnd--;
+                }
+
+                if (elementStart >= elementEnd) {
+                    throw SqlException.$(errorPos, "Empty element in date list");
+                }
+
+                // Check if element starts with '$' (date variable expression)
+                // Date variables like $today, $now, $yesterday, $tomorrow, $today+3bd
+                // The expression ends at '@' (timezone), '#' (day filter), or element end
+                CharSequence elementSeq = seq;
+                int resolvedElementStart = elementStart;
+                int resolvedElementEnd = elementEnd;
+
+                if (seq.charAt(elementStart) == '$') {
+                    // Find where the date expression ends
+                    int exprEnd = elementEnd;
+                    for (int j = elementStart; j < elementEnd; j++) {
+                        char ec = seq.charAt(j);
+                        if (ec == '@' || ec == '#') {
+                            exprEnd = j;
+                            break;
+                        }
+                    }
+
+                    // Evaluate the date expression
+                    long resolvedTimestamp = DateExpressionEvaluator.evaluate(
+                            timestampDriver, seq, elementStart, exprEnd, nowTimestamp, errorPos
+                    );
+
+                    // Check if timestamp has time component (e.g., $now)
+                    // If so, format with full datetime; otherwise just date
+                    StringSink dateVarSink = tlDateVarSink.get();
+                    dateVarSink.clear();
+                    long startOfDay = timestampDriver.startOfDay(resolvedTimestamp, 0);
+                    boolean hasTimeComponent = resolvedTimestamp != startOfDay;
+
+                    if (hasTimeComponent) {
+                        // $now - format with full datetime, timezone suffix still applies
+                        appendDateTime(timestampDriver, resolvedTimestamp, dateVarSink);
+                    } else {
+                        // $today, $yesterday, $tomorrow - format as date only
+                        appendDate(timestampDriver, resolvedTimestamp, dateVarSink);
+                    }
+
+                    // Append any suffix (timezone/day filter) from the original element
+                    if (exprEnd < elementEnd) {
+                        dateVarSink.put(seq, exprEnd, elementEnd);
+                    }
+
+                    elementSeq = dateVarSink;
+                    resolvedElementStart = 0;
+                    resolvedElementEnd = dateVarSink.length();
+                }
+
+                // Check for per-element day filter (e.g., "2024-01-01#Mon")
+                // Order is: date@timezone#dayFilter, so find # first, then @ before it
+                int elemDayFilterMarker = -1;
+                for (int j = resolvedElementStart; j < resolvedElementEnd; j++) {
+                    if (elementSeq.charAt(j) == '#') {
+                        elemDayFilterMarker = j;
+                        break;
+                    }
+                }
+
+                int elemDayFilterMask = 0;
+                int effectiveElementEndForTz = resolvedElementEnd;
+                if (elemDayFilterMarker >= 0) {
+                    // Parse per-element day filter
+                    elemDayFilterMask = parseDayFilter(elementSeq, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
+                    effectiveElementEndForTz = elemDayFilterMarker;
+                }
+
+                // Check if element has per-date timezone (e.g., "2024-01-01@Europe/London")
+                // Look for @ only before the day filter marker (if present)
+                int elemTzMarker = findTimezoneMarker(elementSeq, resolvedElementStart, effectiveElementEndForTz);
+                int elemTzLo;
+                int elemTzHi;
+                int effectiveElementEnd = effectiveElementEndForTz;
+
+                // Determine which timezone to use: per-element takes precedence over global
+                // Track both the timezone bounds and the sequence they reference
+                int activeTzLo = -1;
+                int activeTzHi = -1;
+                CharSequence activeTzSeq = seq;
+
+                if (elemTzMarker >= 0) {
+                    // Per-element timezone
+                    elemTzLo = elemTzMarker + 1;
+                    elemTzHi = effectiveElementEndForTz;
+                    effectiveElementEnd = elemTzMarker;
+                    activeTzLo = elemTzLo;
+                    activeTzHi = elemTzHi;
+                    activeTzSeq = elementSeq;
+                } else if (globalTzMarker >= 0) {
+                    // Use global timezone from suffix
+                    activeTzLo = globalTzLo;
+                    activeTzHi = globalTzHi;
+                }
+
+                // Determine which day filter to use: per-element takes precedence over global
+                int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
+
+                // Remember output size before parsing this element
+                int outSizeBeforeElement = out.size();
+
+                // Check if element already has a time component (contains 'T' followed by digit)
+                boolean elementHasTime = false;
+                for (int j = resolvedElementStart; j < effectiveElementEnd - 1; j++) {
+                    char ec = elementSeq.charAt(j);
+                    if (ec == 'T' && Character.isDigit(elementSeq.charAt(j + 1))) {
+                        elementHasTime = true;
+                        break;
+                    }
+                }
+
+                // Find where the time part of suffix ends (at ';' or '@' or end)
+                // Suffix format: T10:00, T10:00;1h, T10:00@TZ, T10:00@TZ;1h
+                int suffixTimeEnd = suffixStart;
+                if (suffixStart < lim && seq.charAt(suffixStart) == 'T') {
+                    // Find where time ends (at ';', '@', or end)
+                    while (suffixTimeEnd < lim) {
+                        char sc = seq.charAt(suffixTimeEnd);
+                        if (sc == ';' || sc == '@') {
+                            break;
+                        }
+                        suffixTimeEnd++;
+                    }
+                }
+
+                // Build the full interval string: element (without tz) + suffix (without tz)
+                sink.clear();
+                sink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
+
+                // If element already has time, skip the time part of suffix but include duration
+                int effectiveSuffixStart = elementHasTime ? suffixTimeEnd : suffixStart;
+
+                if (globalTzMarker >= 0) {
+                    // Add suffix without timezone: part before @ and part after timezone (;duration)
+                    if (effectiveSuffixStart < globalTzMarker) {
+                        sink.put(seq, effectiveSuffixStart, globalTzMarker);
+                    }
+                    if (globalTzHi < lim) {
+                        sink.put(seq, globalTzHi, lim);
+                    }
+                } else {
+                    sink.put(seq, effectiveSuffixStart, lim);
+                }
+
+                // Check if the combined string contains brackets that need expansion
+                // This includes brackets in the element part AND in the suffix part
+                boolean hasBrackets = false;
+                int expandedLen = sink.length();
+                for (int j = 0; j < expandedLen; j++) {
+                    if (sink.charAt(j) == '[') {
+                        hasBrackets = true;
+                        break;
+                    }
+                }
+
+                if (hasBrackets) {
+                    // Element has field expansion brackets - use existing recursive expansion
+                    // Find where semicolon would be in the expanded string
+                    int expandedLim = sink.length();
+                    int dateLim = expandedLim;
+                    for (int j = 0; j < expandedLim; j++) {
+                        char ch = sink.charAt(j);
+                        if (ch == ';') {
+                            // Semicolon always appears after brackets close (in suffix like T[09,14]:30;1h)
+                            dateLim = j;
+                            break;
+                        }
+                    }
+
+                    // Use tlSink2 since tlSink1 may be in use by the caller (dateSink when day filter exists)
+                    StringSink expansionSink = tlSink2.get();
+                    expansionSink.clear();
+                    boolean hadTimeListBracket = expandBracketsRecursive(
+                            timestampDriver,
+                            configuration,
+                            sink,
+                            0,
+                            dateLim,
+                            sink.length(),
+                            errorPos,
+                            out,
+                            operation,
+                            expansionSink,
+                            0,
+                            applyEncoded,
+                            outSizeBeforeExpansion,
+                            activeTzSeq,   // tzSeq - for time list TZ fallback
+                            activeTzLo,    // tzLo
+                            activeTzHi     // tzHi
+                    );
+                    // If time list brackets were processed, they handled TZ internally
+                    if (hadTimeListBracket) {
+                        activeTzLo = -1; // Clear to skip TZ application below
+                    }
+                } else {
+                    // No brackets - parse directly
+                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                }
+
+                // Apply day filter BEFORE timezone conversion (based on local time)
+                // Use per-element day filter if present, otherwise use global
+                if (activeDayFilterMask != 0) {
+                    if (applyEncoded) {
+                        // Only expand to individual days if the element is an imprecise date (year/month)
+                        // Precise dates (with day component) should just be filtered, not expanded
+                        boolean expandMultiDay = !hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd);
+                        applyDayFilter(timestampDriver, out, outSizeBeforeElement, activeDayFilterMask, expandMultiDay);
+                    } else {
+                        // Dynamic mode: store day filter mask for runtime evaluation
+                        setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, activeDayFilterMask);
+                    }
+                }
+
+                // Apply timezone conversion if present (per-element or global) and NOT already handled by time list
+                if (activeTzLo >= 0) {
+                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+                }
+
+                elementStart = i + 1;
+            }
+        }
+    }
+
+    /**
+     * Checks if a date string has day precision (contains at least 2 hyphens before 'T', '@', '#', or end).
+     * - "2024" has 0 hyphens -> false (year only)
+     * - "2024-01" has 1 hyphen -> false (year-month)
+     * - "2024-W03" has 1 hyphen -> false (ISO week)
+     * - "2024-01-15" has 2 hyphens -> true (full date)
+     * - "2024-W03-1" has 2 hyphens -> true (ISO week with day)
+     */
+    private static boolean hasDatePrecision(CharSequence seq, int lo, int hi) {
+        int hyphenCount = 0;
+        for (int i = lo; i < hi; i++) {
+            char c = seq.charAt(i);
+            if (c == 'T' || c == '@' || c == '#') {
+                break; // Stop at time/timezone/dayfilter marker
+            }
+            if (c == '-') {
+                hyphenCount++;
+                if (hyphenCount >= 2) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -1518,324 +2010,20 @@ public final class IntervalUtils {
     }
 
     /**
-     * Expands a date list in the format: [date1,date2,...]suffix
-     * Each date element can contain field expansion brackets.
-     * The suffix (like T09:30;1h) is appended to each date.
-     *
-     * @param timestampDriver        timestamp driver for parsing
-     * @param seq                    input string starting with '['
-     * @param lo                     position of the opening '['
-     * @param lim                    end of string
-     * @param errorPos               position for error reporting
-     * @param out                    output list for parsed intervals
-     * @param operation              interval operation
-     * @param sink                   reusable StringSink for building expanded strings.
-     * @param applyEncoded           if true, converts to simple format
-     * @param outSizeBeforeExpansion size of out before expansion started
-     * @param dayFilterMask          bitmask for day-of-week filter (0 if not specified)
-     * @param nowTimestamp           timestamp to use for resolving date variables ($today, $now, etc.)
+     * Computes the stride (days) from currentDow to the next matching day in the mask.
+     * Uses bit manipulation with a doubled mask to handle week wrap-around.
+     * <p>
+     * Example for Tue+Fri (mask = 0b0010010, bits 1=Tue, 4=Fri):
+     * - From Tue (dow=1): stride = 3 (to Fri)
+     * - From Fri (dow=4): stride = 4 (to next Tue)
      */
-    private static void expandDateList(
-            TimestampDriver timestampDriver,
-            CairoConfiguration configuration,
-            CharSequence seq,
-            int lo,
-            int lim,
-            int errorPos,
-            LongList out,
-            short operation,
-            StringSink sink,
-            boolean applyEncoded,
-            int outSizeBeforeExpansion,
-            int dayFilterMask,
-            long nowTimestamp
-    ) throws SqlException {
-        // lo points to '[' - find the matching ']' for the date list
-        int depth = 1;
-        int listEnd = -1;
-        for (int i = lo + 1; i < lim; i++) {
-            char c = seq.charAt(i);
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-                if (depth == 0) {
-                    listEnd = i;
-                    break;
-                }
-            }
-        }
-
-        if (listEnd < 0) {
-            throw SqlException.$(errorPos, "Unclosed '[' in date list");
-        }
-
-        // Check for empty brackets
-        int contentStart = lo + 1;
-        int contentEnd = listEnd;
-
-        // Skip leading whitespace in content
-        while (contentStart < contentEnd && Character.isWhitespace(seq.charAt(contentStart))) {
-            contentStart++;
-        }
-
-        if (contentStart >= contentEnd) {
-            throw SqlException.$(errorPos, "Empty date list");
-        }
-
-        // The suffix is everything after the closing bracket (like T09:30;1h or T09:30@Europe/London;1h)
-        int suffixStart = listEnd + 1;
-
-        // Check for global timezone in suffix (applies to elements without per-element timezone)
-        int globalTzMarker = findTimezoneMarker(seq, suffixStart, lim);
-        int globalTzLo = -1;
-        int globalTzHi = -1;
-
-        if (globalTzMarker >= 0) {
-            globalTzLo = globalTzMarker + 1;
-            // Find where timezone ends (at ';' or end of string)
-            int semicolonPos = -1;
-            for (int j = globalTzMarker + 1; j < lim; j++) {
-                if (seq.charAt(j) == ';') {
-                    semicolonPos = j;
-                    break;
-                }
-            }
-            globalTzHi = semicolonPos >= 0 ? semicolonPos : lim;
-        }
-
-        // Parse comma-separated date elements, respecting nested brackets
-        int elementStart = contentStart;
-
-        for (int i = contentStart; i <= contentEnd; i++) {
-            char c = i < contentEnd ? seq.charAt(i) : ','; // Treat end as virtual comma
-
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-            } else if (c == ',' && depth == 0) {
-                // Found element boundary
-                int elementEnd = i;
-
-                // Trim whitespace from element
-                while (elementStart < elementEnd && Character.isWhitespace(seq.charAt(elementStart))) {
-                    elementStart++;
-                }
-                while (elementEnd > elementStart && Character.isWhitespace(seq.charAt(elementEnd - 1))) {
-                    elementEnd--;
-                }
-
-                if (elementStart >= elementEnd) {
-                    throw SqlException.$(errorPos, "Empty element in date list");
-                }
-
-                // Check if element starts with '$' (date variable expression)
-                // Date variables like $today, $now, $yesterday, $tomorrow, $today+3bd
-                // The expression ends at '@' (timezone), '#' (day filter), or element end
-                CharSequence elementSeq = seq;
-                int resolvedElementStart = elementStart;
-                int resolvedElementEnd = elementEnd;
-
-                if (seq.charAt(elementStart) == '$') {
-                    // Find where the date expression ends
-                    int exprEnd = elementEnd;
-                    for (int j = elementStart; j < elementEnd; j++) {
-                        char ec = seq.charAt(j);
-                        if (ec == '@' || ec == '#') {
-                            exprEnd = j;
-                            break;
-                        }
-                    }
-
-                    // Evaluate the date expression
-                    long resolvedTimestamp = DateExpressionEvaluator.evaluate(
-                            timestampDriver, seq, elementStart, exprEnd, nowTimestamp, errorPos
-                    );
-
-                    // Format the resolved timestamp as YYYY-MM-DD and append any remaining suffix
-                    StringSink dateVarSink = tlDateVarSink.get();
-                    dateVarSink.clear();
-                    appendDate(timestampDriver, resolvedTimestamp, dateVarSink);
-
-                    // Append any suffix (timezone/day filter) from the original element
-                    if (exprEnd < elementEnd) {
-                        dateVarSink.put(seq, exprEnd, elementEnd);
-                    }
-
-                    elementSeq = dateVarSink;
-                    resolvedElementStart = 0;
-                    resolvedElementEnd = dateVarSink.length();
-                }
-
-                // Check for per-element day filter (e.g., "2024-01-01#Mon")
-                // Order is: date@timezone#dayFilter, so find # first, then @ before it
-                int elemDayFilterMarker = -1;
-                for (int j = resolvedElementStart; j < resolvedElementEnd; j++) {
-                    if (elementSeq.charAt(j) == '#') {
-                        elemDayFilterMarker = j;
-                        break;
-                    }
-                }
-
-                int elemDayFilterMask = 0;
-                int effectiveElementEndForTz = resolvedElementEnd;
-                if (elemDayFilterMarker >= 0) {
-                    // Parse per-element day filter
-                    elemDayFilterMask = parseDayFilter(elementSeq, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
-                    effectiveElementEndForTz = elemDayFilterMarker;
-                }
-
-                // Check if element has per-date timezone (e.g., "2024-01-01@Europe/London")
-                // Look for @ only before the day filter marker (if present)
-                int elemTzMarker = findTimezoneMarker(elementSeq, resolvedElementStart, effectiveElementEndForTz);
-                int elemTzLo;
-                int elemTzHi;
-                int effectiveElementEnd = effectiveElementEndForTz;
-
-                // Determine which timezone to use: per-element takes precedence over global
-                // Track both the timezone bounds and the sequence they reference
-                int activeTzLo = -1;
-                int activeTzHi = -1;
-                CharSequence activeTzSeq = seq;
-
-                if (elemTzMarker >= 0) {
-                    // Per-element timezone
-                    elemTzLo = elemTzMarker + 1;
-                    elemTzHi = effectiveElementEndForTz;
-                    effectiveElementEnd = elemTzMarker;
-                    activeTzLo = elemTzLo;
-                    activeTzHi = elemTzHi;
-                    activeTzSeq = elementSeq;
-                } else if (globalTzMarker >= 0) {
-                    // Use global timezone from suffix
-                    activeTzLo = globalTzLo;
-                    activeTzHi = globalTzHi;
-                }
-
-                // Determine which day filter to use: per-element takes precedence over global
-                int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
-
-                // Remember output size before parsing this element
-                int outSizeBeforeElement = out.size();
-
-                // Check if element already has a time component (contains 'T' followed by digit)
-                boolean elementHasTime = false;
-                for (int j = resolvedElementStart; j < effectiveElementEnd - 1; j++) {
-                    char ec = elementSeq.charAt(j);
-                    if (ec == 'T' && Character.isDigit(elementSeq.charAt(j + 1))) {
-                        elementHasTime = true;
-                        break;
-                    }
-                }
-
-                // Find where the time part of suffix ends (at ';' or '@' or end)
-                // Suffix format: T10:00, T10:00;1h, T10:00@TZ, T10:00@TZ;1h
-                int suffixTimeEnd = suffixStart;
-                if (suffixStart < lim && seq.charAt(suffixStart) == 'T') {
-                    // Find where time ends (at ';', '@', or end)
-                    while (suffixTimeEnd < lim) {
-                        char sc = seq.charAt(suffixTimeEnd);
-                        if (sc == ';' || sc == '@') {
-                            break;
-                        }
-                        suffixTimeEnd++;
-                    }
-                }
-
-                // Build the full interval string: element (without tz) + suffix (without tz)
-                sink.clear();
-                sink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
-
-                // If element already has time, skip the time part of suffix but include duration
-                int effectiveSuffixStart = elementHasTime ? suffixTimeEnd : suffixStart;
-
-                if (globalTzMarker >= 0) {
-                    // Add suffix without timezone: part before @ and part after timezone (;duration)
-                    if (effectiveSuffixStart < globalTzMarker) {
-                        sink.put(seq, effectiveSuffixStart, globalTzMarker);
-                    }
-                    if (globalTzHi < lim) {
-                        sink.put(seq, globalTzHi, lim);
-                    }
-                } else {
-                    sink.put(seq, effectiveSuffixStart, lim);
-                }
-
-                // Check if the combined string contains brackets that need expansion
-                // This includes brackets in the element part AND in the suffix part
-                boolean hasBrackets = false;
-                int expandedLen = sink.length();
-                for (int j = 0; j < expandedLen; j++) {
-                    if (sink.charAt(j) == '[') {
-                        hasBrackets = true;
-                        break;
-                    }
-                }
-
-                if (hasBrackets) {
-                    // Element has field expansion brackets - use existing recursive expansion
-                    // Find where semicolon would be in the expanded string
-                    int expandedLim = sink.length();
-                    int dateLim = expandedLim;
-                    for (int j = 0; j < expandedLim; j++) {
-                        char ch = sink.charAt(j);
-                        if (ch == ';') {
-                            // Semicolon always appears after brackets close (in suffix like T[09,14]:30;1h)
-                            dateLim = j;
-                            break;
-                        }
-                    }
-
-                    // Use tlSink2 since tlSink1 may be in use by the caller (dateSink when day filter exists)
-                    StringSink expansionSink = tlSink2.get();
-                    expansionSink.clear();
-                    boolean hadTimeListBracket = expandBracketsRecursive(
-                            timestampDriver,
-                            configuration,
-                            sink,
-                            0,
-                            dateLim,
-                            sink.length(),
-                            errorPos,
-                            out,
-                            operation,
-                            expansionSink,
-                            0,
-                            applyEncoded,
-                            outSizeBeforeExpansion,
-                            activeTzSeq,   // tzSeq - for time list TZ fallback
-                            activeTzLo,    // tzLo
-                            activeTzHi     // tzHi
-                    );
-                    // If time list brackets were processed, they handled TZ internally
-                    if (hadTimeListBracket) {
-                        activeTzLo = -1; // Clear to skip TZ application below
-                    }
-                } else {
-                    // No brackets - parse directly
-                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
-                }
-
-                // Apply day filter BEFORE timezone conversion (based on local time)
-                // Use per-element day filter if present, otherwise use global
-                if (activeDayFilterMask != 0) {
-                    if (applyEncoded) {
-                        applyDayFilter(timestampDriver, out, outSizeBeforeElement, activeDayFilterMask);
-                    } else {
-                        // Dynamic mode: store day filter mask for runtime evaluation
-                        setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, activeDayFilterMask);
-                    }
-                }
-
-                // Apply timezone conversion if present (per-element or global) and NOT already handled by time list
-                if (activeTzLo >= 0) {
-                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
-                }
-
-                elementStart = i + 1;
-            }
-        }
+    private static int nextMatchingDayStride(int currentDow, int dayFilterMask) {
+        // Double the mask to handle wrap-around (7 days → 14 bits)
+        int doubleMask = dayFilterMask | (dayFilterMask << 7);
+        // Clear bits at and before currentDow
+        int cleared = doubleMask & -(1 << (currentDow + 1));
+        // Distance to next set bit
+        return Integer.numberOfTrailingZeros(cleared) - currentDow;
     }
 
     /**
