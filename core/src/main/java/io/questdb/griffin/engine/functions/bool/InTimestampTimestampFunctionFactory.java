@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -49,7 +50,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
-import static io.questdb.griffin.model.IntervalUtils.parseAndApplyInterval;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
@@ -211,7 +211,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         ) throws SqlException {
             this.left = left;
             final StringSink sink = new StringSink();
-            parseAndApplyInterval(ColumnType.getTimestampDriver(leftTimestampType), configuration, right, intervals, rightPosition, sink);
+            IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(leftTimestampType), configuration, right, intervals, rightPosition, sink, true);
         }
 
         @Override
@@ -262,7 +262,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             intervals.clear();
             try {
                 // we are ignoring exception contents here, so we do not need the exact position
-                parseAndApplyInterval(timestampDriver, configuration, timestampAsString, intervals, 0, sink);
+                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, 0, sink, true);
             } catch (SqlException e) {
                 return negated;
             }
@@ -430,7 +430,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
-                    parseAndApplyInterval(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, 0, sink);
+                    IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, 0, sink, true);
                     break;
                 default:
                     throw SqlException

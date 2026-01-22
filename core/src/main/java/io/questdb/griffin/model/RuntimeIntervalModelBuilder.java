@@ -138,7 +138,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         int size = staticIntervals.size();
         boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
         if (noDynamicIntervals) {
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
@@ -348,7 +348,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         int size = staticIntervals.size();
         boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
         if (noDynamicIntervals) {
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
@@ -399,7 +399,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // Parse and expand the interval string (may produce multiple pairs for periodic intervals)
         int size = staticIntervals.size();
         boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
         if (noDynamicIntervals) {
             if (intervalApplied) {
                 IntervalUtils.unionInPlace(staticIntervals, size);

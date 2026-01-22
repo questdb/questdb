@@ -1066,13 +1066,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
         final LongList intervals = predicateContext.inIntervals;
-        IntervalUtils.parseAndApplyInterval(
+        IntervalUtils.parseTickExprAndIntersect(
                 ColumnType.getTimestampDriver(predicateContext.columnType),
                 executionContext.getCairoEngine().getConfiguration(),
                 intervalEx,
                 intervals,
                 position,
-                sink
+                sink,
+                true
         );
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;

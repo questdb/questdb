@@ -71,7 +71,7 @@ public class IntrinsicModelTest {
     /**
      * Convenience overload that allocates a temporary StringSink and always returns simple format.
      */
-    public static void parseBracketInterval(
+    public static void parseTickExpr(
             TimestampDriver timestampDriver,
             CharSequence seq,
             int lo,
@@ -80,13 +80,13 @@ public class IntrinsicModelTest {
             LongList out,
             short operation
     ) throws SqlException {
-        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), true);
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), true);
     }
 
     /**
      * Overload that allows specifying applyEncoded parameter for testing encoded format paths.
      */
-    public static void parseBracketInterval(
+    public static void parseTickExpr(
             TimestampDriver timestampDriver,
             CharSequence seq,
             int lo,
@@ -96,7 +96,7 @@ public class IntrinsicModelTest {
             short operation,
             boolean applyEncoded
     ) throws SqlException {
-        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), applyEncoded);
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), applyEncoded);
     }
 
     @Before
@@ -133,14 +133,14 @@ public class IntrinsicModelTest {
 
         // Test 1: Small cartesian product with non-adjacent values (no merging)
         String interval = "2018-[01,06]-[10,15]"; // 2 * 2 = 4 combinations
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals("Expected 4 intervals for 2x2 cartesian product", 4, out.size() / 2);
 
         // Test 2: Larger cartesian product with non-consecutive months
         // 2018-[01,03,05,07,09,11]-[05,10,15,20,25] = 6 months * 5 days = 30 combinations
         out.clear();
         interval = "2018-[01,03,05,07,09,11]-[05,10,15,20,25]";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals("Expected 30 intervals for 6x5 cartesian product", 30, out.size() / 2);
 
         // Test 3: Cartesian product with adjacent days within months
@@ -149,7 +149,7 @@ public class IntrinsicModelTest {
         // Jan 28 -> Feb 1 has gap (Jan 29,30,31), so months don't merge.
         out.clear();
         interval = "2020-[01,02]-[01..28]";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         // Each month's days merge to 1 interval, total 2 (gap between months)
         Assert.assertEquals("2 months * 28 days should merge to 2 intervals", 2, out.size() / 2);
     }
@@ -334,14 +334,14 @@ public class IntrinsicModelTest {
         // But days within each month are adjacent and merge, and months don't merge (gap between months)
         // So let's use a simpler test with consecutive days in January
         String interval = "2020-01-[01..31]"; // 31 consecutive days -> should merge to 1
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals("31 consecutive days should merge to 1 interval", 1, out.size() / 2);
 
         // Test 2: Large year range (non-adjacent intervals don't merge)
         // [1970..2170]-01-01 = 201 separate day intervals (Jan 1 each year, ~365 day gaps)
         out.clear();
         interval = "[1970..2170]-01-01";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         // These don't merge because there's a ~365 day gap between Jan 1 of each year
         Assert.assertEquals("201 non-adjacent year intervals should remain separate", 201, out.size() / 2);
 
@@ -350,7 +350,7 @@ public class IntrinsicModelTest {
         out.clear();
         interval = "[1000..3000]-01-01";
         try {
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail("Should fail with 'too many intervals' error");
         } catch (SqlException e) {
             Assert.assertTrue("Expected 'too many intervals' error, got: " + e.getMessage(),
@@ -362,7 +362,7 @@ public class IntrinsicModelTest {
         // 2020-[01,02,03,04,05,06,07,08,09,10,11,12]-[01..28] = 12 * 28 = 336 combinations
         out.clear();
         interval = "2020-[01,02,03,04,05,06,07,08,09,10,11,12]-[01..28]";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         // Days 1-28 within each month are adjacent and merge to 1.
         // Dec 28 -> Jan 1 has gaps (Dec 29,30,31), so 12 separate month intervals.
         // But wait - all months are in 2020, so Jan 28 -> Feb 1 only has Jan 29,30,31 gap
@@ -435,7 +435,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "1234567890000000";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         Assert.assertEquals(1234567890000000L, out.getQuick(0));
         Assert.assertEquals(1234567890000000L, out.getQuick(1));
@@ -473,7 +473,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2018-01-[10,15]";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
         // 2 intervals * 4 longs = 8
         Assert.assertEquals(8, out.size());
@@ -529,7 +529,7 @@ public class IntrinsicModelTest {
         if (ColumnType.isTimestampNano(timestampType.getTimestampType())) {
             LongList out1 = new LongList();
             final TimestampDriver timestampDriver = timestampType.getDriver();
-            parseBracketInterval(timestampDriver, input, 0, input.length(), 0, out1, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, input, 0, input.length(), 0, out1, IntervalOperation.INTERSECT);
             TestUtils.assertEquals(
                     "[{lo=2024-01-15T10:00:00.000000000Z, hi=2024-01-15T10:00:01.500000999Z}]",
                     intervalToString(timestampDriver, out1)
@@ -550,7 +550,7 @@ public class IntrinsicModelTest {
         int lo = 3; // skip "XXX"
         LongList out = new LongList();
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        parseBracketInterval(timestampDriver, input, lo, input.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, input, lo, input.length(), 0, out, IntervalOperation.INTERSECT);
         // Day field should be zero-padded to 2 digits
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
@@ -586,7 +586,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2018-01-[10,15]";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.SUBTRACT, false);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.SUBTRACT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
         // 2 intervals * 4 longs = 8
         Assert.assertEquals(8, out.size());
@@ -928,7 +928,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2025-01-01,2025-01-05]";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
         // 2 intervals * 4 longs = 8
         Assert.assertEquals(8, out.size());
@@ -984,7 +984,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-01,2024-01-02,2024-01-03]#Mon";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
         // 3 intervals * 4 longs = 12
         Assert.assertEquals(12, out.size());
@@ -1112,7 +1112,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-[01..02]@+12:00#Mon";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
 
         // Non-date-list path: day filter applied before TZ conversion
         // 2024-01-01 is Monday (local) → kept, 2024-01-02 is Tuesday → filtered out
@@ -1209,7 +1209,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-02,2024-01-03]#Mon";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(0, out.size());
     }
 
@@ -1295,7 +1295,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-01@+12:00]#Mon";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
 
         // Day filter is applied based on local time (Monday), interval is kept
         Assert.assertEquals(2, out.size());
@@ -1322,7 +1322,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-[01..03]#Mon";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
 
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
         // 3 intervals (01, 02, 03) * 4 longs = 12
@@ -1343,7 +1343,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-01#weekend";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
 
         // 1 interval * 4 longs = 4
         Assert.assertEquals(4, out.size());
@@ -1359,7 +1359,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-01#workday";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
 
         // 1 interval * 4 longs = 4
         Assert.assertEquals(4, out.size());
@@ -1376,7 +1376,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-[02..04]#Mon";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(0, out.size());
     }
 
@@ -1480,7 +1480,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-01#Tue";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(0, out.size());
     }
 
@@ -1635,7 +1635,7 @@ public class IntrinsicModelTest {
         final String intervalStr = "2018-01-10T10:30:00.000Z;30m;2d;2";
         LongList out = new LongList();
         TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        parseBracketInterval(timestampDriver, intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
         IntervalUtils.invert(out);
         TestUtils.assertEquals(
                 "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
@@ -1873,7 +1873,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2025-01-15";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
         Assert.assertEquals(4, out.size());
     }
@@ -2294,7 +2294,7 @@ public class IntrinsicModelTest {
         LongList out = new LongList();
         String interval = "2024-01-[15@00,16]";
         try {
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail("Expected SqlException for invalid bracket content");
         } catch (SqlException e) {
             // Should fail parsing the bracket content, not as "invalid timezone"
@@ -2310,7 +2310,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-[15,16]T08:00@+02:00;1h";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T07:00:59.999999999Z}]"
@@ -2325,7 +2325,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-15,2024-01-16]T08:00@+02:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z}]"
@@ -2341,7 +2341,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-15,2024-01-16]T08:00@+02:00;1h";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size()); // 2 dates, each with 1 interval (duration extends hi, doesn't add intervals)
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T07:00:59.999999999Z}]"
@@ -2358,7 +2358,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-15@UTC,2024-01-16]T08:00@+03:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z},{lo=2024-01-16T05:00:00.000000000Z, hi=2024-01-16T05:00:59.999999999Z}]"
@@ -2375,7 +2375,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-15@Europe/London,2024-07-15@Europe/London]T08:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z},{lo=2024-07-15T07:00:00.000000000Z, hi=2024-07-15T07:00:59.999999999Z}]"
@@ -2392,7 +2392,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-15@+02:00,2024-01-16@+05:00]T08:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T03:00:00.000000000Z, hi=2024-01-16T03:00:59.999999999Z}]"
@@ -2407,7 +2407,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-[15,16]@+02:00]T08:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z}]"
@@ -2424,7 +2424,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "[2024-01-15T[09:00,14:30]]@+02:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T07:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-15T12:30:00.000000000Z, hi=2024-01-15T12:30:59.999999999Z}]"
@@ -2443,7 +2443,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-03-10T02:30@America/New_York";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-03-10T07:00:00.000000000Z, hi=2024-03-10T07:00:59.999999999Z}]"
@@ -2461,7 +2461,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-03-10T01:59@America/New_York;2m";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-03-10T06:59:00.000000000Z, hi=2024-03-10T07:03:59.999999998Z}]"
@@ -2478,7 +2478,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-11-03T01:30@America/New_York";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         // During overlap, daylight time (EDT = UTC-4) is used
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
@@ -2494,7 +2494,7 @@ public class IntrinsicModelTest {
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@";
         try {
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail("Expected SqlException for empty timezone");
         } catch (SqlException e) {
             Assert.assertTrue("Error should mention invalid timezone", e.getMessage().contains("invalid timezone"));
@@ -2509,7 +2509,7 @@ public class IntrinsicModelTest {
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@+03:00";
         // applyEncoded=false produces 4-long encoded intervals
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         Assert.assertEquals(4, out.size()); // 4-long encoded format
         // Convert to 2-long format for comparison
         IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
@@ -2528,7 +2528,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@-12:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T20:00:00.000000000Z, hi=2024-01-15T20:00:59.999999999Z}]"
@@ -2543,7 +2543,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@+14:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-14T18:00:00.000000000Z, hi=2024-01-14T18:00:59.999999999Z}]"
@@ -2557,7 +2557,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@GMT";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
@@ -2573,7 +2573,7 @@ public class IntrinsicModelTest {
         for (String interval : testCases) {
             LongList out = new LongList();
             try {
-                parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+                parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
                 // If it succeeds without error, that's also fine
             } catch (SqlException e) {
                 // Expected - invalid timezone
@@ -2590,7 +2590,7 @@ public class IntrinsicModelTest {
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@InvalidZone";
         try {
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail("Expected SqlException for invalid timezone");
         } catch (SqlException e) {
             Assert.assertTrue("Error should mention invalid timezone", e.getMessage().contains("invalid timezone"));
@@ -2610,7 +2610,7 @@ public class IntrinsicModelTest {
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@+02:x0";
         try {
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail("Expected SqlException for malformed timezone");
         } catch (SqlException e) {
             // Expected - invalid timezone
@@ -2627,7 +2627,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@Europe/London";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
@@ -2642,7 +2642,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-07-15T08:00@Europe/London";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-07-15T07:00:00.000000000Z, hi=2024-07-15T07:00:59.999999999Z}]"
@@ -2656,7 +2656,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@-05:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T13:00:00.000000000Z, hi=2024-01-15T13:00:59.999999999Z}]"
@@ -2671,7 +2671,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-[15..17]T08:00@+02:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(6, out.size()); // Three intervals
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z},{lo=2024-01-17T06:00:00.000000000Z, hi=2024-01-17T06:00:59.999999999Z}]"
@@ -2686,7 +2686,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@-05:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T13:00:00.000000000Z, hi=2024-01-15T13:00:59.999999999Z}]"
@@ -2701,7 +2701,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@+03:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T05:00:00.000000000Z, hi=2024-01-15T05:00:59.999999999Z}]"
@@ -2715,7 +2715,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@UTC";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
@@ -2730,7 +2730,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-[15,16]T08:00@+02:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size()); // Two intervals, 2 longs each
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T06:00:59.999999999Z}]"
@@ -2747,7 +2747,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-[15,16]T08:00@+02:00;1h";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(4, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T06:00:00.000000000Z, hi=2024-01-15T07:00:59.999999999Z},{lo=2024-01-16T06:00:00.000000000Z, hi=2024-01-16T07:00:59.999999999Z}]"
@@ -2764,7 +2764,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@+03:00;1h";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T05:00:00.000000000Z, hi=2024-01-15T06:00:59.999999999Z}]"
@@ -2779,7 +2779,7 @@ public class IntrinsicModelTest {
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@Z";
         try {
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             // If it succeeds, Z should be treated as UTC
             Assert.assertEquals(2, out.size());
         } catch (SqlException e) {
@@ -2796,7 +2796,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
         String interval = "2024-01-15T08:00@+00:00";
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T08:00:00.000000000Z, hi=2024-01-15T08:00:59.999999999Z}]"
@@ -2813,7 +2813,7 @@ public class IntrinsicModelTest {
     private void assertBracketInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
                         ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
@@ -2826,7 +2826,7 @@ public class IntrinsicModelTest {
         try {
             final TimestampDriver timestampDriver = timestampType.getDriver();
             LongList out = new LongList();
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail("Expected SqlException with message containing: " + expectedError);
         } catch (SqlException e) {
             Assert.assertTrue("Expected error message to contain '" + expectedError + "' but got: " + e.getMessage(),
@@ -2862,7 +2862,7 @@ public class IntrinsicModelTest {
     private void assertIntervalError(String interval) {
         try {
             final TimestampDriver timestampDriver = timestampType.getDriver();
-            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail();
         } catch (SqlException ignore) {
         }
@@ -2871,7 +2871,7 @@ public class IntrinsicModelTest {
     private void assertShortInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
                         ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")

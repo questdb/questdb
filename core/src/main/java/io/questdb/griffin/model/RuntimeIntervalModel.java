@@ -362,7 +362,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval, CairoConfiguration configuration) {
         if (strInterval != null) {
             try {
-                IntervalUtils.parseAndApplyInterval(timestampDriver, configuration, strInterval, outIntervals, 0, sink);
+                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, strInterval, outIntervals, 0, sink, true);
             } catch (SqlException e) {
                 return true;
             }

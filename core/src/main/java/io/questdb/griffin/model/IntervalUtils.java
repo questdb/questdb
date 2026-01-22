@@ -62,10 +62,10 @@ public final class IntervalUtils {
 
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
     // Two sinks are needed for nested usage scenarios:
-    //   1. parseBracketInterval -> expandBracketsRecursive (uses tlSink1)
+    //   1. parseTickExpr -> expandBracketsRecursive (uses tlSink1)
     //                           -> expandTimeListBracket
     //                           -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
-    //   2. parseBracketInterval with day filter (uses tlSink1 for dateSink)
+    //   2. parseTickExpr with day filter (uses tlSink1 for dateSink)
     //                           -> expandDateList with brackets in elements
     //                           -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
     private static final ThreadLocal<StringSink> tlSink1 = ThreadLocal.withInitial(StringSink::new);
@@ -292,7 +292,7 @@ public final class IntervalUtils {
      * @see IntervalOperation
      * @see TimestampDriver
      */
-    public static void parseBracketInterval(
+    public static void parseTickExpr(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
             CharSequence seq,
@@ -760,19 +760,23 @@ public final class IntervalUtils {
         return findInterval(intervals, timestamp) != -1;
     }
 
-    public static void parseAndApplyInterval(
+    public static void parseTickExprAndIntersect(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
             @Nullable CharSequence seq,
             LongList out,
             int position,
-            StringSink sink
+            StringSink sink,
+            boolean applyEncoded
     ) throws SqlException {
         if (seq != null) {
-            parseBracketInterval(timestampDriver, configuration, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, true);
+            parseTickExpr(timestampDriver, configuration, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, applyEncoded);
         } else {
+            // null expression
             encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
-            applyLastEncodedInterval(timestampDriver, out);
+            if (applyEncoded) {
+                applyLastEncodedInterval(timestampDriver, out);
+            }
         }
     }
 
@@ -2219,7 +2223,7 @@ public final class IntervalUtils {
     /**
      * Parses a fully-expanded interval string (no brackets) and adds result to output.
      * In static mode (applyEncoded=true), results are converted to 2-long format.
-     * Union of bracket-expanded intervals is done at the end of parseBracketInterval.
+     * Union of bracket-expanded intervals is done at the end of parseTickExpr.
      * In dynamic mode (applyEncoded=false), results stay in 4-long format:
      * - For INTERSECT operations: first interval uses INTERSECT, subsequent use UNION
      * (intervals are combined, then intersected with previous constraints)
@@ -2237,7 +2241,7 @@ public final class IntervalUtils {
     ) throws SqlException {
         if (applyEncoded) {
             // Static mode: convert to 2-long format
-            // Union is done at the end of bracket expansion in parseBracketInterval
+            // Union is done at the end of bracket expansion in parseTickExpr
             parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, operation);
             applyLastEncodedInterval(timestampDriver, out);
         } else {
