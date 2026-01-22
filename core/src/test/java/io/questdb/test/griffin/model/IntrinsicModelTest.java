@@ -3189,7 +3189,7 @@ public class IntrinsicModelTest {
         // 08:00 in +03:00 = 05:00 UTC
         final TimestampDriver timestampDriver = timestampType.getDriver();
         LongList out = new LongList();
-        parseTickExpr(timestampDriver, "2024-01-15T08:00@+03:00", 0, 24, 0, out, IntervalOperation.INTERSECT, false);
+        parseTickExpr(timestampDriver, "2024-01-15T08:00@+03:00", 0, 23, 0, out, IntervalOperation.INTERSECT, false);
         IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? "[{lo=2024-01-15T05:00:00.000000000Z, hi=2024-01-15T05:00:59.999999999Z}]"
