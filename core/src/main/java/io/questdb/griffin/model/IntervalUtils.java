@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
@@ -33,7 +34,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.StringSink;
@@ -45,22 +46,6 @@ public final class IntervalUtils {
     public static final int OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX = 2;
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
-    /**
-     * Threshold for incremental merging during bracket expansion.
-     * When the number of intervals exceeds this threshold, intervals are merged
-     * to prevent unbounded memory growth from large ranges like [1..1000000].
-     */
-    private static final int INCREMENTAL_MERGE_THRESHOLD = 256;
-    /**
-     * Maximum recursion depth for bracket expansion (one level per bracket group).
-     */
-    private static final int MAX_BRACKET_DEPTH = 8;
-    /**
-     * Maximum number of intervals allowed after bracket expansion and merging.
-     * This limit prevents memory exhaustion from large non-adjacent interval sets
-     * like [1970..12000]-01-01 which produces thousands of non-mergeable intervals.
-     */
-    private static final int MAX_INTERVALS_AFTER_MERGE = 1024;
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
     // Two sinks are needed because expandTimeListBracket can trigger nested recursion:
     //   parseBracketInterval -> expandBracketsRecursive (uses tlSink1)
@@ -386,13 +371,14 @@ public final class IntervalUtils {
 
     public static void parseAndApplyInterval(
             TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
             @Nullable CharSequence seq,
             LongList out,
             int position,
             StringSink sink
     ) throws SqlException {
         if (seq != null) {
-            parseBracketInterval(timestampDriver, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, true);
+            parseBracketInterval(timestampDriver, configuration, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, true);
         } else {
             encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
             applyLastEncodedInterval(timestampDriver, out);
@@ -507,6 +493,7 @@ public final class IntervalUtils {
      */
     public static void parseBracketInterval(
             TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
             CharSequence seq,
             int lo,
             int lim,
@@ -516,6 +503,8 @@ public final class IntervalUtils {
             StringSink sink,
             boolean applyEncoded
     ) throws SqlException {
+        assert configuration.getSqlIntervalMaxIntervalsAfterMerge() > configuration.getSqlIntervalIncrementalMergeThreshold()
+                : "sqlIntervalMaxIntervalsAfterMerge must be greater than sqlIntervalIncrementalMergeThreshold";
         // Skip leading whitespace
         int firstNonSpace = lo;
         while (firstNonSpace < lim && Character.isWhitespace(seq.charAt(firstNonSpace))) {
@@ -536,6 +525,7 @@ public final class IntervalUtils {
             try {
                 expandDateList(
                         timestampDriver,
+                        configuration,
                         seq,
                         firstNonSpace,
                         lim,
@@ -548,7 +538,7 @@ public final class IntervalUtils {
                 );
                 // In static mode, union all bracket-expanded intervals and validate count
                 if (applyEncoded) {
-                    mergeAndValidateIntervals(out, outSize, position);
+                    mergeAndValidateIntervals(configuration, out, outSize, position);
                 }
             } catch (SqlException e) {
                 out.setPos(outSize);
@@ -620,7 +610,7 @@ public final class IntervalUtils {
             }
             // Apply timezone conversion if present
             if (tzMarkerPos >= 0) {
-                applyTimezoneToIntervals(timestampDriver, out, outSize, seq, tzLo, tzHi, position, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, seq, tzLo, tzHi, position, applyEncoded);
             }
             return;
         }
@@ -648,6 +638,7 @@ public final class IntervalUtils {
         try {
             boolean hadTimeListBracket = expandBracketsRecursive(
                     timestampDriver,
+                    configuration,
                     parseSeq,
                     parseLo,
                     parseLo,
@@ -667,7 +658,7 @@ public final class IntervalUtils {
             // Apply timezone conversion if present AND no time list brackets were processed
             // (time list brackets handle their own timezone internally)
             if (tzMarkerPos >= 0 && !hadTimeListBracket) {
-                applyTimezoneToIntervals(timestampDriver, out, outSize, seq, tzLo, tzHi, position, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, seq, tzLo, tzHi, position, applyEncoded);
             }
             // In static mode, union all bracket-expanded intervals with each other
             // (they were added without union during expansion)
@@ -675,9 +666,10 @@ public final class IntervalUtils {
                 unionBracketExpandedIntervals(out, outSize);
                 // Check final interval count against limit
                 int intervalCount = (out.size() - outSize) / 2;
-                if (intervalCount > MAX_INTERVALS_AFTER_MERGE) {
+                int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+                if (intervalCount > maxIntervalsAfterMerge) {
                     throw SqlException.$(position, "Bracket expansion produces too many intervals (max ")
-                            .put(MAX_INTERVALS_AFTER_MERGE).put(')');
+                            .put(maxIntervalsAfterMerge).put(')');
                 }
             }
         } catch (SqlException e) {
@@ -977,6 +969,7 @@ public final class IntervalUtils {
      */
     private static void applyTimezoneToIntervals(
             TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
             LongList out,
             int outSizeBeforeConversion,
             CharSequence tz,
@@ -991,6 +984,7 @@ public final class IntervalUtils {
         // Pre-parse timezone once outside the loop to avoid repeated parsing
         long numericOffset;
         TimeZoneRules tzRules;
+        DateLocale dateLocale = configuration.getDefaultDateLocale();
 
         try {
             long l = Dates.parseOffset(tz, tzLo, tzHi);
@@ -1004,8 +998,8 @@ public final class IntervalUtils {
                 }
             } else {
                 // Named timezone - get timezone rules
-                tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                        Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, tzLo, tzHi)),
+                tzRules = dateLocale.getZoneRules(
+                        Numbers.decodeLowInt(dateLocale.matchZone(tz, tzLo, tzHi)),
                         timestampDriver.getTZRuleResolution()
                 );
                 // Named timezone - handle DST gaps
@@ -1089,6 +1083,7 @@ public final class IntervalUtils {
      */
     private static boolean expandBracketsRecursive(
             TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
             CharSequence seq,
             int intervalStart, // start of interval in seq (for pad width calculation)
             int pos,        // current position in seq (within date part)
@@ -1105,8 +1100,9 @@ public final class IntervalUtils {
             int globalTzLo,           // start of global timezone in globalTzSeq (-1 if none)
             int globalTzHi            // end of global timezone in globalTzSeq (-1 if none)
     ) throws SqlException {
-        if (depth > MAX_BRACKET_DEPTH) {
-            throw SqlException.$(errorPos, "Too many bracket groups (max ").put(MAX_BRACKET_DEPTH).put(')');
+        int maxBracketDepth = configuration.getSqlIntervalMaxBracketDepth();
+        if (depth > maxBracketDepth) {
+            throw SqlException.$(errorPos, "Too many bracket groups (max ").put(maxBracketDepth).put(')');
         }
 
         // Find first bracket starting from pos
@@ -1142,6 +1138,7 @@ public final class IntervalUtils {
         if (isTimeListBracket(seq, bracketStart, bracketEnd)) {
             expandTimeListBracket(
                     timestampDriver,
+                    configuration,
                     seq,
                     bracketStart,
                     bracketEnd,
@@ -1237,7 +1234,7 @@ public final class IntervalUtils {
             for (int v = value; v <= rangeEnd; v++) {
                 appendPaddedInt(sink, v, padWidth);
                 if (expandBracketsRecursive(
-                        timestampDriver, seq, intervalStart, bracketEnd + 1, dateLim, fullLim,
+                        timestampDriver, configuration, seq, intervalStart, bracketEnd + 1, dateLim, fullLim,
                         errorPos, out, operation, sink, depth + 1, applyEncoded, outSizeBeforeExpansion,
                         globalTzSeq, globalTzLo, globalTzHi
                 )) {
@@ -1249,13 +1246,14 @@ public final class IntervalUtils {
                 // This prevents unbounded growth from large ranges like [1..1000000]
                 if (applyEncoded) {
                     int intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
-                    if (intervalCount >= INCREMENTAL_MERGE_THRESHOLD) {
+                    if (intervalCount >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
                         unionBracketExpandedIntervals(out, outSizeBeforeExpansion);
                         // Check if we still exceed max limit after merging
                         intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
-                        if (intervalCount > MAX_INTERVALS_AFTER_MERGE) {
+                        int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+                        if (intervalCount > maxIntervalsAfterMerge) {
                             throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
-                                    .put(MAX_INTERVALS_AFTER_MERGE).put(')');
+                                    .put(maxIntervalsAfterMerge).put(')');
                         }
                     }
                 }
@@ -1305,6 +1303,7 @@ public final class IntervalUtils {
      */
     private static void expandDateList(
             TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
             CharSequence seq,
             int lo,
             int lim,
@@ -1463,6 +1462,7 @@ public final class IntervalUtils {
                     expansionSink.clear();
                     boolean hadTimeListBracket = expandBracketsRecursive(
                             timestampDriver,
+                            configuration,
                             sink,
                             0,
                             0,
@@ -1490,7 +1490,7 @@ public final class IntervalUtils {
 
                 // Apply timezone conversion if present (per-element or global) and NOT already handled by time list
                 if (activeTzLo >= 0) {
-                    applyTimezoneToIntervals(timestampDriver, out, outSizeBeforeElement, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
                 }
 
                 elementStart = i + 1;
@@ -1522,6 +1522,7 @@ public final class IntervalUtils {
      */
     private static void expandTimeListBracket(
             TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
             CharSequence seq,
             int bracketStart,
             int bracketEnd,
@@ -1622,6 +1623,7 @@ public final class IntervalUtils {
                 // Recursively expand brackets in the suffix
                 expandBracketsRecursive(
                         timestampDriver,
+                        configuration,
                         sink,
                         0,              // intervalStart
                         0,              // pos
@@ -1646,10 +1648,10 @@ public final class IntervalUtils {
             // Apply timezone: per-element takes precedence, then global fallback
             if (tzLo >= 0) {
                 // Per-element timezone
-                applyTimezoneToIntervals(timestampDriver, out, outSizeBeforeElement, seq, tzLo, tzHi, errorPos, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, seq, tzLo, tzHi, errorPos, applyEncoded);
             } else if (globalTzLo >= 0) {
                 // Global timezone as fallback
-                applyTimezoneToIntervals(timestampDriver, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos, applyEncoded);
             }
 
             // Reset sink to prefix for next element
@@ -1785,13 +1787,14 @@ public final class IntervalUtils {
      * Bracket values may be in any order (e.g., [20,10,15]), so we sort first.
      * This operates in-place without allocations.
      */
-    private static void mergeAndValidateIntervals(LongList out, int startIndex, int errorPos) throws SqlException {
+    private static void mergeAndValidateIntervals(CairoConfiguration configuration, LongList out, int startIndex, int errorPos) throws SqlException {
         if (out.size() > startIndex + 2) {
             unionBracketExpandedIntervals(out, startIndex);
             int intervalCount = (out.size() - startIndex) / 2;
-            if (intervalCount > MAX_INTERVALS_AFTER_MERGE) {
+            int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+            if (intervalCount > maxIntervalsAfterMerge) {
                 throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
-                        .put(MAX_INTERVALS_AFTER_MERGE).put(')');
+                        .put(maxIntervalsAfterMerge).put(')');
             }
         }
     }

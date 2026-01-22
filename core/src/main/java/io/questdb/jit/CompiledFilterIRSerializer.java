@@ -1068,6 +1068,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final LongList intervals = predicateContext.inIntervals;
         IntervalUtils.parseAndApplyInterval(
                 ColumnType.getTimestampDriver(predicateContext.columnType),
+                executionContext.getCairoEngine().getConfiguration(),
                 intervalEx,
                 intervals,
                 position,

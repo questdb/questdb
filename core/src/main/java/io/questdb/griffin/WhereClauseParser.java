@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
@@ -151,7 +152,7 @@ public final class WhereClauseParser implements Mutable {
 
         IntrinsicModel model = models.next();
         int timestampType = reader.getMetadata().getTimestampType();
-        model.of(timestampType, reader.getPartitionedBy());
+        model.of(timestampType, reader.getPartitionedBy(), executionContext.getCairoEngine().getConfiguration());
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
 
         // pre-order iterative tree traversal
@@ -226,9 +227,9 @@ public final class WhereClauseParser implements Mutable {
         return model;
     }
 
-    public IntrinsicModel getEmpty(int timestampType, int partitionBy) {
+    public IntrinsicModel getEmpty(int timestampType, int partitionBy, CairoConfiguration configuration) {
         IntrinsicModel model = models.next();
-        model.of(timestampType, partitionBy);
+        model.of(timestampType, partitionBy, configuration);
         return model;
     }
 

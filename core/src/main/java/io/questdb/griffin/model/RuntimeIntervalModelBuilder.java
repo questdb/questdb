@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -61,6 +62,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private Function betweenBoundaryFunc;
     private boolean betweenBoundarySet;
     private boolean betweenNegated;
+    private CairoConfiguration configuration;
     private boolean intervalApplied = false;
     private int partitionBy;
     private TimestampDriver timestampDriver;
@@ -136,7 +138,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         int size = staticIntervals.size();
         boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
+        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
         if (noDynamicIntervals) {
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
@@ -254,9 +256,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
-    public void of(int timestampType, int partitionBy) {
+    public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         this.partitionBy = partitionBy;
+        this.configuration = configuration;
     }
 
     public void setBetweenBoundary(long timestamp) {
@@ -345,7 +348,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         int size = staticIntervals.size();
         boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
+        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
         if (noDynamicIntervals) {
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
@@ -396,7 +399,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // Parse and expand the interval string (may produce multiple pairs for periodic intervals)
         int size = staticIntervals.size();
         boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
+        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
         if (noDynamicIntervals) {
             if (intervalApplied) {
                 IntervalUtils.unionInPlace(staticIntervals, size);

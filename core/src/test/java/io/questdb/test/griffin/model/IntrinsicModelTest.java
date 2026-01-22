@@ -24,7 +24,9 @@
 
 package io.questdb.test.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalOperation;
@@ -48,6 +50,7 @@ import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 @RunWith(Parameterized.class)
 public class IntrinsicModelTest {
+    private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
     private static final StringSink sink = new StringSink();
     private final LongList a = new LongList();
     private final LongList b = new LongList();
@@ -77,7 +80,7 @@ public class IntrinsicModelTest {
             LongList out,
             short operation
     ) throws SqlException {
-        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, out, operation, new StringSink(), true);
+        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), true);
     }
 
     /**
@@ -93,7 +96,7 @@ public class IntrinsicModelTest {
             short operation,
             boolean applyEncoded
     ) throws SqlException {
-        IntervalUtils.parseBracketInterval(timestampDriver, seq, lo, lim, position, out, operation, new StringSink(), applyEncoded);
+        IntervalUtils.parseBracketInterval(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), applyEncoded);
     }
 
     @Before

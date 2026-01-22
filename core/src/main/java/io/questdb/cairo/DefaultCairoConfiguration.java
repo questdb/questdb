@@ -1178,6 +1178,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlIntervalIncrementalMergeThreshold() {
+        return 256;
+    }
+
+    @Override
+    public int getSqlIntervalMaxBracketDepth() {
+        return 8;
+    }
+
+    @Override
+    public int getSqlIntervalMaxIntervalsAfterMerge() {
+        return 1024;
+    }
+
+    @Override
     public int getStrFunctionMaxBufferLength() {
         return 1024 * 1024;
     }

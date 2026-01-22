@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
@@ -236,16 +237,17 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     } else {
                         // This is subtraction or intersection with a string interval (not a single timestamp)
                         final CharSequence strInterval = dynamicFunction.getStrA(null);
+                        final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
                         if (operation == IntervalOperation.INTERSECT_INTERVALS) {
                             // This is an intersection
-                            if (tryParseInterval(outIntervals, strInterval)) {
+                            if (tryParseInterval(outIntervals, strInterval, configuration)) {
                                 // return an empty set
                                 outIntervals.clear();
                                 return;
                             }
                         } else {
                             // This is a subtraction
-                            if (tryParseInterval(outIntervals, strInterval)) {
+                            if (tryParseInterval(outIntervals, strInterval, configuration)) {
                                 // full set
                                 negatedNothing(outIntervals, divider);
                                 continue;
@@ -334,10 +336,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval) {
+    private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval, CairoConfiguration configuration) {
         if (strInterval != null) {
             try {
-                IntervalUtils.parseAndApplyInterval(timestampDriver, strInterval, outIntervals, 0, sink);
+                IntervalUtils.parseAndApplyInterval(timestampDriver, configuration, strInterval, outIntervals, 0, sink);
             } catch (SqlException e) {
                 return true;
             }
