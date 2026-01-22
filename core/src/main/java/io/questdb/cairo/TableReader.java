@@ -1446,7 +1446,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 }
                             }
                         }
-                    } else {
+                    } else if (openPartitionSize > -1) {
                         prepareForLazyOpen(partitionIndex);
                     }
                     changed = true;
