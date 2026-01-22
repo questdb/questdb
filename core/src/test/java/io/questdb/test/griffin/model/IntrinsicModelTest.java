@@ -3397,19 +3397,6 @@ public class IntrinsicModelTest {
         return String.format("%04d-%02d-%02d", year, month, day);
     }
 
-    /**
-     * Formats a full interval entry for expected results.
-     */
-    private static String formatInterval(long lo, long hi, TimestampDriver driver, TestTimestampType tsType) {
-        StringSink sink = new StringSink();
-        sink.put("{lo=");
-        driver.append(sink, lo);
-        sink.put(", hi=");
-        driver.append(sink, hi);
-        sink.put('}');
-        return sink.toString();
-    }
-
     private void assertBracketIntervalWithNow(String expected, String interval, String nowTimestamp) throws SqlException {
         LongList out = new LongList();
         final TimestampDriver timestampDriver = timestampType.getDriver();
