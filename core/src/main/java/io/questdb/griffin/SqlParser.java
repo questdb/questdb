@@ -776,7 +776,7 @@ public class SqlParser {
                 alias = createConstColumnAlias(aliasMap);
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
-                if (qc.isWindowColumn() && ((WindowExpression) qc).isIgnoreNulls()) {
+                if (qc.isWindowExpression() && ((WindowExpression) qc).isIgnoreNulls()) {
                     tokenAlias += "_ignore_nulls";
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
@@ -4593,7 +4593,7 @@ public class SqlParser {
                 QueryColumn windowFuncColumn = null;
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     QueryColumn column = columns.getQuick(i);
-                    if (column.isWindowColumn()) {
+                    if (column.isWindowExpression()) {
                         windowFuncColumn = column;
                     }
 

@@ -114,9 +114,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_TRANSACTION_ISOLATION_LEVEL = 5;
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     private static final ObjList<String> modelTypeName = new ObjList<>();
-    private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     // Tracks next sequence number for alias generation to achieve O(1) amortized complexity
     private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
@@ -675,12 +675,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return alias;
     }
 
-    public LowerCaseCharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
-        return aliasToColumnMap;
-    }
-
     public LowerCaseCharSequenceIntHashMap getAliasSequenceMap() {
         return aliasSequenceMap;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
+        return aliasToColumnMap;
     }
 
     public LowerCaseCharSequenceObjHashMap<CharSequence> getAliasToColumnNameMap() {
@@ -1573,7 +1573,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         for (int i = 0, size = getColumns().size(); i < size; i++) {
             QueryColumn column = getColumns().getQuick(i);
-            if (column.isWindowColumn() && ((WindowExpression) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
+            if (column.isWindowExpression() && ((WindowExpression) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
                 return true;
             }
         }
@@ -1635,7 +1635,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             CharSequence alias = column.getAlias();
             ExpressionNode ast = column.getAst();
             ast.toSink(sink);
-            if (column.isWindowColumn() || name == null) {
+            if (column.isWindowExpression() || name == null) {
 
                 if (alias != null) {
                     aliasToSink(alias, sink);

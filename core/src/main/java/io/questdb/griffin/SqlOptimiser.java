@@ -1952,7 +1952,7 @@ public class SqlOptimiser implements Mutable {
      */
     private void collectReferencedAliasesFromColumn(QueryColumn col, LowerCaseCharSequenceHashSet aliases) {
         collectReferencedAliases(col.getAst(), aliases);
-        if (col.isWindowColumn()) {
+        if (col.isWindowExpression()) {
             WindowExpression wc = (WindowExpression) col;
             // Traverse partitionBy expressions
             ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
@@ -2398,7 +2398,7 @@ public class SqlOptimiser implements Mutable {
         tempIntList.clear();
         for (int i = 0; i < n; i++) {
             QueryColumn qc = columns.getQuick(i);
-            if (qc.isWindowColumn()) {
+            if (qc.isWindowExpression()) {
                 continue;
             }
             ExpressionNode ast = qc.getAst();
@@ -2711,7 +2711,7 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
-            if (qc.isWindowColumn()) {
+            if (qc.isWindowExpression()) {
                 final WindowExpression ac = (WindowExpression) qc;
                 emitLiteralsTopDown(ac.getPartitionBy(), target);
                 emitLiteralsTopDown(ac.getOrderBy(), target);
@@ -5635,7 +5635,7 @@ public class SqlOptimiser implements Mutable {
                 final QueryColumn qc = bottomUpColumns.getQuick(i);
                 final ExpressionNode ast = qc.getAst();
                 final CharSequence alias = qc.getAlias();
-                if (qc.isWindowColumn() || (ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token))) {
+                if (qc.isWindowExpression() || (ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token))) {
                     abandonRewrite = true;
                     break;
                 }
@@ -6956,7 +6956,7 @@ public class SqlOptimiser implements Mutable {
         // when column is direct call to aggregation function, such as
         // select sum(x) ...
         // we can add it to group-by model right away
-        if (qc.isWindowColumn()) {
+        if (qc.isWindowExpression()) {
             ExpressionNode ast = qc.getAst();
 
             // Validate that PARTITION BY and ORDER BY don't contain window functions
@@ -7397,13 +7397,13 @@ public class SqlOptimiser implements Mutable {
         // take a look at the select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
-            final boolean window = qc.isWindowColumn();
+            final boolean isWindowExpr = qc.isWindowExpression();
 
             // fail-fast if this is an arithmetic expression where we expect window function
-            if (window && qc.getAst().type != FUNCTION) {
+            if (isWindowExpr && qc.getAst().type != FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Window function expected");
             }
-            if (window && isWindowJoin) {
+            if (isWindowExpr && isWindowJoin) {
                 throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in WINDOW JOIN queries");
             }
 
@@ -7411,7 +7411,7 @@ public class SqlOptimiser implements Mutable {
                 rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
             } else if (qc.getAst().type != LITERAL) {
                 if (qc.getAst().type == FUNCTION) {
-                    if (window) {
+                    if (isWindowExpr) {
                         rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
@@ -7734,7 +7734,7 @@ public class SqlOptimiser implements Mutable {
             // needs col_c to be emitted.
             for (int i = 0, k = columns.size(); i < k; i++) {
                 QueryColumn qc = columns.getQuick(i);
-                final boolean window = qc.isWindowColumn();
+                final boolean window = qc.isWindowExpression();
 
                 if (window & qc.getAst().type == FUNCTION) {
                     // Window model can be after either translation model directly
@@ -7940,7 +7940,7 @@ public class SqlOptimiser implements Mutable {
             ObjList<QueryColumn> windowCols = windowModel.getBottomUpColumns();
             for (int i = 0, n = windowCols.size(); i < n; i++) {
                 QueryColumn col = windowCols.getQuick(i);
-                if (!col.isWindowColumn()) {
+                if (!col.isWindowExpression()) {
                     // Add this non-window column to each inner window model as pass-through
                     for (int j = 0, m = innerWindowModels.size(); j < m; j++) {
                         QueryModel innerWm = innerWindowModels.getQuick(j);
@@ -7960,7 +7960,7 @@ public class SqlOptimiser implements Mutable {
                 referencedAliasesSet.clear();
                 for (int i = 0, n = windowCols.size(); i < n; i++) {
                     QueryColumn col = windowCols.getQuick(i);
-                    if (col.isWindowColumn()) {
+                    if (col.isWindowExpression()) {
                         collectReferencedAliasesFromColumn(col, referencedAliasesSet);
                     }
                 }
@@ -8805,7 +8805,7 @@ public class SqlOptimiser implements Mutable {
             final ObjList<QueryColumn> queryColumns = model.getColumns();
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 QueryColumn qc = queryColumns.getQuick(i);
-                if (qc.isWindowColumn()) {
+                if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
                     // preceding and following accept non-negative values only
                     long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
