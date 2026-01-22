@@ -225,6 +225,106 @@ public class IntrinsicModelTest {
         );
     }
 
+    /**
+     * Tests cartesian product of bracket groups with incremental merging.
+     * <p>
+     * Multiple bracket groups create a cartesian product. For example:
+     * 2018-[01,06]-[10,15] produces 2 * 2 = 4 combinations.
+     * <p>
+     * With incremental merging (PR #6674), large cartesian products that produce
+     * adjacent intervals are merged during expansion to bound memory usage.
+     *
+     * @see <a href="https://github.com/questdb/questdb/pull/6674">PR #6674</a>
+     */
+    @Test(timeout = 60000)
+    public void testBracketExpansionCartesianProductWithMerge() throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+
+        // Test 1: Small cartesian product with non-adjacent values (no merging)
+        String interval = "2018-[01,06]-[10,15]"; // 2 * 2 = 4 combinations
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals("Expected 4 intervals for 2x2 cartesian product", 4, out.size() / 2);
+
+        // Test 2: Larger cartesian product with non-consecutive months
+        // 2018-[01,03,05,07,09,11]-[05,10,15,20,25] = 6 months * 5 days = 30 combinations
+        out.clear();
+        interval = "2018-[01,03,05,07,09,11]-[05,10,15,20,25]";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals("Expected 30 intervals for 6x5 cartesian product", 30, out.size() / 2);
+
+        // Test 3: Cartesian product with adjacent days within months
+        // 2020-[01,02]-[01..28] = 2 months * 28 days = 56 combinations before merging
+        // Days 1-28 within each month are adjacent and merge.
+        // Jan 28 -> Feb 1 has gap (Jan 29,30,31), so months don't merge.
+        out.clear();
+        interval = "2020-[01,02]-[01..28]";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        // Each month's days merge to 1 interval, total 2 (gap between months)
+        Assert.assertEquals("2 months * 28 days should merge to 2 intervals", 2, out.size() / 2);
+    }
+
+    /**
+     * Tests that large bracket range expansions with adjacent intervals are
+     * handled efficiently through incremental merging.
+     * <p>
+     * The fix (PR #6674): incremental merging during expansion bounds memory usage.
+     * When interval count exceeds a threshold (256), intervals are merged mid-expansion.
+     * This prevents OOM from large ranges like [1..1000000] with adjacent values.
+     * <p>
+     * Adjacent intervals (like consecutive days) merge into one, so a range of
+     * 1000 consecutive days results in 1 merged interval, not 1000.
+     *
+     * @see <a href="https://github.com/questdb/questdb/pull/6674">PR #6674</a>
+     */
+    @Test(timeout = 30000)
+    public void testBracketExpansionLargeRangeWithIncrementalMerge() throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+
+        // Test 1: Large range of consecutive days (adjacent intervals merge to 1)
+        // 2020-01-[1..500] would create 500 day intervals, but they're adjacent so merge to 1
+        // Note: Days > 31 are invalid, so use month expansion instead:
+        // 2020-[01..12]-[01..28] = 12 months * 28 days = 336 consecutive-ish intervals
+        // But days within each month are adjacent and merge, and months don't merge (gap between months)
+        // So let's use a simpler test with consecutive days in January
+        String interval = "2020-01-[01..31]"; // 31 consecutive days -> should merge to 1
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals("31 consecutive days should merge to 1 interval", 1, out.size() / 2);
+
+        // Test 2: Large year range (non-adjacent intervals don't merge)
+        // [1970..2170]-01-01 = 201 separate day intervals (Jan 1 each year, ~365 day gaps)
+        out.clear();
+        interval = "[1970..2170]-01-01";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        // These don't merge because there's a ~365 day gap between Jan 1 of each year
+        Assert.assertEquals("201 non-adjacent year intervals should remain separate", 201, out.size() / 2);
+
+        // Test 4: Verify max interval limit (1024) is enforced
+        // [1000..3000]-01-01 = 2001 non-adjacent intervals, exceeds limit of 1024
+        out.clear();
+        interval = "[1000..3000]-01-01";
+        try {
+            parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            Assert.fail("Should fail with 'too many intervals' error");
+        } catch (SqlException e) {
+            Assert.assertTrue("Expected 'too many intervals' error, got: " + e.getMessage(),
+                    e.getMessage().contains("too many intervals"));
+        }
+
+        // Test 3: Verify incremental merge kicks in for large adjacent ranges
+        // Using format that matches existing tests: year-[months]-[days]
+        // 2020-[01,02,03,04,05,06,07,08,09,10,11,12]-[01..28] = 12 * 28 = 336 combinations
+        out.clear();
+        interval = "2020-[01,02,03,04,05,06,07,08,09,10,11,12]-[01..28]";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        // Days 1-28 within each month are adjacent and merge to 1.
+        // Dec 28 -> Jan 1 has gaps (Dec 29,30,31), so 12 separate month intervals.
+        // But wait - all months are in 2020, so Jan 28 -> Feb 1 only has Jan 29,30,31 gap
+        // So we expect 12 intervals (one per month, each spanning days 1-28)
+        Assert.assertEquals("12 months * 28 days should merge to 12 intervals", 12, out.size() / 2);
+    }
+
     @Test
     public void testBracketExpansionErrorTooManySemicolons() {
         // 4 semicolons triggers "Invalid interval format" (exercises line 1192)

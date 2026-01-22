@@ -46,9 +46,21 @@ public final class IntervalUtils {
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
     /**
+     * Threshold for incremental merging during bracket expansion.
+     * When the number of intervals exceeds this threshold, intervals are merged
+     * to prevent unbounded memory growth from large ranges like [1..1000000].
+     */
+    private static final int INCREMENTAL_MERGE_THRESHOLD = 256;
+    /**
      * Maximum recursion depth for bracket expansion (one level per bracket group).
      */
     private static final int MAX_BRACKET_DEPTH = 8;
+    /**
+     * Maximum number of intervals allowed after bracket expansion and merging.
+     * This limit prevents memory exhaustion from large non-adjacent interval sets
+     * like [1970..12000]-01-01 which produces thousands of non-mergeable intervals.
+     */
+    private static final int MAX_INTERVALS_AFTER_MERGE = 1024;
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
     // Two sinks are needed because expandTimeListBracket can trigger nested recursion:
     //   parseBracketInterval -> expandBracketsRecursive (uses tlSink1)
@@ -388,37 +400,110 @@ public final class IntervalUtils {
     }
 
     /**
-     * Parses interval strings with bracket expansion syntax.
-     * <p>
-     * Brackets allow concise specification of multiple disjoint intervals:
-     * <ul>
-     *   <li>Comma-separated: {@code 2018-01-[10,15]} → days 10 and 15</li>
-     *   <li>Ranges: {@code 2018-01-[10..12]} → days 10, 11, 12</li>
-     *   <li>Mixed: {@code 2018-01-[5,10..12,20]} → days 5, 10, 11, 12, 20</li>
-     *   <li>Multiple groups (cartesian product): {@code 2018-[01,06]-[10,15]} → 4 intervals</li>
-     * </ul>
-     * <p>
-     * Output format depends on input and {@code applyEncoded} parameter:
-     * <ul>
-     *   <li>With brackets: always returns simple format (2 longs per interval)</li>
-     *   <li>Without brackets + applyEncoded=true: returns simple format</li>
-     *   <li>Without brackets + applyEncoded=false: returns encoded format (4 longs)</li>
-     * </ul>
-     * <p>
-     * This implementation uses recursion with depth limiting and does not allocate
-     * intermediate objects. The provided StringSink is used as working storage and
-     * is restored to its original state on return.
+     * Parses a TICK (Temporal Interval Calendar Kit) interval string with bracket expansion,
+     * timezone support, and duration suffixes. This method is the main entry point for parsing
+     * complex interval expressions that can expand to multiple disjoint time intervals.
      *
-     * @param timestampDriver timestamp driver for parsing
-     * @param seq             input interval string
-     * @param lo              start index in seq
-     * @param lim             end index in seq
-     * @param position        position for error reporting
-     * @param out             output list for parsed intervals
-     * @param operation       interval operation
-     * @param sink            reusable StringSink for building expanded strings (will be cleared).
-     * @param applyEncoded    if true, converts encoded format to simple format for non-bracket intervals
-     * @throws SqlException if the interval format is invalid
+     * <h2>Supported Features</h2>
+     * <ul>
+     *   <li><b>Bracket Expansion:</b> {@code [a,b,c]} for comma-separated values,
+     *       {@code [a..b]} for inclusive ranges</li>
+     *   <li><b>Date Lists:</b> {@code [date1,date2,...]} for non-contiguous dates</li>
+     *   <li><b>Time Lists:</b> {@code T[09:00,14:30]} for multiple complete times</li>
+     *   <li><b>Timezone Support:</b> {@code @timezone} for DST-aware conversion</li>
+     *   <li><b>Duration Suffix:</b> {@code ;6h}, {@code ;30m}, {@code ;1h30m} for interval duration</li>
+     *   <li><b>Cartesian Product:</b> Multiple bracket groups combine all possibilities</li>
+     * </ul>
+     *
+     * <h2>Bracket Expansion Examples</h2>
+     * <pre>{@code
+     * // Comma-separated values - expands to days 10, 15, 20 of January 2024
+     * "2024-01-[10,15,20]"
+     *
+     * // Inclusive range - expands to days 10, 11, 12
+     * "2024-01-[10..12]"
+     *
+     * // Mixed values and ranges - expands to days 5, 10, 11, 12, 20
+     * "2024-01-[5,10..12,20]"
+     *
+     * // Multiple bracket groups (Cartesian product) - 4 intervals
+     * "2024-[01,06]-[10,15]"  // Jan 10, Jan 15, Jun 10, Jun 15
+     *
+     * // With duration suffix - two 1-hour intervals
+     * "2024-01-[10,15]T10:30;1h"
+     * }</pre>
+     *
+     * <h2>Date List Examples</h2>
+     * <pre>{@code
+     * // Non-contiguous dates
+     * "[2024-01-15,2024-03-20,2024-06-01]"
+     *
+     * // Date list with nested field expansion
+     * "[2024-12-31,2025-01-[03..05]]"  // Dec 31, Jan 3, Jan 4, Jan 5
+     *
+     * // Date list with time suffix
+     * "[2024-01-15,2024-01-20]T09:30;6h30m"
+     * }</pre>
+     *
+     * <h2>Time List Examples</h2>
+     * <pre>{@code
+     * // Multiple times on same day (note: colon inside bracket = time list)
+     * "2024-01-15T[09:00,14:30,18:00];1h"  // Three 1-hour intervals
+     *
+     * // Contrast with numeric expansion (no colon inside bracket)
+     * "2024-01-15T[09,14]:30"  // Expands hour field only -> 09:30 and 14:30
+     *
+     * // Per-element timezone in time list
+     * "2024-01-15T[09:00@UTC,14:30@Europe/London];1h"
+     * }</pre>
+     *
+     * <h2>Timezone Examples</h2>
+     * <pre>{@code
+     * // Numeric offset: 08:00 in UTC+3 = 05:00 UTC
+     * "2024-01-15T08:00@+03:00"
+     *
+     * // Named timezone with DST awareness
+     * "2024-07-15T08:00@Europe/London"  // Summer: 08:00 BST = 07:00 UTC
+     * "2024-01-15T08:00@Europe/London"  // Winter: 08:00 GMT = 08:00 UTC
+     *
+     * // Timezone with bracket expansion and duration
+     * "2024-01-[15..19]T09:30@America/New_York;6h30m"
+     * }</pre>
+     *
+     * <h2>Multi-Unit Duration Examples</h2>
+     * <pre>{@code
+     * // Single unit (traditional)
+     * "2024-01-15T09:00;1h"
+     *
+     * // Multi-unit duration
+     * "2024-01-15T09:00;1h30m"      // 1 hour 30 minutes
+     * "2024-01-15T09:00;2h15m30s"   // 2 hours 15 minutes 30 seconds
+     * "2024-01-15T09:00;500T250u"   // 500 milliseconds + 250 microseconds
+     *
+     * // Supported units: y(years), M(months), w(weeks), d(days), h(hours),
+     * //                  m(minutes), s(seconds), T(milliseconds), u(microseconds), n(nanoseconds)
+     * }</pre>
+     *
+     * <h2>Output Format</h2>
+     * <p>Intervals are appended to the {@code out} list. In static mode ({@code applyEncoded=true}),
+     * each interval is stored as 2 longs: {@code [lo, hi]}. In dynamic mode ({@code applyEncoded=false}),
+     * each interval is stored as 4 longs: {@code [lo, hi, operation|periodType|adjustment, period|count]}.
+     * When multiple intervals are generated, they are automatically unioned (merged if overlapping).</p>
+     *
+     * @param timestampDriver the timestamp driver determining precision (microseconds or nanoseconds)
+     * @param seq             the interval string to parse (e.g., {@code "2024-01-[10,15]T09:00;1h"})
+     * @param lo              start index (inclusive) within {@code seq} to parse from
+     * @param lim             end index (exclusive) within {@code seq} to parse to
+     * @param position        source position for error reporting (typically the token position in SQL)
+     * @param out             output list where parsed intervals will be appended as lo/hi pairs
+     * @param operation       the interval operation type (e.g., {@link IntervalOperation#INTERSECT})
+     * @param sink            a reusable string sink for internal string manipulation; contents may be modified
+     * @param applyEncoded    if {@code true}, intervals are fully resolved (static mode);
+     *                        if {@code false}, interval metadata is preserved for runtime evaluation (dynamic mode)
+     * @throws SqlException if the interval string is malformed (e.g., unclosed bracket, invalid range,
+     *                      empty bracket, invalid timezone, invalid duration format)
+     * @see IntervalOperation
+     * @see TimestampDriver
      */
     public static void parseBracketInterval(
             TimestampDriver timestampDriver,
@@ -461,9 +546,9 @@ public final class IntervalUtils {
                         applyEncoded,
                         outSize
                 );
-                // In static mode, union all bracket-expanded intervals with each other
-                if (applyEncoded && out.size() > outSize + 2) {
-                    unionBracketExpandedIntervals(out, outSize);
+                // In static mode, union all bracket-expanded intervals and validate count
+                if (applyEncoded) {
+                    mergeAndValidateIntervals(out, outSize, position);
                 }
             } catch (SqlException e) {
                 out.setPos(outSize);
@@ -523,12 +608,12 @@ public final class IntervalUtils {
         if (!hasBrackets) {
             if (tzMarkerPos >= 0 && semicolonPos >= 0) {
                 // Parse from reconstructed sink
-                parseInterval0(timestampDriver, sink, 0, effectiveLim, position, out, operation);
+                parseIntervalSuffix(timestampDriver, sink, 0, effectiveLim, position, out, operation);
             } else if (tzMarkerPos >= 0) {
                 // No semicolon, just truncate at timezone marker
-                parseInterval0(timestampDriver, seq, lo, effectiveLim, position, out, operation);
+                parseIntervalSuffix(timestampDriver, seq, lo, effectiveLim, position, out, operation);
             } else {
-                parseInterval0(timestampDriver, seq, lo, lim, position, out, operation);
+                parseIntervalSuffix(timestampDriver, seq, lo, lim, position, out, operation);
             }
             if (applyEncoded) {
                 applyLastEncodedInterval(timestampDriver, out);
@@ -588,6 +673,12 @@ public final class IntervalUtils {
             // (they were added without union during expansion)
             if (applyEncoded && out.size() > outSize + 2) {
                 unionBracketExpandedIntervals(out, outSize);
+                // Check final interval count against limit
+                int intervalCount = (out.size() - outSize) / 2;
+                if (intervalCount > MAX_INTERVALS_AFTER_MERGE) {
+                    throw SqlException.$(position, "Bracket expansion produces too many intervals (max ")
+                            .put(MAX_INTERVALS_AFTER_MERGE).put(')');
+                }
             }
         } catch (SqlException e) {
             // Unwind output on error
@@ -701,6 +792,55 @@ public final class IntervalUtils {
         }
 
         intervals.setPos(writePoint);
+    }
+
+    /**
+     * Adds a duration string to a timestamp. Supports multi-unit format like "5h3m31s".
+     * Supported units: y (years), M (months), w (weeks), d (days), h (hours),
+     * m (minutes), s (seconds), T (millis), u (micros), n (nanos).
+     *
+     * @param timestampDriver the timestamp driver
+     * @param timestamp       the base timestamp
+     * @param seq             the duration string
+     * @param lo              start position in seq
+     * @param lim             end position in seq
+     * @param position        position for error reporting
+     * @return the new timestamp after adding the duration
+     */
+    private static long addDuration(
+            TimestampDriver timestampDriver,
+            long timestamp,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position
+    ) throws SqlException {
+        int numStart = lo;
+        for (int i = lo; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c >= '0' && c <= '9') {
+                continue;
+            }
+            // Found a unit character
+            if (i == numStart) {
+                throw SqlException.$(position, "Expected number before unit '").put(c).put('\'');
+            }
+            int period;
+            try {
+                period = Numbers.parseInt(seq, numStart, i);
+            } catch (NumericException e) {
+                throw SqlException.$(position, "Duration not a number");
+            }
+            timestamp = timestampDriver.add(timestamp, c, period);
+            if (timestamp == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "Invalid duration unit: ").put(c);
+            }
+            numStart = i + 1;
+        }
+        if (numStart < lim) {
+            throw SqlException.$(position, "Missing unit at end of duration");
+        }
+        return timestamp;
     }
 
     private static void addLinearInterval(long period, int count, LongList out) {
@@ -1104,6 +1244,21 @@ public final class IntervalUtils {
                     foundTimeListBracket = true;
                 }
                 sink.clear(afterPrefixLen);
+
+                // Incremental merge: when interval count exceeds threshold, merge to bound memory
+                // This prevents unbounded growth from large ranges like [1..1000000]
+                if (applyEncoded) {
+                    int intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
+                    if (intervalCount >= INCREMENTAL_MERGE_THRESHOLD) {
+                        unionBracketExpandedIntervals(out, outSizeBeforeExpansion);
+                        // Check if we still exceed max limit after merging
+                        intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
+                        if (intervalCount > MAX_INTERVALS_AFTER_MERGE) {
+                            throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
+                                    .put(MAX_INTERVALS_AFTER_MERGE).put(')');
+                        }
+                    }
+                }
             }
 
             valueCount++;
@@ -1625,6 +1780,23 @@ public final class IntervalUtils {
     }
 
     /**
+     * Unions intervals in the range [startIndex, end) with each other.
+     * Pre-existing intervals at [0, startIndex) are preserved unchanged.
+     * Bracket values may be in any order (e.g., [20,10,15]), so we sort first.
+     * This operates in-place without allocations.
+     */
+    private static void mergeAndValidateIntervals(LongList out, int startIndex, int errorPos) throws SqlException {
+        if (out.size() > startIndex + 2) {
+            unionBracketExpandedIntervals(out, startIndex);
+            int intervalCount = (out.size() - startIndex) / 2;
+            if (intervalCount > MAX_INTERVALS_AFTER_MERGE) {
+                throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
+                        .put(MAX_INTERVALS_AFTER_MERGE).put(')');
+            }
+        }
+    }
+
+    /**
      * Parses a fully-expanded interval string (no brackets) and adds result to output.
      * In static mode (applyEncoded=true), results are converted to 2-long format.
      * Union of bracket-expanded intervals is done at the end of parseBracketInterval.
@@ -1646,7 +1818,7 @@ public final class IntervalUtils {
         if (applyEncoded) {
             // Static mode: convert to 2-long format
             // Union is done at the end of bracket expansion in parseBracketInterval
-            parseInterval0(timestampDriver, seq, 0, seq.length(), errorPos, out, operation);
+            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, operation);
             applyLastEncodedInterval(timestampDriver, out);
         } else {
             // Dynamic mode: keep 4-long format
@@ -1661,11 +1833,11 @@ public final class IntervalUtils {
                 // This achieves: (A OR B OR C...) AND previous
                 effectiveOp = isFirstInterval ? operation : IntervalOperation.UNION;
             }
-            parseInterval0(timestampDriver, seq, 0, seq.length(), errorPos, out, effectiveOp);
+            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, effectiveOp);
         }
     }
 
-    private static void parseInterval0(
+    private static void parseIntervalSuffix(
             TimestampDriver timestampDriver,
             CharSequence seq,
             int lo,
@@ -1784,55 +1956,6 @@ public final class IntervalUtils {
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }
-    }
-
-    /**
-     * Adds a duration string to a timestamp. Supports multi-unit format like "5h3m31s".
-     * Supported units: y (years), M (months), w (weeks), d (days), h (hours),
-     * m (minutes), s (seconds), T (millis), u (micros), n (nanos).
-     *
-     * @param timestampDriver the timestamp driver
-     * @param timestamp       the base timestamp
-     * @param seq             the duration string
-     * @param lo              start position in seq
-     * @param lim             end position in seq
-     * @param position        position for error reporting
-     * @return the new timestamp after adding the duration
-     */
-    private static long addDuration(
-            TimestampDriver timestampDriver,
-            long timestamp,
-            CharSequence seq,
-            int lo,
-            int lim,
-            int position
-    ) throws SqlException {
-        int numStart = lo;
-        for (int i = lo; i < lim; i++) {
-            char c = seq.charAt(i);
-            if (c >= '0' && c <= '9') {
-                continue;
-            }
-            // Found a unit character
-            if (i == numStart) {
-                throw SqlException.$(position, "Expected number before unit '").put(c).put('\'');
-            }
-            int period;
-            try {
-                period = Numbers.parseInt(seq, numStart, i);
-            } catch (NumericException e) {
-                throw SqlException.$(position, "Duration not a number");
-            }
-            timestamp = timestampDriver.add(timestamp, c, period);
-            if (timestamp == Numbers.LONG_NULL) {
-                throw SqlException.$(position, "Invalid duration unit: ").put(c);
-            }
-            numStart = i + 1;
-        }
-        if (numStart < lim) {
-            throw SqlException.$(position, "Missing unit at end of duration");
-        }
-        return timestamp;
     }
 
     /**
