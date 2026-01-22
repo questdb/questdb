@@ -1284,6 +1284,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    public void replaceColumnNameMap(CharSequence alias, CharSequence oldToken, CharSequence newToken) {
+        aliasToColumnNameMap.put(alias, newToken);
+        columnNameToAliasMap.remove(oldToken);
+        columnNameToAliasMap.put(newToken, alias);
+    }
+
     public void replaceJoinModel(int pos, QueryModel model) {
         joinModels.setQuick(pos, model);
     }
