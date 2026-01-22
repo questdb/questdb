@@ -850,6 +850,136 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateListBracketExpansionWithPerElementDayFilter() throws SqlException {
+        // Bracket expansion inside element WITH per-element day filter
+        // [2024-01-[01..07]#Mon,2024-01-15] - the #Mon applies to all expanded dates from 01..07
+        // 2024-01-01 is Monday (passes), 02-07 are Tue-Sun (fail), 2024-01-15 has no filter (passes)
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-15T23:59:59.999999Z}]",
+                "[2024-01-[01..07]#Mon,2024-01-15]"
+        );
+    }
+
+    @Test
+    public void testDateListMixedPerElementAndGlobalDayFilter() throws SqlException {
+        // Mix of per-element and global day filter
+        // [2024-01-01#Mon,2024-01-06]#Sat
+        // 2024-01-01 uses #Mon (is Monday, passes), 2024-01-06 uses global #Sat (is Saturday, passes)
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-06T23:59:59.999999Z}]",
+                "[2024-01-01#Mon,2024-01-06]#Sat"
+        );
+    }
+
+    @Test
+    public void testDateListPerElementDayFilter() throws SqlException {
+        // Per-element day filter inside date list IS supported
+        // [2024-01-01#Mon,2024-01-06#Sat] - each element has its own day filter
+        // 2024-01-01 is Monday (passes #Mon), 2024-01-06 is Saturday (passes #Sat)
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-06T23:59:59.999999Z}]",
+                "[2024-01-01#Mon,2024-01-06#Sat]"
+        );
+    }
+
+    @Test
+    public void testDateListPerElementDayFilterFiltersOut() throws SqlException {
+        // Per-element day filter that filters out the element
+        // 2024-01-01 is Monday (fails #Tue), 2024-01-06 is Saturday (passes #Sat)
+        assertBracketInterval(
+                "[{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-06T23:59:59.999999Z}]",
+                "[2024-01-01#Tue,2024-01-06#Sat]"
+        );
+    }
+
+    @Test
+    public void testDateListPerElementDayFilterWithDuration() throws SqlException {
+        // Per-element day filter with duration suffix
+        // [2024-01-01#Mon,2024-01-06#Sat];1h
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-02T00:59:59.999999Z},{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-07T00:59:59.999999Z}]",
+                "[2024-01-01#Mon,2024-01-06#Sat];1h"
+        );
+    }
+
+    @Test
+    public void testDateListPerElementDayFilterWithGlobalTimezone() throws SqlException {
+        // Per-element day filter with global timezone suffix
+        // [2024-01-01#Mon,2024-01-06]@+05:00 - global timezone applies to all
+        // 2024-01-01 is Monday (passes #Mon), 2024-01-06 has no per-element filter (passes)
+        // 2024-01-01 00:00 +05:00 = 2023-12-31 19:00 UTC
+        // 2024-01-06 00:00 +05:00 = 2024-01-05 19:00 UTC
+        assertBracketInterval(
+                "[{lo=2023-12-31T19:00:00.000000Z, hi=2024-01-01T18:59:59.999999Z},{lo=2024-01-05T19:00:00.000000Z, hi=2024-01-06T18:59:59.999999Z}]",
+                "[2024-01-01#Mon,2024-01-06]@+05:00"
+        );
+    }
+
+    @Test
+    public void testDateListPerElementDayFilterWithTimeSuffix() throws SqlException {
+        // Per-element day filter with time suffix
+        // [2024-01-01#Mon,2024-01-06#Sat]T09:00
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z},{lo=2024-01-06T09:00:00.000000Z, hi=2024-01-06T09:00:59.999999Z}]",
+                "[2024-01-01#Mon,2024-01-06#Sat]T09:00"
+        );
+    }
+
+    @Test
+    public void testDateListPerElementDayFilterWithTimezone() throws SqlException {
+        // Per-element day filter with timezone
+        // 2024-01-01@+05:00#Mon - Monday in +05:00 timezone
+        // 2024-01-01 00:00 +05:00 = 2023-12-31 19:00 UTC
+        assertBracketInterval(
+                "[{lo=2023-12-31T19:00:00.000000Z, hi=2024-01-01T18:59:59.999999Z}]",
+                "[2024-01-01@+05:00#Mon]"
+        );
+    }
+
+    @Test
+    public void testDateListWithBracketExpansionAndDayFilter() throws SqlException {
+        // Date list with bracket expansion AND day filter
+        // [2024-01-[01..07],2024-01-15]#Mon should expand Jan 1-7 and Jan 15, then filter to Mondays only
+        // 2024-01-01 is Monday, 2024-01-08 is Monday, 2024-01-15 is Monday
+        // From 01..07, only 01 is Monday. 15 is also Monday.
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-15T23:59:59.999999Z}]",
+                "[2024-01-[01..07],2024-01-15]#Mon"
+        );
+    }
+
+    @Test
+    public void testDateListWithBracketExpansionAndWorkdayFilter() throws SqlException {
+        // Date list with bracket expansion AND workday filter
+        // [2024-01-[01..07]]#workday - Jan 1-7, 2024: Mon(1), Tue(2), Wed(3), Thu(4), Fri(5), Sat(6), Sun(7)
+        // Workdays are Mon-Fri, so 1-5 should pass
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "[2024-01-[01..07]]#workday"
+        );
+    }
+
+    @Test
+    public void testDateListWithBracketExpansionList() throws SqlException {
+        // Date list with bracket expansion using list syntax inside an element
+        // [2024-01-[10,15,20],2024-02-01] should expand to Jan 10, 15, 20 and Feb 1
+        assertBracketInterval(
+                "[{lo=2024-01-10T00:00:00.000000Z, hi=2024-01-10T23:59:59.999999Z},{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-15T23:59:59.999999Z},{lo=2024-01-20T00:00:00.000000Z, hi=2024-01-20T23:59:59.999999Z},{lo=2024-02-01T00:00:00.000000Z, hi=2024-02-01T23:59:59.999999Z}]",
+                "[2024-01-[10,15,20],2024-02-01]"
+        );
+    }
+
+    @Test
+    public void testDateListWithBracketExpansionRange() throws SqlException {
+        // Date list with bracket expansion using range syntax inside an element
+        // [2024-01-[01..03],2024-01-08] should expand to Jan 1, 2, 3, and Jan 8
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z},{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z}]",
+                "[2024-01-[01..03],2024-01-08]"
+        );
+    }
+
+    @Test
     public void testDateListWithDurationOnly() throws SqlException {
         // Date list with simple duration suffix (no repeating)
         // For a date without time, hi starts at end-of-day (23:59:59.999999), then +1h is added

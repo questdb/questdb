@@ -61,10 +61,13 @@ public final class IntervalUtils {
             | (1 << (THURSDAY - 1)) | (1 << (FRIDAY - 1)); // Mon-Fri
 
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
-    // Two sinks are needed because expandTimeListBracket can trigger nested recursion:
-    //   parseBracketInterval -> expandBracketsRecursive (uses tlSink1)
-    //                        -> expandTimeListBracket
-    //                        -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
+    // Two sinks are needed for nested usage scenarios:
+    //   1. parseBracketInterval -> expandBracketsRecursive (uses tlSink1)
+    //                           -> expandTimeListBracket
+    //                           -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
+    //   2. parseBracketInterval with day filter (uses tlSink1 for dateSink)
+    //                           -> expandDateList with brackets in elements
+    //                           -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
     private static final ThreadLocal<StringSink> tlSink1 = ThreadLocal.withInitial(StringSink::new);
     private static final ThreadLocal<StringSink> tlSink2 = ThreadLocal.withInitial(StringSink::new);
 
@@ -309,8 +312,8 @@ public final class IntervalUtils {
             firstNonSpace++;
         }
 
-        // Find day filter marker (#) - must be AFTER @ (timezone) but before ; (duration)
-        // Order: date@timezone#dayFilter;duration
+        // Find day filter marker (#) - must be outside brackets and before ; (duration)
+        // Timezone is optional: "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are both valid
         // Day filter is applied based on LOCAL time (before timezone conversion)
         int dayFilterMarkerPos = findDayFilterMarker(seq, firstNonSpace, lim);
         int dayFilterMask = 0;
@@ -1834,11 +1837,30 @@ public final class IntervalUtils {
                     throw SqlException.$(errorPos, "Empty element in date list");
                 }
 
+                // Check for per-element day filter (e.g., "2024-01-01#Mon")
+                // Order is: date@timezone#dayFilter, so find # first, then @ before it
+                int elemDayFilterMarker = -1;
+                for (int j = elementStart; j < elementEnd; j++) {
+                    if (seq.charAt(j) == '#') {
+                        elemDayFilterMarker = j;
+                        break;
+                    }
+                }
+
+                int elemDayFilterMask = 0;
+                int effectiveElementEndForTz = elementEnd;
+                if (elemDayFilterMarker >= 0) {
+                    // Parse per-element day filter
+                    elemDayFilterMask = parseDayFilter(seq, elemDayFilterMarker + 1, elementEnd, errorPos);
+                    effectiveElementEndForTz = elemDayFilterMarker;
+                }
+
                 // Check if element has per-date timezone (e.g., "2024-01-01@Europe/London")
-                int elemTzMarker = findTimezoneMarker(seq, elementStart, elementEnd);
+                // Look for @ only before the day filter marker (if present)
+                int elemTzMarker = findTimezoneMarker(seq, elementStart, effectiveElementEndForTz);
                 int elemTzLo;
                 int elemTzHi;
-                int effectiveElementEnd = elementEnd;
+                int effectiveElementEnd = effectiveElementEndForTz;
 
                 // Determine which timezone to use: per-element takes precedence over global
                 int activeTzLo = -1;
@@ -1847,7 +1869,7 @@ public final class IntervalUtils {
                 if (elemTzMarker >= 0) {
                     // Per-element timezone
                     elemTzLo = elemTzMarker + 1;
-                    elemTzHi = elementEnd;
+                    elemTzHi = effectiveElementEndForTz;
                     effectiveElementEnd = elemTzMarker;
                     activeTzLo = elemTzLo;
                     activeTzHi = elemTzHi;
@@ -1856,6 +1878,9 @@ public final class IntervalUtils {
                     activeTzLo = globalTzLo;
                     activeTzHi = globalTzHi;
                 }
+
+                // Determine which day filter to use: per-element takes precedence over global
+                int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
 
                 // Remember output size before parsing this element
                 int outSizeBeforeElement = out.size();
@@ -1898,7 +1923,8 @@ public final class IntervalUtils {
                         }
                     }
 
-                    StringSink expansionSink = tlSink1.get();
+                    // Use tlSink2 since tlSink1 may be in use by the caller (dateSink when day filter exists)
+                    StringSink expansionSink = tlSink2.get();
                     expansionSink.clear();
                     boolean hadTimeListBracket = expandBracketsRecursive(
                             timestampDriver,
@@ -1929,12 +1955,13 @@ public final class IntervalUtils {
                 }
 
                 // Apply day filter BEFORE timezone conversion (based on local time)
-                if (dayFilterMask != 0) {
+                // Use per-element day filter if present, otherwise use global
+                if (activeDayFilterMask != 0) {
                     if (applyEncoded) {
-                        applyDayFilter(timestampDriver, out, outSizeBeforeElement, dayFilterMask);
+                        applyDayFilter(timestampDriver, out, outSizeBeforeElement, activeDayFilterMask);
                     } else {
                         // Dynamic mode: store day filter mask for runtime evaluation
-                        setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, dayFilterMask);
+                        setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, activeDayFilterMask);
                     }
                 }
 
@@ -1950,8 +1977,8 @@ public final class IntervalUtils {
 
     /**
      * Finds the position of '#' day filter marker in the string, respecting brackets.
-     * The '#' must be outside brackets and AFTER '@' (timezone) but before ';' (duration suffix).
-     * Order: date@timezone#dayFilter;duration
+     * The '#' must be outside brackets and before ';' (duration suffix).
+     * Timezone is optional: both "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are valid.
      *
      * @param seq the input string
      * @param lo  start index
