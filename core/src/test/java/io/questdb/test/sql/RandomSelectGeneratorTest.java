@@ -377,6 +377,39 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSampleByOrderEnforcesAscWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sample_table (" +
+                    "ts TIMESTAMP, " +
+                    "v INT" +
+                    ") TIMESTAMP(ts)");
+
+            execute("INSERT INTO sample_table SELECT " +
+                    "timestamp_sequence('2024-01-01', 1000000L) ts, " +
+                    "x::int v " +
+                    "FROM long_sequence(10)");
+
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            RandomSelectGenerator generator = new RandomSelectGenerator(engine, rnd, "sample_table")
+                    .setAggregationProbability(1.0)
+                    .setSampleByProbability(1.0) // always SAMPLE BY
+                    .setOrderByProbability(1.0)
+                    .setLimitProbability(1.0)
+                    .setWhereClauseProbability(0.0)
+                    .setJoinProbability(0.0);
+
+            String query = generator.generate();
+            LOG.info().$("SAMPLE BY query with LIMIT: ").$(query).$();
+
+            assertTrue(query.contains("SAMPLE BY"));
+            assertTrue(query.contains("ORDER BY 1"));
+            assertFalse("DESC should not be used with SAMPLE BY ordering", query.contains("DESC"));
+            assertTrue(query.contains("LIMIT"));
+            assertQueryNoLeakCheck(query);
+        });
+    }
+
     // Helper method to execute query without checking specific results
     private void assertQueryNoLeakCheck(String query) throws Exception {
         try (RecordCursorFactory factory = select(query)) {

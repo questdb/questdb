@@ -175,6 +175,19 @@ public class RandomSelectGenerator {
                 boolean willUseLimit = limitEligible && rnd.nextDouble() < limitProbability;
 
                 if (willUseLimit) {
+                    if (currentlyUsingSampleBy) {
+                        // SAMPLE BY requires ascending timestamp ordering; enforce ascending on all orderable columns
+                        sql.put(" ORDER BY ");
+                        for (int i = 0, n = currentOrderableColumns.size(); i < n; i++) {
+                            if (i > 0) {
+                                sql.put(", ");
+                            }
+                            sql.put(currentOrderableColumns.get(i));
+                        }
+                        sql.put(" LIMIT ");
+                        sql.put(1 + rnd.nextInt(100));
+                        return sql.toString();
+                    }
                     // When using LIMIT, ORDER BY all orderable columns positionally to ensure deterministic results
                     // (ordering by a single low-cardinality column can cause non-determinism when LIMIT cuts rows)
                     sql.put(" ORDER BY ");
