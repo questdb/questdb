@@ -370,6 +370,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
                                         }
 
+                                        // Generate _name file from table token (not copied from db_root).
+                                        path.trimTo(rootLen).concat(TableUtils.TABLE_NAME_FILE);
+                                        mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                                        TableUtils.createTableNameFile(mem, tableToken.getTableName());
+
                                         // Copy view _meta file to checkpoint
                                         final Path auxPath = Path.PATH2.get();
                                         auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
@@ -436,6 +441,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                     reader.getColumnVersionReader().dumpTo(mem);
                                     mem.close(false);
+
+                                    // Generate _name file from table token (not copied from db_root).
+                                    path.trimTo(rootLen).concat(TableUtils.TABLE_NAME_FILE);
+                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                                    TableUtils.createTableNameFile(mem, tableToken.getTableName());
 
                                     long txn = reader.getTxn();
                                     long seqTxn = reader.getSeqTxn();
