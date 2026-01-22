@@ -2845,7 +2845,9 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testManyAggregatesFallbackUpdaterNoAliases() throws Exception {
         // Same as testManyAggregatesFallbackUpdater, but without aliases.
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final boolean aliasExprEnabled = rnd.nextBoolean();
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, Boolean.toString(aliasExprEnabled));
         assertMemoryLeak(() -> {
             final int functionCount = 1000;
             execute("create table t (value double)");
@@ -2856,7 +2858,14 @@ public class GroupByTest extends AbstractCairoTest {
             StringBuilder expectedValues = new StringBuilder();
             for (int i = 0; i < functionCount; i++) {
                 query.append("avg(value + ").append(i).append(")");
-                expectedHeader.append("avg(value + ").append(i).append(")");
+                if (aliasExprEnabled) {
+                    expectedHeader.append("avg(value + ").append(i).append(")");
+                } else {
+                    expectedHeader.append("avg");
+                    if (i > 0) {
+                        expectedHeader.append(i);
+                    }
+                }
                 expectedValues.append(1.5 + i);
                 if (i != functionCount - 1) {
                     query.append(", ");
