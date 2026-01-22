@@ -36,7 +36,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -59,7 +61,7 @@ public final class IntervalUtils {
     // Day filter bitmask constants (bit 0 = Monday, bit 6 = Sunday)
     private static final int DAY_FILTER_WORKDAY = (1 << (MONDAY - 1)) | (1 << (TUESDAY - 1)) | (1 << (WEDNESDAY - 1))
             | (1 << (THURSDAY - 1)) | (1 << (FRIDAY - 1)); // Mon-Fri
-
+    private static final ThreadLocal<StringSink> tlDateVarSink = ThreadLocal.withInitial(StringSink::new);
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
     // Two sinks are needed for nested usage scenarios:
     //   1. parseTickExpr -> expandBracketsRecursive (uses tlSink1)
@@ -68,8 +70,28 @@ public final class IntervalUtils {
     //   2. parseTickExpr with day filter (uses tlSink1 for dateSink)
     //                           -> expandDateList with brackets in elements
     //                           -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
+    //   3. tlDateVarSink is used for date variable formatting (isolated from other sinks)
     private static final ThreadLocal<StringSink> tlSink1 = ThreadLocal.withInitial(StringSink::new);
     private static final ThreadLocal<StringSink> tlSink2 = ThreadLocal.withInitial(StringSink::new);
+
+    /**
+     * Formats a timestamp as "YYYY-MM-DD" into the given sink.
+     *
+     * @param timestampDriver the timestamp driver for extracting date parts
+     * @param timestamp       the timestamp to format
+     * @param sink            the sink to write to
+     */
+    public static void appendDate(TimestampDriver timestampDriver, long timestamp, CharSink<?> sink) {
+        int year = timestampDriver.getYear(timestamp);
+        int month = timestampDriver.getMonthOfYear(timestamp);
+        int day = timestampDriver.getDayOfMonth(timestamp);
+
+        MicrosFormatUtils.appendYear000(sink, year);
+        sink.putAscii('-');
+        MicrosFormatUtils.append0(sink, month);
+        sink.putAscii('-');
+        MicrosFormatUtils.append0(sink, day);
+    }
 
     public static void applyLastEncodedInterval(TimestampDriver timestampDriver, LongList intervals) {
         int index = intervals.size() - 4;
@@ -88,6 +110,12 @@ public final class IntervalUtils {
         apply(timestampDriver, intervals, lo, hi, period, periodType, count);
     }
 
+    public static int decodeDayFilterMask(LongList intervals, int index) {
+        // Day filter mask is stored in the high byte of periodCount
+        int encodedPeriodCount = Numbers.decodeHighInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
+        return (encodedPeriodCount >>> 24) & 0xFF;
+    }
+
     public static long decodeIntervalHi(LongList out, int index) {
         return out.getQuick(index + HI_INDEX);
     }
@@ -98,12 +126,6 @@ public final class IntervalUtils {
 
     public static int decodePeriod(LongList intervals, int index) {
         return Numbers.decodeLowInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
-    }
-
-    public static int decodeDayFilterMask(LongList intervals, int index) {
-        // Day filter mask is stored in the high byte of periodCount
-        int encodedPeriodCount = Numbers.decodeHighInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
-        return (encodedPeriodCount >>> 24) & 0xFF;
     }
 
     public static int decodePeriodCount(LongList intervals, int index) {
@@ -184,355 +206,6 @@ public final class IntervalUtils {
             LongList out
     ) {
         encodeInterval(lo, hi, period, periodType, periodCount, adjustment, dynamicIndicator, operation, 0, out);
-    }
-
-    /**
-     * Parses a TICK (Temporal Interval Calendar Kit) interval string with bracket expansion,
-     * timezone support, and duration suffixes. This method is the main entry point for parsing
-     * complex interval expressions that can expand to multiple disjoint time intervals.
-     *
-     * <h4>Supported Features</h4>
-     * <ul>
-     *   <li><b>Bracket Expansion:</b> {@code [a,b,c]} for comma-separated values,
-     *       {@code [a..b]} for inclusive ranges</li>
-     *   <li><b>Date Lists:</b> {@code [date1,date2,...]} for non-contiguous dates</li>
-     *   <li><b>Time Lists:</b> {@code T[09:00,14:30]} for multiple complete times</li>
-     *   <li><b>Timezone Support:</b> {@code @timezone} for DST-aware conversion</li>
-     *   <li><b>Duration Suffix:</b> {@code ;6h}, {@code ;30m}, {@code ;1h30m} for interval duration</li>
-     *   <li><b>Cartesian Product:</b> Multiple bracket groups combine all possibilities</li>
-     * </ul>
-     *
-     * <h4>Bracket Expansion Examples</h4>
-     * <pre>{@code
-     * // Comma-separated values - expands to days 10, 15, 20 of January 2024
-     * "2024-01-[10,15,20]"
-     *
-     * // Inclusive range - expands to days 10, 11, 12
-     * "2024-01-[10..12]"
-     *
-     * // Mixed values and ranges - expands to days 5, 10, 11, 12, 20
-     * "2024-01-[5,10..12,20]"
-     *
-     * // Multiple bracket groups (Cartesian product) - 4 intervals
-     * "2024-[01,06]-[10,15]"  // Jan 10, Jan 15, Jun 10, Jun 15
-     *
-     * // With duration suffix - two 1-hour intervals
-     * "2024-01-[10,15]T10:30;1h"
-     * }</pre>
-     *
-     * <h4>Date List Examples</h4>
-     * <pre>{@code
-     * // Non-contiguous dates
-     * "[2024-01-15,2024-03-20,2024-06-01]"
-     *
-     * // Date list with nested field expansion
-     * "[2024-12-31,2025-01-[03..05]]"  // Dec 31, Jan 3, Jan 4, Jan 5
-     *
-     * // Date list with time suffix
-     * "[2024-01-15,2024-01-20]T09:30;6h30m"
-     * }</pre>
-     *
-     * <h4>Time List Examples</h4>
-     * <pre>{@code
-     * // Multiple times on same day (note: colon inside bracket = time list)
-     * "2024-01-15T[09:00,14:30,18:00];1h"  // Three 1-hour intervals
-     *
-     * // Contrast with numeric expansion (no colon inside bracket)
-     * "2024-01-15T[09,14]:30"  // Expands hour field only -> 09:30 and 14:30
-     *
-     * // Per-element timezone in time list
-     * "2024-01-15T[09:00@UTC,14:30@Europe/London];1h"
-     * }</pre>
-     *
-     * <h4>Timezone Examples</h4>
-     * <pre>{@code
-     * // Numeric offset: 08:00 in UTC+3 = 05:00 UTC
-     * "2024-01-15T08:00@+03:00"
-     *
-     * // Named timezone with DST awareness
-     * "2024-07-15T08:00@Europe/London"  // Summer: 08:00 BST = 07:00 UTC
-     * "2024-01-15T08:00@Europe/London"  // Winter: 08:00 GMT = 08:00 UTC
-     *
-     * // Timezone with bracket expansion and duration
-     * "2024-01-[15..19]T09:30@America/New_York;6h30m"
-     * }</pre>
-     *
-     * <h4>Multi-Unit Duration Examples</h4>
-     * <pre>{@code
-     * // Single unit (traditional)
-     * "2024-01-15T09:00;1h"
-     *
-     * // Multi-unit duration
-     * "2024-01-15T09:00;1h30m"      // 1 hour 30 minutes
-     * "2024-01-15T09:00;2h15m30s"   // 2 hours 15 minutes 30 seconds
-     * "2024-01-15T09:00;500T250u"   // 500 milliseconds + 250 microseconds
-     *
-     * // Supported units: y(years), M(months), w(weeks), d(days), h(hours),
-     * //                  m(minutes), s(seconds), T(milliseconds), u(microseconds), n(nanoseconds)
-     * }</pre>
-     *
-     * <h4>Output Format</h4>
-     * <p>Intervals are appended to the {@code out} list. In static mode ({@code applyEncoded=true}),
-     * each interval is stored as 2 longs: {@code [lo, hi]}. In dynamic mode ({@code applyEncoded=false}),
-     * each interval is stored as 4 longs: {@code [lo, hi, operation|periodType|adjustment, period|count]}.
-     * When multiple intervals are generated, they are automatically unioned (merged if overlapping).</p>
-     *
-     * @param timestampDriver the timestamp driver determining precision (microseconds or nanoseconds)
-     * @param seq             the interval string to parse (e.g., {@code "2024-01-[10,15]T09:00;1h"})
-     * @param lo              start index (inclusive) within {@code seq} to parse from
-     * @param lim             end index (exclusive) within {@code seq} to parse to
-     * @param position        source position for error reporting (typically the token position in SQL)
-     * @param out             output list where parsed intervals will be appended as lo/hi pairs
-     * @param operation       the interval operation type (e.g., {@link IntervalOperation#INTERSECT})
-     * @param sink            a reusable string sink for internal string manipulation; contents may be modified
-     * @param applyEncoded    if {@code true}, intervals are fully resolved (static mode);
-     *                        if {@code false}, interval metadata is preserved for runtime evaluation (dynamic mode)
-     * @throws SqlException if the interval string is malformed (e.g., unclosed bracket, invalid range,
-     *                      empty bracket, invalid timezone, invalid duration format)
-     * @see IntervalOperation
-     * @see TimestampDriver
-     */
-    public static void parseTickExpr(
-            TimestampDriver timestampDriver,
-            CairoConfiguration configuration,
-            CharSequence seq,
-            int lo,
-            int lim,
-            int position,
-            LongList out,
-            short operation,
-            StringSink sink,
-            boolean applyEncoded
-    ) throws SqlException {
-        assert configuration.getSqlIntervalMaxIntervalsAfterMerge() > configuration.getSqlIntervalIncrementalMergeThreshold()
-                : "sqlIntervalMaxIntervalsAfterMerge must be greater than sqlIntervalIncrementalMergeThreshold";
-        // Skip leading whitespace
-        int firstNonSpace = lo;
-        while (firstNonSpace < lim && Character.isWhitespace(seq.charAt(firstNonSpace))) {
-            firstNonSpace++;
-        }
-
-        // Find day filter marker (#) - must be outside brackets and before ; (duration)
-        // Timezone is optional: "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are both valid
-        // Day filter is applied based on LOCAL time (before timezone conversion)
-        int dayFilterMarkerPos = findDayFilterMarker(seq, firstNonSpace, lim);
-        int dayFilterMask = 0;
-        int dayFilterHi = -1;
-
-        if (dayFilterMarkerPos >= 0) {
-            // Find end of day filter (at ; or end of string)
-            dayFilterHi = lim;
-            for (int i = dayFilterMarkerPos + 1; i < lim; i++) {
-                if (seq.charAt(i) == ';') {
-                    dayFilterHi = i;
-                    break;
-                }
-            }
-            dayFilterMask = parseDayFilter(seq, dayFilterMarkerPos + 1, dayFilterHi, position);
-        }
-
-        // Determine effective limits after removing day filter
-        int effectiveSeqLo = firstNonSpace;
-        int effectiveSeqLim = lim;
-        CharSequence effectiveSeq = seq;
-
-        if (dayFilterMarkerPos >= 0) {
-            // Reconstruct the string without the day filter part
-            sink.clear();
-            sink.put(seq, firstNonSpace, dayFilterMarkerPos);
-            sink.put(seq, dayFilterHi, lim);
-            effectiveSeq = sink;
-            effectiveSeqLo = 0;
-            effectiveSeqLim = sink.length();
-        }
-
-        // Check if this is a date list (starts with '[')
-        // A date list looks like: [date1,date2,...] or [date1,date2,...]T09:30;1h
-        // Each date element can contain field expansion brackets like: [2025-12-31,2026-01-[03..05]]
-        //
-        // To distinguish from field expansion like [1]-[1]-[1]T..., we check:
-        // - Find the first ']' that matches the opening '[' (depth 0)
-        // - If it's followed by end-of-string, 'T', ';', ',', or whitespace -> date list
-        // - If it's followed by '-', ':', '.', or digit -> field expansion (part of date format)
-        if (effectiveSeqLo < effectiveSeqLim && effectiveSeq.charAt(effectiveSeqLo) == '[' && isDateList(effectiveSeq, effectiveSeqLo, effectiveSeqLim)) {
-            int outSize = out.size();
-            StringSink dateSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
-            dateSink.clear();
-            try {
-                expandDateList(
-                        timestampDriver,
-                        configuration,
-                        effectiveSeq,
-                        effectiveSeqLo,
-                        effectiveSeqLim,
-                        position,
-                        out,
-                        operation,
-                        dateSink,
-                        applyEncoded,
-                        outSize,
-                        dayFilterMask
-                );
-                // In static mode, union all bracket-expanded intervals and validate count
-                if (applyEncoded) {
-                    mergeAndValidateIntervals(configuration, out, outSize, position);
-                }
-            } catch (SqlException e) {
-                out.setPos(outSize);
-                throw e;
-            }
-            return;
-        }
-
-        // Single scan: detect brackets, find semicolon and timezone marker positions
-        int dateLim = effectiveSeqLim;
-        int semicolonPos = -1;
-        int depth = 0;
-        boolean hasBrackets = false;
-        for (int i = effectiveSeqLo; i < effectiveSeqLim; i++) {
-            char c = effectiveSeq.charAt(i);
-            if (c == '[') {
-                hasBrackets = true;
-                depth++;
-            } else if (c == ']') {
-                depth--;
-            } else if (c == ';' && depth == 0) {
-                semicolonPos = i;
-                dateLim = i;
-                break;
-            }
-        }
-
-        // Find timezone marker (@ before semicolon, outside brackets)
-        int tzMarkerPos = findTimezoneMarker(effectiveSeq, effectiveSeqLo, semicolonPos >= 0 ? semicolonPos : effectiveSeqLim);
-        int tzLo = -1;
-        int tzHi = -1;
-        int effectiveDateLim = dateLim;
-        int effectiveLim = effectiveSeqLim;
-
-        // Use a separate sink for timezone reconstruction to avoid conflicts
-        StringSink tzSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
-
-        if (tzMarkerPos >= 0) {
-            // Extract timezone bounds
-            tzLo = tzMarkerPos + 1;
-            tzHi = semicolonPos >= 0 ? semicolonPos : effectiveSeqLim;
-            // Adjust date limit to exclude timezone
-            effectiveDateLim = tzMarkerPos;
-            // Build the interval string without timezone but with duration suffix
-            // e.g., "2024-01-01T08:00@Europe/London;1h" -> "2024-01-01T08:00;1h"
-            if (semicolonPos >= 0) {
-                // Has duration suffix - we need to reconstruct the string
-                tzSink.clear();
-                tzSink.put(effectiveSeq, effectiveSeqLo, tzMarkerPos);
-                tzSink.put(effectiveSeq, semicolonPos, effectiveSeqLim);
-                effectiveLim = tzSink.length();
-                effectiveDateLim = tzMarkerPos - effectiveSeqLo; // Position in tzSink
-            } else {
-                effectiveLim = tzMarkerPos;
-            }
-        }
-
-        int outSize = out.size();
-
-        if (!hasBrackets) {
-            if (tzMarkerPos >= 0 && semicolonPos >= 0) {
-                // Parse from reconstructed tzSink
-                parseIntervalSuffix(timestampDriver, tzSink, 0, effectiveLim, position, out, operation);
-            } else if (tzMarkerPos >= 0) {
-                // No semicolon, just truncate at timezone marker
-                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveLim, position, out, operation);
-            } else {
-                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveSeqLim, position, out, operation);
-            }
-            if (applyEncoded) {
-                applyLastEncodedInterval(timestampDriver, out);
-                // Apply day filter BEFORE timezone conversion (based on local day-of-week)
-                if (dayFilterMask != 0) {
-                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask);
-                }
-            } else if (dayFilterMask != 0) {
-                // Dynamic mode: store day filter mask for runtime evaluation
-                setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
-            }
-            // Apply timezone conversion if present (after day filter)
-            if (tzMarkerPos >= 0) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
-            }
-            return;
-        }
-
-        StringSink reconstructSink = dayFilterMarkerPos >= 0 ? tlSink2.get() : sink;
-        reconstructSink.clear();
-        CharSequence parseSeq = effectiveSeq;
-        int parseLo = effectiveSeqLo;
-        int parseDateLim = effectiveDateLim;
-        int parseLim = effectiveSeqLim;
-
-        if (tzMarkerPos >= 0) {
-            // Reconstruct the string without timezone
-            reconstructSink.put(effectiveSeq, effectiveSeqLo, tzMarkerPos);
-            if (semicolonPos >= 0) {
-                reconstructSink.put(effectiveSeq, semicolonPos, effectiveSeqLim);
-            }
-            parseSeq = reconstructSink;
-            parseLo = 0;
-            parseDateLim = tzMarkerPos - effectiveSeqLo;
-            parseLim = reconstructSink.length();
-        }
-
-        StringSink expansionSink = tlSink1.get();
-        expansionSink.clear();
-        try {
-            boolean hadTimeListBracket = expandBracketsRecursive(
-                    timestampDriver,
-                    configuration,
-                    parseSeq,
-                    parseLo,
-                    parseDateLim,
-                    parseLim,
-                    position,
-                    out,
-                    operation,
-                    expansionSink,
-                    0,
-                    applyEncoded,
-                    outSize,
-                    effectiveSeq, // globalTzSeq - sequence with timezone
-                    tzLo,         // globalTzLo
-                    tzHi          // globalTzHi
-            );
-            // Apply day filter BEFORE timezone conversion (based on local day-of-week)
-            if (dayFilterMask != 0) {
-                if (applyEncoded) {
-                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask);
-                } else {
-                    // Dynamic mode: store day filter mask for runtime evaluation
-                    setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
-                }
-            }
-            // Apply timezone conversion if present AND no time list brackets were processed
-            // (time list brackets handle their own timezone internally)
-            if (tzMarkerPos >= 0 && !hadTimeListBracket) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
-            }
-            // In static mode, union all bracket-expanded intervals with each other
-            // (they were added without union during expansion)
-            if (applyEncoded && out.size() > outSize + 2) {
-                unionBracketExpandedIntervals(out, outSize);
-                // Check final interval count against limit
-                int intervalCount = (out.size() - outSize) / 2;
-                int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-                if (intervalCount > maxIntervalsAfterMerge) {
-                    throw SqlException.$(position, "Bracket expansion produces too many intervals (max ")
-                            .put(maxIntervalsAfterMerge).put(')');
-                }
-            }
-        } catch (SqlException e) {
-            // Unwind output on error
-            out.setPos(outSize);
-            throw e;
-        }
     }
 
     public static void encodeInterval(
@@ -760,6 +433,388 @@ public final class IntervalUtils {
         return findInterval(intervals, timestamp) != -1;
     }
 
+    /**
+     * Parses a TICK (Temporal Interval Calendar Kit) interval string with bracket expansion,
+     * timezone support, and duration suffixes. This method is the main entry point for parsing
+     * complex interval expressions that can expand to multiple disjoint time intervals.
+     *
+     * <h4>Supported Features</h4>
+     * <ul>
+     *   <li><b>Bracket Expansion:</b> {@code [a,b,c]} for comma-separated values,
+     *       {@code [a..b]} for inclusive ranges</li>
+     *   <li><b>Date Lists:</b> {@code [date1,date2,...]} for non-contiguous dates</li>
+     *   <li><b>Time Lists:</b> {@code T[09:00,14:30]} for multiple complete times</li>
+     *   <li><b>Timezone Support:</b> {@code @timezone} for DST-aware conversion</li>
+     *   <li><b>Duration Suffix:</b> {@code ;6h}, {@code ;30m}, {@code ;1h30m} for interval duration</li>
+     *   <li><b>Cartesian Product:</b> Multiple bracket groups combine all possibilities</li>
+     * </ul>
+     *
+     * <h4>Bracket Expansion Examples</h4>
+     * <pre>{@code
+     * // Comma-separated values - expands to days 10, 15, 20 of January 2024
+     * "2024-01-[10,15,20]"
+     *
+     * // Inclusive range - expands to days 10, 11, 12
+     * "2024-01-[10..12]"
+     *
+     * // Mixed values and ranges - expands to days 5, 10, 11, 12, 20
+     * "2024-01-[5,10..12,20]"
+     *
+     * // Multiple bracket groups (Cartesian product) - 4 intervals
+     * "2024-[01,06]-[10,15]"  // Jan 10, Jan 15, Jun 10, Jun 15
+     *
+     * // With duration suffix - two 1-hour intervals
+     * "2024-01-[10,15]T10:30;1h"
+     * }</pre>
+     *
+     * <h4>Date List Examples</h4>
+     * <pre>{@code
+     * // Non-contiguous dates
+     * "[2024-01-15,2024-03-20,2024-06-01]"
+     *
+     * // Date list with nested field expansion
+     * "[2024-12-31,2025-01-[03..05]]"  // Dec 31, Jan 3, Jan 4, Jan 5
+     *
+     * // Date list with time suffix
+     * "[2024-01-15,2024-01-20]T09:30;6h30m"
+     * }</pre>
+     *
+     * <h4>Time List Examples</h4>
+     * <pre>{@code
+     * // Multiple times on same day (note: colon inside bracket = time list)
+     * "2024-01-15T[09:00,14:30,18:00];1h"  // Three 1-hour intervals
+     *
+     * // Contrast with numeric expansion (no colon inside bracket)
+     * "2024-01-15T[09,14]:30"  // Expands hour field only -> 09:30 and 14:30
+     *
+     * // Per-element timezone in time list
+     * "2024-01-15T[09:00@UTC,14:30@Europe/London];1h"
+     * }</pre>
+     *
+     * <h4>Timezone Examples</h4>
+     * <pre>{@code
+     * // Numeric offset: 08:00 in UTC+3 = 05:00 UTC
+     * "2024-01-15T08:00@+03:00"
+     *
+     * // Named timezone with DST awareness
+     * "2024-07-15T08:00@Europe/London"  // Summer: 08:00 BST = 07:00 UTC
+     * "2024-01-15T08:00@Europe/London"  // Winter: 08:00 GMT = 08:00 UTC
+     *
+     * // Timezone with bracket expansion and duration
+     * "2024-01-[15..19]T09:30@America/New_York;6h30m"
+     * }</pre>
+     *
+     * <h4>Multi-Unit Duration Examples</h4>
+     * <pre>{@code
+     * // Single unit (traditional)
+     * "2024-01-15T09:00;1h"
+     *
+     * // Multi-unit duration
+     * "2024-01-15T09:00;1h30m"      // 1 hour 30 minutes
+     * "2024-01-15T09:00;2h15m30s"   // 2 hours 15 minutes 30 seconds
+     * "2024-01-15T09:00;500T250u"   // 500 milliseconds + 250 microseconds
+     *
+     * // Supported units: y(years), M(months), w(weeks), d(days), h(hours),
+     * //                  m(minutes), s(seconds), T(milliseconds), u(microseconds), n(nanoseconds)
+     * }</pre>
+     *
+     * <h4>Output Format</h4>
+     * <p>Intervals are appended to the {@code out} list. In static mode ({@code applyEncoded=true}),
+     * each interval is stored as 2 longs: {@code [lo, hi]}. In dynamic mode ({@code applyEncoded=false}),
+     * each interval is stored as 4 longs: {@code [lo, hi, operation|periodType|adjustment, period|count]}.
+     * When multiple intervals are generated, they are automatically unioned (merged if overlapping).</p>
+     *
+     * @param timestampDriver the timestamp driver determining precision (microseconds or nanoseconds)
+     * @param seq             the interval string to parse (e.g., {@code "2024-01-[10,15]T09:00;1h"})
+     * @param lo              start index (inclusive) within {@code seq} to parse from
+     * @param lim             end index (exclusive) within {@code seq} to parse to
+     * @param position        source position for error reporting (typically the token position in SQL)
+     * @param out             output list where parsed intervals will be appended as lo/hi pairs
+     * @param operation       the interval operation type (e.g., {@link IntervalOperation#INTERSECT})
+     * @param sink            a reusable string sink for internal string manipulation; contents may be modified
+     * @param applyEncoded    if {@code true}, intervals are fully resolved (static mode);
+     *                        if {@code false}, interval metadata is preserved for runtime evaluation (dynamic mode)
+     * @throws SqlException if the interval string is malformed (e.g., unclosed bracket, invalid range,
+     *                      empty bracket, invalid timezone, invalid duration format)
+     * @see IntervalOperation
+     * @see TimestampDriver
+     */
+    public static void parseTickExpr(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation,
+            StringSink sink,
+            boolean applyEncoded
+    ) throws SqlException {
+        parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, sink, applyEncoded, timestampDriver.getTicks());
+    }
+
+    /**
+     * Parses a TICK interval expression with support for date variables ($today, $now, etc.).
+     * This overload allows specifying a custom "now" timestamp for deterministic testing.
+     *
+     * @param timestampDriver the timestamp driver determining precision (microseconds or nanoseconds)
+     * @param configuration   the Cairo configuration
+     * @param seq             the interval string to parse
+     * @param lo              start index (inclusive) within seq
+     * @param lim             end index (exclusive) within seq
+     * @param position        source position for error reporting
+     * @param out             output list where parsed intervals will be appended
+     * @param operation       the interval operation type
+     * @param sink            a reusable string sink for internal string manipulation
+     * @param applyEncoded    if true, intervals are fully resolved (static mode)
+     * @param nowTimestamp    the timestamp to use for resolving date variables ($today, $now, etc.)
+     */
+    public static void parseTickExpr(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation,
+            StringSink sink,
+            boolean applyEncoded,
+            long nowTimestamp
+    ) throws SqlException {
+        assert configuration.getSqlIntervalMaxIntervalsAfterMerge() > configuration.getSqlIntervalIncrementalMergeThreshold()
+                : "sqlIntervalMaxIntervalsAfterMerge must be greater than sqlIntervalIncrementalMergeThreshold";
+        // Skip leading whitespace
+        int firstNonSpace = lo;
+        while (firstNonSpace < lim && Character.isWhitespace(seq.charAt(firstNonSpace))) {
+            firstNonSpace++;
+        }
+
+        // Find day filter marker (#) - must be outside brackets and before ; (duration)
+        // Timezone is optional: "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are both valid
+        // Day filter is applied based on LOCAL time (before timezone conversion)
+        int dayFilterMarkerPos = findDayFilterMarker(seq, firstNonSpace, lim);
+        int dayFilterMask = 0;
+        int dayFilterHi = -1;
+
+        if (dayFilterMarkerPos >= 0) {
+            // Find end of day filter (at ; or end of string)
+            dayFilterHi = lim;
+            for (int i = dayFilterMarkerPos + 1; i < lim; i++) {
+                if (seq.charAt(i) == ';') {
+                    dayFilterHi = i;
+                    break;
+                }
+            }
+            dayFilterMask = parseDayFilter(seq, dayFilterMarkerPos + 1, dayFilterHi, position);
+        }
+
+        // Determine effective limits after removing day filter
+        int effectiveSeqLo = firstNonSpace;
+        int effectiveSeqLim = lim;
+        CharSequence effectiveSeq = seq;
+
+        if (dayFilterMarkerPos >= 0) {
+            // Reconstruct the string without the day filter part
+            sink.clear();
+            sink.put(seq, firstNonSpace, dayFilterMarkerPos);
+            sink.put(seq, dayFilterHi, lim);
+            effectiveSeq = sink;
+            effectiveSeqLo = 0;
+            effectiveSeqLim = sink.length();
+        }
+
+        // Check if this is a date list (starts with '[')
+        // A date list looks like: [date1,date2,...] or [date1,date2,...]T09:30;1h
+        // Each date element can contain field expansion brackets like: [2025-12-31,2026-01-[03..05]]
+        //
+        // To distinguish from field expansion like [1]-[1]-[1]T..., we check:
+        // - Find the first ']' that matches the opening '[' (depth 0)
+        // - If it's followed by end-of-string, 'T', ';', ',', or whitespace -> date list
+        // - If it's followed by '-', ':', '.', or digit -> field expansion (part of date format)
+        if (effectiveSeqLo < effectiveSeqLim && effectiveSeq.charAt(effectiveSeqLo) == '[' && isDateList(effectiveSeq, effectiveSeqLo, effectiveSeqLim)) {
+            int outSize = out.size();
+            StringSink dateSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
+            dateSink.clear();
+            try {
+                expandDateList(
+                        timestampDriver,
+                        configuration,
+                        effectiveSeq,
+                        effectiveSeqLo,
+                        effectiveSeqLim,
+                        position,
+                        out,
+                        operation,
+                        dateSink,
+                        applyEncoded,
+                        outSize,
+                        dayFilterMask,
+                        nowTimestamp
+                );
+                // In static mode, union all bracket-expanded intervals and validate count
+                if (applyEncoded) {
+                    mergeAndValidateIntervals(configuration, out, outSize, position);
+                }
+            } catch (SqlException e) {
+                out.setPos(outSize);
+                throw e;
+            }
+            return;
+        }
+
+        // Single scan: detect brackets, find semicolon and timezone marker positions
+        int dateLim = effectiveSeqLim;
+        int semicolonPos = -1;
+        int depth = 0;
+        boolean hasBrackets = false;
+        for (int i = effectiveSeqLo; i < effectiveSeqLim; i++) {
+            char c = effectiveSeq.charAt(i);
+            if (c == '[') {
+                hasBrackets = true;
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (c == ';' && depth == 0) {
+                semicolonPos = i;
+                dateLim = i;
+                break;
+            }
+        }
+
+        // Find timezone marker (@ before semicolon, outside brackets)
+        int tzMarkerPos = findTimezoneMarker(effectiveSeq, effectiveSeqLo, semicolonPos >= 0 ? semicolonPos : effectiveSeqLim);
+        int tzLo = -1;
+        int tzHi = -1;
+        int effectiveDateLim = dateLim;
+        int effectiveLim = effectiveSeqLim;
+
+        // Use a separate sink for timezone reconstruction to avoid conflicts
+        StringSink tzSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
+
+        if (tzMarkerPos >= 0) {
+            // Extract timezone bounds
+            tzLo = tzMarkerPos + 1;
+            tzHi = semicolonPos >= 0 ? semicolonPos : effectiveSeqLim;
+            // Adjust date limit to exclude timezone
+            effectiveDateLim = tzMarkerPos;
+            // Build the interval string without timezone but with duration suffix
+            // e.g., "2024-01-01T08:00@Europe/London;1h" -> "2024-01-01T08:00;1h"
+            if (semicolonPos >= 0) {
+                // Has duration suffix - we need to reconstruct the string
+                tzSink.clear();
+                tzSink.put(effectiveSeq, effectiveSeqLo, tzMarkerPos);
+                tzSink.put(effectiveSeq, semicolonPos, effectiveSeqLim);
+                effectiveLim = tzSink.length();
+                effectiveDateLim = tzMarkerPos - effectiveSeqLo; // Position in tzSink
+            } else {
+                effectiveLim = tzMarkerPos;
+            }
+        }
+
+        int outSize = out.size();
+
+        if (!hasBrackets) {
+            if (tzMarkerPos >= 0 && semicolonPos >= 0) {
+                // Parse from reconstructed tzSink
+                parseIntervalSuffix(timestampDriver, tzSink, 0, effectiveLim, position, out, operation);
+            } else if (tzMarkerPos >= 0) {
+                // No semicolon, just truncate at timezone marker
+                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveLim, position, out, operation);
+            } else {
+                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveSeqLim, position, out, operation);
+            }
+            if (applyEncoded) {
+                applyLastEncodedInterval(timestampDriver, out);
+                // Apply day filter BEFORE timezone conversion (based on local day-of-week)
+                if (dayFilterMask != 0) {
+                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask);
+                }
+            } else if (dayFilterMask != 0) {
+                // Dynamic mode: store day filter mask for runtime evaluation
+                setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
+            }
+            // Apply timezone conversion if present (after day filter)
+            if (tzMarkerPos >= 0) {
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
+            }
+            return;
+        }
+
+        StringSink reconstructSink = dayFilterMarkerPos >= 0 ? tlSink2.get() : sink;
+        reconstructSink.clear();
+        CharSequence parseSeq = effectiveSeq;
+        int parseLo = effectiveSeqLo;
+        int parseDateLim = effectiveDateLim;
+        int parseLim = effectiveSeqLim;
+
+        if (tzMarkerPos >= 0) {
+            // Reconstruct the string without timezone
+            reconstructSink.put(effectiveSeq, effectiveSeqLo, tzMarkerPos);
+            if (semicolonPos >= 0) {
+                reconstructSink.put(effectiveSeq, semicolonPos, effectiveSeqLim);
+            }
+            parseSeq = reconstructSink;
+            parseLo = 0;
+            parseDateLim = tzMarkerPos - effectiveSeqLo;
+            parseLim = reconstructSink.length();
+        }
+
+        StringSink expansionSink = tlSink1.get();
+        expansionSink.clear();
+        try {
+            boolean hadTimeListBracket = expandBracketsRecursive(
+                    timestampDriver,
+                    configuration,
+                    parseSeq,
+                    parseLo,
+                    parseDateLim,
+                    parseLim,
+                    position,
+                    out,
+                    operation,
+                    expansionSink,
+                    0,
+                    applyEncoded,
+                    outSize,
+                    effectiveSeq, // globalTzSeq - sequence with timezone
+                    tzLo,         // globalTzLo
+                    tzHi          // globalTzHi
+            );
+            // Apply day filter BEFORE timezone conversion (based on local day-of-week)
+            if (dayFilterMask != 0) {
+                if (applyEncoded) {
+                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask);
+                } else {
+                    // Dynamic mode: store day filter mask for runtime evaluation
+                    setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
+                }
+            }
+            // Apply timezone conversion if present AND no time list brackets were processed
+            // (time list brackets handle their own timezone internally)
+            if (tzMarkerPos >= 0 && !hadTimeListBracket) {
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
+            }
+            // In static mode, union all bracket-expanded intervals with each other
+            // (they were added without union during expansion)
+            if (applyEncoded && out.size() > outSize + 2) {
+                unionBracketExpandedIntervals(out, outSize);
+                // Check final interval count against limit
+                int intervalCount = (out.size() - outSize) / 2;
+                int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+                if (intervalCount > maxIntervalsAfterMerge) {
+                    throw SqlException.$(position, "Bracket expansion produces too many intervals (max ")
+                            .put(maxIntervalsAfterMerge).put(')');
+                }
+            }
+        } catch (SqlException e) {
+            // Unwind output on error
+            out.setPos(outSize);
+            throw e;
+        }
+    }
+
     public static void parseTickExprAndIntersect(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
@@ -778,6 +833,20 @@ public final class IntervalUtils {
                 applyLastEncodedInterval(timestampDriver, out);
             }
         }
+    }
+
+    public static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
+        int lastIndex = out.size() - 4;
+        out.setQuick(lastIndex, lo);
+        out.setQuick(lastIndex + HI_INDEX, hi);
+        out.setQuick(
+                lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX,
+                Numbers.encodeLowHighInts(
+                        Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
+                        0
+                )
+        );
+        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
     }
 
     /**
@@ -800,20 +869,6 @@ public final class IntervalUtils {
             int newPeriodCount = (periodCount & 0x00FFFFFF) | ((dayFilterMask & 0xFF) << 24);
             intervals.setQuick(i + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, newPeriodCount));
         }
-    }
-
-    public static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
-        int lastIndex = out.size() - 4;
-        out.setQuick(lastIndex, lo);
-        out.setQuick(lastIndex + HI_INDEX, hi);
-        out.setQuick(
-                lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX,
-                Numbers.encodeLowHighInts(
-                        Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
-                        0
-                )
-        );
-        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
     }
 
     public static void subtract(LongList intervals, int divider) {
@@ -1064,6 +1119,44 @@ public final class IntervalUtils {
                     break;
             }
         }
+    }
+
+    /**
+     * Applies a day-of-week filter to intervals in the output list.
+     * Removes intervals where the lo timestamp's day of week doesn't match the filter.
+     * Works in-place, compacting the list. Intervals must be in 2-long (static) format.
+     *
+     * @param timestampDriver the timestamp driver for day-of-week calculation
+     * @param out             the interval list to filter
+     * @param startIndex      index to start filtering from
+     * @param dayFilterMask   bitmask of allowed days (bit 0 = Monday, bit 6 = Sunday)
+     */
+    private static void applyDayFilter(
+            TimestampDriver timestampDriver,
+            LongList out,
+            int startIndex,
+            int dayFilterMask
+    ) {
+        assert dayFilterMask != 0; // Callers must check dayFilterMask != 0 before calling
+
+        int writeIdx = startIndex;
+
+        for (int readIdx = startIndex; readIdx < out.size(); readIdx += 2) {
+            long lo = out.getQuick(readIdx);
+            int dayOfWeek = timestampDriver.getDayOfWeek(lo); // 1=Monday, 7=Sunday
+            int dayBit = 1 << (dayOfWeek - 1);
+
+            if ((dayFilterMask & dayBit) != 0) {
+                // Day matches filter - keep this interval
+                if (writeIdx != readIdx) {
+                    out.setQuick(writeIdx, out.getQuick(readIdx));
+                    out.setQuick(writeIdx + 1, out.getQuick(readIdx + 1));
+                }
+                writeIdx += 2;
+            }
+        }
+
+        out.setPos(writeIdx);
     }
 
     /**
@@ -1425,41 +1518,295 @@ public final class IntervalUtils {
     }
 
     /**
-     * Applies a day-of-week filter to intervals in the output list.
-     * Removes intervals where the lo timestamp's day of week doesn't match the filter.
-     * Works in-place, compacting the list. Intervals must be in 2-long (static) format.
+     * Expands a date list in the format: [date1,date2,...]suffix
+     * Each date element can contain field expansion brackets.
+     * The suffix (like T09:30;1h) is appended to each date.
      *
-     * @param timestampDriver the timestamp driver for day-of-week calculation
-     * @param out             the interval list to filter
-     * @param startIndex      index to start filtering from
-     * @param dayFilterMask   bitmask of allowed days (bit 0 = Monday, bit 6 = Sunday)
+     * @param timestampDriver        timestamp driver for parsing
+     * @param seq                    input string starting with '['
+     * @param lo                     position of the opening '['
+     * @param lim                    end of string
+     * @param errorPos               position for error reporting
+     * @param out                    output list for parsed intervals
+     * @param operation              interval operation
+     * @param sink                   reusable StringSink for building expanded strings.
+     * @param applyEncoded           if true, converts to simple format
+     * @param outSizeBeforeExpansion size of out before expansion started
+     * @param dayFilterMask          bitmask for day-of-week filter (0 if not specified)
+     * @param nowTimestamp           timestamp to use for resolving date variables ($today, $now, etc.)
      */
-    private static void applyDayFilter(
+    private static void expandDateList(
             TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int errorPos,
             LongList out,
-            int startIndex,
-            int dayFilterMask
-    ) {
-        assert dayFilterMask != 0; // Callers must check dayFilterMask != 0 before calling
-
-        int writeIdx = startIndex;
-
-        for (int readIdx = startIndex; readIdx < out.size(); readIdx += 2) {
-            long lo = out.getQuick(readIdx);
-            int dayOfWeek = timestampDriver.getDayOfWeek(lo); // 1=Monday, 7=Sunday
-            int dayBit = 1 << (dayOfWeek - 1);
-
-            if ((dayFilterMask & dayBit) != 0) {
-                // Day matches filter - keep this interval
-                if (writeIdx != readIdx) {
-                    out.setQuick(writeIdx, out.getQuick(readIdx));
-                    out.setQuick(writeIdx + 1, out.getQuick(readIdx + 1));
+            short operation,
+            StringSink sink,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion,
+            int dayFilterMask,
+            long nowTimestamp
+    ) throws SqlException {
+        // lo points to '[' - find the matching ']' for the date list
+        int depth = 1;
+        int listEnd = -1;
+        for (int i = lo + 1; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+                if (depth == 0) {
+                    listEnd = i;
+                    break;
                 }
-                writeIdx += 2;
             }
         }
 
-        out.setPos(writeIdx);
+        if (listEnd < 0) {
+            throw SqlException.$(errorPos, "Unclosed '[' in date list");
+        }
+
+        // Check for empty brackets
+        int contentStart = lo + 1;
+        int contentEnd = listEnd;
+
+        // Skip leading whitespace in content
+        while (contentStart < contentEnd && Character.isWhitespace(seq.charAt(contentStart))) {
+            contentStart++;
+        }
+
+        if (contentStart >= contentEnd) {
+            throw SqlException.$(errorPos, "Empty date list");
+        }
+
+        // The suffix is everything after the closing bracket (like T09:30;1h or T09:30@Europe/London;1h)
+        int suffixStart = listEnd + 1;
+
+        // Check for global timezone in suffix (applies to elements without per-element timezone)
+        int globalTzMarker = findTimezoneMarker(seq, suffixStart, lim);
+        int globalTzLo = -1;
+        int globalTzHi = -1;
+
+        if (globalTzMarker >= 0) {
+            globalTzLo = globalTzMarker + 1;
+            // Find where timezone ends (at ';' or end of string)
+            int semicolonPos = -1;
+            for (int j = globalTzMarker + 1; j < lim; j++) {
+                if (seq.charAt(j) == ';') {
+                    semicolonPos = j;
+                    break;
+                }
+            }
+            globalTzHi = semicolonPos >= 0 ? semicolonPos : lim;
+        }
+
+        // Parse comma-separated date elements, respecting nested brackets
+        int elementStart = contentStart;
+
+        for (int i = contentStart; i <= contentEnd; i++) {
+            char c = i < contentEnd ? seq.charAt(i) : ','; // Treat end as virtual comma
+
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                // Found element boundary
+                int elementEnd = i;
+
+                // Trim whitespace from element
+                while (elementStart < elementEnd && Character.isWhitespace(seq.charAt(elementStart))) {
+                    elementStart++;
+                }
+                while (elementEnd > elementStart && Character.isWhitespace(seq.charAt(elementEnd - 1))) {
+                    elementEnd--;
+                }
+
+                if (elementStart >= elementEnd) {
+                    throw SqlException.$(errorPos, "Empty element in date list");
+                }
+
+                // Check if element starts with '$' (date variable expression)
+                // Date variables like $today, $now, $yesterday, $tomorrow, $today+3bd
+                // The expression ends at '@' (timezone), '#' (day filter), or element end
+                CharSequence elementSeq = seq;
+                int resolvedElementStart = elementStart;
+                int resolvedElementEnd = elementEnd;
+
+                if (seq.charAt(elementStart) == '$') {
+                    // Find where the date expression ends
+                    int exprEnd = elementEnd;
+                    for (int j = elementStart; j < elementEnd; j++) {
+                        char ec = seq.charAt(j);
+                        if (ec == '@' || ec == '#') {
+                            exprEnd = j;
+                            break;
+                        }
+                    }
+
+                    // Evaluate the date expression
+                    long resolvedTimestamp = DateExpressionEvaluator.evaluate(
+                            timestampDriver, seq, elementStart, exprEnd, nowTimestamp, errorPos
+                    );
+
+                    // Format the resolved timestamp as YYYY-MM-DD and append any remaining suffix
+                    StringSink dateVarSink = tlDateVarSink.get();
+                    dateVarSink.clear();
+                    appendDate(timestampDriver, resolvedTimestamp, dateVarSink);
+
+                    // Append any suffix (timezone/day filter) from the original element
+                    if (exprEnd < elementEnd) {
+                        dateVarSink.put(seq, exprEnd, elementEnd);
+                    }
+
+                    elementSeq = dateVarSink;
+                    resolvedElementStart = 0;
+                    resolvedElementEnd = dateVarSink.length();
+                }
+
+                // Check for per-element day filter (e.g., "2024-01-01#Mon")
+                // Order is: date@timezone#dayFilter, so find # first, then @ before it
+                int elemDayFilterMarker = -1;
+                for (int j = resolvedElementStart; j < resolvedElementEnd; j++) {
+                    if (elementSeq.charAt(j) == '#') {
+                        elemDayFilterMarker = j;
+                        break;
+                    }
+                }
+
+                int elemDayFilterMask = 0;
+                int effectiveElementEndForTz = resolvedElementEnd;
+                if (elemDayFilterMarker >= 0) {
+                    // Parse per-element day filter
+                    elemDayFilterMask = parseDayFilter(elementSeq, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
+                    effectiveElementEndForTz = elemDayFilterMarker;
+                }
+
+                // Check if element has per-date timezone (e.g., "2024-01-01@Europe/London")
+                // Look for @ only before the day filter marker (if present)
+                int elemTzMarker = findTimezoneMarker(elementSeq, resolvedElementStart, effectiveElementEndForTz);
+                int elemTzLo;
+                int elemTzHi;
+                int effectiveElementEnd = effectiveElementEndForTz;
+
+                // Determine which timezone to use: per-element takes precedence over global
+                // Track both the timezone bounds and the sequence they reference
+                int activeTzLo = -1;
+                int activeTzHi = -1;
+                CharSequence activeTzSeq = seq;
+
+                if (elemTzMarker >= 0) {
+                    // Per-element timezone
+                    elemTzLo = elemTzMarker + 1;
+                    elemTzHi = effectiveElementEndForTz;
+                    effectiveElementEnd = elemTzMarker;
+                    activeTzLo = elemTzLo;
+                    activeTzHi = elemTzHi;
+                    activeTzSeq = elementSeq;
+                } else if (globalTzMarker >= 0) {
+                    // Use global timezone from suffix
+                    activeTzLo = globalTzLo;
+                    activeTzHi = globalTzHi;
+                    activeTzSeq = seq;
+                }
+
+                // Determine which day filter to use: per-element takes precedence over global
+                int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
+
+                // Remember output size before parsing this element
+                int outSizeBeforeElement = out.size();
+
+                // Build the full interval string: element (without tz) + suffix (without tz)
+                sink.clear();
+                sink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
+                if (globalTzMarker >= 0) {
+                    // Add suffix without timezone: part before @ and part after timezone (;duration)
+                    sink.put(seq, suffixStart, globalTzMarker);
+                    if (globalTzHi < lim) {
+                        sink.put(seq, globalTzHi, lim);
+                    }
+                } else {
+                    sink.put(seq, suffixStart, lim);
+                }
+
+                // Check if the combined string contains brackets that need expansion
+                // This includes brackets in the element part AND in the suffix part
+                boolean hasBrackets = false;
+                int expandedLen = sink.length();
+                for (int j = 0; j < expandedLen; j++) {
+                    if (sink.charAt(j) == '[') {
+                        hasBrackets = true;
+                        break;
+                    }
+                }
+
+                if (hasBrackets) {
+                    // Element has field expansion brackets - use existing recursive expansion
+                    // Find where semicolon would be in the expanded string
+                    int expandedLim = sink.length();
+                    int dateLim = expandedLim;
+                    for (int j = 0; j < expandedLim; j++) {
+                        char ch = sink.charAt(j);
+                        if (ch == ';') {
+                            // Semicolon always appears after brackets close (in suffix like T[09,14]:30;1h)
+                            dateLim = j;
+                            break;
+                        }
+                    }
+
+                    // Use tlSink2 since tlSink1 may be in use by the caller (dateSink when day filter exists)
+                    StringSink expansionSink = tlSink2.get();
+                    expansionSink.clear();
+                    boolean hadTimeListBracket = expandBracketsRecursive(
+                            timestampDriver,
+                            configuration,
+                            sink,
+                            0,
+                            dateLim,
+                            sink.length(),
+                            errorPos,
+                            out,
+                            operation,
+                            expansionSink,
+                            0,
+                            applyEncoded,
+                            outSizeBeforeExpansion,
+                            activeTzSeq,   // tzSeq - for time list TZ fallback
+                            activeTzLo,    // tzLo
+                            activeTzHi     // tzHi
+                    );
+                    // If time list brackets were processed, they handled TZ internally
+                    if (hadTimeListBracket) {
+                        activeTzLo = -1; // Clear to skip TZ application below
+                    }
+                } else {
+                    // No brackets - parse directly
+                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                }
+
+                // Apply day filter BEFORE timezone conversion (based on local time)
+                // Use per-element day filter if present, otherwise use global
+                if (activeDayFilterMask != 0) {
+                    if (applyEncoded) {
+                        applyDayFilter(timestampDriver, out, outSizeBeforeElement, activeDayFilterMask);
+                    } else {
+                        // Dynamic mode: store day filter mask for runtime evaluation
+                        setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, activeDayFilterMask);
+                    }
+                }
+
+                // Apply timezone conversion if present (per-element or global) and NOT already handled by time list
+                if (activeTzLo >= 0) {
+                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+                }
+
+                elementStart = i + 1;
+            }
+        }
     }
 
     /**
@@ -1628,6 +1975,37 @@ public final class IntervalUtils {
         }
     }
 
+    /**
+     * Finds the position of '#' day filter marker in the string, respecting brackets.
+     * The '#' must be outside brackets and before ';' (duration suffix).
+     * Timezone is optional: both "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are valid.
+     *
+     * @param seq the input string
+     * @param lo  start index
+     * @param lim end index
+     * @return position of '#' or -1 if not found
+     */
+    private static int findDayFilterMarker(CharSequence seq, int lo, int lim) {
+        int depth = 0;
+        for (int i = lo; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (depth == 0) {
+                if (c == '#') {
+                    return i;
+                }
+                // Stop at duration marker
+                if (c == ';') {
+                    return -1;
+                }
+            }
+        }
+        return -1;
+    }
+
     private static int findMatchingBracket(CharSequence seq, int start, int lim, int position) throws SqlException {
         // start points to '['
         int depth = 1;
@@ -1746,285 +2124,6 @@ public final class IntervalUtils {
     }
 
     /**
-     * Expands a date list in the format: [date1,date2,...]suffix
-     * Each date element can contain field expansion brackets.
-     * The suffix (like T09:30;1h) is appended to each date.
-     *
-     * @param timestampDriver        timestamp driver for parsing
-     * @param seq                    input string starting with '['
-     * @param lo                     position of the opening '['
-     * @param lim                    end of string
-     * @param errorPos               position for error reporting
-     * @param out                    output list for parsed intervals
-     * @param operation              interval operation
-     * @param sink                   reusable StringSink for building expanded strings.
-     * @param applyEncoded           if true, converts to simple format
-     * @param outSizeBeforeExpansion size of out before expansion started
-     * @param dayFilterMask          bitmask for day-of-week filter (0 if not specified)
-     */
-    private static void expandDateList(
-            TimestampDriver timestampDriver,
-            CairoConfiguration configuration,
-            CharSequence seq,
-            int lo,
-            int lim,
-            int errorPos,
-            LongList out,
-            short operation,
-            StringSink sink,
-            boolean applyEncoded,
-            int outSizeBeforeExpansion,
-            int dayFilterMask
-    ) throws SqlException {
-        // lo points to '[' - find the matching ']' for the date list
-        int depth = 1;
-        int listEnd = -1;
-        for (int i = lo + 1; i < lim; i++) {
-            char c = seq.charAt(i);
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-                if (depth == 0) {
-                    listEnd = i;
-                    break;
-                }
-            }
-        }
-
-        if (listEnd < 0) {
-            throw SqlException.$(errorPos, "Unclosed '[' in date list");
-        }
-
-        // Check for empty brackets
-        int contentStart = lo + 1;
-        int contentEnd = listEnd;
-
-        // Skip leading whitespace in content
-        while (contentStart < contentEnd && Character.isWhitespace(seq.charAt(contentStart))) {
-            contentStart++;
-        }
-
-        if (contentStart >= contentEnd) {
-            throw SqlException.$(errorPos, "Empty date list");
-        }
-
-        // The suffix is everything after the closing bracket (like T09:30;1h or T09:30@Europe/London;1h)
-        int suffixStart = listEnd + 1;
-
-        // Check for global timezone in suffix (applies to elements without per-element timezone)
-        int globalTzMarker = findTimezoneMarker(seq, suffixStart, lim);
-        int globalTzLo = -1;
-        int globalTzHi = -1;
-
-        if (globalTzMarker >= 0) {
-            globalTzLo = globalTzMarker + 1;
-            // Find where timezone ends (at ';' or end of string)
-            int semicolonPos = -1;
-            for (int j = globalTzMarker + 1; j < lim; j++) {
-                if (seq.charAt(j) == ';') {
-                    semicolonPos = j;
-                    break;
-                }
-            }
-            globalTzHi = semicolonPos >= 0 ? semicolonPos : lim;
-        }
-
-        // Parse comma-separated date elements, respecting nested brackets
-        int elementStart = contentStart;
-
-        for (int i = contentStart; i <= contentEnd; i++) {
-            char c = i < contentEnd ? seq.charAt(i) : ','; // Treat end as virtual comma
-
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-            } else if (c == ',' && depth == 0) {
-                // Found element boundary
-                int elementEnd = i;
-
-                // Trim whitespace from element
-                while (elementStart < elementEnd && Character.isWhitespace(seq.charAt(elementStart))) {
-                    elementStart++;
-                }
-                while (elementEnd > elementStart && Character.isWhitespace(seq.charAt(elementEnd - 1))) {
-                    elementEnd--;
-                }
-
-                if (elementStart >= elementEnd) {
-                    throw SqlException.$(errorPos, "Empty element in date list");
-                }
-
-                // Check for per-element day filter (e.g., "2024-01-01#Mon")
-                // Order is: date@timezone#dayFilter, so find # first, then @ before it
-                int elemDayFilterMarker = -1;
-                for (int j = elementStart; j < elementEnd; j++) {
-                    if (seq.charAt(j) == '#') {
-                        elemDayFilterMarker = j;
-                        break;
-                    }
-                }
-
-                int elemDayFilterMask = 0;
-                int effectiveElementEndForTz = elementEnd;
-                if (elemDayFilterMarker >= 0) {
-                    // Parse per-element day filter
-                    elemDayFilterMask = parseDayFilter(seq, elemDayFilterMarker + 1, elementEnd, errorPos);
-                    effectiveElementEndForTz = elemDayFilterMarker;
-                }
-
-                // Check if element has per-date timezone (e.g., "2024-01-01@Europe/London")
-                // Look for @ only before the day filter marker (if present)
-                int elemTzMarker = findTimezoneMarker(seq, elementStart, effectiveElementEndForTz);
-                int elemTzLo;
-                int elemTzHi;
-                int effectiveElementEnd = effectiveElementEndForTz;
-
-                // Determine which timezone to use: per-element takes precedence over global
-                int activeTzLo = -1;
-                int activeTzHi = -1;
-
-                if (elemTzMarker >= 0) {
-                    // Per-element timezone
-                    elemTzLo = elemTzMarker + 1;
-                    elemTzHi = effectiveElementEndForTz;
-                    effectiveElementEnd = elemTzMarker;
-                    activeTzLo = elemTzLo;
-                    activeTzHi = elemTzHi;
-                } else if (globalTzMarker >= 0) {
-                    // Use global timezone from suffix
-                    activeTzLo = globalTzLo;
-                    activeTzHi = globalTzHi;
-                }
-
-                // Determine which day filter to use: per-element takes precedence over global
-                int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
-
-                // Remember output size before parsing this element
-                int outSizeBeforeElement = out.size();
-
-                // Build the full interval string: element (without tz) + suffix (without tz)
-                sink.clear();
-                sink.put(seq, elementStart, effectiveElementEnd);
-                if (globalTzMarker >= 0) {
-                    // Add suffix without timezone: part before @ and part after timezone (;duration)
-                    sink.put(seq, suffixStart, globalTzMarker);
-                    if (globalTzHi < lim) {
-                        sink.put(seq, globalTzHi, lim);
-                    }
-                } else {
-                    sink.put(seq, suffixStart, lim);
-                }
-
-                // Check if the combined string contains brackets that need expansion
-                // This includes brackets in the element part AND in the suffix part
-                boolean hasBrackets = false;
-                int expandedLen = sink.length();
-                for (int j = 0; j < expandedLen; j++) {
-                    if (sink.charAt(j) == '[') {
-                        hasBrackets = true;
-                        break;
-                    }
-                }
-
-                if (hasBrackets) {
-                    // Element has field expansion brackets - use existing recursive expansion
-                    // Find where semicolon would be in the expanded string
-                    int expandedLim = sink.length();
-                    int dateLim = expandedLim;
-                    for (int j = 0; j < expandedLim; j++) {
-                        char ch = sink.charAt(j);
-                        if (ch == ';') {
-                            // Semicolon always appears after brackets close (in suffix like T[09,14]:30;1h)
-                            dateLim = j;
-                            break;
-                        }
-                    }
-
-                    // Use tlSink2 since tlSink1 may be in use by the caller (dateSink when day filter exists)
-                    StringSink expansionSink = tlSink2.get();
-                    expansionSink.clear();
-                    boolean hadTimeListBracket = expandBracketsRecursive(
-                            timestampDriver,
-                            configuration,
-                            sink,
-                            0,
-                            dateLim,
-                            sink.length(),
-                            errorPos,
-                            out,
-                            operation,
-                            expansionSink,
-                            0,
-                            applyEncoded,
-                            outSizeBeforeExpansion,
-                            seq,           // globalTzSeq - for time list TZ fallback
-                            activeTzLo,    // globalTzLo
-                            activeTzHi     // globalTzHi
-                    );
-                    // If time list brackets were processed, they handled TZ internally
-                    if (hadTimeListBracket) {
-                        activeTzLo = -1; // Clear to skip TZ application below
-                    }
-                } else {
-                    // No brackets - parse directly
-                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
-                }
-
-                // Apply day filter BEFORE timezone conversion (based on local time)
-                // Use per-element day filter if present, otherwise use global
-                if (activeDayFilterMask != 0) {
-                    if (applyEncoded) {
-                        applyDayFilter(timestampDriver, out, outSizeBeforeElement, activeDayFilterMask);
-                    } else {
-                        // Dynamic mode: store day filter mask for runtime evaluation
-                        setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, activeDayFilterMask);
-                    }
-                }
-
-                // Apply timezone conversion if present (per-element or global) and NOT already handled by time list
-                if (activeTzLo >= 0) {
-                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
-                }
-
-                elementStart = i + 1;
-            }
-        }
-    }
-
-    /**
-     * Finds the position of '#' day filter marker in the string, respecting brackets.
-     * The '#' must be outside brackets and before ';' (duration suffix).
-     * Timezone is optional: both "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are valid.
-     *
-     * @param seq the input string
-     * @param lo  start index
-     * @param lim end index
-     * @return position of '#' or -1 if not found
-     */
-    private static int findDayFilterMarker(CharSequence seq, int lo, int lim) {
-        int depth = 0;
-        for (int i = lo; i < lim; i++) {
-            char c = seq.charAt(i);
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-            } else if (depth == 0) {
-                if (c == '#') {
-                    return i;
-                }
-                // Stop at duration marker
-                if (c == ';') {
-                    return -1;
-                }
-            }
-        }
-        return -1;
-    }
-
-    /**
      * Unions intervals in the range [startIndex, end) with each other.
      * Pre-existing intervals at [0, startIndex) are preserved unchanged.
      * Bracket values may be in any order (e.g., [20,10,15]), so we sort first.
@@ -2112,112 +2211,6 @@ public final class IntervalUtils {
         }
 
         return mask;
-    }
-
-    /**
-     * Parses a single day name and returns its bitmask.
-     *
-     * @param seq      the input string
-     * @param lo       start index
-     * @param hi       end index
-     * @param position position for error reporting
-     * @return bitmask for the day (single bit set)
-     * @throws SqlException if the day name is invalid
-     */
-    private static int parseSingleDay(CharSequence seq, int lo, int hi, int position) throws SqlException {
-        int len = hi - lo;
-        switch (len) {
-            case 3:
-                // Mon, Tue, Wed, Thu, Fri, Sat, Sun
-                char c0 = (char) (seq.charAt(lo) | 32);
-                char c1 = (char) (seq.charAt(lo + 1) | 32);
-                char c2 = (char) (seq.charAt(lo + 2) | 32);
-                if (c0 == 'm' && c1 == 'o' && c2 == 'n') return 1 << (MONDAY - 1);
-                if (c0 == 't' && c1 == 'u' && c2 == 'e') return 1 << (TUESDAY - 1);
-                if (c0 == 'w' && c1 == 'e' && c2 == 'd') return 1 << (WEDNESDAY - 1);
-                if (c0 == 't' && c1 == 'h' && c2 == 'u') return 1 << (THURSDAY - 1);
-                if (c0 == 'f' && c1 == 'r' && c2 == 'i') return 1 << (FRIDAY - 1);
-                if (c0 == 's' && c1 == 'a' && c2 == 't') return 1 << (SATURDAY - 1);
-                if (c0 == 's' && c1 == 'u' && c2 == 'n') return 1 << (SUNDAY - 1);
-                break;
-            case 6:
-                // Monday, Friday, Sunday
-                if ((seq.charAt(lo) | 32) == 'm'
-                        && (seq.charAt(lo + 1) | 32) == 'o'
-                        && (seq.charAt(lo + 2) | 32) == 'n'
-                        && (seq.charAt(lo + 3) | 32) == 'd'
-                        && (seq.charAt(lo + 4) | 32) == 'a'
-                        && (seq.charAt(lo + 5) | 32) == 'y') {
-                    return 1 << (MONDAY - 1);
-                }
-                if ((seq.charAt(lo) | 32) == 'f'
-                        && (seq.charAt(lo + 1) | 32) == 'r'
-                        && (seq.charAt(lo + 2) | 32) == 'i'
-                        && (seq.charAt(lo + 3) | 32) == 'd'
-                        && (seq.charAt(lo + 4) | 32) == 'a'
-                        && (seq.charAt(lo + 5) | 32) == 'y') {
-                    return 1 << (FRIDAY - 1);
-                }
-                if ((seq.charAt(lo) | 32) == 's'
-                        && (seq.charAt(lo + 1) | 32) == 'u'
-                        && (seq.charAt(lo + 2) | 32) == 'n'
-                        && (seq.charAt(lo + 3) | 32) == 'd'
-                        && (seq.charAt(lo + 4) | 32) == 'a'
-                        && (seq.charAt(lo + 5) | 32) == 'y') {
-                    return 1 << (SUNDAY - 1);
-                }
-                break;
-            case 7:
-                // Tuesday
-                if ((seq.charAt(lo) | 32) == 't'
-                        && (seq.charAt(lo + 1) | 32) == 'u'
-                        && (seq.charAt(lo + 2) | 32) == 'e'
-                        && (seq.charAt(lo + 3) | 32) == 's'
-                        && (seq.charAt(lo + 4) | 32) == 'd'
-                        && (seq.charAt(lo + 5) | 32) == 'a'
-                        && (seq.charAt(lo + 6) | 32) == 'y') {
-                    return 1 << (TUESDAY - 1);
-                }
-                break;
-            case 8:
-                // Thursday, Saturday
-                if ((seq.charAt(lo) | 32) == 't'
-                        && (seq.charAt(lo + 1) | 32) == 'h'
-                        && (seq.charAt(lo + 2) | 32) == 'u'
-                        && (seq.charAt(lo + 3) | 32) == 'r'
-                        && (seq.charAt(lo + 4) | 32) == 's'
-                        && (seq.charAt(lo + 5) | 32) == 'd'
-                        && (seq.charAt(lo + 6) | 32) == 'a'
-                        && (seq.charAt(lo + 7) | 32) == 'y') {
-                    return 1 << (THURSDAY - 1);
-                }
-                if ((seq.charAt(lo) | 32) == 's'
-                        && (seq.charAt(lo + 1) | 32) == 'a'
-                        && (seq.charAt(lo + 2) | 32) == 't'
-                        && (seq.charAt(lo + 3) | 32) == 'u'
-                        && (seq.charAt(lo + 4) | 32) == 'r'
-                        && (seq.charAt(lo + 5) | 32) == 'd'
-                        && (seq.charAt(lo + 6) | 32) == 'a'
-                        && (seq.charAt(lo + 7) | 32) == 'y') {
-                    return 1 << (SATURDAY - 1);
-                }
-                break;
-            case 9:
-                // Wednesday
-                if ((seq.charAt(lo) | 32) == 'w'
-                        && (seq.charAt(lo + 1) | 32) == 'e'
-                        && (seq.charAt(lo + 2) | 32) == 'd'
-                        && (seq.charAt(lo + 3) | 32) == 'n'
-                        && (seq.charAt(lo + 4) | 32) == 'e'
-                        && (seq.charAt(lo + 5) | 32) == 's'
-                        && (seq.charAt(lo + 6) | 32) == 'd'
-                        && (seq.charAt(lo + 7) | 32) == 'a'
-                        && (seq.charAt(lo + 8) | 32) == 'y') {
-                    return 1 << (WEDNESDAY - 1);
-                }
-                break;
-        }
-        throw SqlException.$(position, "Invalid day name: ").put(seq, lo, hi);
     }
 
     /**
@@ -2380,6 +2373,112 @@ public final class IntervalUtils {
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }
+    }
+
+    /**
+     * Parses a single day name and returns its bitmask.
+     *
+     * @param seq      the input string
+     * @param lo       start index
+     * @param hi       end index
+     * @param position position for error reporting
+     * @return bitmask for the day (single bit set)
+     * @throws SqlException if the day name is invalid
+     */
+    private static int parseSingleDay(CharSequence seq, int lo, int hi, int position) throws SqlException {
+        int len = hi - lo;
+        switch (len) {
+            case 3:
+                // Mon, Tue, Wed, Thu, Fri, Sat, Sun
+                char c0 = (char) (seq.charAt(lo) | 32);
+                char c1 = (char) (seq.charAt(lo + 1) | 32);
+                char c2 = (char) (seq.charAt(lo + 2) | 32);
+                if (c0 == 'm' && c1 == 'o' && c2 == 'n') return 1 << (MONDAY - 1);
+                if (c0 == 't' && c1 == 'u' && c2 == 'e') return 1 << (TUESDAY - 1);
+                if (c0 == 'w' && c1 == 'e' && c2 == 'd') return 1 << (WEDNESDAY - 1);
+                if (c0 == 't' && c1 == 'h' && c2 == 'u') return 1 << (THURSDAY - 1);
+                if (c0 == 'f' && c1 == 'r' && c2 == 'i') return 1 << (FRIDAY - 1);
+                if (c0 == 's' && c1 == 'a' && c2 == 't') return 1 << (SATURDAY - 1);
+                if (c0 == 's' && c1 == 'u' && c2 == 'n') return 1 << (SUNDAY - 1);
+                break;
+            case 6:
+                // Monday, Friday, Sunday
+                if ((seq.charAt(lo) | 32) == 'm'
+                        && (seq.charAt(lo + 1) | 32) == 'o'
+                        && (seq.charAt(lo + 2) | 32) == 'n'
+                        && (seq.charAt(lo + 3) | 32) == 'd'
+                        && (seq.charAt(lo + 4) | 32) == 'a'
+                        && (seq.charAt(lo + 5) | 32) == 'y') {
+                    return 1 << (MONDAY - 1);
+                }
+                if ((seq.charAt(lo) | 32) == 'f'
+                        && (seq.charAt(lo + 1) | 32) == 'r'
+                        && (seq.charAt(lo + 2) | 32) == 'i'
+                        && (seq.charAt(lo + 3) | 32) == 'd'
+                        && (seq.charAt(lo + 4) | 32) == 'a'
+                        && (seq.charAt(lo + 5) | 32) == 'y') {
+                    return 1 << (FRIDAY - 1);
+                }
+                if ((seq.charAt(lo) | 32) == 's'
+                        && (seq.charAt(lo + 1) | 32) == 'u'
+                        && (seq.charAt(lo + 2) | 32) == 'n'
+                        && (seq.charAt(lo + 3) | 32) == 'd'
+                        && (seq.charAt(lo + 4) | 32) == 'a'
+                        && (seq.charAt(lo + 5) | 32) == 'y') {
+                    return 1 << (SUNDAY - 1);
+                }
+                break;
+            case 7:
+                // Tuesday
+                if ((seq.charAt(lo) | 32) == 't'
+                        && (seq.charAt(lo + 1) | 32) == 'u'
+                        && (seq.charAt(lo + 2) | 32) == 'e'
+                        && (seq.charAt(lo + 3) | 32) == 's'
+                        && (seq.charAt(lo + 4) | 32) == 'd'
+                        && (seq.charAt(lo + 5) | 32) == 'a'
+                        && (seq.charAt(lo + 6) | 32) == 'y') {
+                    return 1 << (TUESDAY - 1);
+                }
+                break;
+            case 8:
+                // Thursday, Saturday
+                if ((seq.charAt(lo) | 32) == 't'
+                        && (seq.charAt(lo + 1) | 32) == 'h'
+                        && (seq.charAt(lo + 2) | 32) == 'u'
+                        && (seq.charAt(lo + 3) | 32) == 'r'
+                        && (seq.charAt(lo + 4) | 32) == 's'
+                        && (seq.charAt(lo + 5) | 32) == 'd'
+                        && (seq.charAt(lo + 6) | 32) == 'a'
+                        && (seq.charAt(lo + 7) | 32) == 'y') {
+                    return 1 << (THURSDAY - 1);
+                }
+                if ((seq.charAt(lo) | 32) == 's'
+                        && (seq.charAt(lo + 1) | 32) == 'a'
+                        && (seq.charAt(lo + 2) | 32) == 't'
+                        && (seq.charAt(lo + 3) | 32) == 'u'
+                        && (seq.charAt(lo + 4) | 32) == 'r'
+                        && (seq.charAt(lo + 5) | 32) == 'd'
+                        && (seq.charAt(lo + 6) | 32) == 'a'
+                        && (seq.charAt(lo + 7) | 32) == 'y') {
+                    return 1 << (SATURDAY - 1);
+                }
+                break;
+            case 9:
+                // Wednesday
+                if ((seq.charAt(lo) | 32) == 'w'
+                        && (seq.charAt(lo + 1) | 32) == 'e'
+                        && (seq.charAt(lo + 2) | 32) == 'd'
+                        && (seq.charAt(lo + 3) | 32) == 'n'
+                        && (seq.charAt(lo + 4) | 32) == 'e'
+                        && (seq.charAt(lo + 5) | 32) == 's'
+                        && (seq.charAt(lo + 6) | 32) == 'd'
+                        && (seq.charAt(lo + 7) | 32) == 'a'
+                        && (seq.charAt(lo + 8) | 32) == 'y') {
+                    return 1 << (WEDNESDAY - 1);
+                }
+                break;
+        }
+        throw SqlException.$(position, "Invalid day name: ").put(seq, lo, hi);
     }
 
     /**
