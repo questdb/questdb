@@ -832,6 +832,24 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateListWithDayFilterApplyEncodedFalse() throws SqlException {
+        // Test date list path with day filter and applyEncoded=false (exercises line 1617)
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2024-01-01,2024-01-02,2024-01-03]#Mon";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        // 3 intervals * 4 longs = 12
+        Assert.assertEquals(12, out.size());
+
+        // Verify day filter mask is encoded on all intervals (Monday = bit 0 = 1)
+        Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, 0));
+        Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, 4));
+        Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, 8));
+    }
+
+    @Test
     public void testDateListWithDurationOnly() throws SqlException {
         // Date list with simple duration suffix (no repeating)
         // For a date without time, hi starts at end-of-day (23:59:59.999999), then +1h is added
@@ -2000,11 +2018,56 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testDayFilterFullDayNames() throws SqlException {
-        // Test full day names
+    public void testDayFilterBracketExpansionWithTimezoneConsistent() throws SqlException {
+        // Bracket expansion path with timezone and day filter
+        //
+        // This uses bracket expansion with global timezone.
+        // 2024-01-01 IS a Monday in local time (+12:00)
+        // 2024-01-02 IS a Tuesday in local time (+12:00)
+        //
+        // Day filter is applied BEFORE timezone conversion,
+        // so it correctly identifies 2024-01-01 as Monday and keeps it,
+        // while filtering out 2024-01-02 (Tuesday).
+        //
+        // Conversion to UTC:
+        // - 2024-01-01 00:00 +12:00 = 2023-12-31 12:00 UTC
+        // - 2024-01-01 23:59 +12:00 = 2024-01-01 11:59 UTC
+
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-[01..02]@+12:00#Mon";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+
+        // Non-date-list path: day filter applied before TZ conversion
+        // 2024-01-01 is Monday (local) → kept, 2024-01-02 is Tuesday → filtered out
+        // Then converted to UTC
+        Assert.assertEquals("Bracket expansion correctly filters by local day", 2, out.size());
+
+        // Verify the UTC timestamp corresponds to 2024-01-01 (Monday) in +12:00
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2023-12-31T12:00:00.000000000Z, hi=2024-01-01T11:59:59.999999999Z}]"
+                : "[{lo=2023-12-31T12:00:00.000000Z, hi=2024-01-01T11:59:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testDayFilterDateListAllMatch() throws SqlException {
+        // Date list where all elements match day filter
+        // 2024-01-01, 2024-01-08, 2024-01-15 are all Mondays
         assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
-                "2024-01-[01..07]#Monday,Wednesday"
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z},{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-15T23:59:59.999999Z}]",
+                "[2024-01-01,2024-01-08,2024-01-15]#Mon"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListMixedMatching() throws SqlException {
+        // Date list with mixed matching/non-matching elements
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
+        // Only Monday should survive
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
+                "[2024-01-01,2024-01-02,2024-01-03]#Mon"
         );
     }
 
@@ -2067,12 +2130,38 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testDayFilterWithDuration() throws SqlException {
-        // 2024-01-01 is Monday, 2024-01-07 is Sunday
-        // #workday should keep Mon-Fri (01..05) with 1h duration
+    public void testDayFilterDateListMixedPerElementAndGlobalTimezone() throws SqlException {
+        // Mixed per-element and global timezone with day filter
+        // First element uses +05:00, second uses global +12:00
+        // 2024-01-01 is Monday in both timezones
+        // 2024-01-02 is Tuesday - filtered out
+        // 2024-01-01 00:00 +05:00 = 2023-12-31 19:00 UTC
+        // 2024-01-01 23:59 +05:00 = 2024-01-01 18:59 UTC
         assertBracketInterval(
-                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z},{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z},{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T10:00:59.999999Z},{lo=2024-01-04T09:00:00.000000Z, hi=2024-01-04T10:00:59.999999Z},{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T10:00:59.999999Z}]",
-                "2024-01-[01..07]T09:00#workday;1h"
+                "[{lo=2023-12-31T19:00:00.000000Z, hi=2024-01-01T18:59:59.999999Z}]",
+                "[2024-01-01@+05:00,2024-01-02]@+12:00#Mon"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListMultipleDays() throws SqlException {
+        // Comma-separated day filter with date list
+        // 2024-01-01 is Mon, 02 is Tue, 03 is Wed
+        // #Mon,Wed keeps Mon and Wed
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
+                "[2024-01-01,2024-01-02,2024-01-03]#Mon,Wed"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListMultipleMondays() throws SqlException {
+        // Date list with multiple Mondays and a non-Monday
+        // 2024-01-01 and 2024-01-08 are Mondays, 2024-01-02 is Tuesday
+        // Result: only Mondays (01 and 08)
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z}]",
+                "[2024-01-01,2024-01-08,2024-01-02]#Mon"
         );
     }
 
@@ -2104,6 +2193,250 @@ public class IntrinsicModelTest {
         assertBracketInterval(
                 "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
                 "2024-01-[01..07]#wd"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListNegativeTimezone() throws SqlException {
+        // Negative timezone offset edge case
+        // 2024-01-01 00:00 in -12:00 = 2024-01-01 12:00 UTC (still Monday)
+        assertBracketInterval(
+                "[{lo=2024-01-01T12:00:00.000000Z, hi=2024-01-02T11:59:59.999999Z}]",
+                "[2024-01-01@-12:00]#Mon"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListNoneMatch() throws SqlException {
+        // Date list where no elements match day filter - should produce empty result
+        // 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2024-01-02,2024-01-03]#Mon";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(0, out.size());
+    }
+
+    @Test
+    public void testDayFilterDateListOppositeTimezones() throws SqlException {
+        // Same date with opposite timezones - both are Monday locally
+        // 2024-01-01 00:00 +12:00 = 2023-12-31 12:00 UTC, ends at 2024-01-01 12:00 UTC
+        // 2024-01-01 00:00 -12:00 = 2024-01-01 12:00 UTC, ends at 2024-01-02 12:00 UTC
+        // Both days are Monday in their respective local times
+        // The two intervals are adjacent and get merged
+        assertBracketInterval(
+                "[{lo=2023-12-31T12:00:00.000000Z, hi=2024-01-02T11:59:59.999999Z}]",
+                "[2024-01-01@+12:00,2024-01-01@-12:00]#Mon"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListTimezoneChangesDayOfWeek() throws SqlException {
+        // Edge case: UTC timestamp is Sunday, but local time is Monday
+        // 2024-01-01 (Monday) at 00:00 in +14:00 = 2023-12-31 (Sunday) 10:00 UTC
+        // Day filter should keep this because it's Monday locally
+        assertBracketInterval(
+                "[{lo=2023-12-31T10:00:00.000000Z, hi=2024-01-01T09:59:59.999999Z}]",
+                "[2024-01-01@+14:00]#Mon"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListWeekend() throws SqlException {
+        // Weekend filter with date list
+        // 2024-01-05 is Friday, 06 is Saturday, 07 is Sunday
+        assertBracketInterval(
+                "[{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]",
+                "[2024-01-05,2024-01-06,2024-01-07]#weekend"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListWithDuration() throws SqlException {
+        // Date list with duration + day filter
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z}]",
+                "[2024-01-01,2024-01-02]T09:00#Mon;1h"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListWithDurationAndTimezone() throws SqlException {
+        // Date list with duration + timezone + day filter
+        // 2024-01-01 is Monday in +05:30
+        // 2024-01-01 09:00 +05:30 = 2024-01-01 03:30 UTC
+        assertBracketInterval(
+                "[{lo=2024-01-01T03:30:00.000000Z, hi=2024-01-01T04:30:59.999999Z}]",
+                "[2024-01-01,2024-01-02]T09:00@+05:30#Mon;1h"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListWithGlobalTimezone() throws SqlException {
+        // Date list with global timezone + day filter
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday (in +05:30 local time)
+        // Day filter applied based on local time, then converted to UTC
+        // 2024-01-01 00:00 +05:30 = 2023-12-31 18:30 UTC
+        // 2024-01-01 23:59:59 +05:30 = 2024-01-01 18:29:59 UTC
+        assertBracketInterval(
+                "[{lo=2023-12-31T18:30:00.000000Z, hi=2024-01-01T18:29:59.999999Z}]",
+                "[2024-01-01,2024-01-02]@+05:30#Mon"
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListWithPerElementTimezone() throws SqlException {
+        // Day filter with per-element timezone in date list
+        //
+        // 2024-01-01 IS a Monday in local time (+12:00)
+        // Day filter should be based on LOCAL time, so the interval should be kept.
+        //
+        // After timezone conversion:
+        // 2024-01-01 00:00 in +12:00 = 2023-12-31 12:00 UTC
+        // 2024-01-01 23:59:59.999999 in +12:00 = 2024-01-01 11:59:59.999999 UTC
+
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2024-01-01@+12:00]#Mon";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+
+        // Day filter is applied based on local time (Monday), interval is kept
+        Assert.assertEquals(2, out.size());
+        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "[{lo=2023-12-31T12:00:00.000000000Z, hi=2024-01-01T11:59:59.999999999Z}]"
+                : "[{lo=2023-12-31T12:00:00.000000Z, hi=2024-01-01T11:59:59.999999Z}]";
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testDayFilterDateListWithTimeSuffix() throws SqlException {
+        // Date list with time suffix + day filter
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z}]",
+                "[2024-01-01,2024-01-02]T09:00#Mon"
+        );
+    }
+
+    @Test
+    public void testDayFilterDynamicModeEncoding() throws SqlException {
+        // Test that day filter mask is properly encoded in dynamic (4-long) format
+        // This verifies the encoding, not the runtime filtering
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-[01..03]#Mon";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        // 3 intervals (01, 02, 03) * 4 longs = 12
+        Assert.assertEquals(12, out.size());
+
+        // Verify day filter mask is encoded (Monday = bit 0 = 1)
+        int dayFilterMask0 = IntervalUtils.decodeDayFilterMask(out, 0);
+        int dayFilterMask1 = IntervalUtils.decodeDayFilterMask(out, 4);
+        int dayFilterMask2 = IntervalUtils.decodeDayFilterMask(out, 8);
+        Assert.assertEquals("Day filter mask should be 1 (Monday)", 1, dayFilterMask0);
+        Assert.assertEquals("Day filter mask should be 1 (Monday)", 1, dayFilterMask1);
+        Assert.assertEquals("Day filter mask should be 1 (Monday)", 1, dayFilterMask2);
+    }
+
+    @Test
+    public void testDayFilterDynamicModeEncodingWeekend() throws SqlException {
+        // Test weekend filter encoding in dynamic mode
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-01#weekend";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+
+        // 1 interval * 4 longs = 4
+        Assert.assertEquals(4, out.size());
+
+        // Weekend mask = Sat|Sun = bits 5-6 = 0x60 = 96
+        int dayFilterMask = IntervalUtils.decodeDayFilterMask(out, 0);
+        Assert.assertEquals("Weekend mask should be 96 (Sat-Sun)", 96, dayFilterMask);
+    }
+
+    @Test
+    public void testDayFilterDynamicModeEncodingWorkday() throws SqlException {
+        // Test workday filter encoding in dynamic mode
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-01-01#workday";
+        parseBracketInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+
+        // 1 interval * 4 longs = 4
+        Assert.assertEquals(4, out.size());
+
+        // Workday mask = Mon|Tue|Wed|Thu|Fri = bits 0-4 = 0x1F = 31
+        int dayFilterMask = IntervalUtils.decodeDayFilterMask(out, 0);
+        Assert.assertEquals("Workday mask should be 31 (Mon-Fri)", 31, dayFilterMask);
+    }
+
+    @Test
+    public void testDayFilterErrorOnlyCommas() {
+        // Test that #,,, results in "Invalid day filter" error (mask == 0)
+        assertBracketIntervalError("2024-01-[01..07]#,,,", "Invalid day filter");
+    }
+
+    @Test
+    public void testDayFilterFullDayNames() throws SqlException {
+        // Test full day names - Monday and Wednesday
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
+                "2024-01-[01..07]#Monday,Wednesday"
+        );
+    }
+
+    @Test
+    public void testDayFilterFullDayNamesAllDays() throws SqlException {
+        // Test all full day names individually
+        // 2024-01-01=Mon, 02=Tue, 03=Wed, 04=Thu, 05=Fri, 06=Sat, 07=Sun
+
+        // Tuesday
+        assertBracketInterval(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]",
+                "2024-01-[01..07]#Tuesday"
+        );
+
+        // Thursday
+        assertBracketInterval(
+                "[{lo=2024-01-04T00:00:00.000000Z, hi=2024-01-04T23:59:59.999999Z}]",
+                "2024-01-[01..07]#Thursday"
+        );
+
+        // Friday
+        assertBracketInterval(
+                "[{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "2024-01-[01..07]#Friday"
+        );
+
+        // Saturday
+        assertBracketInterval(
+                "[{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-06T23:59:59.999999Z}]",
+                "2024-01-[01..07]#Saturday"
+        );
+
+        // Sunday
+        assertBracketInterval(
+                "[{lo=2024-01-07T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]",
+                "2024-01-[01..07]#Sunday"
+        );
+
+        // Mixed full names
+        assertBracketInterval(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z},{lo=2024-01-04T00:00:00.000000Z, hi=2024-01-04T23:59:59.999999Z},{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-06T23:59:59.999999Z}]",
+                "2024-01-[01..07]#Tuesday,Thursday,Saturday"
+        );
+    }
+
+    @Test
+    public void testDayFilterWithDuration() throws SqlException {
+        // 2024-01-01 is Monday, 2024-01-07 is Sunday
+        // #workday should keep Mon-Fri (01..05) with 1h duration
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z},{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z},{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T10:00:59.999999Z},{lo=2024-01-04T09:00:00.000000Z, hi=2024-01-04T10:00:59.999999Z},{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T10:00:59.999999Z}]",
+                "2024-01-[01..07]T09:00#workday;1h"
         );
     }
 

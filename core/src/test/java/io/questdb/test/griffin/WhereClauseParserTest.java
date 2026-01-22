@@ -899,6 +899,122 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testDayFilterDateListWithDynamicInterval() throws Exception {
+        // Date list (comma-separated in brackets) with day filter in dynamic mode
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
+        // #Mon should filter to only Monday (2024-01-01)
+        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]";
+
+        // Static only - date list with day filter
+        runWhereIntervalTest0(
+                "timestamp IN '[2024-01-01,2024-01-02,2024-01-03]#Mon'",
+                expected
+        );
+
+        // Dynamic: now() forces dynamic mode for the date list path
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '[2024-01-01,2024-01-02,2024-01-03]#Mon'",
+                expected
+        );
+    }
+
+    /**
+     * Test weekend filter with dynamic intervals.
+     */
+    @Test
+    public void testDayFilterWeekendWithDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday, 2024-01-07 is Sunday
+        // #weekend should filter to Sat-Sun (06-07)
+        String expected = "[{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..07]#weekend'",
+                expected
+        );
+
+        // Dynamic
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..07]#weekend'",
+                expected
+        );
+    }
+
+    /**
+     * Test day filter with dynamic intervals (now()).
+     * Day filter should be applied at runtime after the dynamic timestamp is resolved.
+     */
+    @Test
+    public void testDayFilterWithDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday
+        // #Mon should filter to only Monday
+        // Combined with now() makes it dynamic
+        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..02]#Mon'",
+                expected
+        );
+
+        // Dynamic: now() first
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..02]#Mon'",
+                expected
+        );
+
+        // Dynamic: day filter first
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..02]#Mon' and timestamp < dateadd('y', 100, now())",
+                expected
+        );
+    }
+
+    /**
+     * Test day filter with timezone and dynamic intervals.
+     */
+    @Test
+    public void testDayFilterWithTimezoneAndDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday in +12:00 timezone
+        // After conversion: 2023-12-31 12:00 UTC to 2024-01-01 11:59 UTC
+        String expected = "[{lo=2023-12-31T12:00:00.000000Z, hi=2024-01-01T11:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..02]@+12:00#Mon'",
+                expected
+        );
+
+        // Dynamic
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..02]@+12:00#Mon'",
+                expected
+        );
+    }
+
+    /**
+     * Test workday filter with dynamic intervals.
+     */
+    @Test
+    public void testDayFilterWorkdayWithDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday, 2024-01-07 is Sunday
+        // #workday should filter Mon-Fri (01-05)
+        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..07]#workday'",
+                expected
+        );
+
+        // Dynamic
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..07]#workday'",
+                expected
+        );
+    }
+
     /**
      * Test bracket expansion with a RESTRICTIVE interval that filters out some results.
      * This verifies that bracket-expanded intervals are properly intersected with other constraints.
