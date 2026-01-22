@@ -30,6 +30,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -46,6 +47,20 @@ public final class IntervalUtils {
     public static final int OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX = 2;
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
+
+    private static final int FRIDAY = 5;
+    // Day of week constants (Monday=1, Sunday=7, matching TimestampDriver.getDayOfWeek())
+    private static final int MONDAY = 1;
+    private static final int SATURDAY = 6;
+    private static final int SUNDAY = 7;
+    private static final int DAY_FILTER_WEEKEND = (1 << (SATURDAY - 1)) | (1 << (SUNDAY - 1)); // Sat-Sun
+    private static final int THURSDAY = 4;
+    private static final int TUESDAY = 2;
+    private static final int WEDNESDAY = 3;
+    // Day filter bitmask constants (bit 0 = Monday, bit 6 = Sunday)
+    private static final int DAY_FILTER_WORKDAY = (1 << (MONDAY - 1)) | (1 << (TUESDAY - 1)) | (1 << (WEDNESDAY - 1))
+            | (1 << (THURSDAY - 1)) | (1 << (FRIDAY - 1)); // Mon-Fri
+
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
     // Two sinks are needed because expandTimeListBracket can trigger nested recursion:
     //   parseBracketInterval -> expandBracketsRecursive (uses tlSink1)
@@ -511,6 +526,40 @@ public final class IntervalUtils {
             firstNonSpace++;
         }
 
+        // Find day filter marker (#) - must be AFTER @ (timezone) but before ; (duration)
+        // Order: date@timezone#dayFilter;duration
+        // Day filter is applied based on LOCAL time (before timezone conversion)
+        int dayFilterMarkerPos = findDayFilterMarker(seq, firstNonSpace, lim);
+        int dayFilterMask = 0;
+        int dayFilterHi = -1;
+
+        if (dayFilterMarkerPos >= 0) {
+            // Find end of day filter (at ; or end of string)
+            dayFilterHi = lim;
+            for (int i = dayFilterMarkerPos + 1; i < lim; i++) {
+                if (seq.charAt(i) == ';') {
+                    dayFilterHi = i;
+                    break;
+                }
+            }
+            dayFilterMask = parseDayFilter(seq, dayFilterMarkerPos + 1, dayFilterHi, position);
+        }
+
+        // Determine effective limits after removing day filter
+        int effectiveSeqLo = firstNonSpace;
+        int effectiveSeqLim = lim;
+        CharSequence effectiveSeq = seq;
+
+        if (dayFilterMarkerPos >= 0) {
+            // Reconstruct the string without the day filter part
+            sink.clear();
+            sink.put(seq, firstNonSpace, dayFilterMarkerPos);
+            sink.put(seq, dayFilterHi, lim);
+            effectiveSeq = sink;
+            effectiveSeqLo = 0;
+            effectiveSeqLim = sink.length();
+        }
+
         // Check if this is a date list (starts with '[')
         // A date list looks like: [date1,date2,...] or [date1,date2,...]T09:30;1h
         // Each date element can contain field expansion brackets like: [2025-12-31,2026-01-[03..05]]
@@ -519,23 +568,28 @@ public final class IntervalUtils {
         // - Find the first ']' that matches the opening '[' (depth 0)
         // - If it's followed by end-of-string, 'T', ';', ',', or whitespace -> date list
         // - If it's followed by '-', ':', '.', or digit -> field expansion (part of date format)
-        if (firstNonSpace < lim && seq.charAt(firstNonSpace) == '[' && isDateList(seq, firstNonSpace, lim)) {
+        if (effectiveSeqLo < effectiveSeqLim && effectiveSeq.charAt(effectiveSeqLo) == '[' && isDateList(effectiveSeq, effectiveSeqLo, effectiveSeqLim)) {
             int outSize = out.size();
-            sink.clear();
+            StringSink dateSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
+            dateSink.clear();
             try {
                 expandDateList(
                         timestampDriver,
                         configuration,
-                        seq,
-                        firstNonSpace,
-                        lim,
+                        effectiveSeq,
+                        effectiveSeqLo,
+                        effectiveSeqLim,
                         position,
                         out,
                         operation,
-                        sink,
+                        dateSink,
                         applyEncoded,
                         outSize
                 );
+                // Apply day filter if specified (based on local time, before TZ in date list was already applied per-element)
+                if (dayFilterMask != 0 && applyEncoded) {
+                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask, true);
+                }
                 // In static mode, union all bracket-expanded intervals and validate count
                 if (applyEncoded) {
                     mergeAndValidateIntervals(configuration, out, outSize, position);
@@ -548,12 +602,12 @@ public final class IntervalUtils {
         }
 
         // Single scan: detect brackets, find semicolon and timezone marker positions
-        int dateLim = lim;
+        int dateLim = effectiveSeqLim;
         int semicolonPos = -1;
         int depth = 0;
         boolean hasBrackets = false;
-        for (int i = lo; i < lim; i++) {
-            char c = seq.charAt(i);
+        for (int i = effectiveSeqLo; i < effectiveSeqLim; i++) {
+            char c = effectiveSeq.charAt(i);
             if (c == '[') {
                 hasBrackets = true;
                 depth++;
@@ -567,27 +621,30 @@ public final class IntervalUtils {
         }
 
         // Find timezone marker (@ before semicolon, outside brackets)
-        int tzMarkerPos = findTimezoneMarker(seq, lo, semicolonPos >= 0 ? semicolonPos : lim);
+        int tzMarkerPos = findTimezoneMarker(effectiveSeq, effectiveSeqLo, semicolonPos >= 0 ? semicolonPos : effectiveSeqLim);
         int tzLo = -1;
         int tzHi = -1;
         int effectiveDateLim = dateLim;
-        int effectiveLim = lim;
+        int effectiveLim = effectiveSeqLim;
+
+        // Use a separate sink for timezone reconstruction to avoid conflicts
+        StringSink tzSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
 
         if (tzMarkerPos >= 0) {
             // Extract timezone bounds
             tzLo = tzMarkerPos + 1;
-            tzHi = semicolonPos >= 0 ? semicolonPos : lim;
+            tzHi = semicolonPos >= 0 ? semicolonPos : effectiveSeqLim;
             // Adjust date limit to exclude timezone
             effectiveDateLim = tzMarkerPos;
             // Build the interval string without timezone but with duration suffix
             // e.g., "2024-01-01T08:00@Europe/London;1h" -> "2024-01-01T08:00;1h"
             if (semicolonPos >= 0) {
                 // Has duration suffix - we need to reconstruct the string
-                sink.clear();
-                sink.put(seq, lo, tzMarkerPos);
-                sink.put(seq, semicolonPos, lim);
-                effectiveLim = sink.length();
-                effectiveDateLim = tzMarkerPos - lo; // Position in sink
+                tzSink.clear();
+                tzSink.put(effectiveSeq, effectiveSeqLo, tzMarkerPos);
+                tzSink.put(effectiveSeq, semicolonPos, effectiveSeqLim);
+                effectiveLim = tzSink.length();
+                effectiveDateLim = tzMarkerPos - effectiveSeqLo; // Position in tzSink
             } else {
                 effectiveLim = tzMarkerPos;
             }
@@ -597,40 +654,45 @@ public final class IntervalUtils {
 
         if (!hasBrackets) {
             if (tzMarkerPos >= 0 && semicolonPos >= 0) {
-                // Parse from reconstructed sink
-                parseIntervalSuffix(timestampDriver, sink, 0, effectiveLim, position, out, operation);
+                // Parse from reconstructed tzSink
+                parseIntervalSuffix(timestampDriver, tzSink, 0, effectiveLim, position, out, operation);
             } else if (tzMarkerPos >= 0) {
                 // No semicolon, just truncate at timezone marker
-                parseIntervalSuffix(timestampDriver, seq, lo, effectiveLim, position, out, operation);
+                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveLim, position, out, operation);
             } else {
-                parseIntervalSuffix(timestampDriver, seq, lo, lim, position, out, operation);
+                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveSeqLim, position, out, operation);
             }
             if (applyEncoded) {
                 applyLastEncodedInterval(timestampDriver, out);
             }
-            // Apply timezone conversion if present
+            // Apply day filter BEFORE timezone conversion (based on local day-of-week)
+            if (dayFilterMask != 0 && applyEncoded) {
+                applyDayFilter(timestampDriver, out, outSize, dayFilterMask, true);
+            }
+            // Apply timezone conversion if present (after day filter)
             if (tzMarkerPos >= 0) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, seq, tzLo, tzHi, position, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
             }
             return;
         }
 
-        sink.clear();
-        CharSequence parseSeq = seq;
-        int parseLo = lo;
+        StringSink reconstructSink = dayFilterMarkerPos >= 0 ? tlSink2.get() : sink;
+        reconstructSink.clear();
+        CharSequence parseSeq = effectiveSeq;
+        int parseLo = effectiveSeqLo;
         int parseDateLim = effectiveDateLim;
-        int parseLim = lim;
+        int parseLim = effectiveSeqLim;
 
         if (tzMarkerPos >= 0) {
             // Reconstruct the string without timezone
-            sink.put(seq, lo, tzMarkerPos);
+            reconstructSink.put(effectiveSeq, effectiveSeqLo, tzMarkerPos);
             if (semicolonPos >= 0) {
-                sink.put(seq, semicolonPos, lim);
+                reconstructSink.put(effectiveSeq, semicolonPos, effectiveSeqLim);
             }
-            parseSeq = sink;
+            parseSeq = reconstructSink;
             parseLo = 0;
-            parseDateLim = tzMarkerPos - lo;
-            parseLim = sink.length();
+            parseDateLim = tzMarkerPos - effectiveSeqLo;
+            parseLim = reconstructSink.length();
         }
 
         StringSink expansionSink = tlSink1.get();
@@ -651,14 +713,18 @@ public final class IntervalUtils {
                     0,
                     applyEncoded,
                     outSize,
-                    seq,          // globalTzSeq - original sequence with timezone
+                    effectiveSeq, // globalTzSeq - sequence with timezone
                     tzLo,         // globalTzLo
                     tzHi          // globalTzHi
             );
+            // Apply day filter BEFORE timezone conversion (based on local day-of-week)
+            if (dayFilterMask != 0 && applyEncoded) {
+                applyDayFilter(timestampDriver, out, outSize, dayFilterMask, true);
+            }
             // Apply timezone conversion if present AND no time list brackets were processed
             // (time list brackets handle their own timezone internally)
             if (tzMarkerPos >= 0 && !hadTimeListBracket) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, seq, tzLo, tzHi, position, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
             }
             // In static mode, union all bracket-expanded intervals with each other
             // (they were added without union during expansion)
@@ -1782,6 +1848,81 @@ public final class IntervalUtils {
     }
 
     /**
+     * Applies a day-of-week filter to intervals in the output list.
+     * Removes intervals where the lo timestamp's day of week doesn't match the filter.
+     * Works in-place, compacting the list.
+     *
+     * @param timestampDriver the timestamp driver for day-of-week calculation
+     * @param out             the interval list to filter
+     * @param startIndex      index to start filtering from
+     * @param dayFilterMask   bitmask of allowed days (bit 0 = Monday, bit 6 = Sunday)
+     * @param isStaticMode    true if intervals are in 2-long format, false if 4-long format
+     */
+    private static void applyDayFilter(
+            TimestampDriver timestampDriver,
+            LongList out,
+            int startIndex,
+            int dayFilterMask,
+            boolean isStaticMode
+    ) {
+        if (dayFilterMask == 0) {
+            return; // No filter to apply
+        }
+
+        int stride = isStaticMode ? 2 : 4;
+        int writeIdx = startIndex;
+
+        for (int readIdx = startIndex; readIdx < out.size(); readIdx += stride) {
+            long lo = out.getQuick(readIdx);
+            int dayOfWeek = timestampDriver.getDayOfWeek(lo); // 1=Monday, 7=Sunday
+            int dayBit = 1 << (dayOfWeek - 1);
+
+            if ((dayFilterMask & dayBit) != 0) {
+                // Day matches filter - keep this interval
+                if (writeIdx != readIdx) {
+                    for (int j = 0; j < stride; j++) {
+                        out.setQuick(writeIdx + j, out.getQuick(readIdx + j));
+                    }
+                }
+                writeIdx += stride;
+            }
+        }
+
+        out.setPos(writeIdx);
+    }
+
+    /**
+     * Finds the position of '#' day filter marker in the string, respecting brackets.
+     * The '#' must be outside brackets and AFTER '@' (timezone) but before ';' (duration suffix).
+     * Order: date@timezone#dayFilter;duration
+     *
+     * @param seq the input string
+     * @param lo  start index
+     * @param lim end index
+     * @return position of '#' or -1 if not found
+     */
+    private static int findDayFilterMarker(CharSequence seq, int lo, int lim) {
+        int depth = 0;
+        for (int i = lo; i < lim; i++) {
+            char c = seq.charAt(i);
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (depth == 0) {
+                if (c == '#') {
+                    return i;
+                }
+                // Stop at duration marker
+                if (c == ';') {
+                    return -1;
+                }
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Unions intervals in the range [startIndex, end) with each other.
      * Pre-existing intervals at [0, startIndex) are preserved unchanged.
      * Bracket values may be in any order (e.g., [20,10,15]), so we sort first.
@@ -1797,6 +1938,106 @@ public final class IntervalUtils {
                         .put(maxIntervalsAfterMerge).put(')');
             }
         }
+    }
+
+    /**
+     * Parses a day filter specification and returns a bitmask of allowed days.
+     * Supported formats:
+     * <ul>
+     *   <li>{@code workday} or {@code wd} - Monday through Friday</li>
+     *   <li>{@code weekend} - Saturday and Sunday</li>
+     *   <li>{@code Mon}, {@code Tue}, {@code Wed}, {@code Thu}, {@code Fri}, {@code Sat}, {@code Sun} - specific day</li>
+     *   <li>{@code Mon,Wed,Fri} - comma-separated list of days</li>
+     * </ul>
+     *
+     * @param seq      the input string
+     * @param lo       start index of day filter spec (after '#')
+     * @param hi       end index of day filter spec
+     * @param position position for error reporting
+     * @return bitmask of allowed days (bit 0 = Monday, bit 6 = Sunday)
+     * @throws SqlException if the day filter spec is invalid
+     */
+    private static int parseDayFilter(CharSequence seq, int lo, int hi, int position) throws SqlException {
+        if (lo >= hi) {
+            throw SqlException.$(position, "Empty day filter after '#'");
+        }
+
+        // Check for keywords first
+        // workday or wd
+        if (Chars.equalsIgnoreCase("workday", seq, lo, hi)) {
+            return DAY_FILTER_WORKDAY;
+        }
+        if (Chars.equalsIgnoreCase("wd", seq, lo, hi)) {
+            return DAY_FILTER_WORKDAY;
+        }
+
+        // weekend
+        if (Chars.equalsIgnoreCase("weekend", seq, lo, hi)) {
+            return DAY_FILTER_WEEKEND;
+        }
+
+        // Parse comma-separated day names
+        int mask = 0;
+        int start = lo;
+        for (int i = lo; i <= hi; i++) {
+            char c = i < hi ? seq.charAt(i) : ',';
+            if (c == ',') {
+                if (i > start) {
+                    int dayBit = parseSingleDay(seq, start, i, position);
+                    mask |= dayBit;
+                }
+                start = i + 1;
+            }
+        }
+
+        if (mask == 0) {
+            throw SqlException.$(position, "Invalid day filter: ").put(seq, lo, hi);
+        }
+
+        return mask;
+    }
+
+    /**
+     * Parses a single day name and returns its bitmask.
+     *
+     * @param seq      the input string
+     * @param lo       start index
+     * @param hi       end index
+     * @param position position for error reporting
+     * @return bitmask for the day (single bit set)
+     * @throws SqlException if the day name is invalid
+     */
+    private static int parseSingleDay(CharSequence seq, int lo, int hi, int position) throws SqlException {
+        // Mon/Monday
+        if (Chars.equalsIgnoreCase("mon", seq, lo, hi) || Chars.equalsIgnoreCase("monday", seq, lo, hi)) {
+            return 1 << (MONDAY - 1);
+        }
+        // Tue/Tuesday
+        if (Chars.equalsIgnoreCase("tue", seq, lo, hi) || Chars.equalsIgnoreCase("tuesday", seq, lo, hi)) {
+            return 1 << (TUESDAY - 1);
+        }
+        // Wed/Wednesday
+        if (Chars.equalsIgnoreCase("wed", seq, lo, hi) || Chars.equalsIgnoreCase("wednesday", seq, lo, hi)) {
+            return 1 << (WEDNESDAY - 1);
+        }
+        // Thu/Thursday
+        if (Chars.equalsIgnoreCase("thu", seq, lo, hi) || Chars.equalsIgnoreCase("thursday", seq, lo, hi)) {
+            return 1 << (THURSDAY - 1);
+        }
+        // Fri/Friday
+        if (Chars.equalsIgnoreCase("fri", seq, lo, hi) || Chars.equalsIgnoreCase("friday", seq, lo, hi)) {
+            return 1 << (FRIDAY - 1);
+        }
+        // Sat/Saturday
+        if (Chars.equalsIgnoreCase("sat", seq, lo, hi) || Chars.equalsIgnoreCase("saturday", seq, lo, hi)) {
+            return 1 << (SATURDAY - 1);
+        }
+        // Sun/Sunday
+        if (Chars.equalsIgnoreCase("sun", seq, lo, hi) || Chars.equalsIgnoreCase("sunday", seq, lo, hi)) {
+            return 1 << (SUNDAY - 1);
+        }
+
+        throw SqlException.$(position, "Invalid day name: ").put(seq, lo, hi);
     }
 
     /**
