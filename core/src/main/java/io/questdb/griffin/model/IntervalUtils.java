@@ -1723,7 +1723,7 @@ public final class IntervalUtils {
                 boolean elementHasTime = false;
                 for (int j = resolvedElementStart; j < effectiveElementEnd - 1; j++) {
                     char ec = elementSeq.charAt(j);
-                    if ((ec == 'T' || ec == 't') && Character.isDigit(elementSeq.charAt(j + 1))) {
+                    if (ec == 'T' && Character.isDigit(elementSeq.charAt(j + 1))) {
                         elementHasTime = true;
                         break;
                     }
@@ -1732,9 +1732,8 @@ public final class IntervalUtils {
                 // Find where the time part of suffix ends (at ';' or '@' or end)
                 // Suffix format: T10:00, T10:00;1h, T10:00@TZ, T10:00@TZ;1h
                 int suffixTimeEnd = suffixStart;
-                if (suffixStart < lim && (seq.charAt(suffixStart) == 'T' || seq.charAt(suffixStart) == 't')) {
+                if (suffixStart < lim && seq.charAt(suffixStart) == 'T') {
                     // Find where time ends (at ';', '@', or end)
-                    suffixTimeEnd = suffixStart;
                     while (suffixTimeEnd < lim) {
                         char sc = seq.charAt(suffixTimeEnd);
                         if (sc == ';' || sc == '@') {
@@ -2094,6 +2093,20 @@ public final class IntervalUtils {
         return -1;
     }
 
+    private static short getEffectiveOp(short operation, boolean isFirstInterval) {
+        short effectiveOp;
+        if (operation == IntervalOperation.SUBTRACT) {
+            // For SUBTRACT: each interval is processed individually (inverted and intersected)
+            // This achieves: NOT A AND NOT B AND NOT C...
+            effectiveOp = operation;
+        } else {
+            // For INTERSECT: first uses INTERSECT, subsequent use UNION to combine
+            // This achieves: (A OR B OR C...) AND previous
+            effectiveOp = isFirstInterval ? operation : IntervalOperation.UNION;
+        }
+        return effectiveOp;
+    }
+
     /**
      * Determines if a string starting with '[' is a date list or field expansion.
      * <p>
@@ -2270,17 +2283,7 @@ public final class IntervalUtils {
         } else {
             // Dynamic mode: keep 4-long format
             boolean isFirstInterval = out.size() == outSizeBeforeExpansion;
-            short effectiveOp;
-            if (operation == IntervalOperation.SUBTRACT) {
-                // For SUBTRACT: each interval is processed individually (inverted and intersected)
-                // This achieves: NOT A AND NOT B AND NOT C...
-                effectiveOp = operation;
-            } else {
-                // For INTERSECT: first uses INTERSECT, subsequent use UNION to combine
-                // This achieves: (A OR B OR C...) AND previous
-                effectiveOp = isFirstInterval ? operation : IntervalOperation.UNION;
-            }
-            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, effectiveOp);
+            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, getEffectiveOp(operation, isFirstInterval));
         }
     }
 
