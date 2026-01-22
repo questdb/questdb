@@ -1151,13 +1151,75 @@ public final class IntervalUtils {
         }
     }
 
-    private static int determinePadWidth(CharSequence seq, int lo, int bracketStart) {
-        // Determine field width based on bracket position in timestamp
-        // Count separators before bracket to determine which field we're in
-        // Format: YYYY-MM-DDTHH:MM:SS.ffffff
+    private static int determinePadWidth(CharSequence sink, CharSequence seq, int lo, int bracketStart) {
+        // Determine field width based on position in timestamp
+        // For accurate analysis after prior bracket expansions, check the sink content
+        // which contains the expanded prefix up to this bracket
+        //
+        // Format: YYYY-MM-DDTHH:MM:SS.ffffff or YYYY-Www-DTHH:MM:SS (ISO week)
+
+        // First, analyze the sink (expanded content so far)
+        int sinkLen = sink.length();
+        if (sinkLen > 0) {
+            boolean afterDot = false;
+            boolean afterT = false;
+            int wPos = -1;
+
+            for (int i = 0; i < sinkLen; i++) {
+                char c = sink.charAt(i);
+                if (c == '.') {
+                    afterDot = true;
+                } else if (c == 'T' || (c == ' ' && i > 0)) {
+                    afterT = true;
+                } else if (c == 'W' && i > 0 && sink.charAt(i - 1) == '-') {
+                    wPos = i;
+                }
+            }
+
+            if (afterDot) {
+                // Microseconds/nanoseconds - no padding (variable width)
+                return 0;
+            }
+            if (afterT) {
+                // Time field: hour, minute, or second - 2 digits
+                return 2;
+            }
+
+            // Check for ISO week format in sink: YYYY-Www-D
+            if (wPos >= 0) {
+                // Count chars after W to determine which field
+                int charsAfterW = sinkLen - wPos - 1;
+                if (charsAfterW == 0) {
+                    // Sink ends with "W" - week number position (2 digits)
+                    return 2;
+                } else if (charsAfterW >= 2 && charsAfterW <= 3) {
+                    // Sink ends with "Wxx" or "Wxx-" - day of week position (1 digit)
+                    return 1;
+                }
+                // Otherwise time field - 2 digits
+                return 2;
+            }
+
+            // Standard date format analysis
+            int dashes = 0;
+            for (int i = 0; i < sinkLen; i++) {
+                if (sink.charAt(i) == '-') dashes++;
+            }
+            if (dashes == 1) {
+                // Month - 2 digits
+                return 2;
+            }
+            if (dashes >= 2) {
+                // Day - 2 digits
+                return 2;
+            }
+        }
+
+        // Fallback: analyze original sequence (for first bracket)
         int dashes = 0;
         boolean afterT = false;
         boolean afterDot = false;
+        int wPos = -1;
 
         for (int i = lo; i < bracketStart; i++) {
             char c = seq.charAt(i);
@@ -1167,26 +1229,32 @@ public final class IntervalUtils {
                 afterT = true;
             } else if (c == '.') {
                 afterDot = true;
+            } else if (c == 'W' && i > lo && seq.charAt(i - 1) == '-') {
+                wPos = i;
             }
         }
 
         if (afterDot) {
-            // Microseconds - no padding (variable width)
             return 0;
         }
         if (afterT) {
-            // Time field: hour, minute, or second - 2 digits
             return 2;
         }
+
+        if (wPos >= 0) {
+            int charsAfterW = bracketStart - wPos - 1;
+            if (charsAfterW == 0) {
+                return 2; // week number
+            }
+            return 1; // day of week (bracket comes after Wxx or Wxx-)
+        }
+
         if (dashes == 1) {
-            // Month - 2 digits
             return 2;
         }
         if (dashes >= 2) {
-            // Day - 2 digits
             return 2;
         }
-        // Year - no padding
         return 0;
     }
 
@@ -1279,7 +1347,8 @@ public final class IntervalUtils {
         }
 
         // Determine zero-padding width based on position in timestamp
-        int padWidth = determinePadWidth(seq, intervalStart, bracketStart);
+        // Use sink content for accurate analysis after prior bracket expansions
+        int padWidth = determinePadWidth(sink, seq, intervalStart, bracketStart);
 
         // Track if any time list bracket was found in recursive calls
         boolean foundTimeListBracket = false;
