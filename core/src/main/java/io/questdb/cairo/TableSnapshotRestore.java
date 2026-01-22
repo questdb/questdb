@@ -124,6 +124,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         int dstPathLen = dstPath.size();
         try {
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.META_FILE_NAME, false);
+            // Name file is optional, it is included in newer checkpoints and backups but may not exist in old checkpoints
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.TABLE_NAME_FILE, true);
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.TXN_FILE_NAME, false);
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.COLUMN_VERSION_FILE_NAME, false);
