@@ -489,7 +489,6 @@ public final class IntervalUtils {
                     configuration,
                     parseSeq,
                     parseLo,
-                    parseLo,
                     parseDateLim,
                     parseLim,
                     position,
@@ -1151,7 +1150,7 @@ public final class IntervalUtils {
         }
     }
 
-    private static int determinePadWidth(CharSequence sink, CharSequence seq, int lo, int bracketStart) {
+    private static int determinePadWidth(CharSequence sink) {
         // Determine field width based on position in timestamp
         // For accurate analysis after prior bracket expansions, check the sink content
         // which contains the expanded prefix up to this bracket
@@ -1169,9 +1168,9 @@ public final class IntervalUtils {
                 char c = sink.charAt(i);
                 if (c == '.') {
                     afterDot = true;
-                } else if (c == 'T' || (c == ' ' && i > 0)) {
+                } else if (c == 'T' || c == ' ') {
                     afterT = true;
-                } else if (c == 'W' && i > 0 && sink.charAt(i - 1) == '-') {
+                } else if (c == 'W') {
                     wPos = i;
                 }
             }
@@ -1192,69 +1191,16 @@ public final class IntervalUtils {
                 if (charsAfterW == 0) {
                     // Sink ends with "W" - week number position (2 digits)
                     return 2;
-                } else if (charsAfterW >= 2 && charsAfterW <= 3) {
-                    // Sink ends with "Wxx" or "Wxx-" - day of week position (1 digit)
-                    return 1;
                 }
-                // Otherwise time field - 2 digits
-                return 2;
+                // Sink ends with "Wxx-" - day of week position (1 digit)
+                return 1;
             }
 
-            // Standard date format analysis
-            int dashes = 0;
-            for (int i = 0; i < sinkLen; i++) {
-                if (sink.charAt(i) == '-') dashes++;
-            }
-            if (dashes == 1) {
-                // Month - 2 digits
-                return 2;
-            }
-            if (dashes >= 2) {
-                // Day - 2 digits
-                return 2;
-            }
-        }
-
-        // Fallback: analyze original sequence (for first bracket)
-        int dashes = 0;
-        boolean afterT = false;
-        boolean afterDot = false;
-        int wPos = -1;
-
-        for (int i = lo; i < bracketStart; i++) {
-            char c = seq.charAt(i);
-            if (c == '-') {
-                dashes++;
-            } else if (c == 'T' || c == ' ') {
-                afterT = true;
-            } else if (c == '.') {
-                afterDot = true;
-            } else if (c == 'W' && i > lo && seq.charAt(i - 1) == '-') {
-                wPos = i;
-            }
-        }
-
-        if (afterDot) {
-            return 0;
-        }
-        if (afterT) {
+            // Standard date format - month or day (2 digits)
             return 2;
         }
 
-        if (wPos >= 0) {
-            int charsAfterW = bracketStart - wPos - 1;
-            if (charsAfterW == 0) {
-                return 2; // week number
-            }
-            return 1; // day of week (bracket comes after Wxx or Wxx-)
-        }
-
-        if (dashes == 1) {
-            return 2;
-        }
-        if (dashes >= 2) {
-            return 2;
-        }
+        // First bracket with empty sink - no padding needed
         return 0;
     }
 
@@ -1273,7 +1219,7 @@ public final class IntervalUtils {
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
             CharSequence seq,
-            int intervalStart, // start of interval in seq (for pad width calculation)
+            // start of interval in seq (for pad width calculation)
             int pos,        // current position in seq (within date part)
             int dateLim,    // end of date part (before semicolon)
             int fullLim,    // end of entire string (including duration suffix)
@@ -1348,7 +1294,7 @@ public final class IntervalUtils {
 
         // Determine zero-padding width based on position in timestamp
         // Use sink content for accurate analysis after prior bracket expansions
-        int padWidth = determinePadWidth(sink, seq, intervalStart, bracketStart);
+        int padWidth = determinePadWidth(sink);
 
         // Track if any time list bracket was found in recursive calls
         boolean foundTimeListBracket = false;
@@ -1423,7 +1369,7 @@ public final class IntervalUtils {
             for (int v = value; v <= rangeEnd; v++) {
                 appendPaddedInt(sink, v, padWidth);
                 if (expandBracketsRecursive(
-                        timestampDriver, configuration, seq, intervalStart, bracketEnd + 1, dateLim, fullLim,
+                        timestampDriver, configuration, seq, bracketEnd + 1, dateLim, fullLim,
                         errorPos, out, operation, sink, depth + 1, applyEncoded, outSizeBeforeExpansion,
                         globalTzSeq, globalTzLo, globalTzHi
                 )) {
@@ -1639,7 +1585,7 @@ public final class IntervalUtils {
                         timestampDriver,
                         configuration,
                         sink,
-                        0,              // intervalStart
+                        // intervalStart
                         0,              // pos
                         expandedDateLim,
                         sink.length(),
@@ -1999,7 +1945,6 @@ public final class IntervalUtils {
                             timestampDriver,
                             configuration,
                             sink,
-                            0,
                             0,
                             dateLim,
                             sink.length(),

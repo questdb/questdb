@@ -401,151 +401,6 @@ public class IntrinsicModelTest {
     // ================= ISO Week Date Tests =================
 
     @Test
-    public void testIsoWeekBasic() throws SqlException {
-        // 2024-W01 is the first week of 2024, starting Mon 2024-01-01
-        // Week 1 spans Mon 2024-01-01 to Sun 2024-01-07
-        assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]",
-                "2024-W01"
-        );
-    }
-
-    @Test
-    public void testIsoWeekBracketExpansionDays() throws SqlException {
-        // Bracket expansion for day of week - weekdays (Mon-Fri) of week 1
-        // These are adjacent days so they should merge
-        assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
-                "2024-W01-[1..5]"
-        );
-    }
-
-    @Test
-    public void testIsoWeekBracketExpansionWeek() throws SqlException {
-        // Bracket expansion for weeks - first 4 weeks of 2024
-        // These are adjacent weeks so they should merge
-        assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-28T23:59:59.999999Z}]",
-                "2024-W[01..04]"
-        );
-    }
-
-    @Test
-    public void testIsoWeekBracketExpansionWeekAndDay() throws SqlException {
-        // Cartesian product: 2 weeks × 2 days = 4 intervals
-        // 2024-W01-1 (Mon Jan 1), 2024-W01-5 (Fri Jan 5), 2024-W02-1 (Mon Jan 8), 2024-W02-5 (Fri Jan 12)
-        assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z},{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z},{lo=2024-01-12T00:00:00.000000Z, hi=2024-01-12T23:59:59.999999Z}]",
-                "2024-W[01,02]-[1,5]"
-        );
-    }
-
-    @Test
-    public void testIsoWeekFloorParsing() throws NumericException {
-        // Test parseFloor for ISO week format
-        assertDateFloor("2024-01-01T00:00:00.000000Z", "2024-W01");
-        assertDateFloor("2024-01-01T00:00:00.000000Z", "2024-W01-1");
-        assertDateFloor("2024-01-05T00:00:00.000000Z", "2024-W01-5");
-        assertDateFloor("2024-01-01T09:00:00.000000Z", "2024-W01-1T09:00");
-        assertDateFloor("2024-01-01T09:30:15.000000Z", "2024-W01-1T09:30:15");
-        assertDateFloor("2024-01-01T09:30:15.123456Z", "2024-W01-1T09:30:15.123456");
-    }
-
-    @Test
-    public void testIsoWeekInvalidDay() {
-        // Day of week must be 1-7
-        assertBracketIntervalError("2024-W01-0", "Invalid date");
-        assertBracketIntervalError("2024-W01-8", "Invalid date");
-    }
-
-    @Test
-    public void testIsoWeekInvalidWeek() {
-        // Week must be 01-53
-        assertBracketIntervalError("2024-W00", "Invalid date");
-        assertBracketIntervalError("2024-W54", "Invalid date");
-    }
-
-    @Test
-    public void testIsoWeekInvalidWeek53For52WeekYear() {
-        // 2024 has only 52 weeks, so W53 is invalid
-        assertBracketIntervalError("2024-W53", "Invalid date");
-    }
-
-    @Test
-    public void testIsoWeekWithDay() throws SqlException {
-        // 2024-W01-1 is Monday of week 1 (2024-01-01)
-        assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
-                "2024-W01-1"
-        );
-        // 2024-W01-5 is Friday of week 1 (2024-01-05)
-        assertBracketInterval(
-                "[{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
-                "2024-W01-5"
-        );
-        // 2024-W01-7 is Sunday of week 1 (2024-01-07)
-        assertBracketInterval(
-                "[{lo=2024-01-07T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]",
-                "2024-W01-7"
-        );
-    }
-
-    @Test
-    public void testIsoWeekWithDurationSuffix() throws SqlException {
-        // 2024-W01-1T09:00;1h - Monday 9am + 1h duration
-        // Duration is added to the end: 09:00:59.999999 + 1h = 10:00:59.999999
-        assertBracketInterval(
-                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z}]",
-                "2024-W01-1T09:00;1h"
-        );
-    }
-
-    @Test
-    public void testIsoWeekWithTime() throws SqlException {
-        // 2024-W01-1T09:00 is Monday 9am
-        assertBracketInterval(
-                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z}]",
-                "2024-W01-1T09:00"
-        );
-        // 2024-W01-1T09:30:15 is Monday 9:30:15
-        assertBracketInterval(
-                "[{lo=2024-01-01T09:30:15.000000Z, hi=2024-01-01T09:30:15.999999Z}]",
-                "2024-W01-1T09:30:15"
-        );
-    }
-
-    @Test
-    public void testIsoWeekWithTimezone() throws SqlException {
-        // 2024-W01-1T09:00@+02:00 - Monday 9am in UTC+2 = 07:00 UTC
-        assertBracketInterval(
-                "[{lo=2024-01-01T07:00:00.000000Z, hi=2024-01-01T07:00:59.999999Z}]",
-                "2024-W01-1T09:00@+02:00"
-        );
-    }
-
-    @Test
-    public void testIsoWeekYear53Weeks() throws SqlException {
-        // 2020 has 53 weeks (Dec 31 is a Thursday, and previous year ends on Wednesday)
-        // Week 53 of 2020 starts Mon 2020-12-28
-        assertBracketInterval(
-                "[{lo=2020-12-28T00:00:00.000000Z, hi=2021-01-03T23:59:59.999999Z}]",
-                "2020-W53"
-        );
-    }
-
-    @Test
-    public void testIsoWeekYearBoundary() throws SqlException {
-        // Week 1 of 2020 starts on Mon 2019-12-30 (ISO week year boundary)
-        // The year in ISO week format refers to the ISO week year, not calendar year
-        assertBracketInterval(
-                "[{lo=2019-12-30T00:00:00.000000Z, hi=2020-01-05T23:59:59.999999Z}]",
-                "2020-W01"
-        );
-    }
-
-    // ================= End ISO Week Date Tests =================
-
-    @Test
     public void testBracketExpansionNoBrackets() throws SqlException {
         // Should delegate to parseInterval when no brackets
         assertBracketInterval(
@@ -795,6 +650,8 @@ public class IntrinsicModelTest {
         assertDateFloor("", "2015-01-01T00:00:00.000000-1");
     }
 
+    // ================= End ISO Week Date Tests =================
+
     @Test(expected = NumericException.class)
     public void testDateFloorFailsOnTzSign() throws NumericException {
         assertDateFloor("", "2015-01-01T00:00:00.000000≠10");
@@ -911,8 +768,6 @@ public class IntrinsicModelTest {
         // '[2025-01-[32..35]]' produces invalid day error
         assertBracketIntervalError("[2025-01-[32..35]]", "Invalid date");
     }
-
-    // ==================== Bracket Expansion Tests ====================
 
     @Test
     public void testDateListErrorLeadingComma() {
@@ -1150,6 +1005,8 @@ public class IntrinsicModelTest {
         );
     }
 
+    // ==================== Bracket Expansion Tests ====================
+
     @Test
     public void testDateListWithDurationSuffix() throws SqlException {
         // '[2025-01-15,2025-01-20]T09:30;389m' produces 2 trading-hours intervals
@@ -1213,8 +1070,6 @@ public class IntrinsicModelTest {
                 "[ 2025-01-01 , 2025-01-02 ]"
         );
     }
-
-    // ==================== TIME LIST BRACKET TESTS ====================
 
     @Test
     public void testDayFilterAllDaysOfWeek() throws SqlException {
@@ -1535,6 +1390,8 @@ public class IntrinsicModelTest {
         assertBracketIntervalError("2024-01-[01..07]#invalid", "Invalid day name");
     }
 
+    // ==================== TIME LIST BRACKET TESTS ====================
+
     @Test
     public void testDayFilterErrorInvalidDayInList() {
         assertBracketIntervalError("2024-01-[01..07]#Mon,invalid,Fri", "Invalid day name");
@@ -1696,8 +1553,6 @@ public class IntrinsicModelTest {
         );
     }
 
-    // ==================== Date List Tests ====================
-
     @Test
     public void testIntersectContain2() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -1785,6 +1640,230 @@ public class IntrinsicModelTest {
         TestUtils.assertEquals(
                 "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
                 intervalToString(timestampDriver, out)
+        );
+    }
+
+    @Test
+    public void testIsoWeek2015Has53Weeks() throws SqlException {
+        // 2015 also has 53 weeks (Dec 31, 2015 was Thursday)
+        // Week 53 of 2015 starts Mon 2015-12-28
+        assertBracketInterval(
+                "[{lo=2015-12-28T00:00:00.000000Z, hi=2016-01-03T23:59:59.999999Z}]",
+                "2015-W53"
+        );
+    }
+
+    @Test
+    public void testIsoWeekBasic() throws SqlException {
+        // 2024-W01 is the first week of 2024, starting Mon 2024-01-01
+        // Week 1 spans Mon 2024-01-01 to Sun 2024-01-07
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]",
+                "2024-W01"
+        );
+    }
+
+    @Test
+    public void testIsoWeekBracketExpansionDays() throws SqlException {
+        // Bracket expansion for day of week - weekdays (Mon-Fri) of week 1
+        // These are adjacent days so they should merge
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "2024-W01-[1..5]"
+        );
+    }
+
+    @Test
+    public void testIsoWeekBracketExpansionInvalidWeekInRange() {
+        // Range that includes invalid week 53 for 2024 (only has 52 weeks)
+        assertBracketIntervalError("2024-W[52..53]", "Invalid date");
+    }
+
+    @Test
+    public void testIsoWeekBracketExpansionWeek() throws SqlException {
+        // Bracket expansion for weeks - first 4 weeks of 2024
+        // These are adjacent weeks so they should merge
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-28T23:59:59.999999Z}]",
+                "2024-W[01..04]"
+        );
+    }
+
+    @Test
+    public void testIsoWeekBracketExpansionWeekAndDay() throws SqlException {
+        // Cartesian product: 2 weeks × 2 days = 4 intervals
+        // 2024-W01-1 (Mon Jan 1), 2024-W01-5 (Fri Jan 5), 2024-W02-1 (Mon Jan 8), 2024-W02-5 (Fri Jan 12)
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z},{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z},{lo=2024-01-12T00:00:00.000000Z, hi=2024-01-12T23:59:59.999999Z}]",
+                "2024-W[01,02]-[1,5]"
+        );
+    }
+
+    @Test
+    public void testIsoWeekFloorParsing() throws NumericException {
+        // Test parseFloor for ISO week format
+        assertDateFloor("2024-01-01T00:00:00.000000Z", "2024-W01");
+        assertDateFloor("2024-01-01T00:00:00.000000Z", "2024-W01-1");
+        assertDateFloor("2024-01-05T00:00:00.000000Z", "2024-W01-5");
+        assertDateFloor("2024-01-01T09:00:00.000000Z", "2024-W01-1T09:00");
+        assertDateFloor("2024-01-01T09:30:15.000000Z", "2024-W01-1T09:30:15");
+        assertDateFloor("2024-01-01T09:30:15.123456Z", "2024-W01-1T09:30:15.123456");
+    }
+
+    @Test
+    public void testIsoWeekHourOnly() throws SqlException {
+        // Hour-only time (no minutes)
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:59:59.999999Z}]",
+                "2024-W01-1T09"
+        );
+    }
+
+    @Test
+    public void testIsoWeekInvalidDay() {
+        // Day of week must be 1-7
+        assertBracketIntervalError("2024-W01-0", "Invalid date");
+        assertBracketIntervalError("2024-W01-8", "Invalid date");
+    }
+
+    @Test
+    public void testIsoWeekInvalidWeek() {
+        // Week must be 01-53
+        assertBracketIntervalError("2024-W00", "Invalid date");
+        assertBracketIntervalError("2024-W54", "Invalid date");
+    }
+
+    @Test
+    public void testIsoWeekInvalidWeek53For52WeekYear() {
+        // 2024 has only 52 weeks, so W53 is invalid
+        assertBracketIntervalError("2024-W53", "Invalid date");
+    }
+
+    @Test
+    public void testIsoWeekMalformedSingleDigitWeek() {
+        // Single digit week number should fail (must be 2 digits)
+        assertBracketIntervalError("2024-W1", "Invalid date");
+    }
+
+    @Test
+    public void testIsoWeekMalformedTrailingDash() {
+        // Trailing dash with no day should fail
+        assertBracketIntervalError("2024-W01-", "Invalid date");
+    }
+
+    @Test
+    public void testIsoWeekMalformedTrailingT() {
+        // Trailing T with no time should fail
+        assertBracketIntervalError("2024-W01-1T", "Invalid date");
+    }
+
+    @Test
+    public void testIsoWeekPartialMicroseconds() throws SqlException {
+        // Partial microseconds (1 digit = 100000 micros)
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:30:15.100000Z, hi=2024-01-01T09:30:15.199999Z}]",
+                "2024-W01-1T09:30:15.1"
+        );
+    }
+
+    @Test
+    public void testIsoWeekStartsOnJan1() throws SqlException {
+        // 2018: Jan 1 was Monday, so week 1 = Jan 1-7 (no year boundary crossing)
+        assertBracketInterval(
+                "[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-07T23:59:59.999999Z}]",
+                "2018-W01"
+        );
+    }
+
+    @Test
+    public void testIsoWeekWeek52() throws SqlException {
+        // Week 52 of 2024 (Dec 23-29, 2024)
+        assertBracketInterval(
+                "[{lo=2024-12-23T00:00:00.000000Z, hi=2024-12-29T23:59:59.999999Z}]",
+                "2024-W52"
+        );
+    }
+
+    // ==================== Date List Tests ====================
+
+    @Test
+    public void testIsoWeekWithDay() throws SqlException {
+        // 2024-W01-1 is Monday of week 1 (2024-01-01)
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
+                "2024-W01-1"
+        );
+        // 2024-W01-5 is Friday of week 1 (2024-01-05)
+        assertBracketInterval(
+                "[{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "2024-W01-5"
+        );
+        // 2024-W01-7 is Sunday of week 1 (2024-01-07)
+        assertBracketInterval(
+                "[{lo=2024-01-07T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]",
+                "2024-W01-7"
+        );
+    }
+
+    @Test
+    public void testIsoWeekWithDurationSuffix() throws SqlException {
+        // 2024-W01-1T09:00;1h - Monday 9am + 1h duration
+        // Duration is added to the end: 09:00:59.999999 + 1h = 10:00:59.999999
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z}]",
+                "2024-W01-1T09:00;1h"
+        );
+    }
+
+    @Test
+    public void testIsoWeekWithSpaceSeparator() throws SqlException {
+        // Space separator instead of T should work
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z}]",
+                "2024-W01-1 09:00"
+        );
+    }
+
+    @Test
+    public void testIsoWeekWithTime() throws SqlException {
+        // 2024-W01-1T09:00 is Monday 9am
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z}]",
+                "2024-W01-1T09:00"
+        );
+        // 2024-W01-1T09:30:15 is Monday 9:30:15
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:30:15.000000Z, hi=2024-01-01T09:30:15.999999Z}]",
+                "2024-W01-1T09:30:15"
+        );
+    }
+
+    @Test
+    public void testIsoWeekWithTimezone() throws SqlException {
+        // 2024-W01-1T09:00@+02:00 - Monday 9am in UTC+2 = 07:00 UTC
+        assertBracketInterval(
+                "[{lo=2024-01-01T07:00:00.000000Z, hi=2024-01-01T07:00:59.999999Z}]",
+                "2024-W01-1T09:00@+02:00"
+        );
+    }
+
+    @Test
+    public void testIsoWeekYear53Weeks() throws SqlException {
+        // 2020 has 53 weeks (Dec 31 is a Thursday, and previous year ends on Wednesday)
+        // Week 53 of 2020 starts Mon 2020-12-28
+        assertBracketInterval(
+                "[{lo=2020-12-28T00:00:00.000000Z, hi=2021-01-03T23:59:59.999999Z}]",
+                "2020-W53"
+        );
+    }
+
+    @Test
+    public void testIsoWeekYearBoundary() throws SqlException {
+        // Week 1 of 2020 starts on Mon 2019-12-30 (ISO week year boundary)
+        // The year in ISO week format refers to the ISO week year, not calendar year
+        assertBracketInterval(
+                "[{lo=2019-12-30T00:00:00.000000Z, hi=2020-01-05T23:59:59.999999Z}]",
+                "2020-W01"
         );
     }
 
