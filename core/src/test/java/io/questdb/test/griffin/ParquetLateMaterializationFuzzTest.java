@@ -25,12 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
@@ -104,7 +109,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testFirstStringAggregate() throws Exception {
-        testLateMaterializationAllTypesLowSelectivity("select first(a_string) from x where id%12=3");
+        testLateMaterializationAllTypesLowSelectivity("select first(a_string) from x where id%12=3", true, false);
     }
 
     @Test
@@ -114,7 +119,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLastVarcharAggregate() throws Exception {
-        testLateMaterializationAllTypesLowSelectivity("select last(a_varchar) from x where id%31 between 10 and 12");
+        testLateMaterializationAllTypesLowSelectivity("select last(a_varchar) from x where id%31 between 10 and 12", false, true);
     }
 
     @Test
@@ -660,6 +665,42 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         testLateMaterializationAllTypesLowSelectivity("select sum(a_byte) from x where id%9=1");
     }
 
+    @Ignore("enable after parquet write support for decimal types is added")
+    @Test
+    public void testSumDecimal128Aggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal128) from x where id%23=11");
+    }
+
+    @Ignore("enable after parquet write support for decimal types is added")
+    @Test
+    public void testSumDecimal16Aggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal16) from x where id%11=4");
+    }
+
+    @Ignore("enable after parquet write support for decimal types is added")
+    @Test
+    public void testSumDecimal256Aggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal256) from x where id%29=13");
+    }
+
+    @Ignore("enable after parquet write support for decimal types is added")
+    @Test
+    public void testSumDecimal32Aggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal32) from x where id%13=6");
+    }
+
+    @Ignore("enable after parquet write support for decimal types is added")
+    @Test
+    public void testSumDecimal64Aggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal64) from x where id%19=7");
+    }
+
+    @Ignore("enable after parquet write support for decimal types is added")
+    @Test
+    public void testSumDecimal8Aggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal8) from x where id%7=3");
+    }
+
     @Test
     public void testSumLong256Aggregate() throws Exception {
         testLateMaterializationAllTypesLowSelectivity("select sum(a_long256) from x where id%31=15");
@@ -690,6 +731,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     }
 
     private void testLateMaterializationAllTypesLowSelectivity(CharSequence query) throws Exception {
+        testLateMaterializationAllTypesLowSelectivity(query, false, false);
+    }
+
+    private void testLateMaterializationAllTypesLowSelectivity(CharSequence query, boolean checkStrLen, boolean checkVarcharLen) throws Exception {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
@@ -716,6 +761,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                                         rnd_long256() a_long256,
                                         rnd_geohash(4) a_geo_byte,
                                         rnd_geohash(16) a_geo_int,
+                                        -- rnd_decimal(2, 1, 0) a_decimal8,
+                                        -- rnd_decimal(4, 2, 0) a_decimal16,
+                                        -- rnd_decimal(9, 2, 0) a_decimal32,
+                                        -- rnd_decimal(18, 3, 0) a_decimal64,
+                                        -- rnd_decimal(38, 7, 0) a_decimal128,
+                                        -- rnd_decimal(76, 10, 0) a_decimal256,
                                         cast(timestamp_sequence(0,1000000) as date) a_date,
                                         timestamp_sequence(0, 60000000) as ts
                                       from long_sequence(2000)
@@ -725,8 +776,57 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
                     final StringSink expected = new StringSink();
                     engine.print(query, expected, sqlExecutionContext);
+                    long expectedTotalStrLen = 0;
+                    if (checkStrLen) {
+                        try (RecordCursorFactory factory = engine.select("select first(a_string) from x where id%12=4 group by a_symbol", sqlExecutionContext)) {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                while (cursor.hasNext()) {
+                                    Record record = cursor.getRecord();
+                                    expectedTotalStrLen += record.getStrLen(0);
+                                }
+                            }
+                        }
+                    }
+
+                    if (checkVarcharLen) {
+                        try (RecordCursorFactory factory = engine.select("select first(a_varchar) from x where id%12=5 group by a_symbol", sqlExecutionContext)) {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                while (cursor.hasNext()) {
+                                    Record record = cursor.getRecord();
+                                    expectedTotalStrLen += record.getVarcharSize(0);
+                                }
+                            }
+                        }
+                    }
+
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
                     TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+
+                    if (checkStrLen) {
+                        try (RecordCursorFactory factory = engine.select("select first(a_string) from x where id%12=4 group by a_symbol", sqlExecutionContext)) {
+                            long totalStrLen = 0;
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                while (cursor.hasNext()) {
+                                    Record record = cursor.getRecord();
+                                    totalStrLen += record.getStrLen(0);
+                                }
+                                Assert.assertEquals(expectedTotalStrLen, totalStrLen);
+                            }
+                        }
+                    }
+
+                    if (checkVarcharLen) {
+                        try (RecordCursorFactory factory = engine.select("select first(a_varchar) from x where id%12=5 group by a_symbol", sqlExecutionContext)) {
+                            long totalStrLen = 0;
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                while (cursor.hasNext()) {
+                                    Record record = cursor.getRecord();
+                                    totalStrLen += record.getVarcharSize(0);
+                                }
+                                Assert.assertEquals(expectedTotalStrLen, totalStrLen);
+                            }
+                        }
+                    }
                 },
                 configuration,
                 LOG
