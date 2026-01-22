@@ -816,9 +816,13 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testDateListErrorElementWithTimeAndGlobalTimeSuffix() {
-        // Element has time T09:30 AND there's a global time suffix T10:00 - this is invalid
-        assertBracketIntervalError("[2026-01-01T09:30, 2026-01-02]T10:00", "Invalid date");
+    public void testDateListElementWithTimeAndGlobalTimeSuffix() throws SqlException {
+        // Element with time keeps its time, element without time gets global suffix time
+        // 2026-01-01T09:30 keeps 09:30, 2026-01-02 gets T10:00
+        assertBracketInterval(
+                "[{lo=2026-01-01T09:30:00.000000Z, hi=2026-01-01T09:30:59.999999Z},{lo=2026-01-02T10:00:00.000000Z, hi=2026-01-02T10:00:59.999999Z}]",
+                "[2026-01-01T09:30, 2026-01-02]T10:00"
+        );
     }
 
     @Test

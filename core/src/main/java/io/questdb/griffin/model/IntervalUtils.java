@@ -1711,7 +1711,6 @@ public final class IntervalUtils {
                     // Use global timezone from suffix
                     activeTzLo = globalTzLo;
                     activeTzHi = globalTzHi;
-                    activeTzSeq = seq;
                 }
 
                 // Determine which day filter to use: per-element takes precedence over global
@@ -1720,17 +1719,48 @@ public final class IntervalUtils {
                 // Remember output size before parsing this element
                 int outSizeBeforeElement = out.size();
 
+                // Check if element already has a time component (contains 'T' followed by digit)
+                boolean elementHasTime = false;
+                for (int j = resolvedElementStart; j < effectiveElementEnd - 1; j++) {
+                    char ec = elementSeq.charAt(j);
+                    if ((ec == 'T' || ec == 't') && Character.isDigit(elementSeq.charAt(j + 1))) {
+                        elementHasTime = true;
+                        break;
+                    }
+                }
+
+                // Find where the time part of suffix ends (at ';' or '@' or end)
+                // Suffix format: T10:00, T10:00;1h, T10:00@TZ, T10:00@TZ;1h
+                int suffixTimeEnd = suffixStart;
+                if (suffixStart < lim && (seq.charAt(suffixStart) == 'T' || seq.charAt(suffixStart) == 't')) {
+                    // Find where time ends (at ';', '@', or end)
+                    suffixTimeEnd = suffixStart;
+                    while (suffixTimeEnd < lim) {
+                        char sc = seq.charAt(suffixTimeEnd);
+                        if (sc == ';' || sc == '@') {
+                            break;
+                        }
+                        suffixTimeEnd++;
+                    }
+                }
+
                 // Build the full interval string: element (without tz) + suffix (without tz)
                 sink.clear();
                 sink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
+
+                // If element already has time, skip the time part of suffix but include duration
+                int effectiveSuffixStart = elementHasTime ? suffixTimeEnd : suffixStart;
+
                 if (globalTzMarker >= 0) {
                     // Add suffix without timezone: part before @ and part after timezone (;duration)
-                    sink.put(seq, suffixStart, globalTzMarker);
+                    if (effectiveSuffixStart < globalTzMarker) {
+                        sink.put(seq, effectiveSuffixStart, globalTzMarker);
+                    }
                     if (globalTzHi < lim) {
                         sink.put(seq, globalTzHi, lim);
                     }
                 } else {
-                    sink.put(seq, suffixStart, lim);
+                    sink.put(seq, effectiveSuffixStart, lim);
                 }
 
                 // Check if the combined string contains brackets that need expansion
