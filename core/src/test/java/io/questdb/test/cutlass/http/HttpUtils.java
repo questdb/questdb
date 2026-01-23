@@ -100,6 +100,10 @@ public final class HttpUtils {
         TestUtils.assertEquals(expectedStatusCode, responseHeaders.getStatusCode());
     }
 
+    public static HttpClient.ResponseHeaders newHttpRequest(HttpClient client, int port, String query) {
+        return newHttpRequest(client, port, query, "admin", "quest", null, null, null);
+    }
+
     public static HttpClient.ResponseHeaders newHttpRequest(HttpClient client, int port, String query, String cookieName, String cookieValue) {
         return newHttpRequest(client, port, query, "admin", "quest", null, cookieName, cookieValue);
     }
