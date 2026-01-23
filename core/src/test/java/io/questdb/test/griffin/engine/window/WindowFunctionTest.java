@@ -7520,6 +7520,45 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionByWithMultiArgFunction() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/6695
+        // Window function type inference regression with multi-arg functions in PARTITION BY
+        // Using split_part with 3 args - without the fix, this fails with:
+        // "there is no matching function `split_part` with the argument types: (INT, CHAR, VARCHAR)"
+        assertMemoryLeak(() -> {
+            execute("create table t (sym varchar, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values ('A-1', '2024-01-01T00:00:00.000000Z')");
+            execute("insert into t values ('A-2', '2024-01-01T00:00:01.000000Z')");
+            execute("insert into t values ('B-1', '2024-01-01T00:00:02.000000Z')");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tmax
+                            A-1\t2024-01-01T00:00:01.000000Z
+                            A-2\t2024-01-01T00:00:01.000000Z
+                            B-1\t2024-01-01T00:00:02.000000Z
+                            """,
+                    "SELECT sym, max(ts) OVER (PARTITION BY split_part(sym, '-', 1)) as max FROM t",
+                    null,
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tmax
+                            A-1\t2024-01-01T00:00:01.000000Z
+                            A-2\t2024-01-01T00:00:01.000000Z
+                            B-1\t2024-01-01T00:00:02.000000Z
+                            """,
+                    "SELECT sym, max(ts) OVER (PARTITION BY split_part(sym, '-', 1), substring(sym, 1, 1)) as max FROM t",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testRankFunction() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, s symbol) timestamp(ts)", timestampType.getTypeName());
