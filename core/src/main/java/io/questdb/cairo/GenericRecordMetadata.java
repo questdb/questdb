@@ -100,7 +100,12 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return metadata;
     }
 
-    public static GenericRecordMetadata deepCopyOf(RecordMetadata that, int columnCount) {
+    /**
+     * Creates a new GenericRecordMetadata instance, copying column references (shallow copy).
+     * Unlike {@link #copyOf}, this method always creates a new instance even if the input
+     * is already a GenericRecordMetadata.
+     */
+    public static GenericRecordMetadata copyOfNew(RecordMetadata that, int columnCount) {
         if (that != null) {
             GenericRecordMetadata metadata = copyOfSansTimestamp(that, columnCount);
             int timestampIndex = that.getTimestampIndex();
@@ -112,23 +117,14 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return null;
     }
 
-    public static GenericRecordMetadata deepCopyOf(RecordMetadata that) {
+    /**
+     * Creates a new GenericRecordMetadata instance, copying column references (shallow copy).
+     * Unlike {@link #copyOf}, this method always creates a new instance even if the input
+     * is already a GenericRecordMetadata.
+     */
+    public static GenericRecordMetadata copyOfNew(RecordMetadata that) {
         if (that != null) {
-            GenericRecordMetadata metadata = new GenericRecordMetadata();
-            for (int i = 0, n = that.getColumnCount(); i < n; i++) {
-                metadata.add(
-                        new TableColumnMetadata(
-                                that.getColumnName(i),
-                                that.getColumnType(i),
-                                that.isColumnIndexed(i),
-                                that.getIndexValueBlockCapacity(i),
-                                that.isSymbolTableStatic(i),
-                                that.getMetadata(i),
-                                that.getWriterIndex(i),
-                                that.isDedupKey(i)
-                        )
-                );
-            }
+            GenericRecordMetadata metadata = copyOfSansTimestamp(that);
             metadata.setTimestampIndex(that.getTimestampIndex());
             return metadata;
         }
