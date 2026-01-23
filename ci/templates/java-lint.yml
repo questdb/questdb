@@ -36,7 +36,7 @@ steps:
         $DIFF_ARG \
         --print-problems 2>&1 | tee $(Agent.TempDirectory)/qodana-results/qodana-output.txt
     displayName: "Run Qodana inspections"
-    timeoutInMinutes: 30
+    timeoutInMinutes: 55
   - bash: |
       RESULTS_DIR="$(Agent.TempDirectory)/qodana-results"
       SARIF_FILE="$RESULTS_DIR/qodana.sarif.json"
