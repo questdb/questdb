@@ -7312,11 +7312,11 @@ public class JoinTest extends AbstractCairoTest {
                 FROM
                 (
                   SELECT *
-                  FROM trades b\s
-                  #JOIN_TYPE#\s
+                  FROM trades b
+                  #JOIN_TYPE#
                   (
-                    SELECT *\s
-                    FROM trades\s
+                    SELECT *
+                    FROM trades
                     WHERE price > 1
                       AND symbol = 'ETH-USD'
                   ) a ON #JOIN_CLAUSE#
