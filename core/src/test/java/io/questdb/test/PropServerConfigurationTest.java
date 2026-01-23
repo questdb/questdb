@@ -2128,7 +2128,9 @@ public class PropServerConfigurationTest {
                     String key = uncommented.substring(0, equalsIndex).trim();
                     String value = uncommented.substring(equalsIndex + 1).trim();
                     if (!key.contains(".") || key.startsWith("http.redirect") || key.contains(" ")
-                            || key.startsWith("replication") || key.startsWith("acl") || key.contains("tls") || key.startsWith("cold.storage") || key.startsWith("native.")) { // Enterprise confs
+                            || key.startsWith("replication") || key.startsWith("acl") || key.contains("tls")
+                            || key.startsWith("cold.storage") || key.startsWith("native.")
+                            || key.startsWith("backup.")) { // Enterprise confs
                         continue;
                     }
                     properties.clear();
