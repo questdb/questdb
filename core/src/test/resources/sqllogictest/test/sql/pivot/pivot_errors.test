@@ -18,6 +18,7 @@ test PIVOT (now() FOR j IN ('a', 'b'));
 db error: ERROR: expected aggregate function [col=now()]
 
 #PIVOT test ON j IN ('a', 'b') USING sum(sum(41) over ());
-query error
+query 3
 test PIVOT (sum(sum(41) over()) FOR j IN ('a', 'b'));
-db error: ERROR Nested window functions' context are not currently supported.
+----
+NULL NULL

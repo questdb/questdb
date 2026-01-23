@@ -59,6 +59,7 @@ import io.questdb.std.str.StringSink;
  * </ul>
  */
 public class RandomSelectGenerator {
+    private final IntList currentOrderableColumns = new IntList(); // 1-based positions of non-BINARY, non-BOOLEAN columns
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
     private final Rnd rnd;
@@ -107,6 +108,7 @@ public class RandomSelectGenerator {
         // Reset temporary state
         currentGroupByTable = null;
         currentGroupByColumnIndex = -1;
+        currentOrderableColumns.clear();
         currentlyUsingSampleBy = false;
 
         // Initialize metadata cache for this generation - fetch once, use locally, then let GC clean up
@@ -166,18 +168,44 @@ public class RandomSelectGenerator {
 
             // Generate ORDER BY clause
             if (rnd.nextDouble() < orderByProbability) {
-                sql.put(" ");
-                int orderedColType = generateOrderByClause(sql, selectedTables, useGroupBy, metadataCache);
+                // LIMIT is only deterministic when we have an orderable GROUP BY key (if grouping)
+                // or any orderable column (when not grouping)
+                boolean hasOrderableGroupKey = useGroupBy && currentOrderableColumns.contains(1);
+                boolean limitEligible = (!useGroupBy && currentOrderableColumns.size() > 0) || hasOrderableGroupKey;
+                boolean willUseLimit = limitEligible && rnd.nextDouble() < limitProbability;
 
-                // we don't allow LIMIT with ORDER BY <boolean> because boolean ordering is practically meaningless
-                // and LIMIT could yield non-determistic results. it's the same as if there was no ORDER BY at all
-                boolean meaningfulOrdering = orderedColType != Numbers.INT_NULL && orderedColType != ColumnType.BOOLEAN;
-
-                // Generate LIMIT clause only after ORDER BY, the result of the generated SELECT could
-                // be non-deterministic if it is not ordered and LIMIT is present
-                if (meaningfulOrdering && rnd.nextDouble() < limitProbability) {
+                if (willUseLimit) {
+                    if (currentlyUsingSampleBy) {
+                        // SAMPLE BY requires ascending timestamp ordering; enforce ascending on all orderable columns
+                        sql.put(" ORDER BY ");
+                        for (int i = 0, n = currentOrderableColumns.size(); i < n; i++) {
+                            if (i > 0) {
+                                sql.put(", ");
+                            }
+                            sql.put(currentOrderableColumns.get(i));
+                        }
+                        sql.put(" LIMIT ");
+                        sql.put(1 + rnd.nextInt(100));
+                        return sql.toString();
+                    }
+                    // When using LIMIT, ORDER BY all orderable columns positionally to ensure deterministic results
+                    // (ordering by a single low-cardinality column can cause non-determinism when LIMIT cuts rows)
+                    sql.put(" ORDER BY ");
+                    for (int i = 0, n = currentOrderableColumns.size(); i < n; i++) {
+                        if (i > 0) {
+                            sql.put(", ");
+                        }
+                        sql.put(currentOrderableColumns.get(i));
+                        if (rnd.nextBoolean()) {
+                            sql.put(" DESC");
+                        }
+                    }
                     sql.put(" LIMIT ");
                     sql.put(1 + rnd.nextInt(100));
+                } else {
+                    // No LIMIT - use regular ORDER BY on a single column
+                    sql.put(" ");
+                    generateOrderByClause(sql, selectedTables, useGroupBy, metadataCache);
                 }
             }
 
@@ -195,42 +223,42 @@ public class RandomSelectGenerator {
 
     public void registerTable(String tableName) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        String alias = "t" + tables.size();
+        String alias = (tableToken.isView() ? "v" : "t") + tables.size();
         tables.add(new TableInfo(tableName, tableToken, alias));
     }
 
     public RandomSelectGenerator setAggregationProbability(double probability) {
-        this.aggregationProbability = probability;
+        aggregationProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setGenerateLiteralProbability(double probability) {
-        this.generateLiteralProbability = probability;
+        generateLiteralProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setJoinProbability(double probability) {
-        this.joinProbability = probability;
+        joinProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setLimitProbability(double probability) {
-        this.limitProbability = probability;
+        limitProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setOrderByProbability(double probability) {
-        this.orderByProbability = probability;
+        orderByProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setSampleByProbability(double probability) {
-        this.sampleByProbability = probability;
+        sampleByProbability = probability;
         return this;
     }
 
     public RandomSelectGenerator setWhereClauseProbability(double probability) {
-        this.whereClauseProbability = probability;
+        whereClauseProbability = probability;
         return this;
     }
 
@@ -253,6 +281,7 @@ public class RandomSelectGenerator {
             sql.put("count(*)");
             currentGroupByTable = null;
             currentGroupByColumnIndex = -1;
+            currentOrderableColumns.add(1); // count(*) is orderable
             return;
         }
 
@@ -306,6 +335,12 @@ public class RandomSelectGenerator {
             sql.put(metadata.getColumnName(colIdx));
             sql.put(")");
         }
+        // Track orderable columns (non-BINARY, non-BOOLEAN - these have low cardinality causing non-determinism with LIMIT)
+        int firstColType = metadata.getColumnType(firstColIdx);
+        if (firstColType != ColumnType.BINARY && firstColType != ColumnType.BOOLEAN) {
+            currentOrderableColumns.add(1); // GROUP BY column
+        }
+        currentOrderableColumns.add(2); // Aggregate result is always orderable (numeric)
     }
 
     private void generateComparisonOperator(StringSink sql, int columnType) {
@@ -377,6 +412,9 @@ public class RandomSelectGenerator {
         ObjList<int[]> matchingColumns = new ObjList<>();
         for (int i = 0; i < meta1.getColumnCount(); i++) {
             int type1 = meta1.getColumnType(i);
+            if (type1 == ColumnType.BOOLEAN) {
+                continue;
+            }
             for (int j = 0; j < meta2.getColumnCount(); j++) {
                 int type2 = meta2.getColumnType(j);
                 if (areTypesCompatibleForJoin(type1, type2)) {
@@ -590,6 +628,13 @@ public class RandomSelectGenerator {
                 sql.put(table.alias).put(".");
             }
             sql.put(metadata.getColumnName(colIdx));
+
+            // Track orderable columns (non-BINARY, non-BOOLEAN) - position is 1-based
+            // BINARY can't be ordered, BOOLEAN has low cardinality causing non-determinism with LIMIT
+            int colType = metadata.getColumnType(colIdx);
+            if (colType != ColumnType.BINARY && colType != ColumnType.BOOLEAN) {
+                currentOrderableColumns.add(i + 1);
+            }
         }
     }
 
