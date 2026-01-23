@@ -81,7 +81,7 @@ public class CopyExportContext {
         this.copyIDSupplier = engine.getConfiguration().getCopyIDSupplier();
     }
 
-    public static boolean canStreamExportParquet(RecordCursorFactory factory) throws SqlException {
+    public static boolean canStreamExportParquet(RecordCursorFactory factory) {
         return factory.supportsPageFrameCursor();
     }
 

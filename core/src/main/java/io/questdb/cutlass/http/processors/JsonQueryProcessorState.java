@@ -1155,7 +1155,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     boolean of(RecordCursorFactory factory, boolean queryCacheable, SqlExecutionContextImpl sqlExecutionContext)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
@@ -1322,6 +1322,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     @FunctionalInterface
     interface StateResumeAction {
         void onResume(HttpChunkedResponse response, int columnCount)
-                throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException;
+                throws PeerDisconnectedException, PeerIsSlowToReadException;
     }
 }

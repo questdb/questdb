@@ -58,7 +58,7 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
             @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         return new Func(
                 configuration,
                 args.getQuick(0),

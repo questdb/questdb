@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -52,7 +51,7 @@ public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         return new IntIntervalFunction(args.getQuick(0));
     }
 

@@ -56,7 +56,7 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
             @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         return new Func(configuration, args.getQuick(0), args.getQuick(1), args.getQuick(2), position);
     }
 

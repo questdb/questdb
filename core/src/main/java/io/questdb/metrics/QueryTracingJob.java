@@ -40,7 +40,6 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class QueryTracingJob extends SynchronizedJob implements Closeable {
     public static final String COLUMN_EXECUTION_MICROS = "execution_micros";
@@ -73,7 +72,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         tableWriter.close();
     }
 

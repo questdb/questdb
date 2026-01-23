@@ -45,7 +45,7 @@ public abstract class WeakDimsArrayFunction extends ArrayFunction {
      * the bind variable values.
      */
     @Override
-    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+    public void assignType(int type, BindVariableService bindVariableService) {
         this.assignedType = type;
     }
 

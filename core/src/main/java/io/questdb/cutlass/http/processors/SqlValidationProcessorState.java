@@ -332,7 +332,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         onResumePrefix(response, columnCount);
     }
 
-    boolean of(RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    boolean of(RecordCursorFactory factory) {
         try (factory) {
             final RecordMetadata metadata = factory.getMetadata();
             this.queryTimestampIndex = metadata.getTimestampIndex();
@@ -424,6 +424,6 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         void onResume(
                 HttpChunkedResponse response,
                 int columnCount
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException;
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException;
     }
 }

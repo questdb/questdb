@@ -39,7 +39,7 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
     private LongAdapter() {
     }
 
-    public long getLong(DirectUtf8Sequence value) throws Exception {
+    public long getLong(DirectUtf8Sequence value) {
         return Numbers.parseLong(value);
     }
 

@@ -48,7 +48,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
             Function arg,
             int targetType,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         if (arg.isConstant()) {
             return newConstantInstance(sqlExecutionContext, position, targetType, arg);
         }

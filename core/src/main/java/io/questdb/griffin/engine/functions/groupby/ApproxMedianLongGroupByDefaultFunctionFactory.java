@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
@@ -55,7 +54,7 @@ public class ApproxMedianLongGroupByDefaultFunctionFactory implements FunctionFa
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         return new ApproxPercentileLongGroupByFunction(args.getQuick(0), percentileFunc, DEFAULT_PRECISION, position);
     }
 

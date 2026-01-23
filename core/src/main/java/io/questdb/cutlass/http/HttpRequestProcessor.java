@@ -77,7 +77,7 @@ public interface HttpRequestProcessor {
     default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
     }
 
-    default boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    default boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
         return true;
     }
 

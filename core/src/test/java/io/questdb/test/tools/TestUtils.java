@@ -756,7 +756,7 @@ public final class TestUtils {
             CharSequence expectedMessage,
             int expectedPosition,
             MutableCharSink<?> sink
-    ) throws SqlException {
+    ) {
         try {
             assertException(
                     engine,

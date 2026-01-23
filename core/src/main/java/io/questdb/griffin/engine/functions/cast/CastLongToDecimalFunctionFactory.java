@@ -52,7 +52,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             Function arg,
             int targetType,
             Decimal256 decimal256
-    ) throws SqlException {
+    ) {
         if (arg.isConstant()) {
             long value = arg.getLong(null);
             return newConstantInstance(decimal256, position, targetType, value);

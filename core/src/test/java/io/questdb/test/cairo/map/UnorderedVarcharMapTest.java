@@ -297,7 +297,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCursor() throws Exception {
+    public void testCursor() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (
                 DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);

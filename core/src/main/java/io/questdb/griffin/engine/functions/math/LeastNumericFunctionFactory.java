@@ -126,7 +126,7 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         throw SqlException.position(argPositions.getQuick(0)).put("unexpected argument types");
     }
 
-    private static @NotNull Function getDecimalLeastFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
+    private static @NotNull Function getDecimalLeastFunction(ObjList<Function> args, IntList argPositions) {
         // We need to find the maximum scale/precision combination.
         int precision = 1;
         int scale = 0;
@@ -408,7 +408,6 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
     private static class LeastDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
-        private final Decimal128 decimal128 = new Decimal128();
         private final Decimal256 decimal256 = new Decimal256();
         private final int n;
         private final StringSink sink = new StringSink();

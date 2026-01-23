@@ -18,7 +18,6 @@ import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
@@ -49,7 +48,7 @@ public class SettingsStore implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.free(preferencesParser);
         Misc.free(blockFileReader);
         Misc.free(blockFileWriter);

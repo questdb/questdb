@@ -98,7 +98,7 @@ public class IDGeneratorTest extends AbstractCairoTest {
         });
     }
 
-    private Set<Long> testGenerateId(CairoConfiguration configuration, int commitMode, int step, int count) throws Exception {
+    private Set<Long> testGenerateId(CairoConfiguration configuration, int commitMode, int step, int count) {
         try (
                 IDGenerator idGenerator = IDGeneratorFactory.newIDGenerator(
                         new CairoConfigurationWrapper(configuration) {

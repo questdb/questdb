@@ -2586,7 +2586,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReloadWithTrailingNullString() throws Exception {
+    public void testReloadWithTrailingNullString() {
         final String tableName = "reload_test";
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
         model.col("str", ColumnType.STRING);

@@ -54,7 +54,7 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
             @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         return new Func(args.getQuick(0), position);
     }
 

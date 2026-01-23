@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.std.Decimal128;
@@ -53,7 +52,7 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         final Function arg = args.getQuick(0);
         return switch (ColumnType.tagOf(arg.getType())) {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->

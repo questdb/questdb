@@ -52,7 +52,7 @@ public class IlpTimestampColumnBenchmark {
     private static final String TIMESTAMP_TYPE_NAME = "TIMESTAMP";
     private static final boolean useV2Protocol = true;
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         runTimestampColumnBenchmark();
     }
 

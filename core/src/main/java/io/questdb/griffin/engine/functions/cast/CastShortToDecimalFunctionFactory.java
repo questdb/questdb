@@ -50,7 +50,7 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
             Function arg,
             int targetType,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         if (arg.isConstant()) {
             short value = arg.getShort(null);
             return newConstantInstance(sqlExecutionContext, position, targetType, value);

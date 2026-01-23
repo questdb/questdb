@@ -32,19 +32,19 @@ import org.junit.Test;
 
 public class TimestampLocaleTest {
     @Test(expected = NumericException.class)
-    public void testBadMonth() throws Exception {
+    public void testBadMonth() {
         String date = "23 Dek 2010";
         DateLocaleFactory.INSTANCE.getLocale("en-GB").matchMonth(date, 3, date.length());
     }
 
     @Test(expected = NumericException.class)
-    public void testBadMonth2() throws Exception {
+    public void testBadMonth2() {
         String date = "23 Zek 2010";
         DateLocaleFactory.INSTANCE.getLocale("en-GB").matchMonth(date, 3, date.length());
     }
 
     @Test
-    public void testLongMonth() throws Exception {
+    public void testLongMonth() {
         String date = "23 December 2010";
         long result = DateLocaleFactory.INSTANCE.getLocale("en-GB").matchMonth(date, 3, date.length());
         Assert.assertEquals(8, Numbers.decodeHighInt(result));
@@ -52,7 +52,7 @@ public class TimestampLocaleTest {
     }
 
     @Test
-    public void testLowCaseLongMonth() throws Exception {
+    public void testLowCaseLongMonth() {
         String date = "23 december 2010";
         long result = DateLocaleFactory.INSTANCE.getLocale("en-GB").matchMonth(date, 3, date.length());
         Assert.assertEquals(8, Numbers.decodeHighInt(result));
@@ -60,7 +60,7 @@ public class TimestampLocaleTest {
     }
 
     @Test
-    public void testRTLMonth() throws Exception {
+    public void testRTLMonth() {
         String s = "23مارس";
         long result = DateLocaleFactory.INSTANCE.getLocale("ar-DZ").matchMonth(s, 2, s.length());
         Assert.assertEquals(4, Numbers.decodeHighInt(result));
@@ -68,7 +68,7 @@ public class TimestampLocaleTest {
     }
 
     @Test
-    public void testShortMonth() throws Exception {
+    public void testShortMonth() {
         String date = "23 Aug 2010";
         long result = DateLocaleFactory.INSTANCE.getLocale("en-GB").matchMonth(date, 3, date.length());
         Assert.assertEquals(3, Numbers.decodeHighInt(result));
@@ -76,7 +76,7 @@ public class TimestampLocaleTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testWrongLength() throws Exception {
+    public void testWrongLength() {
         String date = "23 Zek 2010";
         DateLocaleFactory.INSTANCE.getLocale("en-GB").matchMonth(date, 30, date.length());
     }

@@ -50,7 +50,7 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
             Function arg,
             int targetType,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         if (arg.isConstant()) {
             byte value = arg.getByte(null);
             return newConstantInstance(sqlExecutionContext, position, targetType, value);

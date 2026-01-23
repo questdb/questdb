@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.cast.CastDecimalToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.StrTypeConstant;
 import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
@@ -143,7 +142,7 @@ public class CastDecimalToVarcharFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNull() throws SqlException {
+    public void testNull() {
         decimal256.ofNull();
         for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
             createFunctionAndAssert(null, precision);
@@ -174,6 +173,8 @@ public class CastDecimalToVarcharFunctionFactoryTest extends AbstractCairoTest {
                 Assert.assertNull(strA);
                 Assert.assertNull(strB);
             } else {
+                Assert.assertNotNull(strA);
+                Assert.assertNotNull(strB);
                 Assert.assertEquals(expected.toString(), strA.asAsciiCharSequence().toString());
                 Assert.assertEquals(expected.toString(), strB.asAsciiCharSequence().toString());
             }

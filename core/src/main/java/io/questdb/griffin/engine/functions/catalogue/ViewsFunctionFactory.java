@@ -42,7 +42,6 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
@@ -63,7 +62,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         return new CursorFunction(new ViewsCursorFactory()) {
             @Override
             public boolean isRuntimeConstant() {

@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
 
 public final class ArrayConstant extends ArrayFunction implements ConstantFunction {
@@ -108,7 +107,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
     }
 
     @Override
-    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+    public void assignType(int type, BindVariableService bindVariableService) {
         this.type = type;
         array.setType(type);
     }

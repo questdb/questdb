@@ -57,7 +57,7 @@ public class HealthCheckTest {
             .build();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         Metrics.ENABLED.clear();
     }
 

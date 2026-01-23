@@ -577,7 +577,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
-    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
+    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) {
         columnFilter.of(factory.getMetadata().getColumnCount());
         return RecordToRowCopierUtils.generateCopier(
                 compiler.getAsm(),

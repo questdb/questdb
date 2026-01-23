@@ -62,7 +62,7 @@ public final class IPv4Adapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
         row.putIPv4(column, SqlKeywords.isNullKeyword(value) ? Numbers.IPv4_NULL : parseIPv4(value));
     }
 

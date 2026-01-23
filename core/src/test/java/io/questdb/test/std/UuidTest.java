@@ -47,7 +47,7 @@ public class UuidTest {
     }
 
     @Test
-    public void testEqualsAndHashcode() throws Exception {
+    public void testEqualsAndHashcode() {
         Uuid m1 = new Uuid();
         Uuid m2 = new Uuid();
         for (int i = 0; i < 100; i++) {
@@ -74,7 +74,7 @@ public class UuidTest {
     }
 
     @Test
-    public void testHappyParsing() throws Exception {
+    public void testHappyParsing() {
         UUID javaUuid = UUID.randomUUID();
 
         Uuid uuid = new Uuid();
@@ -123,7 +123,7 @@ public class UuidTest {
     }
 
     @Test
-    public void testUpperCaseUuid() throws Exception {
+    public void testUpperCaseUuid() {
         // rfc4122 section 3 says:
         // The hexadecimal values "a" through "f" are output as lower case characters and are case insensitive on input.
 

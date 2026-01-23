@@ -322,7 +322,7 @@ public class DivDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
     }
 
     @Test
-    public void testDivRandomValues() throws SqlException {
+    public void testDivRandomValues() {
         for (int i = 2; i < 10; i++) {
             long dividend = i * 12;
             long divisor = i % 6 + 1; // ensure divisor is not zero

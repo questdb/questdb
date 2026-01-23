@@ -371,11 +371,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
         sink.put('}');
     }
 
-    protected static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+    protected static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException {
         assertResultSet(null, expected, sink, rs, map);
     }
 
-    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException {
         printToSink(sink, rs, map);
         TestUtils.assertEquals(message, expected, sink);
     }

@@ -51,7 +51,7 @@ public class IlpArrayBenchmark {
     private static final long RUNTIME_SECONDS = 10;
     private static final boolean USE_ARRAY = false;
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         runBenchmark();
     }
 

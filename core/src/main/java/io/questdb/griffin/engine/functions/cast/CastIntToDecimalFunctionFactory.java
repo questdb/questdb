@@ -51,7 +51,7 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
             Function arg,
             int targetType,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         if (arg.isConstant()) {
             int value = arg.getInt(null);
             return newConstantInstance(sqlExecutionContext, position, targetType, value);

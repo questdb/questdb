@@ -56,7 +56,7 @@ public class DoubleArrayShiftDefaultNaNFunctionFactory implements FunctionFactor
             @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         return new Func(configuration, args.getQuick(0), args.getQuick(1), position);
     }
 

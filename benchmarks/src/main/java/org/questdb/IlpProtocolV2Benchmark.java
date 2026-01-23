@@ -52,7 +52,7 @@ public class IlpProtocolV2Benchmark {
     private static final double base = 99.99999;
     private static final boolean useV2Protocol = true;
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         runDoubleBenchmark();
     }
 

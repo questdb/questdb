@@ -81,7 +81,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
     }
 
     @Override
-    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) {
         assert order != ORDER_DESC;
         if (this.pageFrameCursor == null) {
             this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
