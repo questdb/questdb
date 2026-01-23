@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -119,7 +118,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public boolean hasNext() throws DataUnavailableException {
+            public boolean hasNext() {
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
                     final TableToken viewToken = viewTokens.get(viewIndex);
@@ -148,7 +147,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public long size() throws DataUnavailableException {
+            public long size() {
                 return -1;
             }
 

@@ -415,8 +415,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     /**
      * Must be called before subsequence calls to {@link #next(int, boolean)} to count page frames and
      * initialize page frame cache and filter functions.
-     *
-     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     public void prepareForDispatch() {
         if (!readyToDispatch) {

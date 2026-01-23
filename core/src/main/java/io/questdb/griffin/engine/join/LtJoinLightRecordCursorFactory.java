@@ -145,10 +145,8 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
-        private boolean isMasterHasNextPending;
         private boolean isOpen;
         private long lastSlaveRowID = Long.MIN_VALUE;
-        private boolean masterHasNext;
         private Record masterRecord;
         private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
@@ -197,11 +195,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
 
         @Override
         public boolean hasNext() {
-            if (isMasterHasNextPending) {
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            }
-            if (masterHasNext) {
+            if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 MapKey key;
                 MapValue value;
@@ -251,7 +245,6 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                     record.hasSlave(false);
                 }
 
-                isMasterHasNextPending = true;
                 return true;
             }
             return false;
@@ -274,7 +267,6 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             lastSlaveRowID = Long.MIN_VALUE;
             masterCursor.toTop();
             slaveCursor.toTop();
-            isMasterHasNextPending = true;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
@@ -289,7 +281,6 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
-            isMasterHasNextPending = true;
         }
     }
 }

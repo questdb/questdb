@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -80,7 +79,7 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) {
         cursorA.skipRows(rowCount);
         if (rowCount.get() > 0) {
             cursorB.skipRows(rowCount);
