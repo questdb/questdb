@@ -397,6 +397,19 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectFromGenerateSeries() throws Exception {
+        // Test for issue #6547: DECLARE substitution should work for function arguments in FROM clause
+        assertMemoryLeak(() -> assertSql(
+                """
+                        generate_series
+                        2025-01-01T00:00:00.000000Z
+                        2025-01-02T00:00:00.000000Z
+                        """,
+                "DECLARE @lo := '2025-01-01', @hi := '2025-01-02', @unit := '1d' SELECT * FROM generate_series(@lo, @hi, @unit)"
+        ));
+    }
+
+    @Test
     public void testDeclareSelectGroupByNames() throws Exception {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
