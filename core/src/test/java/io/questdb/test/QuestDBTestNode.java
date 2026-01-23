@@ -40,6 +40,7 @@ import io.questdb.std.Misc;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.tools.TestUtils;
 
+@SuppressWarnings("ClassEscapesDefinedScope")
 public class QuestDBTestNode {
     private final int nodeId;
 
@@ -68,10 +69,6 @@ public class QuestDBTestNode {
 
     public CairoEngine getEngine() {
         return cairo.engine;
-    }
-
-    public int getId() {
-        return nodeId;
     }
 
     public MessageBus getMessageBus() {

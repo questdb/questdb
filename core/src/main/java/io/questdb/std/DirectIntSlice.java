@@ -26,7 +26,6 @@ package io.questdb.std;
 
 import io.questdb.std.bytes.DirectSequence;
 import io.questdb.std.str.Utf16Sink;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * A flyweight to an immutable int slice stored in native memory.
@@ -76,15 +75,6 @@ public class DirectIntSlice implements DirectSequence {
 
     public void shl(long delta) {
         this.ptr -= delta;
-    }
-
-    @TestOnly
-    public int[] toArray() {
-        final int[] res = new int[length];
-        for (int i = 0; i < length; ++i) {
-            res[i] = get(i);
-        }
-        return res;
     }
 
     @Override

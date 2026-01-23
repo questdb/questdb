@@ -31,8 +31,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 
@@ -44,6 +42,7 @@ public class TestServerMain extends ServerMain {
         super(args);
     }
 
+    @SuppressWarnings("ClassEscapesDefinedScope")
     public TestServerMain(final Bootstrap bootstrap) {
         super(bootstrap);
     }
@@ -88,23 +87,6 @@ public class TestServerMain extends ServerMain {
         } catch (SqlException e) {
             throw new AssertionError(e);
         }
-    }
-
-    public void reset() {
-        // Drop all tables
-        CairoEngine engine = this.getEngine();
-        engine.releaseInactive();
-        engine.clear();
-        engine.closeNameRegistry();
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        try (Path p = new Path()) {
-            p.of(engine.getConfiguration().getDbRoot());
-            ff.mkdir(p.$(), engine.getConfiguration().getMkDirMode());
-        }
-        engine.getTableIdGenerator().open();
-        engine.resetNameRegistryMemory();
-        resetQueryCache();
-        engine.setUp();
     }
 
     private void ensureContext() {

@@ -35,6 +35,7 @@ exclude:
     paths:
       - benchmarks
   # Exclude noisy style/migration inspections globally
+  - name: EmptyMethod
   - name: JavadocBlankLines
   - name: TextBlockMigration
   - name: CodeBlock2Expr

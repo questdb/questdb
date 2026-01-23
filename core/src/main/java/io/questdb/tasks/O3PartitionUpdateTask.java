@@ -24,10 +24,7 @@
 
 package io.questdb.tasks;
 
-import io.questdb.std.ObjectFactory;
-
 public class O3PartitionUpdateTask {
-    public static final ObjectFactory<O3PartitionUpdateTask> CONSTRUCTOR = O3PartitionUpdateTask::new;
     private boolean partitionMutates;
     private long partitionTimestamp;
     private long srcDataMax;

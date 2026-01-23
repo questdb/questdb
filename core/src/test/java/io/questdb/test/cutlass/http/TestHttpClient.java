@@ -61,21 +61,6 @@ public class TestHttpClient implements QuietCloseable {
         assertGet(expectedResponse, sql, "localhost", 9001, null, null);
     }
 
-    public void assertGet(CharSequence expectedResponse, CharSequence sql, String host, int port) {
-        assertGet(expectedResponse, sql, host, port, null, null);
-    }
-
-    public void assertGet(String host, int port, CharSequence expectedResponse, CharSequence sql, CharSequenceObjHashMap<String> queryParams) {
-        try {
-            toSink0(host, port, "/query", sql, sink, null, null, null, queryParams, null);
-            TestUtils.assertEquals(expectedResponse, sink);
-        } finally {
-            if (!keepConnection) {
-                httpClient.disconnect();
-            }
-        }
-    }
-
     public void assertGet(CharSequence expectedResponse, CharSequence sql, CharSequenceObjHashMap<String> queryParams) {
         try {
             toSink0("/query", sql, sink, null, null, null, queryParams, null);
@@ -423,10 +408,6 @@ public class TestHttpClient implements QuietCloseable {
     @Override
     public void close() {
         httpClient = Misc.free(httpClient);
-    }
-
-    public void disconnect() {
-        httpClient.disconnect();
     }
 
     public HttpClient getHttpClient() {

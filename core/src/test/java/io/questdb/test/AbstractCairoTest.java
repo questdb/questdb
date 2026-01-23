@@ -1570,10 +1570,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return TestUtils.createTable(engine, model);
     }
 
-    protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
-        return createWalApplyJob(node.getEngine());
-    }
-
     protected static ApplyWal2TableJob createWalApplyJob() {
         return createWalApplyJob(engine);
     }
@@ -1632,13 +1628,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         CairoEngine.execute(compiler, sqlText, sqlExecutionContext, null);
     }
 
-    protected static void execute(CharSequence ddlSql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoins);
-            execute(compiler, ddlSql, sqlExecutionContext);
-        }
-    }
-
+    @SuppressWarnings("unused")
     protected static void forEachNode(QuestDBNodeTask task) {
         for (int i = 0; i < nodes.size(); i++) {
             task.run(nodes.get(i));

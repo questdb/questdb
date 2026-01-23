@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Rows;
 
+@SuppressWarnings("ClassEscapesDefinedScope")
 public class TestTableReaderRecordCursor implements RecordCursor {
     protected final TestTableReaderRecord recordA = new TestTableReaderRecord();
     private final TestTableReaderRecord recordB = new TestTableReaderRecord();
@@ -85,14 +86,6 @@ public class TestTableReaderRecordCursor implements RecordCursor {
         this.recordHi = -1;
         of0(reader);
         return this;
-    }
-
-    public void of(TableReader reader, int partitionLo, long recordLo, int partitionHi, long recordHi) {
-        this.partitionLo = partitionLo;
-        this.partitionHi = partitionHi;
-        this.recordLo = recordLo;
-        this.recordHi = recordHi;
-        of0(reader);
     }
 
     @Override

@@ -31,9 +31,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashSet;
 import java.util.Random;
-import java.util.Set;
 
 /**
  * Produces strings by applying the syntax rules for a double literal
@@ -86,29 +84,6 @@ public class LexicalGenerator {
             for (String line = r.readLine(); line != null; line = r.readLine()) {
                 w.write(Double.toHexString(Double.parseDouble(line)));
                 w.write('\n');
-            }
-        }
-    }
-
-    public static void main1(String... args) throws IOException {
-        Path path;
-        if (args.length == 0) {
-            System.out.println("Please provide the output file.");
-            path = null;
-            System.exit(10);
-        } else {
-            path = FileSystems.getDefault().getPath(args[0]);
-        }
-        Random rng = new Random(0);
-        LexicalGenerator gen = new LexicalGenerator(false, true);
-        Set<String> produced = new HashSet<>();
-        try (BufferedWriter w = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
-            while (produced.size() < 100_000) {
-                String str = gen.produceRandomInputStringFromLexicalRuleWithoutWhitespace(40, rng);
-                if (produced.add(str)) {
-                    w.write(str);
-                    w.write('\n');
-                }
             }
         }
     }

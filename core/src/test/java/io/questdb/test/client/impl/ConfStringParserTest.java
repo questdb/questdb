@@ -263,13 +263,6 @@ public final class ConfStringParserTest {
         return pos;
     }
 
-    private static int assertNextValueError(CharSequence input, int pos, String expectedError) {
-        pos = ConfStringParser.value(input, pos, sink);
-        Assert.assertTrue(pos < 0);
-        TestUtils.assertEquals(expectedError, sink);
-        return pos;
-    }
-
     private static int assertNextValueOk(CharSequence input, int pos, String expectedValue) {
         pos = ConfStringParser.value(input, pos, sink);
         Assert.assertTrue(pos >= 0);

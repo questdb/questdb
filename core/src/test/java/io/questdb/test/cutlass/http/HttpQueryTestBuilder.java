@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
@@ -32,7 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -92,7 +90,6 @@ public class HttpQueryTestBuilder {
     private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
-    private SecurityContext securityContext = null;
     private int sendBufferSize = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private ObjList<SqlExecutionContextImpl> sqlExecutionContexts;
@@ -100,10 +97,6 @@ public class HttpQueryTestBuilder {
     private boolean telemetry;
     private String temp;
     private int workerCount = 1;
-
-    public int getWorkerCount() {
-        return this.workerCount;
-    }
 
     public void run(HttpClientCode code) throws Exception {
         run(null, code);
@@ -127,16 +120,6 @@ public class HttpQueryTestBuilder {
             serverConfigBuilder.withSendBufferSize(sendBufferSize);
         }
 
-        if (securityContext != null) {
-            SecurityContextFactory securityContextFactory = (principalContext, interfaceId) -> securityContext;
-
-            serverConfigBuilder.withFactoryProvider(new DefaultFactoryProvider() {
-                @Override
-                public @NotNull SecurityContextFactory getSecurityContextFactory() {
-                    return securityContextFactory;
-                }
-            });
-        }
         final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder.build(configuration);
         final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
 
@@ -422,11 +405,6 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withQueryTimeout(long queryTimeout) {
         this.queryTimeout = queryTimeout;
-        return this;
-    }
-
-    public HttpQueryTestBuilder withSecurityContext(SecurityContext securityContext) {
-        this.securityContext = securityContext;
         return this;
     }
 
