@@ -380,7 +380,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             try {
                 state.resume(response);
                 break;
-            } catch (SqlException | ImplicitCastException e) {
+            } catch (ImplicitCastException e) {
                 sendException(
                         state,
                         e.getPosition(),
@@ -412,7 +412,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     private void executeNewSelect(
             SqlValidationProcessorState state,
             CompiledQuery cq
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         RecordCursorFactory factory = cq.getRecordCursorFactory();
         final HttpConnectionContext context = state.getHttpConnectionContext();
         if (!state.of(factory)) {

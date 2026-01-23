@@ -33,7 +33,6 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -398,7 +397,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     void resume(HttpChunkedResponse response)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         resumeActions.getQuick(validationState).onResume(response, columnCount);
     }
 

@@ -164,7 +164,6 @@ public class HistogramTest {
                 thrown = true;
             }
             Assert.assertTrue(thrown);
-            Assert.assertNull(histogram);
 
             thrown = false;
             try {

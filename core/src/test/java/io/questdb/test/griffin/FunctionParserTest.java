@@ -141,6 +141,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assert assertsEnabled = true;
 
         // test asserts that an assert statement in production code will fail
+        //noinspection ConstantValue
         Assume.assumeTrue(assertsEnabled);
 
         try {

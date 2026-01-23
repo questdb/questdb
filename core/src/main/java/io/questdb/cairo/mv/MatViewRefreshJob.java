@@ -688,6 +688,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 copier = getRecordToRowCopier(walWriter, factory, compiler);
                             }
                         } catch (SqlException e) {
+                            //noinspection ConstantValue,DataFlowIssue
                             factory = Misc.free(factory);
                             LOG.error().$("could not compile materialized view [view=").$(viewTableToken)
                                     .$(", sql=").$(viewSql)

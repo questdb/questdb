@@ -54,6 +54,7 @@ public class UuidTest {
             UUID uuid = UUID.randomUUID();
             m1.of(uuid.getLeastSignificantBits(), uuid.getMostSignificantBits());
             m2.of(uuid.toString());
+            //noinspection EqualsWithItself
             assertEquals(m1, m1);
             assertEquals(m1, m2);
             assertEquals(m1.hashCode(), m2.hashCode());
@@ -62,7 +63,6 @@ public class UuidTest {
             assertNotEquals(m1, m2);
         }
         assertNotEquals(null, m1);
-        assertNotEquals("foo", m1);
 
         m1.of(0, 1);
         m1.of(0, 2);

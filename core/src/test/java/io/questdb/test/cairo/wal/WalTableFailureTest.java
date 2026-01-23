@@ -89,6 +89,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
     }
 
+    @SuppressWarnings("ExtractMethodRecommender")
     @Test
     public void testAddColumnFailToApplySequencerMetadataStructureChangeTransaction() throws Exception {
         assertMemoryLeak(() -> {

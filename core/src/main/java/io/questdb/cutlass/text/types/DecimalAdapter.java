@@ -90,7 +90,7 @@ public class DecimalAdapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
         write(row, column, value, null, null, decimal256);
     }
 }

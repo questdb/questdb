@@ -254,17 +254,6 @@ class FastDouble {
             } else if (hexValue == FastDoubleUtils.DECIMAL_POINT_CLASS) {
                 illegal |= virtualIndexOfPoint >= 0;
                 virtualIndexOfPoint = index;
-                /*
-                for (;index < endIndex - 8; index += 8) {
-                    long parsed = tryToParseEightHexDigits(str, index + 1);
-                    if (parsed >= 0) {
-                        // This might overflow, we deal with it later.
-                        digits = (digits << 32) + parsed;
-                    } else {
-                        break;
-                    }
-                }
-                */
             } else {
                 break;
             }

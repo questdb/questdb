@@ -569,8 +569,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
+    @SuppressWarnings("CanBeFinal")
     protected HttpServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
+    @SuppressWarnings("CanBeFinal")
     protected HttpFullFatServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
+    @SuppressWarnings("CanBeFinal")
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;

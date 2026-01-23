@@ -30,7 +30,6 @@ import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
 import org.junit.Assert;
 import org.junit.Test;
 
-@SuppressWarnings("resource")
 public class GeoIntColumnTest {
 
     @Test
@@ -43,19 +42,24 @@ public class GeoIntColumnTest {
 
     private static void assertBits(int bits, int column) {
         int type = ColumnType.getGeoHashTypeWithBits(bits);
-        GeoIntColumn col = GeoIntColumn.newInstance(column, type);
-        String desc = "col=" + column + ",bits=" + bits;
+        try (GeoIntColumn col = GeoIntColumn.newInstance(column, type)) {
+            String desc = "col=" + column + ",bits=" + bits;
 
-        Assert.assertEquals(desc, type, col.getType());
-        Assert.assertEquals(desc, column, col.getColumnIndex());
+            Assert.assertEquals(desc, type, col.getType());
+            Assert.assertEquals(desc, column, col.getColumnIndex());
 
-        //noinspection ObjectEquality,ExpressionComparedToItself
-        boolean isCached = GeoIntColumn.newInstance(column, type) == GeoIntColumn.newInstance(column, type);
+            try (
+                    GeoIntColumn c1 = GeoIntColumn.newInstance(column, type);
+                    GeoIntColumn c2 = GeoIntColumn.newInstance(column, type)
+            ) {
+                boolean isCached = c1 == c2;
 
-        if (column < ColumnUtils.STATIC_COLUMN_COUNT) {
-            Assert.assertTrue(isCached);
-        } else {
-            Assert.assertFalse(isCached);
+                if (column < ColumnUtils.STATIC_COLUMN_COUNT) {
+                    Assert.assertTrue(isCached);
+                } else {
+                    Assert.assertFalse(isCached);
+                }
+            }
         }
     }
 }

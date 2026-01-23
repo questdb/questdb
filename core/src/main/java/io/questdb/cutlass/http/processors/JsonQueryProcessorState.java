@@ -43,7 +43,6 @@ import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
@@ -1307,7 +1306,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     void resume(HttpChunkedResponse response)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         resumeActions.getQuick(queryState).onResume(response, columnCount);
     }
 

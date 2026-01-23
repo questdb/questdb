@@ -204,7 +204,7 @@ public class HistogramEncodingTest {
             histogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
             targetCompressedBuffer.rewind();
 
-            AbstractHistogram histogram2 = decodeFromCompressedByteBuffer(histoClass, targetCompressedBuffer, 0);
+            AbstractHistogram histogram2 = decodeFromCompressedByteBuffer(histoClass, targetCompressedBuffer);
             Assert.assertEquals(histogram, histogram2);
         }
     }
@@ -226,7 +226,7 @@ public class HistogramEncodingTest {
             histogram.encodeIntoCompressedByteBuffer(targetBuffer);
             targetBuffer.rewind();
 
-            DoubleHistogram decodedHistogram = decodeDoubleHistogramFromCompressedByteBuffer(histoClass, targetBuffer, 0);
+            DoubleHistogram decodedHistogram = decodeDoubleHistogramFromCompressedByteBuffer(histoClass, targetBuffer);
 
             Assert.assertEquals(histogram, decodedHistogram);
         }
@@ -251,7 +251,7 @@ public class HistogramEncodingTest {
 
             histogram.encodeIntoCompressedByteBuffer(targetBuffer);
             targetBuffer.rewind();
-            AbstractHistogram decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer, 0);
+            AbstractHistogram decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer);
             Assert.assertEquals(histogram, decodedHistogram);
 
             histogram.recordValueWithCount(100, 1L << 4); // Make total count > 2^4
@@ -259,7 +259,7 @@ public class HistogramEncodingTest {
             targetBuffer.clear();
             histogram.encodeIntoCompressedByteBuffer(targetBuffer);
             targetBuffer.rewind();
-            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer, 0);
+            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer);
             Assert.assertEquals(histogram, decodedHistogram);
 
             if (histoClass.equals(ShortCountsHistogram.class)) {
@@ -270,7 +270,7 @@ public class HistogramEncodingTest {
             targetBuffer.clear();
             histogram.encodeIntoCompressedByteBuffer(targetBuffer);
             targetBuffer.rewind();
-            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer, 0);
+            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer);
             Assert.assertEquals(histogram, decodedHistogram);
 
             histogram.recordValueWithCount(300, 1L << 20); // Make total count > 2^20
@@ -278,7 +278,7 @@ public class HistogramEncodingTest {
             targetBuffer.clear();
             histogram.encodeIntoCompressedByteBuffer(targetBuffer);
             targetBuffer.rewind();
-            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer, 0);
+            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer);
             Assert.assertEquals(histogram, decodedHistogram);
 
             if (histoClass.equals(IntCountsHistogram.class)) {
@@ -289,7 +289,7 @@ public class HistogramEncodingTest {
             targetBuffer.clear();
             histogram.encodeIntoCompressedByteBuffer(targetBuffer);
             targetBuffer.rewind();
-            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer, 0);
+            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer);
             Assert.assertEquals(histogram, decodedHistogram);
 
             histogram.recordValueWithCount(500, 1L << 52); // Make total count > 2^52
@@ -297,7 +297,7 @@ public class HistogramEncodingTest {
             targetBuffer.clear();
             histogram.encodeIntoCompressedByteBuffer(targetBuffer);
             targetBuffer.rewind();
-            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer, 0);
+            decodedHistogram = decodeFromCompressedByteBuffer(histoClass, targetBuffer);
             Assert.assertEquals(histogram, decodedHistogram);
         }
     }

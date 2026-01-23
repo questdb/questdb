@@ -15,6 +15,7 @@ exclude:
   - name: All
     paths:
       - core/src/main/java/io/questdb/std/histogram/org/HdrHistogram
+      - core/src/test/java/io/questdb/test/std/histogram/org/HdrHistogram
       - core/src/main/java/io/questdb/std/ConcurrentHashMap.java
       - core/src/main/java/io/questdb/std/ConcurrentIntHashMap.java
       - core/src/main/java/io/questdb/std/ConcurrentLongHashMap.java
@@ -32,6 +33,9 @@ exclude:
     paths:
       - benchmarks
   - name: IntegerDivisionInFloatingPointContext
+    paths:
+      - benchmarks
+  - name: unused
     paths:
       - benchmarks
   # Exclude noisy style/migration inspections globally
@@ -64,5 +68,8 @@ exclude:
     paths:
       - core/src/test
   - name: BooleanMethodIsAlwaysInverted
+  - name: ThrowablePrintStackTrace
     paths:
       - core/src/test
+  - name: ExtractMethodRecommender
+  - name: RedundantMethodOverride

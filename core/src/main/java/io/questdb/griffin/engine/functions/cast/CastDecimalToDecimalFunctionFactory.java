@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -82,7 +81,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         final int targetType = args.getQuick(1).getType();
         return newInstance(position, args.getQuick(0), targetType, sqlExecutionContext);
     }

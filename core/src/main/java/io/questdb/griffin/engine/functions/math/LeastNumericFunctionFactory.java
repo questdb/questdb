@@ -149,7 +149,7 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static @Nullable Function getLeastFunction(ObjList<Function> args, IntList argPositions, IntHashSet set) throws SqlException {
+    private static @Nullable Function getLeastFunction(ObjList<Function> args, IntList argPositions, IntHashSet set) {
         if (set.contains(ColumnType.DOUBLE)) {
             return new LeastDoubleRecordFunction(args);
         }
