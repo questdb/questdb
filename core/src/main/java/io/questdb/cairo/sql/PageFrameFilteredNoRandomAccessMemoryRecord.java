@@ -396,6 +396,8 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
         return NullMemoryCMR.INSTANCE.getStrLen(0);
     }
 
+    // Note: Currently not used because PageFrameFilteredNoRandomAccessMemoryRecord
+    // is only used by aggregate functions, which access symbols via getInt() + SymbolTable.
     @Override
     public CharSequence getSymA(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
@@ -406,6 +408,8 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
         return null;
     }
 
+    // Note: Currently not used because PageFrameFilteredNoRandomAccessMemoryRecord
+    // is only used by aggregate functions, which access symbols via getInt() + SymbolTable.
     @Override
     public CharSequence getSymB(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
@@ -422,7 +426,7 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
         if (auxPageAddress != 0) {
             return VarcharTypeDriver.getValueSize(auxPageAddress, rowIndex(columnIndex));
         }
-        return TableUtils.NULL_LEN; // Column top.
+        return TableUtils.NULL_LEN;
     }
 
     public PageFrameFilteredNoRandomAccessMemoryRecord of(PageFrameMemory memory, PageFrameMemoryRecord other, IntHashSet filterIndexes) {

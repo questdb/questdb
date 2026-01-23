@@ -787,6 +787,7 @@ pub fn append_array_nulls(
 
 #[cfg(test)]
 mod tests {
+    use crate::allocator::TestAllocatorState;
     use super::*;
 
     #[test]
@@ -1086,5 +1087,57 @@ mod tests {
             level_pairs.push((levels.rep_levels.clone(), levels.def_levels.clone()));
         }
         Ok(level_pairs)
+    }
+
+    #[test]
+    fn test_append_array_nulls() {
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let data_mem: &[u8] = &[1, 2, 3, 4]; // data_mem.len() = 4
+
+        let mut aux = AcVec::new_in(allocator.clone());
+        append_array_nulls(&mut aux, data_mem, 0).unwrap();
+        assert_eq!(aux.len(), 0);
+
+        // Test count = 1..=4 (fast path)
+        for count in 1..=4 {
+            let mut aux = AcVec::new_in(allocator.clone());
+            append_array_nulls(&mut aux, data_mem, count).unwrap();
+            assert_eq!(aux.len(), count * 16, "count={}", count);
+
+            for i in 0..count {
+                let offset = i * 16;
+                let stored_offset = u64::from_le_bytes(aux[offset..offset + 8].try_into().unwrap());
+                let stored_header = u64::from_le_bytes(aux[offset + 8..offset + 16].try_into().unwrap());
+                assert_eq!(stored_offset, 4, "count={}, i={}", count, i); // data_mem.len()
+                assert_eq!(stored_header, 0, "count={}, i={}", count, i); // null header
+            }
+        }
+
+        // Test count > 4 (general path)
+        for count in [5, 10, 100] {
+            let mut aux = AcVec::new_in(allocator.clone());
+            append_array_nulls(&mut aux, data_mem, count).unwrap();
+            assert_eq!(aux.len(), count * 16, "count={}", count);
+
+            for i in 0..count {
+                let offset = i * 16;
+                let stored_offset = u64::from_le_bytes(aux[offset..offset + 8].try_into().unwrap());
+                let stored_header = u64::from_le_bytes(aux[offset + 8..offset + 16].try_into().unwrap());
+                assert_eq!(stored_offset, 4, "count={}, i={}", count, i);
+                assert_eq!(stored_header, 0, "count={}, i={}", count, i);
+            }
+        }
+
+        let data_mem_large: Vec<u8> = vec![0; 1000];
+        let mut aux = AcVec::new_in(allocator.clone());
+        append_array_nulls(&mut aux, &data_mem_large, 3).unwrap();
+        assert_eq!(aux.len(), 48);
+        for i in 0..3 {
+            let offset = i * 16;
+            let stored_offset = u64::from_le_bytes(aux[offset..offset + 8].try_into().unwrap());
+            assert_eq!(stored_offset, 1000);
+        }
     }
 }

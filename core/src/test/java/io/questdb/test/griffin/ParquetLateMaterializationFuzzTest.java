@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,17 +39,21 @@ import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import static io.questdb.PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED;
+
 public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     private final Rnd rnd = TestUtils.generateRandom(LOG);
     private final StringSink sql = new StringSink();
+    private boolean enableJitCompiler;
 
     @Before
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1 + rnd.nextInt(100));
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1 + rnd.nextInt(4));
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 1 + rnd.nextInt(8));
+        node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1 + rnd.nextInt(100));
+        node1.setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1 + rnd.nextInt(4));
+        node1.setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 1 + rnd.nextInt(8));
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10 + rnd.nextInt(100));
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 10 + rnd.nextInt(100));
+        enableJitCompiler = rnd.nextBoolean();
         super.setUp();
     }
 
@@ -103,6 +108,16 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstGeoHashLongAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_geo_long) from x where id%37=9");
+    }
+
+    @Test
+    public void testFirstGeoHashShortAggregate() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("select first(a_geo_short) from x where id%37=9");
+    }
+
+    @Test
     public void testFirstIpv4Aggregate() throws Exception {
         testLateMaterializationAllTypesLowSelectivity("select first(a_ip) from x where id%29=11");
     }
@@ -128,6 +143,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -164,6 +180,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -198,6 +215,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute("create table x (id long, filter_col int, ts timestamp) timestamp(ts) partition by day;", sqlExecutionContext);
                     engine.execute(
                             """
@@ -218,12 +236,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                                     select
                                       500 + x,
                                       cast(500 + x as int),
-                                      timestamp_sequence(50000000, 1000000),
+                                      timestamp_sequence(130000000000, 60000000),
                                       rnd_int(),
                                       rnd_str('a','b','c'),
                                       rnd_symbol('s1','s2','s3'),
                                       rnd_double()
-                                    from long_sequence(1000);""",
+                                    from long_sequence(2000);""",
                             sqlExecutionContext
                     );
 
@@ -232,7 +250,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     engine.print(query, expected1, sqlExecutionContext);
 
                     final StringSink expected2 = new StringSink();
-                    final CharSequence query2 = "select sum(new_int), count(new_symbol) from x where filter_col % 12 = 3";
+                    final CharSequence query2 = "select sum(new_int), count(new_symbol), last(new_string), first(new_double) from x where filter_col % 12 = 3";
                     engine.print(query2, expected2, sqlExecutionContext);
 
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
@@ -250,6 +268,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -282,6 +301,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -315,6 +335,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -349,6 +370,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -381,6 +403,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -412,6 +435,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -445,6 +469,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -478,6 +503,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -510,6 +536,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -538,38 +565,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationWithArrayColumn() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
-        TestUtils.execute(
-                pool,
-                (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
-                            """
-                                    create table x as (
-                                      select
-                                        x id,
-                                        cast(x as int) filter_col,
-                                        array[x * 1.0, x * 2.0, x * 3.0] an_array,
-                                        rnd_int() an_int,
-                                        rnd_str('a','b') a_string,
-                                        timestamp_sequence(0,60000000) as ts
-                                      from long_sequence(2000)
-                                    ) timestamp(ts) partition by day;""",
-                            sqlExecutionContext
-                    );
+        testLateMaterializationWithArrayColumn(false);
+    }
 
-                    final StringSink expected = new StringSink();
-                    final CharSequence query = generateRndInListSql("filter_col");
-                    final StringSink expected1 = new StringSink();
-                    final CharSequence query1 = ("select first(an_array), last(an_array) from x where filter_col%13=7 group by a_string order by a_string");
-                    engine.print(query, expected, sqlExecutionContext);
-                    engine.print(query1, expected1, sqlExecutionContext);
-                    engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query1, sink, expected1);
-                },
-                configuration,
-                LOG
-        );
+    @Test
+    public void testLateMaterializationWithArrayColumn_rawEncoding() throws Exception {
+        testLateMaterializationWithArrayColumn(true);
     }
 
     @Test
@@ -578,6 +579,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -617,6 +619,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -716,6 +719,11 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         testLateMaterializationAllTypesLowSelectivity("x where a_symbol = 'a'");
     }
 
+    @Test
+    public void testTopK() throws Exception {
+        testLateMaterializationAllTypesLowSelectivity("SELECT * FROM x where id%499 = 0 ORDER BY id, ts DESC LIMIT 3;");
+    }
+
     private StringSink generateRndInListSql(CharSequence column) {
         sql.clear();
         final int inListCount = 1 + rnd.nextInt(80);
@@ -739,6 +747,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
                                     create table x as (
@@ -760,7 +769,9 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                                         rnd_uuid4() a_uuid,
                                         rnd_long256() a_long256,
                                         rnd_geohash(4) a_geo_byte,
+                                        rnd_geohash(8) a_geo_short,
                                         rnd_geohash(16) a_geo_int,
+                                        rnd_geohash(32) a_geo_long,
                                         -- rnd_decimal(2, 1, 0) a_decimal8,
                                         -- rnd_decimal(4, 2, 0) a_decimal16,
                                         -- rnd_decimal(9, 2, 0) a_decimal32,
@@ -827,6 +838,43 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                             }
                         }
                     }
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testLateMaterializationWithArrayColumn(boolean rawArrayEncoding) throws Exception {
+        node1.setProperty(CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, rawArrayEncoding);
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                    engine.execute(
+                            """
+                                    create table x as (
+                                      select
+                                        x id,
+                                        cast(x as int) filter_col,
+                                        array[x * 1.0, x * 2.0, x * 3.0] an_array,
+                                        rnd_int() an_int,
+                                        rnd_str('a','b') a_string,
+                                        timestamp_sequence(0,60000000) as ts
+                                      from long_sequence(2000)
+                                    ) timestamp(ts) partition by day;""",
+                            sqlExecutionContext
+                    );
+
+                    final StringSink expected = new StringSink();
+                    final CharSequence query = generateRndInListSql("filter_col");
+                    final StringSink expected1 = new StringSink();
+                    final CharSequence query1 = ("select first(an_array), last(an_array) from x where filter_col%13=7 group by a_string order by a_string");
+                    engine.print(query, expected, sqlExecutionContext);
+                    engine.print(query1, expected1, sqlExecutionContext);
+                    engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query1, sink, expected1);
                 },
                 configuration,
                 LOG
