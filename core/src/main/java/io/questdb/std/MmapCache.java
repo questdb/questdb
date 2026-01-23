@@ -101,11 +101,11 @@ public final class MmapCache {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
-        if (Files.ASYNC_MUNMAP_ENABLED) {
-            return cacheMmapOptimistic(fd, mmapCacheKey, len, memoryTag);
-        } else {
-            return cacheMmapPessimistic(fd, mmapCacheKey, len, memoryTag);
-        }
+//        if (Files.ASYNC_MUNMAP_ENABLED) {
+//            return cacheMmapOptimistic(fd, mmapCacheKey, len, memoryTag);
+//        } else {
+        return cacheMmapPessimistic(fd, mmapCacheKey, len, memoryTag);
+//        }
     }
 
     /**
