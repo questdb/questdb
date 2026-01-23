@@ -2121,25 +2121,25 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionOrderByThreeArgFunction() throws SqlException {
         // ORDER BY with a 3-argument function - args should be in correct order
-        x("x sum over (order by a b c func)", "sum(x) over (order by func(a, b, c))");
+        x("x sum over (order by c b a func)", "sum(x) over (order by func(a, b, c))");
     }
 
     @Test
     public void testWindowFunctionOrderByThreeArgFunctionDesc() throws SqlException {
         // ORDER BY with a 3-argument function and DESC
-        x("x sum over (order by a b c func desc)", "sum(x) over (order by func(a, b, c) desc)");
+        x("x sum over (order by c b a func desc)", "sum(x) over (order by func(a, b, c) desc)");
     }
 
     @Test
     public void testWindowFunctionOrderByFourArgFunction() throws SqlException {
         // ORDER BY with a 4-argument function
-        x("x sum over (order by a b c d func)", "sum(x) over (order by func(a, b, c, d))");
+        x("x sum over (order by d c b a func)", "sum(x) over (order by func(a, b, c, d))");
     }
 
     @Test
     public void testWindowFunctionOrderByMultipleThreeArgFunctions() throws SqlException {
         // ORDER BY with multiple 3-argument functions
-        x("x sum over (order by a b c f1, d e f f2 desc)",
+        x("x sum over (order by c b a f1, f e d f2 desc)",
                 "sum(x) over (order by f1(a, b, c), f2(d, e, f) desc)");
     }
 
@@ -2153,7 +2153,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionOrderByThreeArgFunctionWithExpressions() throws SqlException {
         // ORDER BY with 3-arg function containing expressions
-        x("x sum over (order by a 1 + b 2 * c 3 - func)",
+        x("x sum over (order by c 3 - b 2 * a 1 + func)",
                 "sum(x) over (order by func(a + 1, b * 2, c - 3))");
     }
 
@@ -2162,13 +2162,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionPartitionByThreeArgFunction() throws SqlException {
         // PARTITION BY with a 3-argument function - args should be in correct order
-        x("x sum over (partition by a b c func)", "sum(x) over (partition by func(a, b, c))");
+        x("x sum over (partition by c b a func)", "sum(x) over (partition by func(a, b, c))");
     }
 
     @Test
     public void testWindowFunctionPartitionByFourArgFunction() throws SqlException {
         // PARTITION BY with a 4-argument function
-        x("x sum over (partition by a b c d func)", "sum(x) over (partition by func(a, b, c, d))");
+        x("x sum over (partition by d c b a func)", "sum(x) over (partition by func(a, b, c, d))");
     }
 
     @Test
@@ -2317,3 +2317,4 @@ public class ExpressionParserTest extends AbstractCairoTest {
         TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
 }
+
