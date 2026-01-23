@@ -5005,7 +5005,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             tempColumnsList.clear();
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn column = model.getBottomUpColumns().getQuick(i);
-                if (!column.isWindowColumn()) {
+                if (!column.isWindowExpression()) {
                     final ExpressionNode node = column.getAst();
                     if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
                         tempColumnsList.add(column);
@@ -6306,7 +6306,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
-                if (qc.isWindowColumn()) {
+                if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
                     final ExpressionNode ast = qc.getAst();
 
@@ -6488,7 +6488,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntList columnIndexes = new IntList();
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
-                if (!qc.isWindowColumn()) {
+                if (!qc.isWindowExpression()) {
                     final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
                     chainMetadata.addIfNotExists(i, m);
@@ -6544,7 +6544,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             deferredWindowMetadata.clear();
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
-                if (qc.isWindowColumn()) {
+                if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
                     final ExpressionNode ast = qc.getAst();
 

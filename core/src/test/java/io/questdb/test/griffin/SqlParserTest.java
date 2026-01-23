@@ -293,7 +293,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             Assert.assertEquals(3, columns.size());
 
                             QueryColumn ac = columns.getQuick(2);
-                            Assert.assertTrue(ac.isWindowColumn());
+                            Assert.assertTrue(ac.isWindowExpression());
                             WindowExpression ac2 = (WindowExpression) ac;
 
                             // start of window expr position
@@ -12947,24 +12947,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testWindowFunctionNestedWithColumnAliases() throws Exception {
-        // Nested window functions with column aliases in the same SELECT clause
-        // sum(a) OVER () and sum(b) OVER () are inner window functions on columns a and b from table
-        // The outer sum() OVER () aggregates their sum
-        // Should be split into two select-window models:
-        // 1. Inner: computes sum(a) OVER () and sum(b) OVER ()
-        // 2. Outer: computes sum(sum + sum1) OVER () and projects x as a, x as b
+    public void testWindowFunctionNestedWithColumnAliasAndArithmetic() throws Exception {
+        // Nested window functions with column alias and arithmetic between outer window functions.
+        // x as a creates an alias that conflicts with table column a.
+        // The expression sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () adds two outer windows.
+        // The model chain correctly extracts inner windows to separate models:
+        // - Inner window 1: sum(a1) over () -> alias "sum" (sum of original column a, renamed to a1)
+        // - Inner window 2: sum(a) over () -> alias "sum1" (sum of x, aliased as a), plus pass-through of "sum"
+        // - Outer windows: sum(sum) and sum(sum1) referencing the inner window aliases
+        // - Final: arithmetic sum1 + sum
         assertQuery(
-                "select-window a, a b, sum(sum + sum1) sum over () from (" +
-                        "select-window [a, sum(b1) sum1 over (), sum(a1) sum over ()] " +
-                        "sum(a1) sum over (), sum(b1) sum1 over (), a, a b from (" +
-                        "select-choose [x a, b b1, a a1] x a, a a1, b, b b1 from (" +
-                        "select [x, b, a] from x timestamp (ts))))",
-                "SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x",
+                "select-virtual a, sum1 + sum column from (select-window [a, sum(sum) sum over (), sum(sum1) sum1 over ()] a, sum(sum) sum over (), sum(sum1) sum1 over () from (select-window [a, sum, sum(a) sum1 over ()] sum(a) sum1 over (), a, sum from (select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a from (select-choose [x a, a a1] x a, a a1 from (select [x, a] from x timestamp (ts))))))",
+                "SELECT x as a, sum( sum(x) OVER () ) OVER () + sum( sum(a) OVER () ) OVER () FROM x",
                 modelOf("x")
                         .col("x", ColumnType.INT)
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
                         .timestamp("ts")
         );
     }
@@ -12982,26 +12979,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "select-choose [x a, a a1] x a, a a1 from (" +
                         "select [x, a] from x timestamp (ts))))",
                 "SELECT x as a, x as b, sum(sum(a) OVER ()) OVER () FROM x",
-                modelOf("x")
-                        .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testWindowFunctionNestedWithColumnAliasConflictThreeLevels() throws Exception {
-        // Three levels of nested window functions with column alias conflicts.
-        // x as a, x as b, x as c create aliases that could conflict.
-        // The innermost sum(a) references table column 'a', not any alias.
-        // The select-choose layer should NOT contain projection aliases like "a b" or "a c".
-        assertQuery(
-                "select-window a, a b, a c, sum(sum1) sum over () from (" +
-                        "select-window [a, sum(sum) sum1 over ()] sum(sum) sum1 over (), a, a b, a c from (" +
-                        "select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a, a b, a c from (" +
-                        "select-choose [x a, a a1] x a, a a1 from (" +
-                        "select [x, a] from x timestamp (ts)))))",
-                "SELECT x as a, x as b, x as c, sum(sum(sum(a) OVER ()) OVER ()) OVER () FROM x",
                 modelOf("x")
                         .col("x", ColumnType.INT)
                         .col("a", ColumnType.INT)
@@ -13049,21 +13026,44 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testWindowFunctionNestedWithColumnAliasAndArithmetic() throws Exception {
-        // Nested window functions with column alias and arithmetic between outer window functions.
-        // x as a creates an alias that conflicts with table column a.
-        // The expression sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () adds two outer windows.
-        // The model chain correctly extracts inner windows to separate models:
-        // - Inner window 1: sum(a1) over () -> alias "sum" (sum of original column a, renamed to a1)
-        // - Inner window 2: sum(a) over () -> alias "sum1" (sum of x, aliased as a), plus pass-through of "sum"
-        // - Outer windows: sum(sum) and sum(sum1) referencing the inner window aliases
-        // - Final: arithmetic sum1 + sum
+    public void testWindowFunctionNestedWithColumnAliasConflictThreeLevels() throws Exception {
+        // Three levels of nested window functions with column alias conflicts.
+        // x as a, x as b, x as c create aliases that could conflict.
+        // The innermost sum(a) references table column 'a', not any alias.
+        // The select-choose layer should NOT contain projection aliases like "a b" or "a c".
         assertQuery(
-                "select-virtual a, sum1 + sum column from (select-window [a, sum(sum) sum over (), sum(sum1) sum1 over ()] a, sum(sum) sum over (), sum(sum1) sum1 over () from (select-window [a, sum, sum(a) sum1 over ()] sum(a) sum1 over (), a, sum from (select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a from (select-choose [x a, a a1] x a, a a1 from (select [x, a] from x timestamp (ts))))))",
-                "SELECT x as a, sum( sum(x) OVER () ) OVER () + sum( sum(a) OVER () ) OVER () FROM x",
+                "select-window a, a b, a c, sum(sum1) sum over () from (" +
+                        "select-window [a, sum(sum) sum1 over ()] sum(sum) sum1 over (), a, a b, a c from (" +
+                        "select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a, a b, a c from (" +
+                        "select-choose [x a, a a1] x a, a a1 from (" +
+                        "select [x, a] from x timestamp (ts)))))",
+                "SELECT x as a, x as b, x as c, sum(sum(sum(a) OVER ()) OVER ()) OVER () FROM x",
                 modelOf("x")
                         .col("x", ColumnType.INT)
                         .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowFunctionNestedWithColumnAliases() throws Exception {
+        // Nested window functions with column aliases in the same SELECT clause
+        // sum(a) OVER () and sum(b) OVER () are inner window functions on columns a and b from table
+        // The outer sum() OVER () aggregates their sum
+        // Should be split into two select-window models:
+        // 1. Inner: computes sum(a) OVER () and sum(b) OVER ()
+        // 2. Outer: computes sum(sum + sum1) OVER () and projects x as a, x as b
+        assertQuery(
+                "select-window a, a b, sum(sum + sum1) sum over () from (" +
+                        "select-window [a, sum(b1) sum1 over (), sum(a1) sum over ()] " +
+                        "sum(a1) sum over (), sum(b1) sum1 over (), a, a b from (" +
+                        "select-choose [x a, b b1, a a1] x a, a a1, b, b b1 from (" +
+                        "select [x, b, a] from x timestamp (ts))))",
+                "SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x",
+                modelOf("x")
+                        .col("x", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
                         .timestamp("ts")
         );
     }
