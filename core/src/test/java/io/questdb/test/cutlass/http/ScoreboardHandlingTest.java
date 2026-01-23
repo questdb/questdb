@@ -54,8 +54,7 @@ public class ScoreboardHandlingTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain main = startWithEnvVariables(
-                            PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
-                            PropertyKey.CAIRO_SQL_BACKUP_ROOT.getEnvVarName(), backupRoot
+                            PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
 
                     );
                     TestHttpClient httpClient = new TestHttpClient()
@@ -101,7 +100,6 @@ public class ScoreboardHandlingTest extends AbstractBootstrapTest {
 
                 ddl(httpClient, main, "alter table old_trades attach partition list '2023-07-01'");
                 ddl(httpClient, main, "alter table old_trades drop partition list '2023-07-01'");
-                ddl(httpClient, main, "backup table old_trades");
 
                 exec(
                         httpClient,
