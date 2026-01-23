@@ -3599,6 +3599,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 //  - if `false`, the join may or may not be self-join
                                 boolean isSelfJoin = isSameTable(master, slave);
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
                                 master = joinType == JOIN_ASOF
                                         ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slave, slaveMetadata)
                                         : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slave, slaveMetadata);
@@ -8001,6 +8002,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         .put(metadata.getColumnName(0))
                         .put(": ")
                         .put(ColumnType.nameOf(columnType));
+        }
+    }
+
+    private void validateTimestampNotInJoinKeys(QueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
+        // When timestamp is the ONLY join key, isKeyedTemporalJoin() will return false and simplify
+        // "ASOF JOIN ON (ts)" to a non-keyed join, which is harmless. But when timestamp is combined
+        // with other keys like "ON (sym, ts)", it causes problems in the join implementation.
+        int keyCount = listColumnFilterA.getColumnCount();
+        if (keyCount <= 1) {
+            return; // Single key (or no key) is fine - handled by isKeyedTemporalJoin()
+        }
+        // listColumnFilterA contains slave column indices, listColumnFilterB contains master column indices
+        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+        int masterTimestampIndex = masterMetadata.getTimestampIndex();
+        for (int i = 0; i < keyCount; i++) {
+            if (listColumnFilterA.getColumnIndexFactored(i) == slaveTimestampIndex ||
+                    listColumnFilterB.getColumnIndexFactored(i) == masterTimestampIndex) {
+                throw SqlException.$(slaveModel.getJoinKeywordPosition(),
+                        "ASOF/LT JOIN cannot use designated timestamp as a join key");
+            }
         }
     }
 
