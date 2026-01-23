@@ -1259,22 +1259,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
     }
 
-    public boolean checkTtl(long partitionTimestamp, int ttl, long wallClockMicros) {
-        long maxTimestamp = txWriter.getMaxTimestamp();
-        // When wall clock mode is enabled (default), use the minimum of maxTimestamp and current wall clock time.
-        // This prevents accidental data loss when future timestamps are inserted into a table with TTL enabled.
-        if (configuration.isTtlWallClockEnabled()) {
-            long wallClockTimestamp = timestampDriver.fromMicros(wallClockMicros);
-            maxTimestamp = Math.min(maxTimestamp, wallClockTimestamp);
-        }
-
-        long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
-        // TTL < 0 means it's in months
-        return ttl > 0
-                ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
-                : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
-    }
-
     @Override
     public void close() {
         if (lifecycleManager.close() && isOpen()) {
@@ -2025,7 +2009,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
 
-            if (checkTtl(partitionTimestamp, ttl, wallClockMicros)) {
+            if (checkTtl(txWriter, timestampDriver, partitionTimestamp, ttl, wallClockMicros, configuration.isTtlWallClockEnabled())) {
                 LOG.info()
                         .$("Partition's TTL expired, evicting [table=").$(metadata.getTableToken())
                         .$(", partitionTs=").microTime(partitionTimestamp)

@@ -40,6 +40,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
@@ -70,11 +71,11 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
-    protected PGServer pgServer;
     private Thread compileViewsThread;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
+    private PGServer pgServer;
     private WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
@@ -312,7 +313,7 @@ public class ServerMain implements Closeable {
                     }
 
                     if (!isReadOnly) {
-                        WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
+                        setupWriterJobs(sharedPoolWrite, engine);
 
                         if (walSupported) {
                             sharedPoolWrite.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
@@ -541,6 +542,10 @@ public class ServerMain implements Closeable {
             sharedPoolWrite.assign(i, applyWal2TableJob);
             sharedPoolWrite.freeOnExit(applyWal2TableJob);
         }
+    }
+
+    protected void setupWriterJobs(WorkerPool sharedPoolWrite, CairoEngine engine) throws SqlException {
+        WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
     }
 
     protected String webConsoleSchema() {

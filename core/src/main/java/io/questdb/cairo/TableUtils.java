@@ -83,6 +83,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
+import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
 public final class TableUtils {
@@ -128,6 +129,7 @@ public final class TableUtils {
     public static final int NULL_LEN = -1;
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
+    public static final String SP_TABLE_WRITE_REASON = "Storage Policy Enforcement";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
@@ -193,6 +195,8 @@ public final class TableUtils {
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
+    public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
+    public static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
@@ -302,6 +306,29 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
         }
         return memSize;
+    }
+
+    public static boolean checkTtl(
+            TxReader txReader,
+            TimestampDriver timestampDriver,
+            long partitionTimestamp,
+            int ttl,
+            long wallClockMicros,
+            boolean ttlWallClockEnabled
+    ) {
+        long maxTimestamp = txReader.getMaxTimestamp();
+        // When wall clock mode is enabled (default), use the minimum of maxTimestamp and current wall clock time.
+        // This prevents accidental data loss when future timestamps are inserted into a table with TTL enabled.
+        if (ttlWallClockEnabled) {
+            long wallClockTimestamp = timestampDriver.fromMicros(wallClockMicros);
+            maxTimestamp = Math.min(maxTimestamp, wallClockTimestamp);
+        }
+
+        long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
+        // TTL < 0 means it's in months
+        return ttl > 0
+                ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
+                : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
     }
 
     public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -1018,6 +1045,13 @@ public final class TableUtils {
 
     public static boolean isSymbolCached(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
+    }
+
+    public static boolean isUnsolicitedTableLock(String lockReason) {
+        //noinspection StringEquality
+        return lockReason != NO_LOCK_REASON
+                && !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
+                && !WAL_2_TABLE_RESUME_REASON.equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {

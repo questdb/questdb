@@ -400,6 +400,7 @@ public class MetadataCache implements QuietCloseable {
         public boolean isVisibleTable(@NotNull CharSequence tableName) {
             CairoConfiguration configuration = engine.getConfiguration();
 
+            // todo: why do not we update TableToken.isSystem() to match the below, and use it here
             // sys table
             if (Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())
                     && !Chars.startsWith(tableName, configuration.getParquetExportTableNamePrefix())) {
@@ -416,6 +417,11 @@ public class MetadataCache implements QuietCloseable {
 
             // query tracing table
             if (Chars.equals(tableName, QueryTracingJob.TABLE_NAME)) {
+                return false;
+            }
+
+            // storage policies view
+            if (Chars.equals(tableName, "storage_policies")) {
                 return false;
             }
 

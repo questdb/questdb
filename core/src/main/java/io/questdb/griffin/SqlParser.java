@@ -1438,7 +1438,6 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
-        // todo: storage policy in ent create table/mat view sql commands
         if (tok != null && isTtlKeyword(tok)) {
             final int ttlValuePos = lexer.getPosition();
             final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
@@ -1600,7 +1599,6 @@ public class SqlParser {
             builder.setPartitionByExpr(partitionByExpr);
             tok = optTok(lexer);
 
-            // todo: storage policy in ent create table/mat view sql commands
             if (tok != null && isTtlKeyword(tok)) {
                 final int ttlValuePos = lexer.getPosition();
                 final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
@@ -4782,7 +4780,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false);
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);

@@ -632,7 +632,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.squashPartitions();
     }
 
-    protected void applyTtl(MetadataService svc) {
+    private void applyTtl(MetadataService svc) {
         final int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
             svc.setMetaTtl(ttlHoursOrMonths);

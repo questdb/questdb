@@ -511,7 +511,6 @@ public class CairoEngine implements Closeable, WriterSource {
             w.clearCache();
         }
         viewGraph.clear();
-        viewStateStore.clear();
         matViewGraph.clear();
         matViewStateStore.clear();
         matViewTimerQueue.clear();
@@ -2053,7 +2052,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private @NotNull ViewMetadata getViewMetadata(TableToken tableToken) {
-        final ViewState state = getViewStateStore().getViewState(tableToken);
+        final ViewState state = viewStateStore.getViewState(tableToken);
         if (state == null) {
             throw CairoException.viewDoesNotExist(tableToken.getTableName());
         }
