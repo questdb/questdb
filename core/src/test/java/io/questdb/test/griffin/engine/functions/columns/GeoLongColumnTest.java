@@ -59,6 +59,6 @@ public class GeoLongColumnTest {
                     Assert.assertFalse(isCached);
                 }
             }
-            }
+        }
     }
 }

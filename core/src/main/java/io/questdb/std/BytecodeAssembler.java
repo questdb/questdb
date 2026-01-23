@@ -344,7 +344,7 @@ public class BytecodeAssembler {
     }
 
     @SuppressWarnings("unused")
-        public int iflt() {
+    public int iflt() {
         return genericGoto(0x9b);
     }
 
