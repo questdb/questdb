@@ -2209,6 +2209,46 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnTimestampAndSomethingElseNotAllowed() throws Exception {
+        // Test for https://github.com/questdb/questdb/issues/6637
+        // Using designated timestamp as join key is not allowed for ASOF/LT joins
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t1 (
+                                sym SYMBOL,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t2 (
+                                sym SYMBOL,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("INSERT INTO t1 VALUES ('A', '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', '2024-01-01T10:00:00.000000Z')");
+
+            // ASOF JOIN with symbol AND timestamp in ON clause - timestamp as join key is not allowed
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t1 ASOF JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)",
+                    17,
+                    "ASOF/LT JOIN cannot use designated timestamp as a join key");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t1 LT JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)",
+                    17,
+                    "ASOF/LT JOIN cannot use designated timestamp as a join key");
+        });
+    }
+
+    @Test
     public void testJoinStringOnSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (sym STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
