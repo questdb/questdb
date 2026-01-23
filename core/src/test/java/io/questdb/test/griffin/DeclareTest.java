@@ -281,6 +281,39 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareOverridable() throws Exception {
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE OVERRIDABLE @x := 5 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareOverridableCaseInsensitive() throws Exception {
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE overridable @x := 5 SELECT @x", ExecutionModel.QUERY);
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE Overridable @x := 5 SELECT @x", ExecutionModel.QUERY);
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE OVERRIDABLE @x := 5 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareOverridableMissingVariable() throws Exception {
+        assertException("DECLARE OVERRIDABLE SELECT 1", 20, "variable name expected after OVERRIDABLE");
+    }
+
+    @Test
+    public void testDeclareOverridableMixed() throws Exception {
+        assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
+                "DECLARE OVERRIDABLE @x := 5, @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareOverridableMultiple() throws Exception {
+        assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
+                "DECLARE OVERRIDABLE @x := 5, OVERRIDABLE @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
+    }
+
+    @Test
     public void testDeclareReuseVariable() throws Exception {
         assertSql("interval\n('2025-07-02T13:00:00.000Z', '2025-07-02T13:00:00.000Z')\n",
                 "declare " +
@@ -960,39 +993,6 @@ public class DeclareTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck("declare @ts1 := '2024-01-01', @ts2 := '2024-08-23' select timestamp, count() from trades where timestamp IN (@ts1, @ts2);", plan);
             assertException("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts", 44, "bracket lists are not supported");
         });
-    }
-
-    @Test
-    public void testDeclareOverridable() throws Exception {
-        assertModel("select-virtual 5 5 from (long_sequence(1))",
-                "DECLARE OVERRIDABLE @x := 5 SELECT @x", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareOverridableCaseInsensitive() throws Exception {
-        assertModel("select-virtual 5 5 from (long_sequence(1))",
-                "DECLARE overridable @x := 5 SELECT @x", ExecutionModel.QUERY);
-        assertModel("select-virtual 5 5 from (long_sequence(1))",
-                "DECLARE Overridable @x := 5 SELECT @x", ExecutionModel.QUERY);
-        assertModel("select-virtual 5 5 from (long_sequence(1))",
-                "DECLARE OVERRIDABLE @x := 5 SELECT @x", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareOverridableMixed() throws Exception {
-        assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
-                "DECLARE OVERRIDABLE @x := 5, @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareOverridableMultiple() throws Exception {
-        assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
-                "DECLARE OVERRIDABLE @x := 5, OVERRIDABLE @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareOverridableMissingVariable() throws Exception {
-        assertException("DECLARE OVERRIDABLE SELECT 1", 20, "variable name expected after OVERRIDABLE");
     }
 
     @Test
