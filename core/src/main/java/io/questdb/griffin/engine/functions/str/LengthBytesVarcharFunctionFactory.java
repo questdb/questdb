@@ -34,13 +34,12 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.Utf8s;
 
-public class LengthVarcharFunctionFactory implements FunctionFactory {
+public class LengthBytesVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "length(Ø)";
+        return "length_bytes(Ø)";
     }
 
     @Override
@@ -68,12 +67,12 @@ public class LengthVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return Utf8s.length(arg.getVarcharA(rec));
+            return arg.getVarcharSize(rec);
         }
 
         @Override
         public String getName() {
-            return "length";
+            return "length_bytes";
         }
     }
 }
