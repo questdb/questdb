@@ -44,6 +44,7 @@ import org.jetbrains.annotations.NotNull;
  * One shouldn't modify the data id in an unblank database as it may cause data loss.
  * </p>
  */
+@SuppressWarnings("ClassCanBeRecord")
 public final class DataID implements Sinkable {
 
     /**
@@ -51,7 +52,7 @@ public final class DataID implements Sinkable {
      * as this avoids a name clash with a potentially valid table name.
      */
     public static final CharSequence FILENAME = ".data_id";
-    public static long FILE_SIZE = Long.BYTES * 2;  // Storing UUID as binary
+    public static final long FILE_SIZE = Long.BYTES * 2;  // Storing UUID as binary
     private final CairoConfiguration configuration;
     private final Uuid id;
 

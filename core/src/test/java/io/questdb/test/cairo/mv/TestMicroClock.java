@@ -29,7 +29,7 @@ import io.questdb.std.datetime.MicrosecondClock;
 import java.util.concurrent.atomic.AtomicLong;
 
 class TestMicroClock implements MicrosecondClock {
-    AtomicLong micros;
+    final AtomicLong micros;
 
     public TestMicroClock(long micros) {
         this.micros = new AtomicLong(micros);

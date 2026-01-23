@@ -38,7 +38,7 @@ import org.junit.Test;
 import java.time.temporal.ChronoUnit;
 
 public class MicroTimestampDriverTest extends AbstractCairoTest {
-    TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_MICRO);
+    final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_MICRO);
 
     @Test
     public void testFromChronosUnit() {

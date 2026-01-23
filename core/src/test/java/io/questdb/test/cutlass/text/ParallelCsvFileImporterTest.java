@@ -3611,8 +3611,8 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     static class IndexChunk {
-        long[] data; // timestamp+offset pairs
-        String path;
+        final long[] data; // timestamp+offset pairs
+        final String path;
 
         IndexChunk(String path, long... data) {
             this.path = path;

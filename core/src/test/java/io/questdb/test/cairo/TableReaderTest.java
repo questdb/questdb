@@ -2980,7 +2980,9 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                 }
 
-                try (TableReader ignore2 = getReader("all")) {
+                try {
+                    TableReader ignore2 = getReader("all");
+                    Assert.fail();
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
                 }

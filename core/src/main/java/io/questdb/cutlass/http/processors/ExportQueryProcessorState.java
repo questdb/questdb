@@ -46,13 +46,13 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
+    final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     final StringSink fileName = new StringSink();
     final StringSink sqlText = new StringSink();
     private final CopyExportContext copyExportContext;
     private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
     private final HttpConnectionContext httpConnectionContext;
-    HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
     boolean columnValueFullySent = true;
     long copyID = -1;

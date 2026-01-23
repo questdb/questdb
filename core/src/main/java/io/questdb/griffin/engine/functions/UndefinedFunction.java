@@ -39,7 +39,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class UndefinedFunction implements Function {
-    public static UndefinedFunction INSTANCE = new UndefinedFunction();
+    public static final UndefinedFunction INSTANCE = new UndefinedFunction();
 
     @Override
     public ArrayView getArray(Record rec) {

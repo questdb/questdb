@@ -55,7 +55,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
     public static final RecordMetadata METADATA;
     public static final String SIGNATURE = "information_schema.columns()";
     private static final IntObjHashMap<String> OID_TO_TYPE_NAME = new IntObjHashMap<>();
-    public static IntFunction<String> TYPE_TO_NAME = columnType -> {
+    public static final IntFunction<String> TYPE_TO_NAME = columnType -> {
         int typeOid = PGOids.getTypeOid(columnType);
         String sqlStdName = OID_TO_TYPE_NAME.get(typeOid);
         if (sqlStdName != null) {

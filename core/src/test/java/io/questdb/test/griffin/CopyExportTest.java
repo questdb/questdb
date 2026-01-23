@@ -62,7 +62,7 @@ import static org.junit.Assert.assertTrue;
 
 public class CopyExportTest extends AbstractCairoTest {
 
-    static HashSet<Class<?>> exceptionTypesToCatch = new HashSet<>();
+    static final HashSet<Class<?>> exceptionTypesToCatch = new HashSet<>();
 
     public CopyExportTest() {
     }

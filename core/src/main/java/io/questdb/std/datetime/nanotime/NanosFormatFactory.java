@@ -32,9 +32,9 @@ import io.questdb.std.datetime.DateFormat;
 import java.util.function.Function;
 
 public class NanosFormatFactory implements TimestampDateFormatFactory {
+    public static final NanosFormatFactory INSTANCE = new NanosFormatFactory();
     private final static ThreadLocal<NanosFormatCompiler> tlCompiler = ThreadLocal.withInitial(NanosFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = NanosFormatFactory::map;
-    public static NanosFormatFactory INSTANCE = new NanosFormatFactory();
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
 
     private NanosFormatFactory() {

@@ -45,7 +45,7 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(ExpressionParserFuzzTest.class);
     // fixed operators with precedence (we better to fix this independently of precedence in OperatorExpression in order to test fresh implementation against fixed ordering)
     // syntax like ${operator}'${arity} used for disambiguation (e.g. unary/binary minus)
-    public static String[][] operators = {
+    public static final String[][] operators = {
             {"."},
             {"::"},
             {"-'1", "~'1"},

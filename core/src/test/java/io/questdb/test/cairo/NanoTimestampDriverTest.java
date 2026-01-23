@@ -38,7 +38,7 @@ import org.junit.Test;
 import java.time.temporal.ChronoUnit;
 
 public class NanoTimestampDriverTest extends AbstractCairoTest {
-    TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO);
+    final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO);
 
     @Test
     public void testFromChronosUnit() {

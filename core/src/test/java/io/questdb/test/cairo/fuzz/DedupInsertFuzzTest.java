@@ -1314,6 +1314,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     private static class DedupCursor implements RecordCursor {
 
+        final ObjList<String> recordKeys = new ObjList<>();
         private final StringSink currentRecordKeys = new StringSink();
         private final IntList keyColumns = new IntList();
         private final ObjHashSet<String> keyProcessed = new ObjHashSet<>();
@@ -1322,7 +1323,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         private final StringSink nextRecordKeys = new StringSink();
         private final RecordCursor recordCursor;
         private final IntList skipRecords = new IntList();
-        ObjList<String> recordKeys = new ObjList<>();
         private long lastTimestamp = -1;
         private int timestampColIndex = -1;
 

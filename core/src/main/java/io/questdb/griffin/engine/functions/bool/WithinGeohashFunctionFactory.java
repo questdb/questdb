@@ -209,9 +209,9 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
     }
 
     private static class WithinGeohashRuntimeConstFunction extends AbstractWithinGeohashFunction {
-        IntList argPositions;
+        final IntList argPositions;
+        final ObjList<Function> prefixFuncs;
         long geoHashValue;
-        ObjList<Function> prefixFuncs;
         LongList prefixList;
         int prefixListSize;
 

@@ -58,9 +58,9 @@ public class GroupByUtf8SequenceLongHashMapBenchmark {
     private static final Rnd rnd = new Rnd();
     private static final Utf8SequenceLongHashMap utf8SequenceLongHashMap = new Utf8SequenceLongHashMap(initialCapacity);
     private static long mapPtr = 0;
+    final Utf8StringSink sink = new Utf8StringSink();
     @Param({"10", "50", "200", "1000"})
     public int size;
-    Utf8StringSink sink = new Utf8StringSink();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

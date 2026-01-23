@@ -25,6 +25,6 @@
 package io.questdb.griffin.engine.table.parquet;
 
 public class ParquetVersion {
-    public static int PARQUET_VERSION_V1 = 1;
-    public static int PARQUET_VERSION_V2 = 2;
+    public static final int PARQUET_VERSION_V1 = 1;
+    public static final int PARQUET_VERSION_V2 = 2;
 }

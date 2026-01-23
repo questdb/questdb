@@ -47,8 +47,8 @@ import org.junit.Test;
 
 @SuppressWarnings("resource")
 public class DecimalTransformerFactoryTest {
-    Decimal128 decimal128 = new Decimal128();
-    Decimal256 decimal256 = new Decimal256();
+    final Decimal128 decimal128 = new Decimal128();
+    final Decimal256 decimal256 = new Decimal256();
 
     @Test
     public void testAddOneTransformerWithScale() {

@@ -52,11 +52,11 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class BinarySearchVsHashSetBenchmark {
+    final Rnd rnd = new Rnd();
     private final LongList longList = new LongList();
     private final LongHashSet longSet = new LongHashSet();
     @Param({"1", "2", "3", "5", "8", "10", "100", "200", "1000", "10000", "100000"})
     public int size;
-    Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

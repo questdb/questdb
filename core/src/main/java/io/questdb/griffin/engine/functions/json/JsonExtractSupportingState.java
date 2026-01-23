@@ -46,7 +46,7 @@ import org.jetbrains.annotations.Nullable;
 public class JsonExtractSupportingState implements QuietCloseable {
     public static final String EXTRACT_FUNCTION_NAME = "json_extract";
     // Only set for VARCHAR extraction to provide string backwards compatibility.
-    public @Nullable StringSink destUtf16Sink;
+    public final @Nullable StringSink destUtf16Sink;
     // Only set for types that require UTF-8 storage: VARCHAR, TIMESTAMP, DATE or IPV4 parsing.
     public @Nullable DirectUtf8Sink destUtf8Sink;
     public DirectUtf8Sequence jsonSeq = null;

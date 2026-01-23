@@ -1530,7 +1530,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     static class Row {
-        Object[] cols;
+        final Object[] cols;
 
         Row(Object... cols) {
             this.cols = cols;

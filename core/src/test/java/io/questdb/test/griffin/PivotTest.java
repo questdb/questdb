@@ -29,12 +29,12 @@ import org.junit.Test;
 
 public class PivotTest extends AbstractSqlParserTest {
 
-    public static String ddlCities = """
+    public static final String ddlCities = """
             CREATE TABLE cities (
                 country VARCHAR, name VARCHAR, year INT, population INT
             );""";
-    public static String ddlMonthlySales = "CREATE TABLE monthly_sales (empid INT, amount INT, month TEXT);";
-    public static String ddlSensors = """
+    public static final String ddlMonthlySales = "CREATE TABLE monthly_sales (empid INT, amount INT, month TEXT);";
+    public static final String ddlSensors = """
             CREATE TABLE IF NOT EXISTS sensors (
               timestamp TIMESTAMP,
               vehicle_id SYMBOL,
@@ -43,7 +43,7 @@ public class PivotTest extends AbstractSqlParserTest {
               str_value STRING
             ) timestamp(timestamp) PARTITION BY DAY;
             """;
-    public static String ddlTrades = """
+    public static final String ddlTrades = """
             CREATE TABLE 'trades' (
               symbol SYMBOL,
               side SYMBOL,
@@ -51,7 +51,7 @@ public class PivotTest extends AbstractSqlParserTest {
               amount DOUBLE,
               timestamp TIMESTAMP
             ) timestamp (timestamp) PARTITION BY NONE""";
-    public static String dmlCities =
+    public static final String dmlCities =
             """
                     INSERT INTO cities VALUES
                         ('NL', 'Amsterdam', 2000, 1005),
@@ -63,7 +63,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('US', 'New York City', 2000, 8015),
                         ('US', 'New York City', 2010, 8175),
                         ('US', 'New York City', 2020, 8772);""";
-    public static String dmlMonthlySales = """
+    public static final String dmlMonthlySales = """
              INSERT INTO monthly_sales VALUES
                         (1, 10000, 'JAN'),
                 (1, 400, 'JAN'),
@@ -82,7 +82,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         (2, 800, 'APR'),
                         (2, 4500, 'APR');\
             """;
-    public static String dmlSensors = """
+    public static final String dmlSensors = """
             INSERT INTO sensors
             SELECT
                 date_trunc('milliseconds', timestamp_sequence('2025-01-01', 1L) + (x / 2000)) AS timestamp,
@@ -94,7 +94,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 CASE WHEN x % 20 < 10 THEN rnd_long() % 1000 ELSE NULL END AS int_value,
                 CASE WHEN x % 20 >= 10 THEN 'val_' || rnd_int() % 1000 ELSE NULL END AS str_value
             FROM long_sequence(10000) x;""";
-    public static String dmlTrades = """
+    public static final String dmlTrades = """
             INSERT INTO trades(symbol,side,price,amount,timestamp)\s
             VALUES ('ADA-USDT','sell',0.9716,94.2581,'2024-12-19T08:10:00.062000Z'),
              ('ADA-USD','sell',0.9716,94.2581,'2024-12-19T08:10:00.062000Z'),

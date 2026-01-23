@@ -50,7 +50,7 @@ import java.time.temporal.ChronoUnit;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 
 public class MillsTimestampDriverTest extends AbstractCairoTest {
-    TimestampDriver driver = MillsTimestampDriver.INSTANCE;
+    final TimestampDriver driver = MillsTimestampDriver.INSTANCE;
 
     @Test
     public void testAdd() {
