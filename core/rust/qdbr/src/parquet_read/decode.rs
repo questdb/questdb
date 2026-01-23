@@ -3358,7 +3358,7 @@ mod tests {
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
-    use crate::parquet_read::{ColumnChunkBuffers, DecodeContext, ParquetDecoder};
+    use crate::parquet_read::{ColumnChunkBuffers, DecodeContext, ParquetDecoder, RowGroupBuffers};
     use crate::parquet_write::array::{append_array_null, append_raw_array};
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
@@ -4138,5 +4138,444 @@ mod tests {
             false,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_decode_row_group_filtered_empty_filter() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 10;
+        let row_group_size = 10;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        let columns = vec![(0i32, ColumnTypeTag::Int.into_type())];
+        let rows_filter: Vec<i64> = vec![];
+
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                0,
+                row_group_size as u32,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, 0);
+        assert_eq!(rgb.column_bufs[0].data_vec.len(), 0);
+    }
+
+    #[test]
+    fn test_decode_row_group_filtered_single_row() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 10;
+        let row_group_size = 10;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        let columns = vec![(0i32, ColumnTypeTag::Int.into_type())];
+        let rows_filter: Vec<i64> = vec![3];
+
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                0,
+                row_group_size as u32,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, 1);
+        assert_eq!(rgb.column_bufs[0].data_vec.len(), 4);
+        assert_eq!(
+            rgb.column_bufs[0].data_vec.as_slice(),
+            &expected_buff.data_vec[12..16]
+        );
+    }
+
+    #[test]
+    fn test_decode_row_group_filtered_consecutive_rows() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 20;
+        let row_group_size = 20;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let columns = vec![(0i32, ColumnTypeTag::Int.into_type())];
+        let rows_filter: Vec<i64> = vec![5, 6, 7, 8];
+
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                0,
+                row_group_size as u32,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, 4);
+        assert_eq!(rgb.column_bufs[0].data_vec.len(), 16);
+        assert_eq!(
+            rgb.column_bufs[0].data_vec.as_slice(),
+            &expected_buff.data_vec[20..36]
+        );
+    }
+
+    #[test]
+    fn test_decode_row_group_filtered_non_consecutive_rows() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 20;
+        let row_group_size = 20;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        let columns = vec![(0i32, ColumnTypeTag::Int.into_type())];
+        let rows_filter: Vec<i64> = vec![2, 5, 10, 15];
+
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                0,
+                row_group_size as u32,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, 4);
+        assert_eq!(rgb.column_bufs[0].data_vec.len(), 16);
+
+        let result: Vec<i32> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(4)
+            .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let expected: Vec<i32> = [2, 5, 10, 15]
+            .iter()
+            .map(|&i| {
+                i32::from_le_bytes(
+                    expected_buff.data_vec[i * 4..(i + 1) * 4]
+                        .try_into()
+                        .unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_decode_row_group_filtered_fill_nulls_true() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 10;
+        let row_group_size = 10;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        let columns = vec![(0i32, ColumnTypeTag::Int.into_type())];
+        let rows_filter: Vec<i64> = vec![1, 3, 5];
+
+        let count = decoder
+            .decode_row_group_filtered::<true>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                0,
+                row_group_size as u32,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, 10);
+        assert_eq!(rgb.column_bufs[0].data_vec.len(), 40);
+        let result: Vec<i32> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(4)
+            .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+
+        for (i, &val) in result.iter().enumerate() {
+            if rows_filter.contains(&(i as i64)) {
+                let expected_val = i32::from_le_bytes(
+                    expected_buff.data_vec[i * 4..(i + 1) * 4]
+                        .try_into()
+                        .unwrap(),
+                );
+                assert_eq!(val, expected_val, "Row {} should have value", i);
+            } else {
+                assert_eq!(val, i32::MIN, "Row {} should be NULL", i);
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_row_group_filtered_across_pages() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 100;
+        let row_group_size = 100;
+        let data_page_size = 10; // 10 pages of 10 rows each
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        let columns = vec![(0i32, ColumnTypeTag::Int.into_type())];
+        let rows_filter: Vec<i64> = vec![5, 25, 55, 95];
+
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                0,
+                row_group_size as u32,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, 4);
+        let result: Vec<i32> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(4)
+            .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let expected: Vec<i32> = [5, 25, 55, 95]
+            .iter()
+            .map(|&i| {
+                i32::from_le_bytes(
+                    expected_buff.data_vec[i * 4..(i + 1) * 4]
+                        .try_into()
+                        .unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_decode_row_group_filtered_with_row_range() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 20;
+        let row_group_size = 20;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        let columns = vec![(0i32, ColumnTypeTag::Int.into_type())];
+        let rows_filter: Vec<i64> = vec![0, 2, 4, 6, 8];
+
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                5,
+                15,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, 5);
+
+        let result: Vec<i32> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(4)
+            .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+
+        let expected: Vec<i32> = [5, 7, 9, 11, 13]
+            .iter()
+            .map(|&i| {
+                i32::from_le_bytes(
+                    expected_buff.data_vec[i * 4..(i + 1) * 4]
+                        .try_into()
+                        .unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_decode_row_group_filtered_long_column() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 20;
+        let row_group_size = 20;
+        let data_page_size = 10;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i64, 8, _>(row_count, LONG_NULL, |long| long.to_le_bytes());
+        let columns = vec![create_fix_column(
+            0,
+            row_count,
+            "long_col",
+            expected_buff.data_vec.as_ref(),
+            ColumnTypeTag::Long.into_type(),
+        )];
+        let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        let columns = vec![(0i32, ColumnTypeTag::Long.into_type())];
+        let rows_filter: Vec<i64> = vec![1, 5, 10, 15, 19];
+
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                0,
+                row_group_size as u32,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, 5);
+        assert_eq!(rgb.column_bufs[0].data_vec.len(), 40);
+
+        let result: Vec<i64> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(8)
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let expected: Vec<i64> = [1, 5, 10, 15, 19]
+            .iter()
+            .map(|&i| {
+                i64::from_le_bytes(
+                    expected_buff.data_vec[i * 8..(i + 1) * 8]
+                        .try_into()
+                        .unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(result, expected);
     }
 }

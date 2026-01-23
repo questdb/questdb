@@ -787,8 +787,8 @@ pub fn append_array_nulls(
 
 #[cfg(test)]
 mod tests {
-    use crate::allocator::TestAllocatorState;
     use super::*;
+    use crate::allocator::TestAllocatorState;
 
     #[test]
     fn test_null_or_empty() {
@@ -1091,7 +1091,6 @@ mod tests {
 
     #[test]
     fn test_append_array_nulls() {
-
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
         let data_mem: &[u8] = &[1, 2, 3, 4]; // data_mem.len() = 4
@@ -1109,7 +1108,8 @@ mod tests {
             for i in 0..count {
                 let offset = i * 16;
                 let stored_offset = u64::from_le_bytes(aux[offset..offset + 8].try_into().unwrap());
-                let stored_header = u64::from_le_bytes(aux[offset + 8..offset + 16].try_into().unwrap());
+                let stored_header =
+                    u64::from_le_bytes(aux[offset + 8..offset + 16].try_into().unwrap());
                 assert_eq!(stored_offset, 4, "count={}, i={}", count, i); // data_mem.len()
                 assert_eq!(stored_header, 0, "count={}, i={}", count, i); // null header
             }
@@ -1124,7 +1124,8 @@ mod tests {
             for i in 0..count {
                 let offset = i * 16;
                 let stored_offset = u64::from_le_bytes(aux[offset..offset + 8].try_into().unwrap());
-                let stored_header = u64::from_le_bytes(aux[offset + 8..offset + 16].try_into().unwrap());
+                let stored_header =
+                    u64::from_le_bytes(aux[offset + 8..offset + 16].try_into().unwrap());
                 assert_eq!(stored_offset, 4, "count={}, i={}", count, i);
                 assert_eq!(stored_header, 0, "count={}, i={}", count, i);
             }
