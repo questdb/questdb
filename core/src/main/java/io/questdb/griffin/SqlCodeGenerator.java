@@ -3763,7 +3763,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
 
                                 if (!isLastWindowJoin) {
-                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(joinMetadata, splitIndex);
+                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(joinMetadata, splitIndex);
                                     for (int j = 0, m = outerProjectionMetadata.getColumnCount(); j < m; j++) {
                                         metadata.add(outerProjectionMetadata.getColumnMetadata(j));
                                     }
@@ -3851,7 +3851,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (columnIndex == null) {
                                                 factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
                                             } else {
-                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
+                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(masterMetadata);
                                                 for (int k = 0, m = aggregateCols.size(); k < m; k++) {
                                                     metadata.add(new TableColumnMetadata(aggregateCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
                                                 }
@@ -4288,7 +4288,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.getMetadataVersion(),
                     intervalModel,
                     timestampIndex,
-                    GenericRecordMetadata.deepCopyOf(reader.getMetadata()),
+                    GenericRecordMetadata.copyOfNew(reader.getMetadata()),
                     ORDER_DESC,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
@@ -4298,7 +4298,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             partitionFrameCursorFactory = new FullPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
-                    GenericRecordMetadata.deepCopyOf(reader.getMetadata()),
+                    GenericRecordMetadata.copyOfNew(reader.getMetadata()),
                     ORDER_DESC,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
@@ -6921,7 +6921,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new EmptyTableRecordCursorFactory(queryMeta, metadata.getTableToken());
         }
 
-        GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
+        GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.copyOfNew(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, queryMeta);
         final TableToken tableToken = metadata.getTableToken();
         ExpressionNode withinExtracted;
