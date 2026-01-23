@@ -72,16 +72,21 @@ public class DateExpressionEvaluator {
             int errorPos
     ) throws SqlException {
         // Caller already trims whitespace and verifies first char is '$'
-        // Find end of variable name (until space or end)
+        // Find end of variable name (until space, '+', '-', or end)
+        // This supports both "$today + 5d" (with spaces) and "$today+5d" (compact)
         int varEnd = lo + 1;
-        while (varEnd < hi && expression.charAt(varEnd) != ' ') {
+        while (varEnd < hi) {
+            char c = expression.charAt(varEnd);
+            if (c == ' ' || c == '+' || c == '-') {
+                break;
+            }
             varEnd++;
         }
 
         // Resolve base variable
         long baseTimestamp = resolveVariable(timestampDriver, expression, lo, varEnd, nowTimestamp, errorPos);
 
-        // Check for arithmetic operator
+        // Check for arithmetic operator (skip any spaces first)
         int opPos = varEnd;
         while (opPos < hi && expression.charAt(opPos) == ' ') {
             opPos++;
@@ -97,7 +102,7 @@ public class DateExpressionEvaluator {
             throw SqlException.$(errorPos, "Expected '+' or '-' operator");
         }
 
-        // Parse the offset value
+        // Parse the offset value (skip any spaces after operator)
         int offsetStart = opPos + 1;
         while (offsetStart < hi && expression.charAt(offsetStart) == ' ') {
             offsetStart++;

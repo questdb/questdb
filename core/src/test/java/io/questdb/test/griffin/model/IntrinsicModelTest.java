@@ -1741,6 +1741,409 @@ public class IntrinsicModelTest {
         );
     }
 
+    // ================= Date Variable Range Tests =================
+
+    @Test
+    public void testDateVariableRangeArithmeticBothSides() throws SqlException {
+        // [$today+1bd..$today+5bd] produces 2 merged intervals (business days)
+        // 2026-01-22 (Thu) + 1bd = Fri 23, + 5bd = Thu 29
+        // Days: Fri 23, (skip Sat 24, Sun 25), Mon 26, Tue 27, Wed 28, Thu 29
+        // Merged: [Jan 23] and [Jan 26-29]
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}," +
+                        "{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-29T23:59:59.999999Z}]",
+                "[$today+1bd..$today+5bd]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeArithmeticBothSidesCalendar() throws SqlException {
+        // [$today+1d..$today+5d] produces a merged interval (all calendar days)
+        // 2026-01-22 + 1d = Jan 23, + 5d = Jan 27
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-27T23:59:59.999999Z}]",
+                "[$today+1d..$today+5d]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeBothNegativeArithmetic() throws SqlException {
+        // Both expressions with negative arithmetic - range in the past
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-17T00:00:00.000000Z, hi=2026-01-20T23:59:59.999999Z}]",
+                "[$today-5d..$today-2d]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeBusinessDays() throws SqlException {
+        // [$today..$today+5bd] produces 2 merged intervals (weekdays only)
+        // 2026-01-22 (Thu) + 5bd = 2026-01-29 (Thu), skipping Sat/Sun
+        // Days: Thu 22, Fri 23, (skip Sat 24, Sun 25), Mon 26, Tue 27, Wed 28, Thu 29
+        // Adjacent weekdays are merged: [Jan 22-23] and [Jan 26-29]
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}," +
+                        "{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-29T23:59:59.999999Z}]",
+                "[$today..$today+5bd]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeBusinessDaysFromWeekend() throws SqlException {
+        // Start from Saturday - business day range should still work
+        // 2026-01-24 is Saturday, +3bd should skip Sat/Sun and give Mon 26, Tue 27, Wed 28
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-28T23:59:59.999999Z}]",
+                "[$today..$today+3bd]",
+                "2026-01-24T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeBusinessDaysOnlyWeekends() throws SqlException {
+        // Range that spans only weekend days with business day mode
+        // Sat to Sun with bd range = empty (no weekdays)
+        // 2026-01-24 is Saturday, 2026-01-25 is Sunday
+        // $today..$today+1bd from Saturday = Monday only (skips Sat, Sun)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-26T23:59:59.999999Z}]",
+                "[$today..$today+1bd]",
+                "2026-01-24T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeBusinessDaysWithTrailingWhitespaceBeforeTimezone() throws SqlException {
+        // Bug test: trailing whitespace before @ should not break business day detection
+        // [$today..$today+5bd @+05:00] - the space before @ should be trimmed
+        // 2026-01-22 (Thu) + 5bd = Thu 29, skipping Sat/Sun
+        // Should produce 2 merged intervals: [Thu 22 - Fri 23] and [Mon 26 - Thu 29]
+        // In UTC+5: 19:00 UTC previous day to 18:59:59 UTC
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-21T19:00:00.000000Z, hi=2026-01-23T18:59:59.999999Z}," +
+                        "{lo=2026-01-25T19:00:00.000000Z, hi=2026-01-29T18:59:59.999999Z}]",
+                "[$today..$today+5bd @+05:00]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeCalendarDays() throws SqlException {
+        // [$today..$today+5d] produces a merged interval for all calendar days
+        // 2026-01-22 (Thu) to 2026-01-27 (Tue) - adjacent full-day intervals are merged
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-27T23:59:59.999999Z}]",
+                "[$today..$today+5d]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeCaseInsensitive() throws SqlException {
+        // Variable names and units should be case-insensitive
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-24T23:59:59.999999Z}]",
+                "[$TODAY..$TODAY+2D]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}," +
+                        "{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-26T23:59:59.999999Z}]",
+                "[$Today..$Today+2BD]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+        // Mixed case for "bd" unit - covers all branches: bD and Bd
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}," +
+                        "{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-26T23:59:59.999999Z}]",
+                "[$today..$today+2bD]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}," +
+                        "{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-26T23:59:59.999999Z}]",
+                "[$today..$today+2Bd]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeCompactVsSpaced() throws SqlException {
+        // Both compact ($today+5d) and spaced ($today + 5d) formats should work
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-27T23:59:59.999999Z}]",
+                "[$today..$today+5d]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-27T23:59:59.999999Z}]",
+                "[$today .. $today + 5d]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeDayFilterInStartExpression() {
+        // '#' is parsed as day filter marker, so "workday..$tomorrow" becomes the day filter value
+        assertBracketIntervalError("[$today#workday..$tomorrow]", "Invalid day name: workday..$tomorrow");
+    }
+
+    @Test
+    public void testDateVariableRangeEmptyEndExpression() {
+        // Empty end expression
+        assertBracketIntervalError("[$today..]", "Empty end expression in date range");
+    }
+
+    @Test
+    public void testDateVariableRangeEmptyStartExpression() {
+        // Empty start expression - fails at date parsing
+        assertBracketIntervalError("[..$today]", "Invalid date");
+    }
+
+    @Test
+    public void testDateVariableRangeInMixedList() throws SqlException {
+        // Range as part of a larger date list
+        // [$yesterday..$tomorrow, 2026-02-01] - range + static date
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-21T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}," +
+                        "{lo=2026-02-01T00:00:00.000000Z, hi=2026-02-01T23:59:59.999999Z}]",
+                "[$yesterday..$tomorrow, 2026-02-01]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeInvalidOrder() {
+        // End before start should produce error
+        assertBracketIntervalError("[$today+5d..$today]", "Invalid date range: start is after end");
+    }
+
+    @Test
+    public void testDateVariableRangeMissingNumberAfterOperator() {
+        // Missing number after + operator
+        assertBracketIntervalError("[$today+..$today+5d]", "Expected number after operator");
+    }
+
+    @Test
+    public void testDateVariableRangeMissingUnitAfterNumber() {
+        // Missing unit after number
+        assertBracketIntervalError("[$today+5..$today+10d]", "Expected unit");
+    }
+
+    @Test
+    public void testDateVariableRangeMixedExpressions() throws SqlException {
+        // [$yesterday..$tomorrow] produces a merged interval
+        // 2026-01-21, 2026-01-22, 2026-01-23 - adjacent full days are merged
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-21T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
+                "[$yesterday..$tomorrow]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeMultipleRangesInList() throws SqlException {
+        // Multiple ranges in a date list (separated by gap)
+        // This tests that we can have two range expressions in one list
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-20T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}," +
+                        "{lo=2026-02-01T00:00:00.000000Z, hi=2026-02-03T23:59:59.999999Z}]",
+                "[$today-2d..$today, $today+10d..$today+12d]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeNegativeOffset() throws SqlException {
+        // [$today-2d..$today] produces a merged interval
+        // Jan 20, 21, 22 - adjacent full days are merged
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-20T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
+                "[$today-2d..$today]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeSameDaySingleBusinessDay() throws SqlException {
+        // Single business day range: $today+1bd..$today+1bd (Friday 2026-01-23)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
+                "[$today+1bd..$today+1bd]",
+                "2026-01-22T10:30:00.000000Z"  // Thursday
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeSingleDay() throws SqlException {
+        // [$today..$today] should produce 1 interval
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
+                "[$today..$today]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeSingleDot() {
+        // Single dot - findRangeOperator returns position of '.', end becomes "tomorrow" (no $)
+        assertBracketIntervalError("[$today.$tomorrow]", "Unknown date variable: tomorrow");
+    }
+
+    @Test
+    public void testDateVariableRangeSpanningMonthBoundary() throws SqlException {
+        // Range spanning Jan 29 to Feb 2 (month boundary)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-29T00:00:00.000000Z, hi=2026-02-02T23:59:59.999999Z}]",
+                "[$today..$today+4d]",
+                "2026-01-29T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeSpanningYearBoundary() throws SqlException {
+        // Range spanning Dec 30 to Jan 2 (year boundary)
+        // 2025-12-30 to 2026-01-02 = 4 days merged
+        assertBracketIntervalWithNow(
+                "[{lo=2025-12-30T00:00:00.000000Z, hi=2026-01-02T23:59:59.999999Z}]",
+                "[$today-3d..$today]",
+                "2026-01-02T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeThreeDots() {
+        // Three dots is invalid - parsed as ".." followed by ".$tomorrow" which fails
+        assertBracketIntervalError("[$today...$tomorrow]", "Unknown date variable");
+    }
+
+    @Test
+    public void testDateVariableRangeUnknownEndVariable() {
+        // Unknown variable in end expression
+        assertBracketIntervalError("[$today..$invalid]", "Unknown date variable");
+    }
+
+    @Test
+    public void testDateVariableRangeUnknownStartVariable() {
+        // Unknown variable in start expression
+        assertBracketIntervalError("[$invalid..$today]", "Unknown date variable");
+    }
+
+    @Test
+    public void testDateVariableRangeWithDayFilter() throws SqlException {
+        // [$today..$today+10d]#workday - range then filter for workdays
+        // From 2026-01-22 (Thu) to 2026-02-01 (Sun) = 11 days
+        // Filtered to workdays: Thu 22, Fri 23, Mon 26, Tue 27, Wed 28, Thu 29, Fri 30
+        // Adjacent weekdays are merged: [Jan 22-23] and [Jan 26-30]
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}," +
+                        "{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-30T23:59:59.999999Z}]",
+                "[$today..$today+10d]#workday",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowStripsTime() throws SqlException {
+        // $now has time component, but range should use start of day
+        // Range from $now (10:30 on Jan 22) to $tomorrow should be Jan 22-23 full days
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
+                "[$now..$tomorrow]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithPerElementTimezone() throws SqlException {
+        // Per-element timezone on range expression
+        // [$today..$today+2d@+05:00] - each date at +05:00
+        // Full day at +05:00 = 19:00 UTC previous day to 18:59:59 UTC
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-21T19:00:00.000000Z, hi=2026-01-24T18:59:59.999999Z}]",
+                "[$today..$today+2d]@+05:00",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithTimeList() throws SqlException {
+        // [$today..$today+2d]T[09:00,14:00] should produce 6 intervals (3 days * 2 times)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T09:00:00.000000Z, hi=2026-01-22T09:00:59.999999Z}," +
+                        "{lo=2026-01-22T14:00:00.000000Z, hi=2026-01-22T14:00:59.999999Z}," +
+                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:00:59.999999Z}," +
+                        "{lo=2026-01-23T14:00:00.000000Z, hi=2026-01-23T14:00:59.999999Z}," +
+                        "{lo=2026-01-24T09:00:00.000000Z, hi=2026-01-24T09:00:59.999999Z}," +
+                        "{lo=2026-01-24T14:00:00.000000Z, hi=2026-01-24T14:00:59.999999Z}]",
+                "[$today..$today+2d]T[09:00,14:00]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithTimeSuffix() throws SqlException {
+        // [$today..$today+3d]T09:00;1h should produce 4 intervals with time
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T09:00:00.000000Z, hi=2026-01-22T10:00:59.999999Z}," +
+                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T10:00:59.999999Z}," +
+                        "{lo=2026-01-24T09:00:00.000000Z, hi=2026-01-24T10:00:59.999999Z}," +
+                        "{lo=2026-01-25T09:00:00.000000Z, hi=2026-01-25T10:00:59.999999Z}]",
+                "[$today..$today+3d]T09:00;1h",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithTimezone() throws SqlException {
+        // [$today..$today+2d]T09:00@America/New_York
+        // 09:00 EST = 14:00 UTC (winter time, UTC-5)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T14:00:00.000000Z, hi=2026-01-22T14:00:59.999999Z}," +
+                        "{lo=2026-01-23T14:00:00.000000Z, hi=2026-01-23T14:00:59.999999Z}," +
+                        "{lo=2026-01-24T14:00:00.000000Z, hi=2026-01-24T14:00:59.999999Z}]",
+                "[$today..$today+2d]T09:00@America/New_York",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithWhitespace() throws SqlException {
+        // Whitespace around range operator and in expressions
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-24T23:59:59.999999Z}]",
+                "[ $today .. $today + 2d ]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeZeroBusinessDays() throws SqlException {
+        // $today..$today+0bd should be just today (if weekday)
+        // 2026-01-22 is Thursday
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
+                "[$today..$today+0bd]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeZeroBusinessDaysFromWeekend() throws SqlException {
+        // $today..$today+0bd from Saturday = empty (Saturday is not a business day)
+        // The start and end are both Saturday, but bd range skips weekends
+        // So no days are included
+        assertBracketIntervalWithNow(
+                "[]",
+                "[$today..$today+0bd]",
+                "2026-01-24T10:30:00.000000Z"  // Saturday
+        );
+    }
+
     // ================= End Date Variable Tests =================
 
     @Test
