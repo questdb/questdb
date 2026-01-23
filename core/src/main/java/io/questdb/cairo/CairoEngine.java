@@ -248,8 +248,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
-            this.matViewGraph = new MatViewGraph();
-            this.viewGraph = new ViewGraph();
+            this.matViewGraph = createMatViewGraph();
+            this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
 
@@ -271,9 +271,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             // Migrate database files.
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
-            tableNameRegistry = configuration.isReadOnlyInstance()
-                    ? new TableNameRegistryRO(this, tableFlagResolver)
-                    : new TableNameRegistryRW(this, tableFlagResolver);
+            tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
@@ -327,6 +325,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
+        if (updatedTableToken.isMatView() && matViewGraph.getViewDefinition(updatedTableToken) == null) {
+            throw CairoException.nonCritical().put("materialized view has not been registered yet [name=").put(updatedTableToken.getTableName()).put(']');
+        }
         tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
         if (token.isWal()) {
             tableSequencerAPI.applyRename(updatedTableToken);
@@ -631,7 +632,6 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
     }
-
 
     public @NotNull TableToken createTable(
             SecurityContext securityContext,
@@ -2183,6 +2183,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
+    protected @NotNull MatViewGraph createMatViewGraph() {
+        return new MatViewGraph();
+    }
+
     // used in ent
     protected MatViewStateStore createMatViewStateStore() {
         return configuration.isMatViewEnabled() ? new MatViewStateStoreImpl(this) : NoOpMatViewStateStore.INSTANCE;
@@ -2197,11 +2201,21 @@ public class CairoEngine implements Closeable, WriterSource {
         return new SqlExecutionContextImpl(this, 0).with(AllowAllSecurityContext.INSTANCE);
     }
 
+    protected @NotNull TableNameRegistry createTableNameRegistry(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
+        return configuration.isReadOnlyInstance()
+                ? new TableNameRegistryRO(this, tableFlagResolver)
+                : new TableNameRegistryRW(this, tableFlagResolver);
+    }
+
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
             Telemetry.TelemetryTypeBuilder<T> builder,
             CairoConfiguration configuration
     ) {
         return new Telemetry<>(builder, configuration);
+    }
+
+    protected @NotNull ViewGraph createViewGraph() {
+        return new ViewGraph();
     }
 
     protected Iterable<FunctionFactory> getFunctionFactories() {
