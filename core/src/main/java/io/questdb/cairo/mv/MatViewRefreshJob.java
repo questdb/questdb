@@ -577,7 +577,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
-    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) {
+    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
         columnFilter.of(factory.getMetadata().getColumnCount());
         return RecordToRowCopierUtils.generateCopier(
                 compiler.getAsm(),
@@ -688,7 +688,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 copier = getRecordToRowCopier(walWriter, factory, compiler);
                             }
                         } catch (SqlException e) {
-                            //noinspection ConstantValue,DataFlowIssue
                             factory = Misc.free(factory);
                             LOG.error().$("could not compile materialized view [view=").$(viewTableToken)
                                     .$(", sql=").$(viewSql)

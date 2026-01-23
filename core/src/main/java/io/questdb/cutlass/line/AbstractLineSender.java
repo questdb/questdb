@@ -270,7 +270,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         return this;
     }
 
-    @SuppressWarnings("DefaultNotLastCaseInSwitch")
     @Override
     public AbstractLineSender putAscii(char c) {
         validateNotClosed();

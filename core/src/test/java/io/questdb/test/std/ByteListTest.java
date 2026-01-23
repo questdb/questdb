@@ -77,7 +77,7 @@ public class ByteListTest {
         Assert.assertNotEquals(list1, list5);
 
         // null
-        Assert.assertNotEquals(null, list1);
+        Assert.assertNotEquals(list1, null);
 
         // equals
         final ByteList list6 = new ByteList();

@@ -164,6 +164,7 @@ public class HistogramTest {
                 thrown = true;
             }
             Assert.assertTrue(thrown);
+            Assert.assertNull(histogram);
 
             thrown = false;
             try {
@@ -299,7 +300,7 @@ public class HistogramTest {
                     ((8 *
                             ((long) (
                                     Math.ceil(
-                                            Math.log((double) highestTrackableValue / subBucketSize)
+                                            Math.log(highestTrackableValue / subBucketSize)
                                                     / Math.log(2)
                                     )
                                             + 2)) *
@@ -542,8 +543,8 @@ public class HistogramTest {
             verifyMaxValue(histogram);
             histogram.recordValue(20);
             histogram.recordValue(80);
-            Assert.assertEquals(20, histogram.getMinValue());
-            Assert.assertEquals(80, histogram.getMaxValue());
+            Assert.assertEquals(histogram.getMinValue(), 20);
+            Assert.assertEquals(histogram.getMaxValue(), 80);
         }
     }
 
@@ -1251,7 +1252,7 @@ public class HistogramTest {
         ObjectOutput out = null;
         ByteArrayInputStream bis = null;
         ObjectInput in = null;
-        AbstractHistogram newHistogram;
+        AbstractHistogram newHistogram = null;
         try {
             out = new ObjectOutputStream(bos);
             out.writeObject(histogram);

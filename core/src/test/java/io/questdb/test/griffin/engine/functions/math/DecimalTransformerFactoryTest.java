@@ -45,10 +45,9 @@ import io.questdb.std.Decimals;
 import org.junit.Assert;
 import org.junit.Test;
 
-@SuppressWarnings("resource")
 public class DecimalTransformerFactoryTest {
-    final Decimal128 decimal128 = new Decimal128();
-    final Decimal256 decimal256 = new Decimal256();
+    Decimal128 decimal128 = new Decimal128();
+    Decimal256 decimal256 = new Decimal256();
 
     @Test
     public void testAddOneTransformerWithScale() {

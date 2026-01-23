@@ -36,7 +36,6 @@ import org.junit.Test;
 
 import static org.junit.Assert.fail;
 
-@SuppressWarnings("resource")
 public class UdpLineChannelTest {
     private static final NetworkFacade FAILS_SET_SET_TTL_NET_FACADE = new NetworkFacadeImpl() {
         @Override

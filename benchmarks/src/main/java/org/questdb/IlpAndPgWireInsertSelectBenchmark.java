@@ -42,7 +42,6 @@ import java.util.stream.IntStream;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-@SuppressWarnings({"ConstantValue", "Java9ReflectionClassVisibility"})
 public class IlpAndPgWireInsertSelectBenchmark {
     public static final int COOLDOWN_PERIOD_SECONDS = 30;
     private static final int INSERT_BATCH_SIZE = 100;

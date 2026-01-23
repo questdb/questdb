@@ -43,6 +43,7 @@ import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
@@ -1154,7 +1155,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     boolean of(RecordCursorFactory factory, boolean queryCacheable, SqlExecutionContextImpl sqlExecutionContext)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
@@ -1306,7 +1307,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     void resume(HttpChunkedResponse response)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         resumeActions.getQuick(queryState).onResume(response, columnCount);
     }
 
@@ -1321,6 +1322,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     @FunctionalInterface
     interface StateResumeAction {
         void onResume(HttpChunkedResponse response, int columnCount)
-                throws PeerDisconnectedException, PeerIsSlowToReadException;
+                throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException;
     }
 }

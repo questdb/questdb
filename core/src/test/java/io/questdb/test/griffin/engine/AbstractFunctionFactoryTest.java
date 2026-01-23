@@ -315,6 +315,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         });
     }
 
+    @Deprecated
     protected Invocation call(Object... args) throws SqlException {
         return callCustomised(false, true, args);
     }
@@ -529,6 +530,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
+        public void andAssert(short expected) {
+            Assert.assertEquals(expected, function1.getShort(record));
+            Assert.assertEquals(expected, function2.getShort(record));
+            cleanup();
+        }
+
         public void andAssert(int expected) {
             Assert.assertEquals(expected, function1.getInt(record));
             Assert.assertEquals(expected, function2.getInt(record));
@@ -538,6 +545,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssert(long expected) {
             Assert.assertEquals(expected, function1.getLong(record));
             Assert.assertEquals(expected, function2.getLong(record));
+            cleanup();
+        }
+
+        public void andAssert(float expected, float delta) {
+            Assert.assertEquals(expected, function1.getFloat(record), delta);
+            Assert.assertEquals(expected, function2.getFloat(record), delta);
             cleanup();
         }
 
@@ -553,7 +566,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
-        @SuppressWarnings("unused")
         public void andAssertDecimal256(long hh, long hl, long lh, long ll, int scale) {
             Decimal256 decimal256 = new Decimal256();
             function1.getDecimal256(record, decimal256);
@@ -565,7 +577,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
-        @SuppressWarnings("unused")
         public void andAssertDecimal256Null() {
             Decimal256 decimal256 = new Decimal256();
             function1.getDecimal256(record, decimal256);

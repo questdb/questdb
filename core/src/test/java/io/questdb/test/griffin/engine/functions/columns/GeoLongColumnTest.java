@@ -42,23 +42,18 @@ public class GeoLongColumnTest {
 
     private static void assertBits(int bits, int column) {
         int type = ColumnType.getGeoHashTypeWithBits(bits);
-        try (GeoLongColumn col = GeoLongColumn.newInstance(column, type)) {
-            String desc = "col=" + column + ",bits=" + bits;
+        GeoLongColumn col = GeoLongColumn.newInstance(column, type);
+        String desc = "col=" + column + ",bits=" + bits;
 
-            Assert.assertEquals(desc, type, col.getType());
-            Assert.assertEquals(desc, column, col.getColumnIndex());
+        Assert.assertEquals(desc, type, col.getType());
+        Assert.assertEquals(desc, column, col.getColumnIndex());
 
-            try (GeoLongColumn c1 = GeoLongColumn.newInstance(column, type);
-                 GeoLongColumn c2 = GeoLongColumn.newInstance(column, type)) {
-                //noinspection ObjectEquality
-                boolean isCached = c1 == c2;
+        boolean isCached = GeoLongColumn.newInstance(column, type) == GeoLongColumn.newInstance(column, type);
 
-                if (column < ColumnUtils.STATIC_COLUMN_COUNT) {
-                    Assert.assertTrue(isCached);
-                } else {
-                    Assert.assertFalse(isCached);
-                }
-            }
+        if (column < ColumnUtils.STATIC_COLUMN_COUNT) {
+            Assert.assertTrue(isCached);
+        } else {
+            Assert.assertFalse(isCached);
         }
     }
 }

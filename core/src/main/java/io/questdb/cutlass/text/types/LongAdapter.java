@@ -39,12 +39,12 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
     private LongAdapter() {
     }
 
-    public long getLong(DirectUtf8Sequence value) {
+    public long getLong(DirectUtf8Sequence value) throws Exception {
         return Numbers.parseLong(value);
     }
 
     @Override
-    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) {
+    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception {
         return getLong(value);
     }
 
@@ -67,7 +67,7 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         row.putLong(column, SqlKeywords.isNullKeyword(value) ? Numbers.LONG_NULL : getLong(value));
     }
 }

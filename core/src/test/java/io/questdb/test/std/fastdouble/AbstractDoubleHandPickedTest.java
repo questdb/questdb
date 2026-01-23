@@ -39,7 +39,6 @@ import java.util.Arrays;
 
 import static org.junit.Assert.*;
 
-@SuppressWarnings("resource")
 abstract class AbstractDoubleHandPickedTest {
     ///-----------old tests----------
 

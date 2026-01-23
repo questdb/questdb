@@ -34,7 +34,6 @@ public class CommitFailedException extends Exception {
     private Throwable reason;
     private boolean tableDropped;
 
-    @SuppressWarnings({"ConstantValue", "AssertWithSideEffects"})
     public static CommitFailedException instance(Throwable reason, boolean tableDropped) {
         CommitFailedException ex = tlException.get();
         assert (ex = new CommitFailedException()) != null;

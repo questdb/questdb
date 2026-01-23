@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.json.JsonException;
@@ -38,6 +39,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.QuietCloseable;
@@ -58,6 +60,14 @@ import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
 public class LineHttpClientJsonTest extends AbstractBootstrapTest {
+
+    public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
+        StringSink sink = Misc.getThreadLocalSink();
+        engine.print(sql, sink);
+        if (!Chars.equals(sink, expectedResult)) {
+            Assert.assertEquals(expectedResult, sink);
+        }
+    }
 
     @Override
     @Before

@@ -45,6 +45,11 @@ import static io.questdb.test.std.histogram.org.HdrHistogram.HistogramTestUtils.
 public class HistogramShiftTest {
     static final long highestTrackableValue = 3600L * 1000 * 1000; // e.g. for 1 hr in usec units
 
+    static final Class[] histogramClassesNoAtomic = {
+            Histogram.class,
+            PackedHistogram.class
+    };
+
     @Test
     public void testHistogramShift() {
         Class<?>[] testClasses = new Class[]{

@@ -87,7 +87,7 @@ public class CompactUtf8SequenceHashSetTest {
         Assert.assertEquals(n, set.size());
 
         for (int i = 0; i < n; i++) {
-            Assert.assertEquals("at " + i, -1, set.remove(next(rnd, sink)));
+            Assert.assertEquals("at " + i, set.remove(next(rnd, sink)), -1);
         }
 
         Rnd rnd4 = new Rnd();

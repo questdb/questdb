@@ -25,8 +25,8 @@
 package io.questdb.test.cutlass.line.tcp;
 
 public class ColumnNameType {
-    public final CharSequence columnName;
-    public final int columnType;
+    public CharSequence columnName;
+    public int columnType;
 
     public ColumnNameType(String columnName, int columnType) {
         this.columnName = columnName;

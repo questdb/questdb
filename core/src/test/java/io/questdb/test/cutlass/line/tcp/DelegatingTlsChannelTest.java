@@ -31,7 +31,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 
-@SuppressWarnings("resource")
 public class DelegatingTlsChannelTest {
 
     @Test

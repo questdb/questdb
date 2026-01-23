@@ -73,7 +73,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
-@SuppressWarnings("resource")
 public class TableReaderTest extends AbstractCairoTest {
     public static final int DO_NOT_CARE = 0;
     public static final int MUST_NOT_SWITCH = 2;
@@ -1524,7 +1523,6 @@ public class TableReaderTest extends AbstractCairoTest {
         });
     }
 
-    @SuppressWarnings("ExtractMethodRecommender")
     @Test
     public void testAsyncRemoveAndReloadSymRetried() throws Exception {
         AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
@@ -1872,11 +1870,9 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             TestUtils.assertEquals(
-                    """
-                            a
-                            0x04000000000000000300000000000000020000000000000001
-                            0x08000000000000000700000000000000060000000000000005
-                            """, sink
+                    "a\n" +
+                            "0x04000000000000000300000000000000020000000000000001\n" +
+                            "0x08000000000000000700000000000000060000000000000005\n", sink
             );
         });
     }
@@ -2048,10 +2044,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testNullValueRecovery() throws Exception {
-        final String expected = replaceTimestampSuffix1("""
-                int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\tvarchar\ttimestamp
-                null\t0\t0\tnull\tnull\tnull\t\tabc\ttrue\t\t\t\t1970-01-01T00:00:00.100000Z
-                """, ColumnType.nameOf(timestampType));
+        final String expected = replaceTimestampSuffix1("int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\tvarchar\ttimestamp\n" +
+                "null\t0\t0\tnull\tnull\tnull\t\tabc\ttrue\t\t\t\t1970-01-01T00:00:00.100000Z\n", ColumnType.nameOf(timestampType));
 
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, timestampType);
@@ -2537,10 +2531,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 cursor.toTop();
                 println(reader.getMetadata(), cursor);
                 TestUtils.assertEquals(
-                        replaceTimestampSuffix("""
-                                l\ttimestamp\txyz
-                                null\t2016-03-02T10:00:00.000000Z\t
-                                """, ColumnType.nameOf(timestampType)),
+                        replaceTimestampSuffix("l\ttimestamp\txyz\n" +
+                                "null\t2016-03-02T10:00:00.000000Z\t\n", ColumnType.nameOf(timestampType)),
                         sink
                 );
             }
@@ -2593,7 +2585,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReloadWithTrailingNullString() {
+    public void testReloadWithTrailingNullString() throws Exception {
         final String tableName = "reload_test";
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
         model.col("str", ColumnType.STRING);
@@ -2987,9 +2979,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                 }
 
-                try {
-                    TableReader ignore2 = getReader("all");
-                    Assert.fail();
+                try (TableReader ignore2 = getReader("all")) {
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
                 }
@@ -4544,15 +4534,19 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
-        return switch (partitionBy) {
-            case PartitionBy.NONE -> true;
-            case PartitionBy.DAY, PartitionBy.MONTH, PartitionBy.WEEK, PartitionBy.YEAR, PartitionBy.HOUR -> {
+        switch (partitionBy) {
+            case PartitionBy.NONE:
+                return true;
+            case PartitionBy.DAY:
+            case PartitionBy.MONTH:
+            case PartitionBy.WEEK:
+            case PartitionBy.YEAR:
+            case PartitionBy.HOUR:
                 TimestampDriver.TimestampFloorMethod partitionByMethod = timestampDriver.getPartitionFloorMethod(partitionBy);
-                yield partitionByMethod.floor(timestampA) == partitionByMethod.floor(timestampB);
-            }
-            default ->
-                    throw CairoException.critical(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
-        };
+                return partitionByMethod.floor(timestampA) == partitionByMethod.floor(timestampB);
+            default:
+                throw CairoException.critical(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
+        }
     }
 
     @FunctionalInterface

@@ -41,7 +41,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-@SuppressWarnings("resource")
 public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     private FunctionParser functionParser;

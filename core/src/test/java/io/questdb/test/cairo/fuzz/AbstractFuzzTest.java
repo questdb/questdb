@@ -76,7 +76,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return fuzzer.generateRandom(log);
     }
 
-    @SuppressWarnings("unused")
     public Rnd generateRandom(Log log, long s0, long s1) {
         return fuzzer.generateRandom(log, s0, s1);
     }

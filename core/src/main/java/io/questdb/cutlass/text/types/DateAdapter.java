@@ -44,7 +44,7 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
     }
 
     @Override
-    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) {
+    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception {
         return driver.fromDate(parseLong(value));
     }
 
@@ -70,7 +70,7 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         row.putDate(column, parseLong(value));
     }
 

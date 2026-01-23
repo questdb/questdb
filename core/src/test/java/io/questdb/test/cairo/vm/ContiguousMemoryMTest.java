@@ -43,7 +43,6 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-@SuppressWarnings("resource")
 public class ContiguousMemoryMTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(ContiguousMemoryMTest.class);

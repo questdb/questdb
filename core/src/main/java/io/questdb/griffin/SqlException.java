@@ -135,7 +135,6 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                         .put(msg);
     }
 
-    @SuppressWarnings({"ConstantValue", "AssertWithSideEffects"})
     public static SqlException position(int position) {
         SqlException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
@@ -191,7 +190,6 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position;
     }
 
-    @SuppressWarnings("AssertWithSideEffects")
     @Override
     public StackTraceElement[] getStackTrace() {
         StackTraceElement[] result = EMPTY_STACK_TRACE;

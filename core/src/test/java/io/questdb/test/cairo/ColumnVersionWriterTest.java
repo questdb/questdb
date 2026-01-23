@@ -52,7 +52,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.ColumnVersionReader.HEADER_SIZE;
 
-@SuppressWarnings("resource")
 public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test

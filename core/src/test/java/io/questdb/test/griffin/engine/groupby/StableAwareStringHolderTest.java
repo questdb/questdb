@@ -142,7 +142,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
                 }
 
                 holder.clearAndSet(Chars.repeat("a", N));
-                Assert.assertEquals(N, holder.length());
+                Assert.assertEquals(holder.length(), N);
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals('a', holder.charAt(i));
                 }

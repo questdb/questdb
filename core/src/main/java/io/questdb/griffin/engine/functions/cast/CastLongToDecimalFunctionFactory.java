@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
@@ -51,7 +52,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             Function arg,
             int targetType,
             Decimal256 decimal256
-    ) {
+    ) throws SqlException {
         if (arg.isConstant()) {
             long value = arg.getLong(null);
             return newConstantInstance(decimal256, position, targetType, value);
@@ -71,7 +72,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             int position,
             Function arg,
             Decimal256 decimal256
-    ) {
+    ) throws SqlException {
         int targetPrecision;
         if (arg.isConstant()) {
             long value = arg.getLong(null);
@@ -95,7 +96,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         return newInstance(argPositions.getQuick(0), args.getQuick(0), args.getQuick(1).getType(), sqlExecutionContext.getDecimal256());
     }
 

@@ -37,7 +37,7 @@ import java.util.function.IntFunction;
 
 public class InformationSchemaQuestDBColumnsFunctionFactory implements FunctionFactory {
     public static final String SIGNATURE = "information_schema.questdb_columns()";
-    public static final IntFunction<String> TYPE_TO_NAME = ColumnType::nameOf;
+    public static IntFunction<String> TYPE_TO_NAME = ColumnType::nameOf;
 
     @Override
     public String getSignature() {

@@ -42,7 +42,6 @@ import java.util.stream.IntStream;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-@SuppressWarnings({"ConstantValue", "Java9ReflectionClassVisibility"})
 public class IlpTimestampColumnBenchmark {
     private static final int ELEM_COUNT = 100;
     private static final int INSERT_BATCH_SIZE = 75;
@@ -52,7 +51,7 @@ public class IlpTimestampColumnBenchmark {
     private static final String TIMESTAMP_TYPE_NAME = "TIMESTAMP";
     private static final boolean useV2Protocol = true;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         runTimestampColumnBenchmark();
     }
 

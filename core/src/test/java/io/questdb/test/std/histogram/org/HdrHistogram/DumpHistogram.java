@@ -33,8 +33,8 @@ import io.questdb.std.histogram.org.HdrHistogram.HistogramIterationValue;
 import java.nio.ByteBuffer;
 
 public class DumpHistogram {
-    static final String hist1 = "DHISTwAAAAMAAAAAAAAABByEkxQAAABBeNqTaZkszMDAoMwAAcxQmhFC2f+3OwBhHZdgecrONJWDpZuF5zozSzMTUz8bVzcL03VmjkZGlnqWRkY2AGoTC78=";
-    static final String hist2 = "DHISTwAAAAMAAAAAAAAAAhyEkxQAAAAieNqTaZkszMDAwMIAAcxQmhFCyf+32wBhMa0VYAIAUp8EHA==";
+    static String hist1 = "DHISTwAAAAMAAAAAAAAABByEkxQAAABBeNqTaZkszMDAoMwAAcxQmhFC2f+3OwBhHZdgecrONJWDpZuF5zozSzMTUz8bVzcL03VmjkZGlnqWRkY2AGoTC78=";
+    static String hist2 = "DHISTwAAAAMAAAAAAAAAAhyEkxQAAAAieNqTaZkszMDAwMIAAcxQmhFCyf+32wBhMa0VYAIAUp8EHA==";
 
     public static void main(String[] args) throws Exception {
         System.out.println("hist1:");

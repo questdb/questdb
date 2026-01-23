@@ -28,6 +28,7 @@ import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -46,7 +47,7 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (this.cursor == null) {
             this.cursor = new ReadParquetRecordCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
         }

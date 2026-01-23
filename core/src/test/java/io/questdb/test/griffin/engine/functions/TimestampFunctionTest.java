@@ -40,7 +40,6 @@ import java.util.Arrays;
 import java.util.Collection;
 
 // asserts that all type casts that are not possible will throw exception
-@SuppressWarnings("resource")
 @RunWith(Parameterized.class)
 public class TimestampFunctionTest {
     private final TimestampFunction function;

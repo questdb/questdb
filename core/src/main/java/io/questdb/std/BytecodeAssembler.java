@@ -178,7 +178,6 @@ public class BytecodeAssembler {
             buf.limit(l);
             buf.position(p);
         } catch (Exception e) {
-            //noinspection CallToPrintStackTrace
             e.printStackTrace();
         }
     }
@@ -273,7 +272,6 @@ public class BytecodeAssembler {
         return poolCount;
     }
 
-    @SuppressWarnings("unused")
     public void getStatic(int index) {
         putByte(178);
         putShort(index);
@@ -343,7 +341,6 @@ public class BytecodeAssembler {
         return genericGoto(0x9e);
     }
 
-    @SuppressWarnings("unused")
     public int iflt() {
         return genericGoto(0x9b);
     }
@@ -534,7 +531,6 @@ public class BytecodeAssembler {
         return classCache.valueAt(index);
     }
 
-    @SuppressWarnings("unused")
     public int poolDoubleConst(double value) {
         putByte(0x06);
         putDouble(value);

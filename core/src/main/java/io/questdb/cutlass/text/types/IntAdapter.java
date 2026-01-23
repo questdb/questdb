@@ -40,7 +40,7 @@ public final class IntAdapter extends AbstractTypeAdapter implements TimestampCo
     }
 
     @Override
-    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) {
+    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception {
         return parseInt(value);
     }
 
@@ -63,7 +63,7 @@ public final class IntAdapter extends AbstractTypeAdapter implements TimestampCo
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         row.putInt(column, SqlKeywords.isNullKeyword(value) ? Numbers.INT_NULL : parseInt(value));
     }
 

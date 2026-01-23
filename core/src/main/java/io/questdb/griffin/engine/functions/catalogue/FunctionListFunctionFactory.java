@@ -201,7 +201,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                 close();
             }
 
-            private static class FunctionRecord implements Record {
+            private class FunctionRecord implements Record {
                 private final StringSink sink = new StringSink();
                 private FunctionFactory funcFactory;
                 private CharSequence funcName;

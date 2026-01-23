@@ -63,8 +63,8 @@ import java.util.HashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class UnorderedVarcharMapTest extends AbstractCairoTest {
-    final Decimal128 decimal128 = new Decimal128();
-    final Decimal256 decimal256 = new Decimal256();
+    Decimal128 decimal128 = new Decimal128();
+    Decimal256 decimal256 = new Decimal256();
 
     @Test
     public void testAllValueTypes() throws Exception {
@@ -182,7 +182,6 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                         // key part, comes after value part in records
                         int col = 19;
                         Utf8Sequence sequence = record.getVarcharA(col);
-                        Assert.assertNotNull(sequence);
                         String key = sequence.toString();
                         keyToRowIds.put(key, record.getRowId());
                         rowIds.add(record.getRowId());
@@ -194,7 +193,6 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                     while (cursor.hasNext()) {
                         int col = 19;
                         Utf8Sequence sequence = record.getVarcharA(col);
-                        Assert.assertNotNull(sequence);
                         String key = sequence.toString();
                         Assert.assertEquals((long) keyToRowIds.get(key), record.getRowId());
                         Assert.assertEquals(rowIds.getQuick(i++), record.getRowId());
@@ -299,7 +297,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCursor() {
+    public void testCursor() throws Exception {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (
                 DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);

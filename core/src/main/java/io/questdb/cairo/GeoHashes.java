@@ -76,7 +76,7 @@ public class GeoHashes {
         final int columnBits = ColumnType.getGeoHashBits(columnType);
 
         if (hash == NULL || bits > columnBits) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
 
         final int shift = columnBits - bits;
@@ -175,7 +175,7 @@ public class GeoHashes {
         final int byteCount = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
         int actualBits = 5 * byteCount;
         if (actualBits < bits || bits == 0) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
         long geohash = 0;
         for (long p = lo, limit = p + byteCount; p < limit; p++) {
@@ -198,13 +198,13 @@ public class GeoHashes {
 
     public static long fromCoordinatesDeg(double lat, double lon, int bits) throws NumericException {
         if (lat < -90.0 || lat > 90.0) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
         if (lon < -180.0 || lon > 180.0) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
         if (bits < 0 || bits > ColumnType.GEOLONG_MAX_BITS) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
         return fromCoordinatesDegUnsafe(lat, lon, bits);
     }
@@ -229,7 +229,7 @@ public class GeoHashes {
     }
 
     public static long fromStringNl(CharSequence geohash, int start, int length) throws NumericException {
-        if (length <= 0 || geohash == null || geohash.isEmpty()) {
+        if (length <= 0 || geohash == null || geohash.length() == 0) {
             return GeoHashes.NULL;
         }
         return fromString(geohash, start, start + Math.min(length, MAX_STRING_LENGTH));
@@ -242,7 +242,7 @@ public class GeoHashes {
         final int chars = Math.min(end - start, MAX_STRING_LENGTH);
         int fromBits = 5 * chars;
         if (fromBits < toBits) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
         return widen(fromString(hash, start, start + chars), fromBits, toBits);
     }
@@ -321,7 +321,7 @@ public class GeoHashes {
         if (idx > -1) {
             return (hash << 5) | idx;
         }
-        throw NumericException.instance();
+        throw NumericException.INSTANCE;
     }
 
     private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
@@ -335,7 +335,7 @@ public class GeoHashes {
                     result = (result << 1) | 1;
                     break;
                 default:
-                    throw NumericException.instance();
+                    throw NumericException.INSTANCE;
             }
         }
         return result;

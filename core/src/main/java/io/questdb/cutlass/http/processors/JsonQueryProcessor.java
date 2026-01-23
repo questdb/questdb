@@ -529,7 +529,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             try {
                 state.resume(response);
                 break;
-            } catch (ImplicitCastException e) {
+            } catch (SqlException | ImplicitCastException e) {
                 // close the factory on reset instead of caching it
                 state.setQueryCacheable(false);
                 sendException(
@@ -538,6 +538,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                         e.getFlyweightMessage(),
                         HTTP_BAD_REQUEST
                 );
+                // close the factory on reset instead of caching it
                 break;
             } catch (DataUnavailableException e) {
                 response.resetToBookmark();

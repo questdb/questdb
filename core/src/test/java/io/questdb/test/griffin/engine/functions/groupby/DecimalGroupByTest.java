@@ -1048,8 +1048,7 @@ public class DecimalGroupByTest extends AbstractCairoTest {
                             acc, decimal256.toBigDecimal());
                 }
 
-                @SuppressWarnings({"rawtypes", "unchecked"}) var triple = new Triple(map, acc, count);
-                //noinspection unchecked
+                var triple = new Triple(map, acc, count);
                 maps.push(triple);
             }
 
@@ -1327,8 +1326,8 @@ public class DecimalGroupByTest extends AbstractCairoTest {
         }
     }
 
-    private static class Triple<A, B, C> {
-        public final A a;
+    private class Triple<A, B, C> {
+        public A a;
         public B b;
         public C c;
 

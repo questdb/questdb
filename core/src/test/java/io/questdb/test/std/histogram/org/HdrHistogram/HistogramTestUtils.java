@@ -31,7 +31,6 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 
-@SuppressWarnings("rawtypes")
 public class HistogramTestUtils {
     static DoubleHistogram constructDoubleHistogram(Class<?> c, Object... constructorArgs) {
         try {
@@ -66,7 +65,6 @@ public class HistogramTestUtils {
         }
     }
 
-    @SuppressWarnings("rawtypes")
     static AbstractHistogram constructHistogram(Class<?> c, Object... constructorArgs) {
         try {
             Class[] argTypes;
@@ -96,11 +94,13 @@ public class HistogramTestUtils {
         }
     }
 
-    static DoubleHistogram decodeDoubleHistogramFromCompressedByteBuffer(Class<?> c, final ByteBuffer buffer) {
+    static DoubleHistogram decodeDoubleHistogramFromCompressedByteBuffer(Class<?> c,
+                                                                         final ByteBuffer buffer,
+                                                                         final long minBarForHighestTrackableValue) {
         try {
             Class[] argTypes = {ByteBuffer.class, long.class};
             Method m = c.getMethod("decodeFromCompressedByteBuffer", argTypes);
-            return (DoubleHistogram) m.invoke(null, buffer, (long) 0);
+            return (DoubleHistogram) m.invoke(null, buffer, minBarForHighestTrackableValue);
         } catch (InvocationTargetException ex) {
             if (ex.getTargetException() instanceof IllegalArgumentException) {
                 throw new IllegalArgumentException(ex.getTargetException().getMessage(), ex);
@@ -112,11 +112,13 @@ public class HistogramTestUtils {
         }
     }
 
-    static AbstractHistogram decodeFromCompressedByteBuffer(Class<?> c, final ByteBuffer buffer) {
+    static AbstractHistogram decodeFromCompressedByteBuffer(Class<?> c,
+                                                            final ByteBuffer buffer,
+                                                            final long minBarForHighestTrackableValue) {
         try {
             Class[] argTypes = {ByteBuffer.class, long.class};
             Method m = c.getMethod("decodeFromCompressedByteBuffer", argTypes);
-            return (AbstractHistogram) m.invoke(null, buffer, (long) 0);
+            return (AbstractHistogram) m.invoke(null, buffer, minBarForHighestTrackableValue);
         } catch (InvocationTargetException ex) {
             if (ex.getTargetException() instanceof IllegalArgumentException) {
                 throw new IllegalArgumentException(ex.getTargetException().getMessage(), ex);

@@ -56,7 +56,6 @@ import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
 
-@SuppressWarnings("resource")
 public class SqlUtilTest {
 
     @Test

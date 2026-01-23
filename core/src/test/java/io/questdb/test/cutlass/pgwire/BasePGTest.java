@@ -371,11 +371,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
         sink.put('}');
     }
 
-    protected static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException {
+    protected static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
         assertResultSet(null, expected, sink, rs, map);
     }
 
-    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException {
+    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
         printToSink(sink, rs, map);
         TestUtils.assertEquals(message, expected, sink);
     }
@@ -638,6 +638,19 @@ public abstract class BasePGTest extends AbstractCairoTest {
         } else {
             return getConnection(Mode.EXTENDED, port, binary);
         }
+    }
+
+    protected Connection getConnection(int port, boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", Boolean.toString(binary));
+        properties.setProperty("preferQueryMode", simple ? Mode.SIMPLE.value : Mode.EXTENDED.value);
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        properties.setProperty("options", "-c statement_timeout=" + statementTimeoutMs);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
     }
 
     protected Connection getConnectionWitSslInitRequest(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {

@@ -32,6 +32,8 @@ import org.junit.rules.Timeout;
 
 import java.util.concurrent.TimeUnit;
 
+import static io.questdb.test.tools.TestUtils.drainWalQueue;
+
 public class HttpAlterTableTest extends AbstractTest {
 
     private static final String JSON_DDL_RESPONSE = "0c\r\n" +

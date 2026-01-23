@@ -226,7 +226,7 @@ public class WalListenerTest extends AbstractCairoTest {
     }
 
     static class TestWalListener implements WalListener {
-        public final Deque<WalListenerEvent> events = new ArrayDeque<>();
+        public Deque<WalListenerEvent> events = new ArrayDeque<>();
 
         @Override
         public void dataTxnCommitted(TableToken tableToken, long txn, long timestamp, int walId, int segmentId, int segmentTxn) {

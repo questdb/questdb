@@ -32,9 +32,9 @@ import io.questdb.std.datetime.DateFormat;
 import java.util.function.Function;
 
 public class MicrosFormatFactory implements TimestampDateFormatFactory {
-    public static final MicrosFormatFactory INSTANCE = new MicrosFormatFactory();
     private final static ThreadLocal<MicrosFormatCompiler> tlCompiler = ThreadLocal.withInitial(MicrosFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = MicrosFormatFactory::map;
+    public static MicrosFormatFactory INSTANCE = new MicrosFormatFactory();
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
 
     private MicrosFormatFactory() {

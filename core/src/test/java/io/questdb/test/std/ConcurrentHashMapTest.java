@@ -43,10 +43,9 @@ public class ConcurrentHashMapTest {
         map.put("TaBLE", "5");
         map.putIfAbsent("TaBlE", "Hello");
         assertEquals(1, map.size());
-        assertEquals("5", map.get("TABLE"));
-        assertEquals("5", ((Map<CharSequence, String>) map).get("TABLE"));
-        //noinspection SuspiciousMethodCalls
-        assertNull(map.get(42));
+        assertEquals(map.get("TABLE"), "5");
+        assertEquals(((Map<CharSequence, String>) map).get("TABLE"), "5");
+        assertNull(((Map<CharSequence, String>) map).get(42));
 
         ConcurrentHashMap<String> cs = new ConcurrentHashMap<>(5, 0.58F);
         cs.put("Table", "1");
@@ -56,8 +55,8 @@ public class ConcurrentHashMapTest {
         cs.put("TaBLE", "5");
 
         ConcurrentHashMap<String> ccs = new ConcurrentHashMap<>(cs);
-        assertEquals(cs.size(), ccs.size());
-        assertEquals("5", ccs.get("TaBLE"));
+        assertEquals(ccs.size(), cs.size());
+        assertEquals(ccs.get("TaBLE"), "5");
         assertNull(ccs.get("TABLE"));
 
         ConcurrentHashMap<String> cci = new ConcurrentHashMap<>(cs, false);

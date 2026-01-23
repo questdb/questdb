@@ -67,7 +67,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
 
         Function symbolFunc = args.getQuick(0);
         Function timestampFunc = args.getQuick(1);

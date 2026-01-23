@@ -38,6 +38,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
@@ -427,7 +428,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
 
     protected abstract String getUserName(Rnd rnd);
 
-    protected abstract void initTest(Rnd rnd);
+    protected abstract void initTest(Rnd rnd) throws SQLException;
 
     private interface TestCode {
         void run(

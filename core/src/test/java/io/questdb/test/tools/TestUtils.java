@@ -83,6 +83,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -424,6 +425,53 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(File a, CharSequence actual) {
+        try (Path path = new Path()) {
+            path.of(a.getAbsolutePath());
+            long fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
+            Assert.assertNotEquals(-1, fda);
+
+            try {
+                long bufa = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
+                final long str = toMemory(actual);
+                long offset = 0;
+                long strp = str;
+                try {
+
+                    while (true) {
+                        long reada = Files.read(fda, bufa, 4096, offset);
+
+                        if (reada == 0) {
+                            break;
+                        }
+
+                        for (int i = 0; i < reada; i++) {
+                            byte b = Unsafe.getUnsafe().getByte(bufa + i);
+                            if (b == 13) {
+                                continue;
+                            }
+                            byte bb = Unsafe.getUnsafe().getByte(strp);
+                            strp++;
+                            if (b != bb) {
+                                Assert.fail("expected: '" + (char) (bb) + "'(" + bb + ")" + ", actual: '" + (char) (b)
+                                        + "'(" + b + ")" + ", at: " + (offset + i - 1));
+                            }
+                        }
+
+                        offset += reada;
+                    }
+
+                    Assert.assertEquals(strp - str, actual.length());
+                } finally {
+                    Unsafe.free(bufa, 4096, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(str, actual.length(), MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                TestFilesFacadeImpl.INSTANCE.close(fda);
+            }
+        }
+    }
+
     public static void assertEquals(CharSequence expected, Sinkable actual) {
         StringSink sink = getTlSink();
         actual.toSink(sink);
@@ -540,6 +588,15 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(IntList expected, IntList actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
     public static <T> void assertEquals(ObjList<T> expected, ObjList<T> actual) {
         Assert.assertEquals(expected.size(), actual.size());
         for (int i = 0, n = expected.size(); i < n; i++) {
@@ -646,6 +703,11 @@ public final class TestUtils {
         assertEventually(assertion, 60);
     }
 
+    public static void assertEventually(EventualCode assertion, Set<Class<?>> exceptionTypesToCatch) throws Exception {
+        exceptionTypesToCatch.add(AssertionError.class);
+        assertEventually(assertion, 30, exceptionTypesToCatch);
+    }
+
     public static void assertEventually(EventualCode assertion, int timeoutSeconds, Set<Class<?>> exceptionTypesToCatch) throws Exception {
         long maxSleepingTimeMillis = 1000;
         long nextSleepingTimeMillis = 10;
@@ -694,7 +756,7 @@ public final class TestUtils {
             CharSequence expectedMessage,
             int expectedPosition,
             MutableCharSink<?> sink
-    ) {
+    ) throws SqlException {
         try {
             assertException(
                     engine,

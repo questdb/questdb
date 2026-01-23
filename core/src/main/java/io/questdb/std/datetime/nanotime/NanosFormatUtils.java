@@ -192,13 +192,13 @@ public class NanosFormatUtils {
     public static void assertChar(char c, @NotNull CharSequence in, int pos, int hi) throws NumericException {
         assertRemaining(pos, hi);
         if (in.charAt(pos) != c) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
     }
 
     public static void assertNoTail(int pos, int hi) throws NumericException {
         if (pos < hi) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
     }
 
@@ -229,7 +229,7 @@ public class NanosFormatUtils {
     ) throws NumericException {
         if (era == 0) {
             // era out of range
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
 
         if (year > 1677 && year < 2262) {
@@ -237,19 +237,19 @@ public class NanosFormatUtils {
 
             // wrong month
             if (month < 1 || month > 12) {
-                throw NumericException.instance();
+                throw NumericException.INSTANCE;
             }
 
             if (hourType == CommonUtils.HOUR_24) {
                 // wrong 24-hour clock hour
                 if (hour < 0 || hour > 24) {
-                    throw NumericException.instance();
+                    throw NumericException.INSTANCE;
                 }
                 hour %= 24;
             } else {
                 // wrong 12-hour clock hour
                 if (hour < 0 || hour > 12) {
-                    throw NumericException.instance();
+                    throw NumericException.INSTANCE;
                 }
                 hour %= 12;
                 if (hourType == CommonUtils.HOUR_PM) {
@@ -259,19 +259,19 @@ public class NanosFormatUtils {
 
             // wrong day of month
             if (day < 1 || day > CommonUtils.getDaysPerMonth(month, leap)) {
-                throw NumericException.instance();
+                throw NumericException.INSTANCE;
             }
 
             if (minute < 0 || minute > 59) {
-                throw NumericException.instance();
+                throw NumericException.INSTANCE;
             }
 
             if (second < 0 || second > 59) {
-                throw NumericException.instance();
+                throw NumericException.INSTANCE;
             }
 
             if ((week <= 0 && week != -1) || week > CommonUtils.getWeeks(year)) {
-                throw NumericException.instance();
+                throw NumericException.INSTANCE;
             }
 
             // calculate year, month, and day of ISO week
@@ -303,7 +303,7 @@ public class NanosFormatUtils {
             return outNanos;
         }
 
-        throw NumericException.instance();
+        throw NumericException.INSTANCE;
     }
 
     public static long getReferenceYear() {
@@ -333,7 +333,7 @@ public class NanosFormatUtils {
                 // try next
             }
         }
-        throw NumericException.instance();
+        throw NumericException.INSTANCE;
     }
 
     public static long parseYearGreedy(@NotNull CharSequence in, int pos, int hi) throws NumericException {

@@ -131,11 +131,11 @@ public class WalWriterSymbolBenchmark {
         public static final int avgReadPerSymbol = 10;
         public static final int nSymbols = 1000;
         public static final int symbolLength = 32;
-        public final int[] indices;
         public final MemoryARW mem;
         public final int minimumValue;
-        public final CharSequence[] symbols;
         private final Rnd rnd;
+        public int[] indices;
+        public CharSequence[] symbols;
         private long lo;
 
         public State() {

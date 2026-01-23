@@ -54,7 +54,7 @@ public class VarcharAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         write(row, column, value, null, utf8Sink, null);
     }
 

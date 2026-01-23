@@ -719,9 +719,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     private static class MapStats {
-        final LongList medianList = new LongList();
         // We don't use median for heap size since heap is mmapped lazily initialized memory.
         long maxHeapSize;
+        LongList medianList = new LongList();
         long medianSize;
         long mergedHeapSize;
         long mergedSize;

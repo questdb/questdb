@@ -24,7 +24,6 @@ import java.math.RoundingMode;
  * Using 1 bit for the sign, we have 255 bits for T, which gives us 77 digits of precision.
  * </p>
  */
-@SuppressWarnings("unused")
 public class Decimal256 implements Sinkable, Decimal {
     public static final int BYTES = 32;
     /**

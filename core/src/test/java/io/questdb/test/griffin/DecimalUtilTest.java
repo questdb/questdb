@@ -58,7 +58,6 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
-@SuppressWarnings("resource")
 public class DecimalUtilTest extends AbstractCairoTest {
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();

@@ -43,7 +43,6 @@ import java.lang.reflect.UndeclaredThrowableException;
 import java.util.Arrays;
 import java.util.Collections;
 
-@SuppressWarnings("resource")
 public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
 
     // SqlCompiler.isAssignableFrom

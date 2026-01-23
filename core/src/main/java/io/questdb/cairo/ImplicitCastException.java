@@ -134,7 +134,6 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
                 .put(']');
     }
 
-    @SuppressWarnings({"ConstantValue", "AssertWithSideEffects"})
     public static ImplicitCastException instance() {
         ImplicitCastException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
@@ -159,7 +158,6 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
         return position;
     }
 
-    @SuppressWarnings("AssertWithSideEffects")
     @Override
     public StackTraceElement[] getStackTrace() {
         StackTraceElement[] result = EMPTY_STACK_TRACE;

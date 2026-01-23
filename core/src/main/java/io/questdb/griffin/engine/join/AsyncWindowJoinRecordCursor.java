@@ -489,7 +489,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             PageFrameSequence<? extends AsyncWindowJoinAtom> masterFrameSequence,
             TablePageFrameCursor slaveFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;

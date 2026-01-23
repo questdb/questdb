@@ -222,7 +222,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return messagePosition;
     }
 
-    @SuppressWarnings("AssertWithSideEffects")
     @Override
     public StackTraceElement[] getStackTrace() {
         StackTraceElement[] result = EMPTY_STACK_TRACE;
@@ -382,7 +381,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
-    @SuppressWarnings({"ConstantValue", "AssertWithSideEffects"})
     private static CairoException instance(int errno) {
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option

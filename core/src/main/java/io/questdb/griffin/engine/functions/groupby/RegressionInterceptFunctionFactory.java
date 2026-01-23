@@ -112,7 +112,6 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
             return Double.NaN;
         }
 
-        @SuppressWarnings("SuspiciousNameCombination") // y is the dependent variable (left side of y = mx + b)
         @Override
         public Function getLeft() {
             return yFunc;

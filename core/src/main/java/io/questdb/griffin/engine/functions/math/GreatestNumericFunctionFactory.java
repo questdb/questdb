@@ -126,7 +126,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         throw SqlException.position(argPositions.getQuick(0)).put("unexpected argument types");
     }
 
-    private static @NotNull Function getDecimalGreatestFunction(ObjList<Function> args, IntList argPositions) {
+    private static @NotNull Function getDecimalGreatestFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
         // We need to find the maximum scale/precision combination.
         int precision = 1;
         int scale = 0;
@@ -149,7 +149,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static @Nullable Function getGreatestFunction(ObjList<Function> args, IntList argPositions, IntHashSet set) {
+    private static @Nullable Function getGreatestFunction(ObjList<Function> args, IntList argPositions, IntHashSet set) throws SqlException {
         if (set.contains(ColumnType.DOUBLE)) {
             return new GreatestDoubleRecordFunction(args);
         }

@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
@@ -556,7 +557,7 @@ public class MillsTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) {
+    public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
         throw new UnsupportedOperationException();
     }
 

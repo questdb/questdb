@@ -275,8 +275,8 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     }
 
     private static class Column {
-        final String name;
-        final int type;
+        String name;
+        int type;
 
         public Column(String name, int type) {
             this.name = name;

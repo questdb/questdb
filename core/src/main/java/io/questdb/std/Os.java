@@ -89,24 +89,20 @@ public final class Os {
         }
     }
 
-    @SuppressWarnings("unused")
     public static int forkExecPid(long forkExecT) {
         return Unsafe.getUnsafe().getInt(forkExecT + 8);
     }
 
-    @SuppressWarnings("unused")
     public static int forkExecReadFd(long forkExecT) {
         return Unsafe.getUnsafe().getInt(forkExecT);
     }
 
-    @SuppressWarnings("unused")
     public static int forkExecWriteFd(long forkExecT) {
         return Unsafe.getUnsafe().getInt(forkExecT + 4);
     }
 
     public static native void free(long mem);
 
-    @SuppressWarnings("unused")
     public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
         // We use Path as a LPSZ sink here.
         try (Path sink = new Path().of(spn)) {
@@ -144,7 +140,7 @@ public final class Os {
         if (bean == null) {
             return -1;
         }
-        return bean.getTotalMemorySize();
+        return bean.getTotalPhysicalMemorySize();
     }
 
     public static native int getPid();
@@ -160,7 +156,6 @@ public final class Os {
     public static void init() {
     }
 
-    @SuppressWarnings("unused")
     public static boolean isFreeBSD() {
         return type == Os.FREEBSD;
     }
@@ -177,7 +172,6 @@ public final class Os {
         return type != Os.WINDOWS;
     }
 
-    @SuppressWarnings("unused")
     public static native boolean isRustReleaseBuild();
 
     public static boolean isWindows() {

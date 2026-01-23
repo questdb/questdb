@@ -37,7 +37,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-@SuppressWarnings("resource")
 public class VarcharFunctionTest {
     // assert that all type casts that are not possible will throw exception
 

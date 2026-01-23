@@ -58,7 +58,7 @@ public class TrailingDigitsTest extends AbstractCairoTest {
     public void testDoubleConversion() throws SqlException {
         int cases = 1000;
         for (int digits = 11; digits <= 14; digits++)
-            Assert.assertEquals(cases, passCount(cases, digits));
+            Assert.assertEquals(passCount(cases, digits), cases);
     }
 
     /**

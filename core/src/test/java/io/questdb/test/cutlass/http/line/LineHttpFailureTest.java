@@ -68,7 +68,6 @@ import static io.questdb.test.tools.TestUtils.assertResponse;
 import static java.net.HttpURLConnection.HTTP_BAD_METHOD;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 
-@SuppressWarnings("resource")
 public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Before

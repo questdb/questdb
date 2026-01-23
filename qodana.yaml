@@ -73,3 +73,4 @@ exclude:
       - core/src/test
   - name: ExtractMethodRecommender
   - name: RedundantMethodOverride
+  - name: RedundantSuppression

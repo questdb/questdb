@@ -43,7 +43,6 @@ import org.jetbrains.annotations.NotNull;
  * One shouldn't modify the data id in an unblank database as it may cause data loss.
  * </p>
  */
-@SuppressWarnings("ClassCanBeRecord")
 public final class DataID implements Sinkable {
 
     /**

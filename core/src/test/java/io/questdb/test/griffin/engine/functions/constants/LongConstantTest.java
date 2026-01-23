@@ -28,7 +28,6 @@ import io.questdb.griffin.engine.functions.constants.LongConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
-@SuppressWarnings("resource")
 public class LongConstantTest {
     @Test
     public void testConstant() {

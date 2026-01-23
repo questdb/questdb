@@ -30,7 +30,7 @@ import io.questdb.std.Rnd;
 
 public class Port0PGConfiguration extends DefaultPGConfiguration {
     private static final String DEBUG_PGWIRE_PORT = "QDB_DEBUG_PGWIRE_PORT";
-    final int connectionLimit;
+    int connectionLimit;
 
     public Port0PGConfiguration() {
         this(-1);

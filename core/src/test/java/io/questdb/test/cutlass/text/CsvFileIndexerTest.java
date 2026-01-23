@@ -59,7 +59,6 @@ import java.io.IOException;
 
 import static io.questdb.test.cutlass.text.ParallelCsvFileImporterTest.*;
 
-@SuppressWarnings("resource")
 public class CsvFileIndexerTest extends AbstractCairoTest {
 
     public void assertFailureFor(FilesFacade ff, String fileName, int timestampIndex, String errorMessage) {

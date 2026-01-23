@@ -39,7 +39,6 @@ public class TableMetadataPool extends AbstractMultiTenantPool<TableReaderMetada
         return PoolListener.SRC_TABLE_METADATA;
     }
 
-    @SuppressWarnings("ClassEscapesDefinedScope")
     @Override
     protected TableReaderMetadataTenantImpl newTenant(
             TableToken tableToken,

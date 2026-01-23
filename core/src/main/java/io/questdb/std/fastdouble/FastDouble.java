@@ -47,7 +47,7 @@ class FastDouble {
                                 || d == 0.0d
                 )
         ) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
         return d;
     }
@@ -162,7 +162,7 @@ class FastDouble {
         index = skipWhitespace(str, index, endIndex);
         if (illegal || index < endIndex
                 || !hasLeadingZero && digitCount == 0) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
 
         // Re-parse significand in case of a potential overflow
@@ -254,6 +254,17 @@ class FastDouble {
             } else if (hexValue == FastDoubleUtils.DECIMAL_POINT_CLASS) {
                 illegal |= virtualIndexOfPoint >= 0;
                 virtualIndexOfPoint = index;
+                /*
+                for (;index < endIndex - 8; index += 8) {
+                    long parsed = tryToParseEightHexDigits(str, index + 1);
+                    if (parsed >= 0) {
+                        // This might overflow, we deal with it later.
+                        digits = (digits << 32) + parsed;
+                    } else {
+                        break;
+                    }
+                }
+                */
             } else {
                 break;
             }
@@ -301,7 +312,7 @@ class FastDouble {
         if (illegal || index < endIndex
                 || digitCount == 0
                 || !hasExponent) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
 
         // Re-parse significand in case of a potential overflow
@@ -371,7 +382,7 @@ class FastDouble {
                 return Double.NaN;
             }
         }
-        throw NumericException.instance();
+        throw NumericException.INSTANCE;
     }
 
     private static int tryToParseEightDigits(CharSequence str, int offset) {
@@ -412,14 +423,14 @@ class FastDouble {
     static double parseFloatingPointLiteral(CharSequence str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length()) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
 
         // Skip leading whitespace
         // -------------------
         int index = skipWhitespace(str, offset, endIndex);
         if (index == endIndex) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
         char ch = str.charAt(index);
 
@@ -429,7 +440,7 @@ class FastDouble {
         if (isNegative || ch == '+') {
             ch = ++index < endIndex ? str.charAt(index) : 0;
             if (ch == 0) {
-                throw NumericException.instance();
+                throw NumericException.INSTANCE;
             }
         }
 
@@ -486,7 +497,7 @@ class FastDouble {
                 return negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
             }
         }
-        throw NumericException.instance();
+        throw NumericException.INSTANCE;
     }
 
     /**

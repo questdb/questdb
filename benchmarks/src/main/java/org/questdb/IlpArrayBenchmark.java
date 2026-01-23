@@ -42,7 +42,6 @@ import java.util.stream.IntStream;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-@SuppressWarnings({"ConstantValue", "Java9ReflectionClassVisibility"})
 public class IlpArrayBenchmark {
     private static final int ELEM_COUNT = 100;
     private static final int INSERT_BATCH_SIZE = 75;
@@ -51,7 +50,7 @@ public class IlpArrayBenchmark {
     private static final long RUNTIME_SECONDS = 10;
     private static final boolean USE_ARRAY = false;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         runBenchmark();
     }
 

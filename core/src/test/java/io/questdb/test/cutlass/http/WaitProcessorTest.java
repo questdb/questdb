@@ -42,7 +42,6 @@ import org.junit.rules.Timeout;
 
 import java.util.concurrent.TimeUnit;
 
-@SuppressWarnings("resource")
 public class WaitProcessorTest {
 
     private final HttpRequestProcessorSelector emptySelector = createEmptySelector();

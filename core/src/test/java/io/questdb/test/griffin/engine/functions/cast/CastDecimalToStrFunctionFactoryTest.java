@@ -178,7 +178,7 @@ public class CastDecimalToStrFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNull() {
+    public void testNull() throws SqlException {
         decimal256.ofNull();
         for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
             createFunctionAndAssert(null, precision);

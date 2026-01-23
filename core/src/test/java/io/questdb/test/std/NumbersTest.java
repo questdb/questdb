@@ -2205,6 +2205,6 @@ public class NumbersTest {
 
     @FunctionalInterface
     interface ExceptionalRunnable {
-        void run();
+        void run() throws Exception;
     }
 }

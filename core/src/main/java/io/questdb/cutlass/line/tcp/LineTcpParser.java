@@ -186,7 +186,6 @@ public class LineTcpParser implements QuietCloseable {
         return this;
     }
 
-    @SuppressWarnings("DefaultNotLastCaseInSwitch")
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
         // We can resume from random place of the line message

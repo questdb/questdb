@@ -30,7 +30,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
 public class FuzzTransaction implements QuietCloseable {
-    public final ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
+    public ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
     public boolean reopenTable;
     public boolean rollback;
     public int structureVersion;

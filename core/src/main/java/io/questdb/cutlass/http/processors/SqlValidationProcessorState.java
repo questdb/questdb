@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.Utf8Exception;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -331,7 +332,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         onResumePrefix(response, columnCount);
     }
 
-    boolean of(RecordCursorFactory factory) {
+    boolean of(RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         try (factory) {
             final RecordMetadata metadata = factory.getMetadata();
             this.queryTimestampIndex = metadata.getTimestampIndex();
@@ -397,7 +398,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     void resume(HttpChunkedResponse response)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         resumeActions.getQuick(validationState).onResume(response, columnCount);
     }
 
@@ -423,6 +424,6 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         void onResume(
                 HttpChunkedResponse response,
                 int columnCount
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException;
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException;
     }
 }

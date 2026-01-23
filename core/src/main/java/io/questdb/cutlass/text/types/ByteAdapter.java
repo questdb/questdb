@@ -48,7 +48,7 @@ public final class ByteAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         row.putByte(column, SqlKeywords.isNullKeyword(value) ? (byte) 0 : (byte) Numbers.parseInt(value));
     }
 }

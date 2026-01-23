@@ -48,7 +48,7 @@ public final class FloatAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         row.putFloat(column, SqlKeywords.isNullKeyword(value) ? Float.NaN : Numbers.parseFloat(value.lo(), value.size()));
     }
 }

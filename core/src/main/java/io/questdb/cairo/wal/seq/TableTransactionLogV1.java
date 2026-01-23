@@ -62,9 +62,9 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * See the format of the header and transaction record in {@link TableTransactionLogFile}
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
-    public static final long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
+    public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();

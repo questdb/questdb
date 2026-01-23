@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
@@ -60,15 +61,22 @@ public class MatViewsFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(MatViewsFunctionFactory.class);
 
     public static String getIntervalUnit(char unit) {
-        return switch (unit) {
-            case 'm' -> "MINUTE";
-            case 'h' -> "HOUR";
-            case 'd' -> "DAY";
-            case 'w' -> "WEEK";
-            case 'y' -> "YEAR";
-            case 'M' -> "MONTH";
-            default -> null;
-        };
+        switch (unit) {
+            case 'm':
+                return "MINUTE";
+            case 'h':
+                return "HOUR";
+            case 'd':
+                return "DAY";
+            case 'w':
+                return "WEEK";
+            case 'y':
+                return "YEAR";
+            case 'M':
+                return "MONTH";
+            default:
+                return null;
+        }
     }
 
     @Override
@@ -83,7 +91,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         return new CursorFunction(new MatViewsCursorFactory(sqlExecutionContext.getCairoEngine())) {
             @Override
             public boolean isRuntimeConstant() {
@@ -92,7 +100,6 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         };
     }
 
-    @SuppressWarnings("ClassCanBeRecord")
     private static class MatViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_REFRESH_TYPE = COLUMN_VIEW_NAME + 1;
@@ -295,55 +302,82 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public int getInt(int col) {
-                    return switch (col) {
-                        case COLUMN_REFRESH_LIMIT -> TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
-                        case COLUMN_TIMER_INTERVAL -> timerInterval;
-                        case COLUMN_PERIOD_LENGTH -> periodLength;
-                        case COLUMN_PERIOD_DELAY -> periodDelay;
-                        default -> 0;
-                    };
+                    switch (col) {
+                        case COLUMN_REFRESH_LIMIT:
+                            return TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
+                        case COLUMN_TIMER_INTERVAL:
+                            return timerInterval;
+                        case COLUMN_PERIOD_LENGTH:
+                            return periodLength;
+                        case COLUMN_PERIOD_DELAY:
+                            return periodDelay;
+                        default:
+                            return 0;
+                    }
                 }
 
                 @Override
                 public long getLong(int col) {
-                    return switch (col) {
-                        case COLUMN_LAST_REFRESH_START_TIMESTAMP -> lastRefreshStartTimestamp;
-                        case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP -> lastRefreshFinishTimestamp;
-                        case COLUMN_REFRESH_PERIOD_HI -> lastPeriodHi;
-                        case COLUMN_REFRESH_BASE_TABLE_TXN -> lastRefreshTxn;
-                        case COLUMN_APPLIED_BASE_TABLE_TXN -> lastAppliedBaseTxn;
-                        case COLUMN_TIMER_START -> timerStart;
-                        default -> 0;
-                    };
+                    switch (col) {
+                        case COLUMN_LAST_REFRESH_START_TIMESTAMP:
+                            return lastRefreshStartTimestamp;
+                        case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP:
+                            return lastRefreshFinishTimestamp;
+                        case COLUMN_REFRESH_PERIOD_HI:
+                            return lastPeriodHi;
+                        case COLUMN_REFRESH_BASE_TABLE_TXN:
+                            return lastRefreshTxn;
+                        case COLUMN_APPLIED_BASE_TABLE_TXN:
+                            return lastAppliedBaseTxn;
+                        case COLUMN_TIMER_START:
+                            return timerStart;
+                        default:
+                            return 0;
+                    }
                 }
 
                 @Override
                 public CharSequence getStrA(int col) {
-                    return switch (col) {
-                        case COLUMN_VIEW_NAME -> viewDefinition.getMatViewToken().getTableName();
-                        case COLUMN_REFRESH_TYPE -> switch (viewDefinition.getRefreshType()) {
-                            case MatViewDefinition.REFRESH_TYPE_IMMEDIATE -> "immediate";
-                            case MatViewDefinition.REFRESH_TYPE_TIMER -> "timer";
-                            case MatViewDefinition.REFRESH_TYPE_MANUAL -> "manual";
-                            default -> "unknown";
-                        };
-                        case COLUMN_BASE_TABLE_NAME -> viewDefinition.getBaseTableName();
-                        case COLUMN_VIEW_SQL -> viewDefinition.getMatViewSql();
-                        case COLUMN_TABLE_DIR_NAME -> viewDefinition.getMatViewToken().getDirName();
-                        case COLUMN_VIEW_STATUS -> getViewStatus();
-                        case COLUMN_INVALIDATION_REASON -> !invalidationReason.isEmpty() ? invalidationReason : null;
-                        case COLUMN_REFRESH_LIMIT_UNIT -> {
-                            if (refreshLimitHoursOrMonths == 0) {
-                                yield null;
+                    switch (col) {
+                        case COLUMN_VIEW_NAME:
+                            return viewDefinition.getMatViewToken().getTableName();
+                        case COLUMN_REFRESH_TYPE:
+                            switch (viewDefinition.getRefreshType()) {
+                                case MatViewDefinition.REFRESH_TYPE_IMMEDIATE:
+                                    return "immediate";
+                                case MatViewDefinition.REFRESH_TYPE_TIMER:
+                                    return "timer";
+                                case MatViewDefinition.REFRESH_TYPE_MANUAL:
+                                    return "manual";
+                                default:
+                                    return "unknown";
                             }
-                            yield TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
-                        }
-                        case COLUMN_TIMER_INTERVAL_UNIT -> getIntervalUnit(timerIntervalUnit);
-                        case COLUMN_TIMER_TIME_ZONE -> viewDefinition.getTimerTimeZone();
-                        case COLUMN_PERIOD_LENGTH_UNIT -> getIntervalUnit(periodLengthUnit);
-                        case COLUMN_PERIOD_DELAY_UNIT -> getIntervalUnit(periodDelayUnit);
-                        default -> null;
-                    };
+                        case COLUMN_BASE_TABLE_NAME:
+                            return viewDefinition.getBaseTableName();
+                        case COLUMN_VIEW_SQL:
+                            return viewDefinition.getMatViewSql();
+                        case COLUMN_TABLE_DIR_NAME:
+                            return viewDefinition.getMatViewToken().getDirName();
+                        case COLUMN_VIEW_STATUS:
+                            return getViewStatus();
+                        case COLUMN_INVALIDATION_REASON:
+                            return invalidationReason.length() > 0 ? invalidationReason : null;
+                        case COLUMN_REFRESH_LIMIT_UNIT:
+                            if (refreshLimitHoursOrMonths == 0) {
+                                return null;
+                            }
+                            return TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
+                        case COLUMN_TIMER_INTERVAL_UNIT:
+                            return getIntervalUnit(timerIntervalUnit);
+                        case COLUMN_TIMER_TIME_ZONE:
+                            return viewDefinition.getTimerTimeZone();
+                        case COLUMN_PERIOD_LENGTH_UNIT:
+                            return getIntervalUnit(periodLengthUnit);
+                        case COLUMN_PERIOD_DELAY_UNIT:
+                            return getIntervalUnit(periodDelayUnit);
+                        default:
+                            return null;
+                    }
                 }
 
                 @Override

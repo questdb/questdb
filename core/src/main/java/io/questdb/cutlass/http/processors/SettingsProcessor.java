@@ -41,6 +41,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -116,7 +117,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         @Override
-        public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             final Utf8StringSink settings = LV_GET_SINK.get(context);
             context.simpleResponse().sendStatusJsonContent(HTTP_OK, settings, false);
         }
@@ -131,7 +132,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         @Override
-        public void onChunk(long lo, long hi) {
+        public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             if (hi > lo) {
                 final DirectUtf8Sink utf8Sink = transientState.getUtf8Sink();
                 utf8Sink.putNonAscii(lo, hi);
@@ -149,7 +150,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         @Override
-        public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             try {
                 context.getSecurityContext().authorizeSettings();
 
@@ -174,7 +175,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         @Override
-        public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             transientState.send(context);
         }
 

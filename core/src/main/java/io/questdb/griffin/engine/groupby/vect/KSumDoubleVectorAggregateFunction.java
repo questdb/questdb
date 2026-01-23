@@ -67,7 +67,6 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
         }
     }
 
-    @SuppressWarnings("ExpressionComparedToItself") // x == x is a NaN check
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {

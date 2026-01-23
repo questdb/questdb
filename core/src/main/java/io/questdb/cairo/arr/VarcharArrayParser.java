@@ -358,9 +358,9 @@ public final class VarcharArrayParser extends ArrayView implements FlatArrayView
         int len = input.length();
         if (len == 4
                 && (input.charAt(0) | 32) == 'n'
-                && (input.charAt(1) | 32) == 'u'
-                && (input.charAt(2) | 32) == 'l'
-                && (input.charAt(3) | 32) == 'l') {
+                && (input.charAt(0 + 1) | 32) == 'u'
+                && (input.charAt(0 + 2) | 32) == 'l'
+                && (input.charAt(0 + 3) | 32) == 'l') {
             nullFlags.add(true);
             values.setElem();
         } else {

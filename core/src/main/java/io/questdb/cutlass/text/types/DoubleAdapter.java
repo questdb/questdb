@@ -57,7 +57,7 @@ public final class DoubleAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         row.putDouble(column, SqlKeywords.isNullKeyword(value) ? Double.NaN : Numbers.parseDouble(value.lo(), value.size()));
     }
 }

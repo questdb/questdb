@@ -120,7 +120,6 @@ import org.junit.Test;
 import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
 import static org.junit.Assert.*;
 
-@SuppressWarnings("resource")
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
@@ -141,7 +140,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assert assertsEnabled = true;
 
         // test asserts that an assert statement in production code will fail
-        //noinspection ConstantValue
         Assume.assumeTrue(assertsEnabled);
 
         try {

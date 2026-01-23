@@ -27,8 +27,8 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 
 public class FullOuterJoinRecord extends JoinRecord {
-    protected final Record masterNullRecord;
-    protected final Record slaveNullRecord;
+    protected Record masterNullRecord;
+    protected Record slaveNullRecord;
     private Record flappingMaster;
     private Record flappingSlave;
 

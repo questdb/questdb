@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * so the thread always tries to process just published tasks.
  */
 public class AlwaysWorkStealingStrategy implements WorkStealingStrategy {
-    public static final AlwaysWorkStealingStrategy INSTANCE = new AlwaysWorkStealingStrategy();
+    public static AlwaysWorkStealingStrategy INSTANCE = new AlwaysWorkStealingStrategy();
 
     @Override
     public WorkStealingStrategy of(AtomicInteger startedCounter) {

@@ -54,8 +54,8 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class MemoryCARWImplTest {
-    final Decimal128 decimal128 = new Decimal128();
-    final Decimal256 decimal256 = new Decimal256();
+    Decimal128 decimal128 = new Decimal128();
+    Decimal256 decimal256 = new Decimal256();
 
     @AfterClass
     public static void afterClass() {

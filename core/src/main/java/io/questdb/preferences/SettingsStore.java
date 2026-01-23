@@ -20,6 +20,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.io.IOException;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
@@ -50,7 +51,7 @@ public class SettingsStore implements Closeable {
     }
 
     @Override
-    public void close() {
+    public void close() throws IOException {
         Misc.free(preferencesParser);
         Misc.free(blockFileReader);
         Misc.free(blockFileWriter);

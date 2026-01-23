@@ -173,7 +173,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                 Utf8Sequence splitString = VarcharTypeDriver.getSplitValue(auxMem, dataMem, 0, 1);
 
                 holder.clearAndSet(splitString);
-                Assert.assertEquals(9, holder.size());
+                Assert.assertEquals(holder.size(), 9);
                 Assert.assertTrue(holder.isAscii());
                 TestUtils.assertEquals("foobarbaz", splitString);
             }
@@ -197,7 +197,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                 Utf8StringSink sink = new Utf8StringSink();
                 sink.put(Chars.repeat("a", N));
                 holder.clearAndSet(sink);
-                Assert.assertEquals(N, holder.size());
+                Assert.assertEquals(holder.size(), N);
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals((byte) 'a', holder.byteAt(i));
                 }

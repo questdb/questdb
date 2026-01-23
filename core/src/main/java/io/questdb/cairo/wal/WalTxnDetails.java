@@ -71,12 +71,12 @@ public class WalTxnDetails implements QuietCloseable {
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_PERIOD_HI + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
-    final WalTxnDetailsSlice txnSlice = new WalTxnDetailsSlice();
     private final CairoConfiguration config;
     private final long maxLookaheadRows;
     private final SymbolMapDiffCursorImpl symbolMapDiffCursor = new SymbolMapDiffCursorImpl();
     private final LongList transactionMeta = new LongList();
     private final WalEventReader walEventReader;
+    WalTxnDetailsSlice txnSlice = new WalTxnDetailsSlice();
     private long currentSymbolIndexesStartOffset = 0;
     private long currentSymbolStringMemStartOffset = 0;
     private long startSeqTxn = 0;

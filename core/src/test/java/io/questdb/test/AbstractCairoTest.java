@@ -138,17 +138,15 @@ import java.util.function.Supplier;
 public abstract class AbstractCairoTest extends AbstractTest {
 
     public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
-    public static final StaticOverrides staticOverrides = new StaticOverrides();
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final String TIMESTAMP_NS_TYPE_NAME = "TIMESTAMP_NS";
-    protected static final ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
-    static final boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static final double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
     public static String exportRoot = null;
+    public static StaticOverrides staticOverrides = new StaticOverrides();
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
@@ -168,9 +166,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static MessageBus messageBus;
     protected static QuestDBTestNode node1;
+    protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static SecurityContext securityContext;
     protected static long spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     protected static SqlExecutionContext sqlExecutionContext;
+    static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static long fdReuseCount;
     private static long memoryUsage = -1;
     private static long mmapReuseCount;
@@ -1570,6 +1570,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return TestUtils.createTable(engine, model);
     }
 
+    protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
+        return createWalApplyJob(node.getEngine());
+    }
+
     protected static ApplyWal2TableJob createWalApplyJob() {
         return createWalApplyJob(engine);
     }
@@ -1628,7 +1632,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         CairoEngine.execute(compiler, sqlText, sqlExecutionContext, null);
     }
 
-    @SuppressWarnings("unused")
+    protected static void execute(CharSequence ddlSql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoins);
+            execute(compiler, ddlSql, sqlExecutionContext);
+        }
+    }
+
     protected static void forEachNode(QuestDBNodeTask task) {
         for (int i = 0; i < nodes.size(); i++) {
             task.run(nodes.get(i));

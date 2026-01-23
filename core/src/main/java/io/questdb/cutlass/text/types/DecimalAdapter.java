@@ -84,13 +84,13 @@ public class DecimalAdapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
         decimal256.ofString(value.asAsciiCharSequence(), precision, scale);
         WriterRowUtils.putDecimalQuick(column, decimal256, tag, row);
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         write(row, column, value, null, null, decimal256);
     }
 }

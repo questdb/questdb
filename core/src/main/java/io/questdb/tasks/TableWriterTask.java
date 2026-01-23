@@ -34,7 +34,6 @@ import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
     public static final int CMD_ALTER_TABLE = 2;
-    @SuppressWarnings("unused")
     public static final int CMD_UNUSED = 1;
     public static final int CMD_UPDATE_TABLE = 3;
 

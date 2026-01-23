@@ -31,6 +31,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 
 import java.net.URLEncoder;
 

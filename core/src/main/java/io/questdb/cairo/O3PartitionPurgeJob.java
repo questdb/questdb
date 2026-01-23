@@ -418,7 +418,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         if (engine.lockTableCreate(tableToken)) {
             try {
                 TableToken lastToken = engine.getUpdatedTableToken(tableToken);
-                if (lastToken.equals(tableToken)) {
+                if (lastToken == tableToken) {
                     LOG.info().$(message).$substr(pathFrom, path).I$();
                     ff.unlinkOrRemove(path, LOG);
                 } else {

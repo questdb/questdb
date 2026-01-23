@@ -466,8 +466,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
-    private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
+    private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParquetFrameCacheCapacity;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
@@ -569,11 +569,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
-    @SuppressWarnings("CanBeFinal")
     protected HttpServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
-    @SuppressWarnings("CanBeFinal")
     protected HttpFullFatServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
-    @SuppressWarnings("CanBeFinal")
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
@@ -3989,13 +3986,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSqlParallelWorkStealingSpinTimeout() {
-            return sqlParallelWorkStealingSpinTimeout;
+        public int getSqlParallelWorkStealingThreshold() {
+            return sqlParallelWorkStealingThreshold;
         }
 
         @Override
-        public int getSqlParallelWorkStealingThreshold() {
-            return sqlParallelWorkStealingThreshold;
+        public long getSqlParallelWorkStealingSpinTimeout() {
+            return sqlParallelWorkStealingSpinTimeout;
         }
 
         @Override

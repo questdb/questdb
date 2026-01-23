@@ -29,7 +29,6 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
-@SuppressWarnings("resource")
 public class TimestampConstantTest {
     @Test
     public void testTimestampConstant() {

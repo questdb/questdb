@@ -112,10 +112,10 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class LeftConvertFunc extends NegatableBooleanFunction implements BinaryFunction {
-        protected final TimestampDriver driver;
-        protected final int toTimestampType;
         private final Function leftFunc;
         private final Function rightFunc;
+        protected TimestampDriver driver;
+        protected int toTimestampType;
 
         public LeftConvertFunc(Function leftFunc, Function rightFunc, TimestampDriver driver, int toTimestampType) {
             this.leftFunc = leftFunc;
@@ -156,10 +156,10 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class RightConvertFunc extends NegatableBooleanFunction implements BinaryFunction {
-        protected final TimestampDriver driver;
-        protected final int toTimestampType;
         private final Function leftFunc;
         private final Function rightFunc;
+        protected TimestampDriver driver;
+        protected int toTimestampType;
 
         public RightConvertFunc(Function leftFunc, Function rightFunc, TimestampDriver driver, int toTimestampType) {
             this.leftFunc = leftFunc;

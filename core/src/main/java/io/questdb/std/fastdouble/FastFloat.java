@@ -53,7 +53,7 @@ final class FastFloat {
                                 || f == 0.0f
                 )
         ) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
         return f;
     }
@@ -168,7 +168,7 @@ final class FastFloat {
         index = skipWhitespace(str, index, endIndex);
         if (illegal || index < endIndex
                 || !hasLeadingZero && digitCount == 0) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
 
         // Re-parse significand in case of a potential overflow
@@ -306,7 +306,7 @@ final class FastFloat {
         if (illegal || index < endIndex
                 || digitCount == 0
                 || !hasExponent) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
 
         // Re-parse significand in case of a potential overflow
@@ -379,7 +379,7 @@ final class FastFloat {
                 return negative ? negativeInfinity() : positiveInfinity();
             }
         }
-        throw NumericException.instance();
+        throw NumericException.INSTANCE;
     }
 
     /**
@@ -411,7 +411,7 @@ final class FastFloat {
                 return nan();
             }
         }
-        throw NumericException.instance();
+        throw NumericException.INSTANCE;
     }
 
     /**
@@ -476,14 +476,14 @@ final class FastFloat {
     static float parseFloatingPointLiteral(CharSequence str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length()) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
 
         // Skip leading whitespace
         // -------------------
         int index = skipWhitespace(str, offset, endIndex);
         if (index == endIndex) {
-            throw NumericException.instance();
+            throw NumericException.INSTANCE;
         }
         char ch = str.charAt(index);
 
@@ -493,7 +493,7 @@ final class FastFloat {
         if (isNegative || ch == '+') {
             ch = ++index < endIndex ? str.charAt(index) : 0;
             if (ch == 0) {
-                throw NumericException.instance();
+                throw NumericException.INSTANCE;
             }
         }
 

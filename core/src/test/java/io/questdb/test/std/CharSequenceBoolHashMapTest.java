@@ -106,8 +106,7 @@ public class CharSequenceBoolHashMapTest {
         map1.put("a", false);
 
         assertNotEquals(null, map1);
-        assertNotEquals(new Object(), map1);
-        //noinspection EqualsWithItself
+        assertNotEquals(map1, new Object());
         assertEquals(map1, map1);
 
         CharSequenceBoolHashMap map2 = new CharSequenceBoolHashMap();
@@ -124,7 +123,7 @@ public class CharSequenceBoolHashMapTest {
         map.put("a", false);
         map.put("b", true);
 
-        assertEquals(new ObjList<>("a", "b"), map.keys());
+        assertEquals(map.keys(), new ObjList<>("a", "b"));
     }
 
     @Test

@@ -40,11 +40,11 @@ import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 public class RejectProcessorImpl implements RejectProcessor {
     private static final Log LOG = LogFactory.getLog(RejectProcessorImpl.class);
     protected final HttpConnectionContext httpConnectionContext;
-    protected final ObjList<CharSequence> rejectCookieNames = new ObjList<>();
-    protected final ObjList<CharSequence> rejectCookieValues = new ObjList<>();
     private final Utf8StringSink rejectMessage = new Utf8StringSink();
     protected byte authenticationType = AUTH_TYPE_NONE;
     protected int rejectCode = 0;
+    protected ObjList<CharSequence> rejectCookieNames = new ObjList<>();
+    protected ObjList<CharSequence> rejectCookieValues = new ObjList<>();
     protected boolean shutdownWrite = false;
 
     public RejectProcessorImpl(HttpConnectionContext httpConnectionContext) {

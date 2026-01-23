@@ -107,7 +107,6 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.getUnsafe().putLong(addr + COL_VAR_DATA_LEN_64, columnVarDataLen);
     }
 
-    @SuppressWarnings("SuspiciousNameCombination")
     public static long setColValues(
             long dedupCommitAddr,
             int dedupKeyIndex,

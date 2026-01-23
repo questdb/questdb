@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.std.Decimal128;
@@ -47,7 +48,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
             int position,
             Function arg,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         if (arg.isConstant()) {
             return newConstantInstance(sqlExecutionContext, position, arg);
         }
@@ -80,7 +81,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         return newInstance(position, args.getQuick(0), sqlExecutionContext);
     }
 

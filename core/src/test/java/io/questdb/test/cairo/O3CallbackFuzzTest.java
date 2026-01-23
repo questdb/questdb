@@ -84,13 +84,13 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
     }
 
     public static class WriterObj {
-        final int columnCount;
         final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
         private final int complexity;
         private final CairoEngine engine;
         private final TableWriter.ColumnTaskHandler o3MoveUncommittedRef = this::o3MoveUncommitted0;
         private final Rnd rnd;
         private final AtomicReference<Throwable> th;
+        int columnCount;
 
         public WriterObj(Rnd rnd, AtomicReference<Throwable> th, int columns, int complexity, CairoEngine engine) {
             this.engine = engine;

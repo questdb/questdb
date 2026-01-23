@@ -89,7 +89,7 @@ public class ConcurrentLongHashMapTest {
         map.put(5, "5");
         map.putIfAbsent(5, "Hello");
         Assert.assertEquals(5, map.size());
-        Assert.assertEquals("5", map.get(5));
+        Assert.assertEquals(map.get(5), "5");
         Assert.assertNull(map.get(42));
 
         ConcurrentLongHashMap.KeySetView<Boolean> ks = ConcurrentLongHashMap.newKeySet(4);

@@ -37,8 +37,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 // This is supposed to be disabled in production runs and only enabled in tests or on special debugging occasions via configuration.
 public class PartitionOverwriteControl {
     private static final Log LOG = LogFactory.getLog(PartitionOverwriteControl.class);
-    final ConcurrentHashMap<ObjList<ReaderPartitionUsage>> readerPartitionUsageMap = new ConcurrentHashMap<>();
     private final AtomicInteger errorCount = new AtomicInteger();
+    ConcurrentHashMap<ObjList<ReaderPartitionUsage>> readerPartitionUsageMap = new ConcurrentHashMap<>();
     private boolean enabled;
 
     public void acquirePartitions(TableReader reader) {

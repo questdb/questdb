@@ -82,9 +82,6 @@ public class WalUtils {
     // REPLACE_RANGE mode means replacing the existing range of data with the new data.
     public static final byte WAL_DEDUP_MODE_REPLACE_RANGE = WAL_DEDUP_MODE_UPSERT_NEW + 1;
     public static final byte WAL_DEDUP_MODE_MAX = WAL_DEDUP_MODE_REPLACE_RANGE;
-    public static final long WAL_DEFAULT_BASE_TABLE_TXN = Long.MIN_VALUE;
-    public static final long WAL_DEFAULT_LAST_PERIOD_HI = Long.MIN_VALUE;
-    public static final long WAL_DEFAULT_LAST_REFRESH_TIMESTAMP = Long.MIN_VALUE;
     public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final short WAL_FORMAT_VERSION = 0;
     public static final short WALE_FORMAT_VERSION = WAL_FORMAT_VERSION;
@@ -95,6 +92,9 @@ public class WalUtils {
     public static final String WAL_PENDING_FS_MARKER = ".pending";
     public static final int WAL_SEQUENCER_FORMAT_VERSION_V1 = 0;
     public static final int WAL_SEQUENCER_FORMAT_VERSION_V2 = 1;
+    public static long WAL_DEFAULT_BASE_TABLE_TXN = Long.MIN_VALUE;
+    public static long WAL_DEFAULT_LAST_PERIOD_HI = Long.MIN_VALUE;
+    public static long WAL_DEFAULT_LAST_REFRESH_TIMESTAMP = Long.MIN_VALUE;
 
     public static void createTxnLogFile(FilesFacade ff, MemoryMARW mem, Path txnSeqDirPath, long tableCreateDate, int chunkSize, int mkDirMode) {
         int rootLen = txnSeqDirPath.size();

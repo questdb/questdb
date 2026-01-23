@@ -45,8 +45,8 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class GCMetricsBenchmark {
 
-    final GCMetrics metrics = new GCMetrics();
-    final DirectUtf8Sink sink = new DirectUtf8Sink(1024 * 1024);
+    GCMetrics metrics = new GCMetrics();
+    DirectUtf8Sink sink = new DirectUtf8Sink(1024 * 1024);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

@@ -445,7 +445,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnHavingTroubleCreatingMetaSwap() {
+    public void testAddColumnHavingTroubleCreatingMetaSwap() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         FilesFacade ff = new TestFilesFacadeImpl() {
@@ -2039,7 +2039,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonStandardPageSize() {
+    public void testNonStandardPageSize() throws Exception {
         populateTable(new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
@@ -2049,7 +2049,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonStandardPageSize2() {
+    public void testNonStandardPageSize2() throws Exception {
         populateTable(new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
