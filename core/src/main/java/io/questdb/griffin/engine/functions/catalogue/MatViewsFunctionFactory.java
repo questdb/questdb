@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -61,22 +60,15 @@ public class MatViewsFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(MatViewsFunctionFactory.class);
 
     public static String getIntervalUnit(char unit) {
-        switch (unit) {
-            case 'm':
-                return "MINUTE";
-            case 'h':
-                return "HOUR";
-            case 'd':
-                return "DAY";
-            case 'w':
-                return "WEEK";
-            case 'y':
-                return "YEAR";
-            case 'M':
-                return "MONTH";
-            default:
-                return null;
-        }
+        return switch (unit) {
+            case 'm' -> "MINUTE";
+            case 'h' -> "HOUR";
+            case 'd' -> "DAY";
+            case 'w' -> "WEEK";
+            case 'y' -> "YEAR";
+            case 'M' -> "MONTH";
+            default -> null;
+        };
     }
 
     @Override
@@ -183,7 +175,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public boolean hasNext() throws DataUnavailableException {
+            public boolean hasNext() {
                 final CairoConfiguration configuration = engine.getConfiguration();
                 path.of(configuration.getDbRoot());
                 final int pathLen = path.size();
@@ -271,7 +263,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public long size() throws DataUnavailableException {
+            public long size() {
                 return -1;
             }
 
@@ -302,82 +294,55 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public int getInt(int col) {
-                    switch (col) {
-                        case COLUMN_REFRESH_LIMIT:
-                            return TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
-                        case COLUMN_TIMER_INTERVAL:
-                            return timerInterval;
-                        case COLUMN_PERIOD_LENGTH:
-                            return periodLength;
-                        case COLUMN_PERIOD_DELAY:
-                            return periodDelay;
-                        default:
-                            return 0;
-                    }
+                    return switch (col) {
+                        case COLUMN_REFRESH_LIMIT -> TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
+                        case COLUMN_TIMER_INTERVAL -> timerInterval;
+                        case COLUMN_PERIOD_LENGTH -> periodLength;
+                        case COLUMN_PERIOD_DELAY -> periodDelay;
+                        default -> 0;
+                    };
                 }
 
                 @Override
                 public long getLong(int col) {
-                    switch (col) {
-                        case COLUMN_LAST_REFRESH_START_TIMESTAMP:
-                            return lastRefreshStartTimestamp;
-                        case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP:
-                            return lastRefreshFinishTimestamp;
-                        case COLUMN_REFRESH_PERIOD_HI:
-                            return lastPeriodHi;
-                        case COLUMN_REFRESH_BASE_TABLE_TXN:
-                            return lastRefreshTxn;
-                        case COLUMN_APPLIED_BASE_TABLE_TXN:
-                            return lastAppliedBaseTxn;
-                        case COLUMN_TIMER_START:
-                            return timerStart;
-                        default:
-                            return 0;
-                    }
+                    return switch (col) {
+                        case COLUMN_LAST_REFRESH_START_TIMESTAMP -> lastRefreshStartTimestamp;
+                        case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP -> lastRefreshFinishTimestamp;
+                        case COLUMN_REFRESH_PERIOD_HI -> lastPeriodHi;
+                        case COLUMN_REFRESH_BASE_TABLE_TXN -> lastRefreshTxn;
+                        case COLUMN_APPLIED_BASE_TABLE_TXN -> lastAppliedBaseTxn;
+                        case COLUMN_TIMER_START -> timerStart;
+                        default -> 0;
+                    };
                 }
 
                 @Override
                 public CharSequence getStrA(int col) {
-                    switch (col) {
-                        case COLUMN_VIEW_NAME:
-                            return viewDefinition.getMatViewToken().getTableName();
-                        case COLUMN_REFRESH_TYPE:
-                            switch (viewDefinition.getRefreshType()) {
-                                case MatViewDefinition.REFRESH_TYPE_IMMEDIATE:
-                                    return "immediate";
-                                case MatViewDefinition.REFRESH_TYPE_TIMER:
-                                    return "timer";
-                                case MatViewDefinition.REFRESH_TYPE_MANUAL:
-                                    return "manual";
-                                default:
-                                    return "unknown";
-                            }
-                        case COLUMN_BASE_TABLE_NAME:
-                            return viewDefinition.getBaseTableName();
-                        case COLUMN_VIEW_SQL:
-                            return viewDefinition.getMatViewSql();
-                        case COLUMN_TABLE_DIR_NAME:
-                            return viewDefinition.getMatViewToken().getDirName();
-                        case COLUMN_VIEW_STATUS:
-                            return getViewStatus();
-                        case COLUMN_INVALIDATION_REASON:
-                            return invalidationReason.length() > 0 ? invalidationReason : null;
-                        case COLUMN_REFRESH_LIMIT_UNIT:
+                    return switch (col) {
+                        case COLUMN_VIEW_NAME -> viewDefinition.getMatViewToken().getTableName();
+                        case COLUMN_REFRESH_TYPE -> switch (viewDefinition.getRefreshType()) {
+                            case MatViewDefinition.REFRESH_TYPE_IMMEDIATE -> "immediate";
+                            case MatViewDefinition.REFRESH_TYPE_TIMER -> "timer";
+                            case MatViewDefinition.REFRESH_TYPE_MANUAL -> "manual";
+                            default -> "unknown";
+                        };
+                        case COLUMN_BASE_TABLE_NAME -> viewDefinition.getBaseTableName();
+                        case COLUMN_VIEW_SQL -> viewDefinition.getMatViewSql();
+                        case COLUMN_TABLE_DIR_NAME -> viewDefinition.getMatViewToken().getDirName();
+                        case COLUMN_VIEW_STATUS -> getViewStatus();
+                        case COLUMN_INVALIDATION_REASON -> !invalidationReason.isEmpty() ? invalidationReason : null;
+                        case COLUMN_REFRESH_LIMIT_UNIT -> {
                             if (refreshLimitHoursOrMonths == 0) {
-                                return null;
+                                yield null;
                             }
-                            return TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
-                        case COLUMN_TIMER_INTERVAL_UNIT:
-                            return getIntervalUnit(timerIntervalUnit);
-                        case COLUMN_TIMER_TIME_ZONE:
-                            return viewDefinition.getTimerTimeZone();
-                        case COLUMN_PERIOD_LENGTH_UNIT:
-                            return getIntervalUnit(periodLengthUnit);
-                        case COLUMN_PERIOD_DELAY_UNIT:
-                            return getIntervalUnit(periodDelayUnit);
-                        default:
-                            return null;
-                    }
+                            yield TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
+                        }
+                        case COLUMN_TIMER_INTERVAL_UNIT -> getIntervalUnit(timerIntervalUnit);
+                        case COLUMN_TIMER_TIME_ZONE -> viewDefinition.getTimerTimeZone();
+                        case COLUMN_PERIOD_LENGTH_UNIT -> getIntervalUnit(periodLengthUnit);
+                        case COLUMN_PERIOD_DELAY_UNIT -> getIntervalUnit(periodDelayUnit);
+                        default -> null;
+                    };
                 }
 
                 @Override

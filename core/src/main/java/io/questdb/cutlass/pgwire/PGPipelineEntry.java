@@ -28,7 +28,6 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
@@ -60,7 +59,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
@@ -734,12 +732,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      * @param pendingWriters      per connection write cache to be used by "insert" SQL. This is also part of the
      *                            optional "execute"
      * @param utf8Sink            the response buffer
-     * @throws QueryPausedException                 exception is thrown by SQL fetch, which could be in the middle of the fetch.
-     *                                              The exception indicates that SQL engine has to wait for the data to be retrieved
-     *                                              from cold storage, and it might take a while. The convention is to enqueue the
-     *                                              connection (fd) with the IODispatcher and deque this connection when data is ready.
-     *                                              When connection is dequeued the sync process should be resumed. Which is done by
-     *                                              calling this method again.
      * @throws NoSpaceLeftInResponseBufferException exception is thrown when sync runs out of space in the
      *                                              response buffer. When this happens the caller has to flush the buffer
      *                                              and call sync again, unless the flush was ineffective (had 0 bytes to flush).
@@ -750,7 +742,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             PGResponseSink utf8Sink
-    ) throws QueryPausedException, NoSpaceLeftInResponseBufferException {
+    ) throws NoSpaceLeftInResponseBufferException {
         if (isError()) {
             outError(utf8Sink, pendingWriters);
         } else {
@@ -2360,8 +2352,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
-            throws QueryPausedException {
+    private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink) {
         if (pgResultSetColumnTypes.size() == 0) {
             copyPgResultSetColumnTypesAndNames();
         }
@@ -2379,11 +2370,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outCursor(
-            SqlExecutionContext sqlExecutionContext,
-            PGResponseSink utf8Sink,
-            int columnCount
-    ) throws QueryPausedException {
+    private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink, int columnCount) {
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
         }
@@ -2402,9 +2389,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 outRecord(sqlExecutionContext, utf8Sink, record, columnCount);
                 recordStartAddress = utf8Sink.getSendBufferPtr();
             }
-        } catch (DataUnavailableException e) {
-            utf8Sink.resetToBookmark();
-            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (NoSpaceLeftInResponseBufferException e) {
             throw e;
         } catch (Throwable th) {
@@ -3555,10 +3539,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return msgParseReconcileParameterTypes((short) msgParseParameterTypeOIDs.size(), typeContainer);
     }
 
-    boolean populateBindingServiceForExec(SqlExecutionContext sqlExecutionContext,
-                                          CharacterStore bindVariableCharacterStore,
-                                          @Transient DirectUtf8String directUtf8String,
-                                          @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws PGMessageProcessingException, SqlException {
+    boolean populateBindingServiceForExec(
+            SqlExecutionContext sqlExecutionContext,
+            CharacterStore bindVariableCharacterStore,
+            @Transient DirectUtf8String directUtf8String,
+            @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+    ) throws PGMessageProcessingException, SqlException {
         if (isError()) {
             return false;
         }

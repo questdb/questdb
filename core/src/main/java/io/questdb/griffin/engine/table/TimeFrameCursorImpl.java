@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
@@ -179,7 +178,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
-    public long open() throws DataUnavailableException {
+    public long open() {
         final int frameIndex = timeFrame.getFrameIndex();
         if (frameIndex < 0 || frameIndex >= frameCount) {
             throw CairoException.nonCritical().put("open call on uninitialized time frame");

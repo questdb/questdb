@@ -122,22 +122,17 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     }
 
     private static class DistinctTimeSeriesRecordCursor implements RecordCursor {
-        private static final byte COMPUTE_NEXT = 1;
-        private static final byte INIT_FIRST_TIMESTAMP = 0;
-        private static final byte NO_ROWS = 3;
-        private static final byte REUSE_CURRENT = 2;
-
         private final Map dataMap;
         private final RecordSink recordSink;
         private final int timestampIndex;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isFirstRow;
         private boolean isOpen;
         private long prevRowId;
         private long prevTimestamp;
         private Record record;
         private Record recordB;
-        private byte state = 0;
 
         public DistinctTimeSeriesRecordCursor(int timestampIndex, Map dataMap, RecordSink recordSink) {
             this.timestampIndex = timestampIndex;
@@ -172,38 +167,30 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public boolean hasNext() {
-            if (state == INIT_FIRST_TIMESTAMP) {
-                // first iteration to get initial timestamp value
+            if (isFirstRow) {
+                isFirstRow = false;
                 if (baseCursor.hasNext()) {
                     prevTimestamp = record.getTimestamp(timestampIndex);
                     prevRowId = record.getRowId();
-                    state = REUSE_CURRENT;
-                } else {
-                    // edge case - base cursor is empty, avoid calling hasNext() again
-                    state = NO_ROWS;
-                }
-            }
-
-            if (state == COMPUTE_NEXT) {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    final long timestamp = record.getTimestamp(timestampIndex);
-                    if (timestamp != prevTimestamp) {
-                        prevTimestamp = timestamp;
-                        prevRowId = record.getRowId();
-                        return true;
-                    }
-
-                    if (checkIfNotDupe()) {
-                        return true;
-                    }
+                    return true;
                 }
                 return false;
             }
 
-            boolean next = (state == REUSE_CURRENT);
-            state = COMPUTE_NEXT;
-            return next;
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                final long timestamp = record.getTimestamp(timestampIndex);
+                if (timestamp != prevTimestamp) {
+                    prevTimestamp = timestamp;
+                    prevRowId = record.getRowId();
+                    return true;
+                }
+
+                if (checkIfNotDupe()) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         @Override
@@ -220,19 +207,19 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
                 dataMap.reopen();
             }
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-            state = INIT_FIRST_TIMESTAMP;
+            isFirstRow = true;
             return this;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
         }
 
         @Override
         public long preComputedStateSize() {
             // no pre-computed state
             return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            baseCursor.recordAt(record, atRowId);
         }
 
         @Override
@@ -244,6 +231,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         public void toTop() {
             baseCursor.toTop();
             dataMap.clear();
+            isFirstRow = true;
         }
 
         private boolean checkIfNotDupe() {
