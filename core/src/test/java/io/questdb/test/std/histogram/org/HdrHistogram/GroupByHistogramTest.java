@@ -586,7 +586,7 @@ public class GroupByHistogramTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMergeWithDifferentPrecision() {
+    public void testMergeWithDifferentValueRanges() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             GroupByHistogram dest = new GroupByHistogram(2);
             GroupByHistogram src = new GroupByHistogram(2);
