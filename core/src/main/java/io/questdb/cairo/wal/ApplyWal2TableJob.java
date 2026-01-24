@@ -25,8 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -71,13 +71,13 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.TelemetrySystemEvent.*;
+import static io.questdb.TelemetryEvent.*;
 import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -459,7 +459,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             case 0:
                                 throw CairoException.critical(0)
                                         .put("broken table transaction record in sequencer log, walId cannot be 0 [table=")
-                                        .put(tableToken.getTableName()).put(", seqTxn=").put(seqTxn).put(']');
+                                        .put(tableToken).put(", seqTxn=").put(seqTxn).put(']');
 
                             default:
                                 // Always set full path when using thread static path
@@ -534,7 +534,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("ms, rate=").$(throughput)
                             .$("rows/s, ampl=").$(amplification)
                             .I$();
-                    engine.getRecentWriteTracker().recordMergeStats(writer.getTableToken(), amplification, throughput);
+                    engine.getRecentWriteTracker().recordMergeStats(
+                            writer.getTableToken(),
+                            amplification,
+                            throughput,
+                            writer.getMinTimestamp(),
+                            writer.getMaxTimestamp()
+                    );
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
@@ -596,7 +602,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
 
         try {
-            telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            telemetryFacade.store(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             LogRecord logRecord = LOG.critical().$("job failed, table suspended [table=").$(tableToken);
             if (lastAttemptSeqTxn > -1) {
                 logRecord.$(", seqTxn=").$(lastAttemptSeqTxn);

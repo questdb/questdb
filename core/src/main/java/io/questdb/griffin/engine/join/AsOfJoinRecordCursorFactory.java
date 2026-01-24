@@ -167,9 +167,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         private final RecordValueSink valueSink;
         private Map currentJoinKeyMap;
         private boolean danglingSlaveRecord = false;
-        private boolean isMasterHasNextPending;
         private boolean isOpen;
-        private boolean masterHasNext;
         private Record masterRecord;
         private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
@@ -223,11 +221,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         @Override
         public boolean hasNext() {
-            if (isMasterHasNextPending) {
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            }
-            if (masterHasNext) {
+            if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
                 MapKey key;
@@ -280,7 +274,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     record.hasSlave(false);
                 }
 
-                isMasterHasNextPending = true;
                 return true;
             }
             return false;
@@ -305,7 +298,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             danglingSlaveRecord = false;
             masterCursor.toTop();
             slaveCursor.toTop();
-            isMasterHasNextPending = true;
         }
 
         /**
@@ -372,7 +364,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 MapRecord mapRecordB = joinKeyMapB.getRecord();
                 mapRecordB.setSymbolTableResolver(slaveCursor, columnIndex);
             }
-            isMasterHasNextPending = true;
         }
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -58,33 +59,35 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (this.cursor == null) {
-            this.cursor = new PageFrameRecordCursorImpl(
-                    executionContext.getCairoEngine().getConfiguration(),
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        if (cursor == null) {
+            cursor = new PageFrameRecordCursorImpl(
+                    configuration,
                     getMetadata(),
                     new PageFrameRowCursorFactory(ORDER_ASC),
                     true,
                     null
             );
         }
-        if (this.pageFrameCursor == null) {
-            this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        if (pageFrameCursor == null) {
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata());
         }
         pageFrameCursor.of(path.$());
         try {
             cursor.of(pageFrameCursor, executionContext);
             return cursor;
-        } catch (Throwable e) {
-            pageFrameCursor.close();
-            throw e;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         }
     }
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert order != ORDER_DESC;
-        if (this.pageFrameCursor == null) {
-            this.pageFrameCursor = new ReadParquetPageFrameCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        if (pageFrameCursor == null) {
+            final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata());
         }
         pageFrameCursor.of(path.$());
         return pageFrameCursor;

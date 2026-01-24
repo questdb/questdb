@@ -956,7 +956,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 }
                 frameSequence.await();
                 Misc.freeIfCloseable(frameSequence.getSymbolTableSource());
-                frameSequence.clear();
+                frameSequence.reset();
             }
         });
     }
@@ -1126,6 +1126,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void changePageFrameSizes(int minRows, int maxRows) {
+            sqlExecutionContext.changePageFrameSizes(minRows, maxRows);
+        }
+
+        @Override
         public void clearWindowContext() {
             sqlExecutionContext.clearWindowContext();
         }
@@ -1240,6 +1245,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public int getNowTimestampType() {
             return sqlExecutionContext.getNowTimestampType();
+        }
+
+        @Override
+        public int getPageFrameMaxRows() {
+            return sqlExecutionContext.getPageFrameMaxRows();
+        }
+
+        @Override
+        public int getPageFrameMinRows() {
+            return sqlExecutionContext.getPageFrameMinRows();
         }
 
         @Override
@@ -1361,6 +1376,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void reset() {
             sqlExecutionContext.reset();
+        }
+
+        @Override
+        public void restoreToDefaultPageFrameSizes() {
+            sqlExecutionContext.restoreToDefaultPageFrameSizes();
         }
 
         @Override

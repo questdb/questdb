@@ -39,7 +39,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.std.Unsafe;
@@ -198,7 +197,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         // For WebSocket, after the handshake is sent, we just return normally.
         // The framework will call reset() and then loop back to handleClientRecv().
         // Since we called switchProtocol() in onHeadersReady, the framework will
@@ -615,7 +614,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (sendState == SendState.SENDING) {
             // Try to flush the pending ACK in the buffer
             context.resumeResponseSend();

@@ -25,8 +25,8 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -498,7 +498,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                     .put(tableToken.getTableName())
                                     .put(']');
                         }
-                        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
+                        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetryEvent.ILP_RESERVE_WRITER);
                         if (engine.isWalTable(tableToken)) {
                             // create WAL-oriented TUD and DON'T add it to the global cache
                             tud = new WalTableUpdateDetails(

@@ -227,7 +227,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 execute("insert into tbl select 4, '1970-01-10T09'");
 
                 // This should lock partition 1970-01-10.1 from being deleted from the disk
-                engine.checkpointCreate(sqlExecutionContext);
+                engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), false);
                 runPartitionPurgeJobs();
                 testPartitionExist(path, len, true, false, false);
 
@@ -246,6 +246,85 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 testPartitionExist(path, len, false, false, true);
             }
             Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testDedupWithPartitionPurge() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            // Create a table with initial data
+            execute("create table tbl as (" +
+                    "select x, timestamp_sequence('1970-01-10T10', 1000000) ts " +
+                    "from long_sequence(10)" +
+                    ") timestamp(ts) partition by DAY WAL dedup upsert keys (ts)");
+
+            // OOO insert to create partition version
+            execute("insert into tbl select 100 + x, '1970-01-10T09' from long_sequence(1)");
+            drainWalQueue();
+
+            // Insert data identical to last X rows (dedup-like scenario) plus new data at the end
+            // This simulates the dedup case where we re-commit existing rows + add new ones
+            execute("insert into tbl " +
+                    "select x, timestamp_sequence('1970-01-10T10', 1000000) ts " +
+                    "from long_sequence(10) " +  // identical to original last 10 rows
+                    "union all " +
+                    "select 200 + x, '1970-01-10T11' from long_sequence(1)");  // new data at the end
+
+            drainWalQueue();
+
+
+            // This should lock the partition from being deleted
+            try (TableReader rdr = getReader("tbl")) {
+                rdr.openPartition(0);
+                // Merge data to create another partition version
+                execute("insert into tbl " +
+                        "select 202, '1970-01-10T11'");  // new data at the end
+
+                drainWalQueue();
+
+                // Partition overwrite control should prevent purge of in-use partition
+                // it would fail here if the 1970-01-01 is deleted
+                runPartitionPurgeJobs();
+
+                TestUtils.assertReader(
+                        """
+                                x	ts
+                                101	1970-01-10T09:00:00.000000Z
+                                1	1970-01-10T10:00:00.000000Z
+                                2	1970-01-10T10:00:01.000000Z
+                                3	1970-01-10T10:00:02.000000Z
+                                4	1970-01-10T10:00:03.000000Z
+                                5	1970-01-10T10:00:04.000000Z
+                                6	1970-01-10T10:00:05.000000Z
+                                7	1970-01-10T10:00:06.000000Z
+                                8	1970-01-10T10:00:07.000000Z
+                                9	1970-01-10T10:00:08.000000Z
+                                10	1970-01-10T10:00:09.000000Z
+                                201	1970-01-10T11:00:00.000000Z
+                                """,
+                        rdr,
+                        sink
+                );
+            }
+
+            assertSql("""
+                            x	ts
+                            101	1970-01-10T09:00:00.000000Z
+                            1	1970-01-10T10:00:00.000000Z
+                            2	1970-01-10T10:00:01.000000Z
+                            3	1970-01-10T10:00:02.000000Z
+                            4	1970-01-10T10:00:03.000000Z
+                            5	1970-01-10T10:00:04.000000Z
+                            6	1970-01-10T10:00:05.000000Z
+                            7	1970-01-10T10:00:06.000000Z
+                            8	1970-01-10T10:00:07.000000Z
+                            9	1970-01-10T10:00:08.000000Z
+                            10	1970-01-10T10:00:09.000000Z
+                            202	1970-01-10T11:00:00.000000Z
+                            """,
+                    "tbl"
+            );
         });
     }
 

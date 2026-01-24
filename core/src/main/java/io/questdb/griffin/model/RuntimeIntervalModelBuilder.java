@@ -55,7 +55,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     // ListLongs has STATIC_LONGS_PER_DYNAMIC_INTERVAL entries per 1 dynamic interval
     // and pairs of static intervals in the end
     private final LongList staticIntervals = new LongList();
-    private long betweenBoundary;
+    private long betweenBoundary = Numbers.LONG_NULL;
     private Function betweenBoundaryFunc;
     private boolean betweenBoundarySet;
     private boolean betweenNegated;
@@ -375,6 +375,27 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
         } else {
             throw new UnsupportedOperationException();
+        }
+        intervalApplied = true;
+    }
+
+    public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        if (isEmptySet()) {
+            return;
+        }
+
+        if (dynamicRangeList.size() > 0) {
+            throw new UnsupportedOperationException();
+        }
+
+        // Parse and expand the interval string (may produce multiple pairs for periodic intervals)
+        int size = staticIntervals.size();
+        IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
+
+        // Union all newly added pairs with existing intervals
+        if (intervalApplied) {
+            IntervalUtils.unionInPlace(staticIntervals, size);
         }
         intervalApplied = true;
     }

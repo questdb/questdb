@@ -69,6 +69,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     private int frameIndex;
     private int frameLimit;
     private PageFrameSequence<?> frameSequence;
+    private boolean isOpen;
     private PageFrameMemoryRecord recordB;
     private long rowCount;
     private long rowIndex;
@@ -87,16 +88,24 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        LOG.debug()
-                .$("closing [shard=").$(frameSequence.getShard())
-                .$(", frameCount=").$(frameLimit)
-                .I$();
+        if (isOpen) {
+            try {
+                if (frameSequence != null) {
+                    LOG.debug()
+                            .$("closing [shard=").$(frameSequence.getShard())
+                            .$(", frameCount=").$(frameLimit)
+                            .I$();
 
-        if (frameLimit > -1) {
-            frameSequence.await();
+                    if (frameLimit > -1) {
+                        frameSequence.await();
+                    }
+                    frameSequence.reset();
+                }
+            } finally {
+                Misc.free(frameMemoryPool);
+                isOpen = false;
+            }
         }
-        frameSequence.clear();
-        Misc.free(frameMemoryPool);
     }
 
     public void freeRecords() {
@@ -255,13 +264,14 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {
+        this.isOpen = true;
         this.frameSequence = frameSequence;
-        frameIndex = -1;
-        frameLimit = -1;
+        this.frameIndex = -1;
+        this.frameLimit = -1;
         this.rowLimit = rowLimit;
-        rows = negativeLimitRows;
-        rowIndex = negativeLimitRows.getCapacity();
-        rowCount = 0;
+        this.rows = negativeLimitRows;
+        this.rowIndex = negativeLimitRows.getCapacity();
+        this.rowCount = 0;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {

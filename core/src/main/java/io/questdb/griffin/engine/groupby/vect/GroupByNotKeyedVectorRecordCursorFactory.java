@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -92,7 +91,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         super(metadata);
         try {
             this.base = base;
-            this.frameAddressCache = new PageFrameAddressCache(configuration);
+            this.frameAddressCache = new PageFrameAddressCache();
             this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             this.vafList = new ObjList<>(vafList.size());
             this.vafList.addAll(vafList);
@@ -219,7 +218,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void close() {
-            frameAddressCache.clear();
+            Misc.free(frameAddressCache);
             frameCursor = Misc.free(frameCursor);
         }
 
@@ -368,14 +367,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 }
 
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            } catch (DataUnavailableException e) {
-                // We're not yet done, so no need to cancel the circuit breaker.
-                throw e;
-            } catch (Throwable e) {
+            } catch (Throwable th) {
                 sharedCircuitBreaker.cancel();
-                // Release page frame memory.
-                Misc.freeObjListAndKeepObjects(frameMemoryPools);
-                throw e;
+                throw th;
             } finally {
                 // all done? great start consuming the queue we just published
                 // how do we get to the end? If we consume our own queue there is chance we will be consuming
@@ -393,10 +387,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         sharedCircuitBreaker,
                         workStealingStrategy
                 );
+                // Release page frame memory now, when no worker is using it.
+                Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
-
-            // Release page frame memory.
-            Misc.freeObjListAndKeepObjects(frameMemoryPools);
 
             toTop();
 

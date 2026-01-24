@@ -65,6 +65,7 @@ import java.io.Closeable;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final ActiveConnectionTracker activeConnectionTracker;
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
@@ -72,7 +73,6 @@ public class HttpServer implements Closeable {
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
-    private final ActiveConnectionTracker activeConnectionTracker;
 
     public HttpServer(
             HttpServerConfiguration configuration,
@@ -272,7 +272,7 @@ public class HttpServer implements Closeable {
             }
         });
 
-        server.bind(new StaticContentProcessorFactory(httpServerConfiguration));
+        server.bind(new StaticContentProcessorFactory(cairoEngine, httpServerConfiguration));
     }
 
     public static Utf8Sequence normalizeUrl(DirectUtf8String url) {

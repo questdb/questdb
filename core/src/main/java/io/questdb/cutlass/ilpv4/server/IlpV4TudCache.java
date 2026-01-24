@@ -26,7 +26,7 @@ package io.questdb.cutlass.ilpv4.server;
 
 import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
+import io.questdb.TelemetryEvent;
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -164,7 +164,7 @@ public class IlpV4TudCache implements QuietCloseable {
             return null;
         }
 
-        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
+        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetryEvent.ILP_RESERVE_WRITER);
         path.of(engine.getConfiguration().getDbRoot());
 
         // Copy table name to heap - needed for WalTableUpdateDetails and cache key

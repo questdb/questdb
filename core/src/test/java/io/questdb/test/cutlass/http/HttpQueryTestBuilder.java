@@ -70,6 +70,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -142,6 +143,8 @@ public class HttpQueryTestBuilder {
         CairoConfiguration cairoConfiguration = configuration;
         if (cairoConfiguration == null) {
             cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
+                private final AtomicLong copyIdGenerator = new AtomicLong(0);
+
                 @Override
                 public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                     return new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -156,7 +159,7 @@ public class HttpQueryTestBuilder {
 
                 @Override
                 public @NotNull LongSupplier getCopyIDSupplier() {
-                    return () -> 0;
+                    return copyIdGenerator::getAndIncrement;
                 }
 
                 public @NotNull FilesFacade getFilesFacade() {
@@ -221,7 +224,7 @@ public class HttpQueryTestBuilder {
                 workerPool.freeOnExit(copyExportRequestJob);
             }
 
-            httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+            httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override

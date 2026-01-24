@@ -49,10 +49,10 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
-    private final int pageFrameMaxRows;
-    private final int pageFrameMinRows;
     private final LongList pageSizes = new LongList();
     private final int sharedQueryWorkerCount;
+    private int pageFrameMaxRows;
+    private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     // only native partition frames are reentered
@@ -67,16 +67,12 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     public FwdTableReaderPageFrameCursor(
             IntList columnIndexes,
             IntList columnSizeShifts,
-            int sharedQueryWorkerCount,
-            int pageFrameMinRows,
-            int pageFrameMaxRows
+            int sharedQueryWorkerCount
     ) {
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
-        columnCount = columnIndexes.size();
+        this.columnCount = columnIndexes.size();
         this.sharedQueryWorkerCount = sharedQueryWorkerCount;
-        this.pageFrameMinRows = pageFrameMinRows;
-        this.pageFrameMaxRows = pageFrameMaxRows;
     }
 
     @Override
@@ -133,6 +129,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 frame.partitionIndex = reenterPartitionIndex;
                 frame.partitionLo = lo;
                 frame.partitionHi = hi;
+                frame.format = partitionFrame.getPartitionFormat();
+                if (frame.format == PartitionFormat.PARQUET) {
+                    frame.partitionDecoder = partitionFrame.getParquetDecoder();
+                }
+
                 return frame;
             }
             return nextSlow(partitionFrame, lo, hi);
@@ -141,9 +142,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
+    public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) {
         reader = partitionFrameCursor.getTableReader();
         this.partitionFrameCursor = partitionFrameCursor;
+        this.pageFrameMinRows = pageFrameMinRows;
+        this.pageFrameMaxRows = pageFrameMaxRows;
         toTop();
         return this;
     }
@@ -283,6 +286,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reenterPartitionFrame = false;
         }
 
+        frame.partitionDecoder = reenterParquetDecoder;
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
         frame.format = PartitionFormat.PARQUET;
@@ -304,15 +308,31 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = Math.min(
-                pageFrameMaxRows,
-                Math.max(pageFrameMinRows, (hi - lo) / Math.max(sharedQueryWorkerCount, 1))
-        );
+        reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
+    }
+
+    static long calculatePageFrameRowLimit(
+            long partitionLo,
+            long partitionHi,
+            long pageFrameMinRows,
+            long pageFrameMaxRows,
+            int sharedQueryWorkerCount
+    ) {
+        final int workerCount = Math.max(sharedQueryWorkerCount, 1);
+        long rowsPerFrame = Math.min(pageFrameMaxRows, Math.max(pageFrameMinRows, (partitionHi - partitionLo) / workerCount));
+        final long lastFrameSize = (partitionHi - partitionLo) % rowsPerFrame;
+        if (lastFrameSize > 0 && lastFrameSize < pageFrameMinRows) {
+            // Adjust the limit, so that we don't have tiny trailing frames.
+            final long frameCount = Math.max((partitionHi - partitionLo) / rowsPerFrame, 1);
+            rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
+        }
+        return rowsPerFrame;
     }
 
     private class TableReaderPageFrame implements PageFrame {
         private byte format;
+        private PartitionDecoder partitionDecoder;
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
@@ -357,8 +377,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public PartitionDecoder getParquetPartitionDecoder() {
-            assert reenterParquetDecoder != null || format != PartitionFormat.PARQUET;
-            return reenterParquetDecoder;
+            assert partitionDecoder != null || format != PartitionFormat.PARQUET;
+            return partitionDecoder;
         }
 
         @Override

@@ -1222,11 +1222,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins, SqlExecutionContext sqlExecutionContext) throws Exception {
         Assert.assertNotNull(contains);
-        Assert.assertFalse("provide matching text", contains.isEmpty());
         try {
             assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
+                if (contains.isEmpty()) {
+                    Assert.fail("position: " + ((FlyweightMessageContainer) e).getPosition() + ", message: " + e.getMessage());
+                }
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
                 Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
             } else {
@@ -2233,12 +2235,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock");
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
-    }
-
-    protected void configureForBackups() throws IOException {
-        String backupDir = temp.newFolder().getAbsolutePath();
-        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_ROOT, backupDir);
-        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "ddMMMyyyy");
     }
 
     protected void createPopulateTable(TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {

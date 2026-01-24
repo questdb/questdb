@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.Reopenable;
+import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -33,7 +35,7 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * Note: implementations are not necessarily thread-safe.
  */
-public interface GroupByAllocator extends QuietCloseable {
+public interface GroupByAllocator extends QuietCloseable, Mutable, Reopenable {
 
     /**
      * @return allocated chunks total (bytes).

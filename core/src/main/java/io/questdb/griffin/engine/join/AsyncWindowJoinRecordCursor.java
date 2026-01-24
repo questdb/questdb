@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -88,7 +87,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private long valueSizeBytes;
 
     public AsyncWindowJoinRecordCursor(
-            @NotNull CairoConfiguration configuration,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull RecordMetadata slaveMetadata,
             @Nullable IntList columnIndex,
@@ -99,10 +97,10 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         this.slaveMetadata = slaveMetadata;
         this.columnSplit = columnSplit;
         this.isMasterFiltered = isMasterFiltered;
-        slaveTimeFrameAddressCache = new PageFrameAddressCache(configuration);
+        this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
         this.crossIndex = columnIndex;
-        masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        groupByRecord = new VirtualRecord(groupByFunctions);
+        this.masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        this.groupByRecord = new VirtualRecord(groupByFunctions);
         final JoinRecord jr = new JoinRecord(columnSplit);
         jr.of(masterRecord, groupByRecord);
         if (columnIndex != null) {
@@ -128,24 +126,28 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            Misc.free(slaveFrameCursor);
-            slaveTimeFrameAddressCache.clear();
-            if (masterFrameSequence != null) {
-                LOG.debug()
-                        .$("closing [shard=").$(masterFrameSequence.getShard())
-                        .$(", frameIndex=").$(frameIndex)
-                        .$(", frameCount=").$(frameLimit)
-                        .$(", frameId=").$(masterFrameSequence.getId())
-                        .$(", cursor=").$(cursor)
-                        .I$();
+            try {
+                if (masterFrameSequence != null) {
+                    LOG.debug()
+                            .$("closing [shard=").$(masterFrameSequence.getShard())
+                            .$(", frameIndex=").$(frameIndex)
+                            .$(", frameCount=").$(frameLimit)
+                            .$(", frameId=").$(masterFrameSequence.getId())
+                            .$(", cursor=").$(cursor)
+                            .I$();
 
-                collectCursor(true);
-                if (frameLimit > -1) {
-                    masterFrameSequence.await();
+                    collectCursor(true);
+                    if (frameLimit > -1) {
+                        masterFrameSequence.await();
+                    }
+                    masterFrameSequence.reset();
                 }
-                masterFrameSequence.clear();
+            } finally {
+                // Free shared resources only after workers have finished
+                Misc.free(slaveFrameCursor);
+                Misc.free(slaveTimeFrameAddressCache);
+                isOpen = false;
             }
-            isOpen = false;
         }
     }
 
@@ -488,10 +490,14 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             TablePageFrameCursor slaveFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
+        if (!isOpen) {
+            isOpen = true;
+            atom.reopen();
+        }
         this.masterFrameSequence = masterFrameSequence;
         this.slaveFrameCursor = slaveFrameCursor;
         this.executionContext = executionContext;
-        isOpen = true;
         allFramesActive = true;
         isSlaveTimeFrameCacheBuilt = false;
         frameIndex = -1;
@@ -500,7 +506,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         frameValueOffset = -1;
         frameRowCount = -1;
         masterRecord.of(masterFrameSequence.getSymbolTableSource());
-        final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
         valueSizeBytes = atom.getValueSizeBytes();
         groupByValue = atom.getOwnerGroupByValue();
         groupByRecord.of(groupByValue);

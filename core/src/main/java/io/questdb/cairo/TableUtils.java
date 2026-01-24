@@ -25,6 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
@@ -74,6 +77,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3PartitionPurgeTask;
+import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -123,6 +127,7 @@ public final class TableUtils {
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
+    public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
@@ -157,6 +162,7 @@ public final class TableUtils {
      * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
      */
     public static final String TXN_FILE_NAME = "_txn";
+    public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
     // @formatter:off
@@ -394,6 +400,7 @@ public final class TableUtils {
     public static void createTable(
             CairoConfiguration configuration,
             MemoryMARW memory,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             Path path,
             TableStructure structure,
             int tableVersion,
@@ -403,12 +410,13 @@ public final class TableUtils {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getDbRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
+        createTable(ff, root, telemetry, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
     }
 
     public static void createTable(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             MemoryMARW memory,
             Path path,
@@ -417,12 +425,13 @@ public final class TableUtils {
             int tableId,
             CharSequence dirName
     ) {
-        createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
+        createTable(ff, root, telemetry, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
     }
 
     public static void createTable(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             TableStructure structure,
             int tableVersion,
@@ -433,13 +442,14 @@ public final class TableUtils {
                 Path path = new Path();
                 MemoryMARW mem = Vm.getCMARWInstance()
         ) {
-            createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
+            createTable(ff, root, telemetry, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
         }
     }
 
     public static void createTable(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             MemoryMARW memory,
             Path path,
@@ -448,7 +458,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTableOrViewOrMatView(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
+        createTableOrViewOrMatView(ff, root, mkDirMode, telemetry, memory, null, path, tableDir, structure, tableVersion, tableId);
     }
 
     public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
@@ -461,6 +471,7 @@ public final class TableUtils {
     public static void createTableOrMatViewInVolume(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             MemoryMARW memory,
             Path path,
@@ -469,12 +480,13 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTableOrMatViewInVolume(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
+        createTableOrMatViewInVolume(ff, root, telemetry, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
     }
 
     public static void createTableOrMatViewInVolume(
             FilesFacade ff,
             CharSequence root,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             int mkDirMode,
             MemoryMARW memory,
             @Nullable BlockFileWriter blockFileWriter,
@@ -506,7 +518,7 @@ public final class TableUtils {
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }
-            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
         } finally {
             path.trimTo(rootLen);
         }
@@ -516,6 +528,7 @@ public final class TableUtils {
             FilesFacade ff,
             CharSequence root,
             int mkDirMode,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             MemoryMARW memory,
             @Nullable BlockFileWriter blockFileWriter,
             Path path,
@@ -536,7 +549,7 @@ public final class TableUtils {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
             dirCreated = true;
-            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
         } catch (Throwable e) {
             if (dirCreated) {
                 ff.rmdir(path.trimTo(rootLen).slash());
@@ -551,6 +564,7 @@ public final class TableUtils {
             FilesFacade ff,
             MemoryMARW memory,
             @Nullable BlockFileWriter blockFileWriter,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             Path path,
             int rootLen,
             CharSequence tableDir,
@@ -558,13 +572,14 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
     }
 
     public static void createTableOrViewOrMatViewFiles(
             FilesFacade ff,
             MemoryMARW memory,
             @Nullable BlockFileWriter blockFileWriter,
+            @Nullable Telemetry<TelemetryTask> telemetry,
             Path path,
             int rootLen,
             CharSequence tableDir,
@@ -575,17 +590,18 @@ public final class TableUtils {
     ) {
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRONoCache(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
+            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            mem.jumpTo(0);
+            path.trimTo(rootLen);
+            writeMetadata(structure, tableVersion, tableId, mem);
+            mem.sync(false);
+
+            // create symbol maps
             int symbolMapCount = 0;
             if (!structure.isView()) {
-                mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                mem.jumpTo(0);
-                path.trimTo(rootLen);
-                writeMetadata(structure, tableVersion, tableId, mem);
-                mem.sync(false);
-
-                // create symbol maps
                 for (int i = 0, n = structure.getColumnCount(); i < n; i++) {
-                    if (ColumnType.isSymbol(structure.getColumnType(i))) {
+                    int columnType = structure.getColumnType(i);
+                    if (ColumnType.isSymbol(columnType)) {
                         createSymbolMapFiles(
                                 ff,
                                 mem,
@@ -597,7 +613,16 @@ public final class TableUtils {
                         );
                         symbolMapCount++;
                     }
+
+                    if (telemetry != null) {
+                        if (ColumnType.isTimestampNano(columnType)) {
+                            TelemetryTask.store(telemetry, TelemetryOrigin.NO_MATTERS, TelemetryEvent.USE_TIMESTAMP_NANOS);
+                        } else if (ColumnType.isArray(columnType)) {
+                            TelemetryTask.store(telemetry, TelemetryOrigin.NO_MATTERS, TelemetryEvent.USE_ARRAY);
+                        }
+                    }
                 }
+
 
                 mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                 createColumnVersionFile(mem);

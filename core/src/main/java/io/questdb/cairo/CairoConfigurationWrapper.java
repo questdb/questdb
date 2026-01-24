@@ -112,26 +112,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return getDelegate().getBackupDirTimestampFormat();
-    }
-
-    @Override
-    public int getBackupMkDirMode() {
-        return getDelegate().getBackupMkDirMode();
-    }
-
-    @Override
-    public CharSequence getBackupRoot() {
-        return getDelegate().getBackupRoot();
-    }
-
-    @Override
-    public @NotNull CharSequence getBackupTempDirName() {
-        return getDelegate().getBackupTempDirName();
-    }
-
-    @Override
     public int getBinaryEncodingMaxLength() {
         return getDelegate().getBinaryEncodingMaxLength();
     }
@@ -149,6 +129,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getCairoSqlLegacyOperatorPrecedence() {
         return getDelegate().getCairoSqlLegacyOperatorPrecedence();
+    }
+
+    @Override
+    public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+        return getDelegate().getCheckpointRecoveryRebuildColumnIndexes();
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMax() {
+        return getDelegate().getCheckpointRecoveryThreadpoolMax();
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMin() {
+        return getDelegate().getCheckpointRecoveryThreadpoolMin();
     }
 
     @Override
@@ -422,13 +417,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getInactiveWalWriterTTL() {
-        return getDelegate().getInactiveWalWriterTTL();
+    public long getInactiveViewWalWriterTTL() {
+        return getDelegate().getInactiveViewWalWriterTTL();
     }
 
     @Override
-    public long getInactiveViewWalWriterTTL() {
-        return getDelegate().getInactiveViewWalWriterTTL();
+    public long getInactiveWalWriterTTL() {
+        return getDelegate().getInactiveWalWriterTTL();
     }
 
     @Override
@@ -972,11 +967,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlJitPageAddressCacheThreshold() {
-        return getDelegate().getSqlJitPageAddressCacheThreshold();
-    }
-
-    @Override
     public int getSqlJoinContextPoolCapacity() {
         return getDelegate().getSqlJoinContextPoolCapacity();
     }
@@ -1049,6 +1039,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlParallelWorkStealingThreshold() {
         return getDelegate().getSqlParallelWorkStealingThreshold();
+    }
+
+    @Override
+    public long getSqlParallelWorkStealingSpinTimeout() {
+        return getDelegate().getSqlParallelWorkStealingSpinTimeout();
     }
 
     @Override
@@ -1237,6 +1232,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return getDelegate().getViewWalWriterPoolMaxSegments();
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return getDelegate().getVolumeDefinitions();
     }
@@ -1319,11 +1319,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalWriterPoolMaxSegments() {
         return getDelegate().getWalWriterPoolMaxSegments();
-    }
-
-    @Override
-    public int getViewWalWriterPoolMaxSegments() {
-        return getDelegate().getViewWalWriterPoolMaxSegments();
     }
 
     @Override
@@ -1414,6 +1409,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isMatViewParallelSqlEnabled() {
         return getDelegate().isMatViewParallelSqlEnabled();
+    }
+
+    @Override
+    public boolean isMatViewRefreshMissingWalFilesFatal() {
+        return getDelegate().isMatViewRefreshMissingWalFilesFatal();
     }
 
     @Override

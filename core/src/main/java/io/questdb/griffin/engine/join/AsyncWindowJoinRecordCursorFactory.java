@@ -139,7 +139,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
         this.joinMetadata = joinMetadata;
         this.cursor = new AsyncWindowJoinRecordCursor(
-                configuration,
                 groupByFunctions,
                 slaveFactory.getMetadata(),
                 columnIndex,
@@ -206,7 +205,13 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public PageFrameSequence<AsyncWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
+        CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
+        executionContext.changePageFrameSizes(config.getSqlSmallPageFrameMinRows(), config.getSqlSmallPageFrameMaxRows());
+        try {
+            return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
+        } finally {
+            executionContext.restoreToDefaultPageFrameSizes();
+        }
     }
 
     @Override

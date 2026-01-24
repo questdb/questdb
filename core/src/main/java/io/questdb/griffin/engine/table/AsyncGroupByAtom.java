@@ -144,7 +144,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
-            final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
+            final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
                 perWorkerFunctionUpdaters = new ObjList<>(slotCount);
@@ -244,10 +244,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-        Misc.free(ownerAllocator);
-        Misc.freeObjListAndKeepObjects(perWorkerAllocators);
-        Misc.free(ownerLongTopKList);
-        Misc.freeObjListAndKeepObjects(perWorkerLongTopKLists);
+        Misc.clear(ownerAllocator);
+        Misc.clearObjList(perWorkerAllocators);
+        Misc.clear(ownerLongTopKList);
+        Misc.clearObjList(perWorkerLongTopKLists);
     }
 
     @Override
@@ -585,7 +585,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
             sharded = true;
         }
-        // The maps will be open lazily by worker threads.
+        // The maps will be open lazily by worker threads, but we need to reopen the allocators.
+        ownerAllocator.reopen();
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                perWorkerAllocators.getQuick(i).reopen();
+            }
+        }
     }
 
     public void shardAll() {

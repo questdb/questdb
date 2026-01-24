@@ -43,16 +43,18 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit;
+
 public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int columnCount;
     private final IntList columnIndexes;
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
-    private final int pageFrameMaxRows;
-    private final int pageFrameMinRows;
     private final LongList pageSizes = new LongList();
     private final int sharedQueryWorkerCount;
+    private int pageFrameMaxRows;
+    private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     private long reenterPageFrameRowLimit;
@@ -66,16 +68,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     public BwdTableReaderPageFrameCursor(
             IntList columnIndexes,
             IntList columnSizeShifts,
-            int sharedQueryWorkerCount,
-            int pageFrameMinRows,
-            int pageFrameMaxRows
+            int sharedQueryWorkerCount
     ) {
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
         this.columnCount = columnIndexes.size();
         this.sharedQueryWorkerCount = sharedQueryWorkerCount;
-        this.pageFrameMinRows = pageFrameMinRows;
-        this.pageFrameMaxRows = pageFrameMaxRows;
     }
 
     @Override
@@ -140,9 +138,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
+    public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) {
         this.partitionFrameCursor = partitionFrameCursor;
         reader = partitionFrameCursor.getTableReader();
+        this.pageFrameMinRows = pageFrameMinRows;
+        this.pageFrameMaxRows = pageFrameMaxRows;
         toTop();
         return this;
     }
@@ -300,10 +300,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = Math.min(
-                pageFrameMaxRows,
-                Math.max(pageFrameMinRows, (hi - lo) / Math.max(sharedQueryWorkerCount, 1))
-        );
+        reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
     }
 

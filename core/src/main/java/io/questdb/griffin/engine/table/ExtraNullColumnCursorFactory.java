@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -64,11 +63,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         this.base = base;
         this.columnSplit = columnSplit;
         this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess());
-    }
-
-    @Override
-    public void changePageFrameSizes(int minRows, int maxRows) {
-        base.changePageFrameSizes(minRows, maxRows);
     }
 
     @Override
@@ -434,7 +428,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public long open() throws DataUnavailableException {
+        public long open() {
             return baseCursor.open();
         }
 

@@ -159,7 +159,7 @@ import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -695,6 +695,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCastFloatToDouble() throws Exception {
+        allowFunctionMemoization();
         assertMemoryLeak(() -> assertPlanNoLeakCheck("select rnd_float()::double ", """
                 VirtualRecord
                   functions: [memoize(rnd_float()::double)]
@@ -875,6 +876,79 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: t
                     """);
+        });
+    }
+
+    @Test
+    public void testDateaddIntrinsic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id long, ts timestamp, ts2 timestamp) timestamp(ts) partition by hour;");
+
+            assertPlanNoLeakCheck(
+                    "select * from x where id = 42 and dateadd('h', -1, ts) = '2020-01-01T00:01'",
+                    """
+                            Async JIT Filter workers: 1
+                              filter: id=42
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2020-01-01T01:01:00.000000Z","2020-01-01T01:01:00.000000Z")]
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where id = 42 and dateadd('h', -1, ts2) = '2020-01-01T00:01'",
+                    """
+                            Async Filter workers: 1
+                              filter: (id=42 and dateadd('h',-1,ts2)=2020-01-01T00:01:00.000000Z)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select * from x where dateadd('d', 1, ts) >= '2020-01-01T00:01' and id < 42",
+                    """
+                            Async JIT Filter workers: 1
+                              filter: id<42
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2019-12-31T00:01:00.000000Z","MAX")]
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where dateadd('d', 1, ts2) >= '2020-01-01T00:01' and id < 42",
+                    """
+                            Async Filter workers: 1
+                              filter: (dateadd('d',1,ts2)>=2020-01-01T00:01:00.000000Z and id<42)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select * from x where id in (1,2,3) and dateadd('m', -1, ts) between '2020-01-01T00:01' and '2020-01-01T00:02'",
+                    """
+                            Async JIT Filter workers: 1
+                              filter: id in [1,2,3]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2020-01-01T00:02:00.000000Z","2020-01-01T00:03:00.000000Z")]
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where id in (1,2,3) and dateadd('m', -1, ts2) between '2020-01-01T00:01' and '2020-01-01T00:02'",
+                    """
+                            Async Filter workers: 1
+                              filter: (id in [1,2,3] and dateadd('m',-1,ts2) between 1577836860000000 and 1577836920000000)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
         });
     }
 
@@ -1549,6 +1623,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainUpdateWithFilter() throws Exception {
+        allowFunctionMemoization();
         assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)", "update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );", """
                 Update table: a
                     VirtualRecord
@@ -2543,7 +2618,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowExpression.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20, WindowExpression.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
                             }
                             Function function = null;
                             try {
@@ -8429,6 +8504,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectRandomBoolean() throws Exception {
+        allowFunctionMemoization();
         assertMemoryLeak(() -> assertPlanNoLeakCheck("select rnd_boolean()", """
                 VirtualRecord
                   functions: [memoize(rnd_boolean())]
@@ -8480,15 +8556,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // TODO: this should use interval scan with two ranges !
+    @Test
     public void testSelectStaticTsInterval3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'", """
-                Async JIT Filter workers: 1
-                  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999])
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
+                """
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: tab
+                              intervals: [("2020-03-01T00:00:00.000000Z","2020-03-01T23:59:59.999999Z"),("2020-03-10T00:00:00.000000Z","2020-03-10T23:59:59.999999Z")]
+                        """);
     }
 
     @Test // ranges don't overlap so result is empty
@@ -9164,9 +9240,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit is not because rnd_long() value is not stable
     public void testSelectWithNonJittedFilter4() throws Exception {
+        // Async filter function doesn't support memoization.
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = rnd_long() ", """
                 Async Filter workers: 1
-                  filter: memoize(l=rnd_long())
+                  filter: l=rnd_long()
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab

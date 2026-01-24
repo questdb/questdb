@@ -25,8 +25,8 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
@@ -153,7 +153,18 @@ public class LineHttpTudCache implements QuietCloseable {
     ) throws TableCreateException {
         int key = tableUpdateDetails.keyIndex(parser.getMeasurementName());
         if (key < 0) {
-            return tableUpdateDetails.valueAt(key);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
+            // We only need to check for rename if there are no uncommitted rows
+            // it's too taxing to check for renames for every row
+            if (!tud.isFirstRow() || !tud.isTableRenamed()) {
+                return tud;
+            } else {
+                // Table was renamed, we need to evict this TUD from cache
+                tableUpdateDetails.removeAt(key);
+                Misc.free(tud);
+                // continue and re-create the tud
+                key = -key - 1;
+            }
         }
 
         tableNameUtf16.clear();
@@ -163,7 +174,7 @@ public class LineHttpTudCache implements QuietCloseable {
             throw parseException.of("cannot insert in non-WAL table", null);
         }
 
-        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
+        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_HTTP, TelemetryEvent.ILP_RESERVE_WRITER);
         // check if table on disk is WAL
         path.of(engine.getConfiguration().getDbRoot());
         Utf8String nameUtf8 = Utf8String.newInstance(parser.getMeasurementName());

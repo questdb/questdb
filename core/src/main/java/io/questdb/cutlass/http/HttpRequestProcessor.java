@@ -28,7 +28,6 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
 import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_GET;
@@ -67,18 +66,21 @@ public interface HttpRequestProcessor {
 
     default void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 
     default void onRequestRetry(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 
     default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
     }
 
-    default boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    default boolean processServiceAccountCookie(
+            HttpConnectionContext context,
+            SecurityContext securityContext
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException {
         return true;
     }
 
@@ -95,6 +97,6 @@ public interface HttpRequestProcessor {
 
     default void resumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 }

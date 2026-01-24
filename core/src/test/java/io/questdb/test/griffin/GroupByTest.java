@@ -37,7 +37,6 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test1GroupByWithoutAggregateFunctionsReturnsUniqueKeys() throws Exception {
-
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
@@ -229,7 +228,7 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             String query = "select x, avg(y), case when x > 0 then 1 else row_number() over (partition by x) end as z from t group by x, z";
-            assertError(query, "[59] Nested window functions are not currently supported.");
+            assertError(query, "[109] window functions are not allowed in GROUP BY");
         });
     }
 
@@ -1845,7 +1844,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByWithNonConstantSelectClauseExpression() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
-
+        allowFunctionMemoization();
         assertMemoryLeak(() -> {
             execute("create table t as (" +
                     "    select 1 as l, 'a' as s " +
@@ -2803,6 +2802,86 @@ public class GroupByTest extends AbstractCairoTest {
                             "WHERE ts IN '2023-01-01' " +
                             "ORDER BY latest DESC " +
                             "LIMIT 10;"
+            );
+        });
+    }
+
+    @Test
+    public void testManyAggregatesFallbackUpdater() throws Exception {
+        // This test verifies that GROUP BY queries with many aggregate functions
+        // don't fail with "Bytecode is too long" error. See issue #3326.
+        assertMemoryLeak(() -> {
+            // change to 6k to reproduce the OG issue
+            final int functionCount = 1000;
+            execute("create table t (value double)");
+            execute("insert into t values (1.5)");
+
+            StringBuilder query = new StringBuilder("select ");
+            StringBuilder expectedHeader = new StringBuilder();
+            StringBuilder expectedValues = new StringBuilder();
+            for (int i = 0; i < functionCount; i++) {
+                query.append("avg(value + ").append(i).append(") avg").append(i);
+                expectedHeader.append("avg").append(i);
+                expectedValues.append(1.5 + i);
+                if (i != functionCount - 1) {
+                    query.append(", ");
+                    expectedHeader.append("\t");
+                    expectedValues.append("\t");
+                }
+            }
+            query.append(" from t;");
+            expectedHeader.append("\n");
+            expectedValues.append("\n");
+
+            // assertQueryNoLeakCheck's cursor memory verification is too strict, so we're using assertSql;
+            // that's because non-keyed group by cursors only close their map value when the factory is closed
+            assertSql(
+                    expectedHeader + expectedValues.toString(),
+                    query.toString()
+            );
+        });
+    }
+
+    @Test
+    public void testManyAggregatesFallbackUpdaterNoAliases() throws Exception {
+        // Same as testManyAggregatesFallbackUpdater, but without aliases.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final boolean aliasExprEnabled = rnd.nextBoolean();
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, Boolean.toString(aliasExprEnabled));
+        assertMemoryLeak(() -> {
+            final int functionCount = 1000;
+            execute("create table t (value double)");
+            execute("insert into t values (1.5)");
+
+            StringBuilder query = new StringBuilder("select ");
+            StringBuilder expectedHeader = new StringBuilder();
+            StringBuilder expectedValues = new StringBuilder();
+            for (int i = 0; i < functionCount; i++) {
+                query.append("avg(value + ").append(i).append(")");
+                if (aliasExprEnabled) {
+                    expectedHeader.append("avg(value + ").append(i).append(")");
+                } else {
+                    expectedHeader.append("avg");
+                    if (i > 0) {
+                        expectedHeader.append(i);
+                    }
+                }
+                expectedValues.append(1.5 + i);
+                if (i != functionCount - 1) {
+                    query.append(", ");
+                    expectedHeader.append("\t");
+                    expectedValues.append("\t");
+                }
+            }
+            query.append(" from t;");
+            expectedHeader.append("\n");
+            expectedValues.append("\n");
+
+            // assertQueryNoLeakCheck's cursor memory verification is too strict, so we're using assertSql;
+            // that's because non-keyed group by cursors only close their map value when the factory is closed
+            assertSql(
+                    expectedHeader + expectedValues.toString(),
+                    query.toString()
             );
         });
     }

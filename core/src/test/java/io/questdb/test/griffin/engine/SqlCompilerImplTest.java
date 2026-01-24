@@ -171,17 +171,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             for (String frameType : Arrays.asList("rows ", "range")) {
                 String queryPrefix = prefix + frameType;
 
-                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "Expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "'preceding' or 'following' expected");
 
                 assertExceptionNoLeakCheck(queryPrefix + " between '' preceding and current row)  from trips", 60, "integer expression expected");
 
@@ -3967,7 +3967,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test(time TIMESTAMP, symbol STRING);");
 
-            assertExceptionNoLeakCheck("SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)", 97, "there is no matching function `SUM` with the argument types: (INT, INT)");
+            assertExceptionNoLeakCheck(
+                    "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)",
+                    97,
+                    "there is no matching function `SUM` with the argument types: (INT, INT)"
+            );
         });
     }
 
@@ -7176,9 +7180,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             avg
                             500.5
                             """,
-                    "union",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "union"
             );
 
             assertWithReorder(
@@ -7187,9 +7189,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             500.5
                             500.5
                             """,
-                    "union all",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "union all"
             );
 
             assertWithReorder(
@@ -7197,16 +7197,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             avg
                             500.5
                             """,
-                    "intersect",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "intersect"
             );
 
             assertWithReorder(
                     "avg\n",
-                    "except",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "except"
             );
         });
     }
@@ -7549,9 +7545,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         );
     }
 
-    private void assertWithReorder(String expected, String setOperation, String... subqueries) throws Exception {
-        assertSql(expected, subqueries[0] + " " + setOperation + " " + subqueries[1]);
-        assertSql(expected, subqueries[1] + " " + setOperation + " " + subqueries[0]);
+    private void assertWithReorder(String expected, String setOperation) throws Exception {
+        assertSql(expected, "select avg(event) from ict " + " " + setOperation + " " + "select distinct avg(event) from ict");
+        assertSql(expected, "select distinct avg(event) from ict" + " " + setOperation + " " + "select avg(event) from ict ");
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {

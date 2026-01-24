@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
@@ -33,6 +34,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Misc;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayDeque;
@@ -75,6 +77,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
               vendor_id SYMBOL capacity 8,
               pickup_datetime TIMESTAMP
             ) timestamp (pickup_datetime) PARTITION BY MONTH WAL;""";
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
+    }
 
     @Test
     public void testAliasAppearsInFuncArgs1() throws Exception {
@@ -409,7 +417,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Window
                           functions: [rank() over (partition by [hostname])]
                             VirtualRecord
-                              functions: [hostname,ts,usage_system,usage_system1+10]
+                              functions: [hostname,ts,memoize(usage_system),usage_system1+10]
                                 SelectedRecord
                                     Filter filter: t2.ts<t1.ts
                                         Cross Join
@@ -465,6 +473,152 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFirstLastTimestampFunctionAsArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
+            String queryTemplate = "select dateadd('m', -15, %s(ts)) from y";
+            String[] functions = {"first", "last", "min", "max"};
+            String[] scanDirection = {"forward", "backward", "forward", "backward"};
+            String modelTemplate = "select-virtual dateadd('m', -(15), %s) dateadd from (select-choose [ts %s] ts %s from (select [ts] from y timestamp (ts))%s limit 1)";
+            String planTemplate = """
+                    VirtualRecord
+                      functions: [dateadd('m',-15,%s)]
+                        Limit value: 1 skip-rows: 0 take-rows: 0
+                            SelectedRecord
+                                PageFrame
+                                    Row %s scan
+                                    Frame %s scan on: y
+                    """;
+            for (int i = 0; i < functions.length; i++) {
+                String query = String.format(queryTemplate, functions[i]);
+                QueryModel model = compileModel(query);
+                TestUtils.assertEquals(String.format(modelTemplate, functions[i], functions[i], functions[i], i % 2 == 1 ? String.format(" order by %s desc", functions[i]) : ""), model.toString0());
+                assertPlanNoLeakCheck(
+                        query,
+                        String.format(planTemplate, functions[i], scanDirection[i], scanDirection[i])
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFunctionMemoizationBasicColumnRefCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b double, c string)");
+            execute("insert into x values(3, 1.0, 'a'), (1, 2.0, 'b')");
+            final String query = "select a, b, a + b c1 from x order by  c1";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Sort light
+                              keys: [c1]
+                                VirtualRecord
+                                  functions: [a,b,memoize(a+b)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """
+            );
+            assertSql(
+                    """
+                            a\tb\tc1
+                            1\t2.0\t3.0
+                            3\t1.0\t4.0
+                            """,
+                    query
+            );
+
+            final String query2 = "select a_alias + 1, a_alias + 2 from (select a + 1 a_alias, b + 1 b1 from x) order by  b1";
+            assertPlanNoLeakCheck(
+                    query2,
+                    """
+                            SelectedRecord
+                                Sort light
+                                  keys: [b1]
+                                    VirtualRecord
+                                      functions: [a_alias+1,a_alias+2,b1]
+                                        VirtualRecord
+                                          functions: [memoize(a+1),b+1]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
+            assertSql(
+                    """
+                            column\tcolumn1
+                            5\t6
+                            3\t4
+                            """,
+                    query2
+            );
+
+            final String query3 = "select sum(a_alias + 1), sum(a_alias + 2) from (select a + 1 a_alias, b b1 from x)";
+            assertPlanNoLeakCheck(
+                    query3,
+                    """
+                            GroupBy vectorized: false
+                              values: [sum(a_alias+1),sum(a_alias+2)]
+                                VirtualRecord
+                                  functions: [memoize(a+1)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """
+            );
+            assertSql(
+                    """
+                            sum\tsum1
+                            8\t10
+                            """,
+                    query3
+            );
+
+            final String query4 = "select b1, a_alias from (select a + 1 a_alias, b b1 from x) where a_alias > 10";
+            assertPlanNoLeakCheck(
+                    query4,
+                    """
+                            Filter filter: 10<a_alias
+                                VirtualRecord
+                                  functions: [b1,memoize(a+1)]
+                                    SelectedRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFunctionMemoizationUnionModel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b double)");
+            execute("create table y (c int, d string)");
+            assertPlanNoLeakCheck(
+                    "select a1 + 1 , a1 + 2 from (select a + 1 a1 from x) union select a1 + 1 , a1 + 2 from (select c + 1 a1 from y) ",
+                    """
+                            Union
+                                VirtualRecord
+                                  functions: [a1+1,a1+2]
+                                    VirtualRecord
+                                      functions: [memoize(a+1)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                VirtualRecord
+                                  functions: [a1+1,a1+2]
+                                    VirtualRecord
+                                      functions: [memoize(c+1)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: y
                             """
             );
         });
@@ -5445,6 +5599,77 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testWindowFunctionDeduplicationWhenNestedInExpression() throws Exception {
+        // This test verifies that when a window function appears first inside an expression
+        // (e.g., abs(row_number() over(...))) and then as a top-level window column
+        // (e.g., row_number() over(...)), they are properly deduplicated.
+        // Bug: replaceIfWindowFunction() (called via emitWindowFunctions) adds window functions
+        // to windowModel but doesn't register them in windowFunctionHashMap, causing
+        // findDuplicateWindowFunction() to miss them when processing later identical windows.
+        assertMemoryLeak(() -> {
+            execute("create table t ( x int, ts timestamp) timestamp(ts);");
+            execute("insert into t select x, x::timestamp from long_sequence(3)");
+
+            // Case 1: Window function nested in expression appears BEFORE the same top-level window function
+            // If deduplication works correctly, there should be only ONE window function in the plan
+            String q1 = "select abs(row_number() over(order by x)), row_number() over(order by x) from t";
+
+            assertPlanNoLeakCheck(
+                    q1,
+                    """
+                            VirtualRecord
+                              functions: [abs(row_number),row_number]
+                                CachedWindow
+                                  orderedFunctions: [[x] => [row_number()]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+
+            // Verify the result is correct
+            assertSql("""
+                    abs\trow_number
+                    1\t1
+                    2\t2
+                    3\t3
+                    """, q1);
+
+            // Case 2: Same test but with partition by clause
+            String q2 = "select abs(row_number() over(partition by x order by ts)), row_number() over(partition by x order by ts) from t";
+
+            assertPlanNoLeakCheck(
+                    q2,
+                    """
+                            VirtualRecord
+                              functions: [abs(row_number),row_number]
+                                Window
+                                  functions: [row_number() over (partition by [x])]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+
+            // Case 3: Multiple nested window functions that are the same
+            String q3 = "select abs(row_number() over(order by x)) + abs(row_number() over(order by x)), row_number() over(order by x) from t";
+
+            assertPlanNoLeakCheck(
+                    q3,
+                    """
+                            VirtualRecord
+                              functions: [abs(row_number)+abs(row_number),row_number]
+                                CachedWindow
+                                  orderedFunctions: [[x] => [row_number()]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
                             """
             );
         });

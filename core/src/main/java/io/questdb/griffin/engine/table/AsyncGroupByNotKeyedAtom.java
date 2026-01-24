@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -54,7 +55,7 @@ import java.io.Closeable;
 
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
-public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Plannable {
+public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -94,7 +95,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             this.perWorkerFilters = perWorkerFilters;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
-            final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
+            final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
                 perWorkerFunctionUpdaters = new ObjList<>(slotCount);
@@ -135,14 +136,11 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
 
     @Override
     public void clear() {
-        // Make sure to set the allocator for the owner's group by functions.
-        // This is done by the getFunctionUpdater() method.
-        final GroupByFunctionsUpdater functionUpdater = getFunctionUpdater(-1);
-        functionUpdater.updateEmpty(ownerMapValue);
+        ownerFunctionUpdater.updateEmpty(ownerMapValue);
         ownerMapValue.setNew(true);
         for (int i = 0, n = perWorkerMapValues.size(); i < n; i++) {
             SimpleMapValue value = perWorkerMapValues.getQuick(i);
-            functionUpdater.updateEmpty(value);
+            ownerFunctionUpdater.updateEmpty(value);
             value.setNew(true);
         }
         if (perWorkerGroupByFunctions != null) {
@@ -150,8 +148,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
                 Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-        Misc.free(ownerAllocator);
-        Misc.freeObjListAndKeepObjects(perWorkerAllocators);
+        Misc.clear(ownerAllocator);
+        Misc.clearObjList(perWorkerAllocators);
     }
 
     @Override
@@ -267,6 +265,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
 
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
+    }
+
+    @Override
+    public void reopen() {
+        ownerAllocator.reopen();
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                perWorkerAllocators.getQuick(i).reopen();
+            }
+        }
     }
 
     @Override

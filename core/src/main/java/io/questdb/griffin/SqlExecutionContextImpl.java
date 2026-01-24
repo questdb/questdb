@@ -45,6 +45,7 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjStack;
@@ -60,11 +61,14 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
+    private static final IntHashSet SKIP_TELEMETRY_EVENTS = new IntHashSet();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
     private final Decimal64 decimal64 = new Decimal64();
+    private final int defaultPageFrameMaxRows;
+    private final int defaultPageFrameMinRows;
     private final IntStack hasIntervalStack = new IntStack();
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
@@ -89,6 +93,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
     private int nowTimestampType;
+    private int pageFrameMaxRows;
+    private int pageFrameMinRows;
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
@@ -122,11 +128,21 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoEngine, cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+        this.defaultPageFrameMaxRows = cairoConfiguration.getSqlPageFrameMaxRows();
+        this.defaultPageFrameMinRows = cairoConfiguration.getSqlPageFrameMinRows();
+        this.pageFrameMaxRows = defaultPageFrameMaxRows;
+        this.pageFrameMinRows = defaultPageFrameMinRows;
     }
 
     @Override
     public boolean allowNonDeterministicFunctions() {
         return allowNonDeterministicFunction;
+    }
+
+    @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        this.pageFrameMinRows = minRows;
+        this.pageFrameMaxRows = maxRows;
     }
 
     @Override
@@ -164,7 +180,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 ordered,
                 orderByDirection,
                 orderByPos,
-                baseSupportsRandomAccess,
                 framingMode,
                 rowsLo,
                 rowsLoUnit,
@@ -260,6 +275,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getNowTimestampType() {
         return nowTimestampType;
+    }
+
+    @Override
+    public int getPageFrameMaxRows() {
+        return pageFrameMaxRows;
+    }
+
+    @Override
+    public int getPageFrameMinRows() {
+        return pageFrameMinRows;
     }
 
     @Override
@@ -401,6 +426,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void restoreToDefaultPageFrameSizes() {
+        this.pageFrameMinRows = defaultPageFrameMinRows;
+        this.pageFrameMaxRows = defaultPageFrameMaxRows;
+    }
+
+    @Override
     public void setAllowNonDeterministicFunction(boolean value) {
         this.allowNonDeterministicFunction = value;
     }
@@ -519,7 +550,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return with(securityContext, bindVariableService, null, -1, null);
     }
 
-
     public SqlExecutionContextImpl with(
             @NotNull SecurityContext securityContext,
             @Nullable BindVariableService bindVariableService,
@@ -532,11 +562,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
+        this.pageFrameMaxRows = defaultPageFrameMaxRows;
+        this.pageFrameMinRows = defaultPageFrameMinRows;
         reset();
         return this;
     }
 
     private void doStoreTelemetry(short event, short origin) {
+        if (SKIP_TELEMETRY_EVENTS.contains(event)) {
+            return;
+        }
         TelemetryTask.store(telemetry, origin, event);
     }
 
@@ -546,5 +581,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @FunctionalInterface
     private interface TelemetryFacade {
         void store(short event, short origin);
+    }
+
+    static {
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.SET);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.BEGIN);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.COMMIT);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.ROLLBACK);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.DEALLOCATE);
     }
 }
