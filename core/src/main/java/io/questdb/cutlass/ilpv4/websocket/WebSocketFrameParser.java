@@ -246,13 +246,6 @@ public class WebSocketFrameParser {
             return;
         }
 
-        // Extract mask bytes
-        byte[] mask = new byte[4];
-        mask[0] = (byte) (maskKey & 0xFF);
-        mask[1] = (byte) ((maskKey >> 8) & 0xFF);
-        mask[2] = (byte) ((maskKey >> 16) & 0xFF);
-        mask[3] = (byte) ((maskKey >> 24) & 0xFF);
-
         // Process 8 bytes at a time when possible for better performance
         long i = 0;
         long longMask = ((long) maskKey << 32) | (maskKey & 0xFFFFFFFFL);
@@ -274,7 +267,9 @@ public class WebSocketFrameParser {
         // Process remaining bytes
         while (i < len) {
             byte b = Unsafe.getUnsafe().getByte(buf + i);
-            Unsafe.getUnsafe().putByte(buf + i, (byte) (b ^ mask[(int) (i % 4)]));
+            int shift = ((int) (i % 4)) << 3;  // 0, 8, 16, or 24
+            byte maskByte = (byte) ((maskKey >> shift) & 0xFF);
+            Unsafe.getUnsafe().putByte(buf + i, (byte) (b ^ maskByte));
             i++;
         }
     }

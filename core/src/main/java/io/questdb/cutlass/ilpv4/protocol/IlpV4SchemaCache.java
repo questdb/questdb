@@ -24,247 +24,81 @@
 
 package io.questdb.cutlass.ilpv4.protocol;
 
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 /**
- * Thread-safe cache for ILP v4 schemas.
+ * Simple cache for ILP v4 schemas.
  * <p>
- * Schemas are cached by (tableName, schemaHash) tuple to allow
- * schema reference mode lookups.
- * <p>
- * The cache uses LRU eviction when the maximum size is exceeded.
+ * Keyed by combined hash of (tableName, schemaHash).
+ * Single-threaded, zero-allocation on lookups.
  */
 public class IlpV4SchemaCache {
 
-    /**
-     * Default maximum cache size.
-     */
-    public static final int DEFAULT_MAX_SIZE = 1000;
+    private final LongObjHashMap<IlpV4Schema> cache;
+    private long hits;
+    private long misses;
 
-    /**
-     * Cache key combining table name and schema hash.
-     */
-    private static final class CacheKey {
-        private final String tableName;
-        private final long schemaHash;
-
-        CacheKey(String tableName, long schemaHash) {
-            this.tableName = tableName;
-            this.schemaHash = schemaHash;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            CacheKey cacheKey = (CacheKey) o;
-            return schemaHash == cacheKey.schemaHash && tableName.equals(cacheKey.tableName);
-        }
-
-        @Override
-        public int hashCode() {
-            int result = tableName.hashCode();
-            result = 31 * result + (int) (schemaHash ^ (schemaHash >>> 32));
-            return result;
-        }
-    }
-
-    /**
-     * Cache entry with access tracking for LRU eviction.
-     */
-    private static final class CacheEntry {
-        final IlpV4Schema schema;
-        volatile long lastAccessTime;
-
-        CacheEntry(IlpV4Schema schema) {
-            this.schema = schema;
-            this.lastAccessTime = System.nanoTime();
-        }
-
-        void touch() {
-            lastAccessTime = System.nanoTime();
-        }
-    }
-
-    private final ConcurrentHashMap<CacheKey, CacheEntry> cache;
-    private final int maxSize;
-    private final AtomicLong hits = new AtomicLong(0);
-    private final AtomicLong misses = new AtomicLong(0);
-
-    /**
-     * Creates a schema cache with the default maximum size.
-     */
     public IlpV4SchemaCache() {
-        this(DEFAULT_MAX_SIZE);
+        this.cache = new LongObjHashMap<>();
     }
 
-    /**
-     * Creates a schema cache with a custom maximum size.
-     *
-     * @param maxSize maximum number of schemas to cache
-     */
-    public IlpV4SchemaCache(int maxSize) {
-        this.maxSize = maxSize;
-        this.cache = new ConcurrentHashMap<>(maxSize);
+    public IlpV4SchemaCache(int initialCapacity) {
+        this.cache = new LongObjHashMap<>(initialCapacity);
     }
 
-    /**
-     * Puts a schema into the cache.
-     *
-     * @param tableName the table name
-     * @param schema    the schema to cache
-     */
     public void put(String tableName, IlpV4Schema schema) {
-        CacheKey key = new CacheKey(tableName, schema.getSchemaHash());
-
-        // Evict if necessary before inserting
-        if (cache.size() >= maxSize && !cache.containsKey(key)) {
-            evictOldest();
-        }
-
-        cache.put(key, new CacheEntry(schema));
+        long key = combineKey(tableName.hashCode(), schema.getSchemaHash());
+        cache.put(key, schema);
     }
 
-    /**
-     * Gets a schema from the cache.
-     *
-     * @param tableName  the table name
-     * @param schemaHash the schema hash
-     * @return the cached schema, or null if not found
-     */
+    public IlpV4Schema get(DirectUtf8Sequence tableName, long schemaHash) {
+        long key = combineKey(Utf8s.hashCode(tableName), schemaHash);
+        IlpV4Schema schema = cache.get(key);
+        if (schema != null) {
+            hits++;
+        } else {
+            misses++;
+        }
+        return schema;
+    }
+
     public IlpV4Schema get(String tableName, long schemaHash) {
-        CacheKey key = new CacheKey(tableName, schemaHash);
-        CacheEntry entry = cache.get(key);
-
-        if (entry != null) {
-            entry.touch();
-            hits.incrementAndGet();
-            return entry.schema;
+        long key = combineKey(tableName.hashCode(), schemaHash);
+        IlpV4Schema schema = cache.get(key);
+        if (schema != null) {
+            hits++;
+        } else {
+            misses++;
         }
-
-        misses.incrementAndGet();
-        return null;
+        return schema;
     }
 
-    /**
-     * Checks if a schema is in the cache.
-     *
-     * @param tableName  the table name
-     * @param schemaHash the schema hash
-     * @return true if cached
-     */
-    public boolean contains(String tableName, long schemaHash) {
-        return cache.containsKey(new CacheKey(tableName, schemaHash));
-    }
-
-    /**
-     * Removes a schema from the cache.
-     *
-     * @param tableName  the table name
-     * @param schemaHash the schema hash
-     * @return the removed schema, or null if not found
-     */
-    public IlpV4Schema remove(String tableName, long schemaHash) {
-        CacheEntry entry = cache.remove(new CacheKey(tableName, schemaHash));
-        return entry != null ? entry.schema : null;
-    }
-
-    /**
-     * Invalidates all schemas for a table.
-     *
-     * @param tableName the table name
-     * @return number of schemas invalidated
-     */
-    public int invalidateTable(String tableName) {
-        int count = 0;
-        var iterator = cache.entrySet().iterator();
-        while (iterator.hasNext()) {
-            var entry = iterator.next();
-            if (entry.getKey().tableName.equals(tableName)) {
-                iterator.remove();
-                count++;
-            }
-        }
-        return count;
-    }
-
-    /**
-     * Clears all cached schemas.
-     */
     public void clear() {
         cache.clear();
-        hits.set(0);
-        misses.set(0);
+        hits = 0;
+        misses = 0;
     }
 
-    /**
-     * Gets the current cache size.
-     */
     public int size() {
         return cache.size();
     }
 
-    /**
-     * Gets the maximum cache size.
-     */
-    public int getMaxSize() {
-        return maxSize;
-    }
-
-    /**
-     * Gets the cache hit count.
-     */
     public long getHits() {
-        return hits.get();
+        return hits;
     }
 
-    /**
-     * Gets the cache miss count.
-     */
     public long getMisses() {
-        return misses.get();
+        return misses;
     }
 
-    /**
-     * Gets the cache hit rate (0.0 to 1.0).
-     *
-     * @return hit rate, or 0.0 if no lookups have occurred
-     */
     public double getHitRate() {
-        long h = hits.get();
-        long m = misses.get();
-        long total = h + m;
-        return total > 0 ? (double) h / total : 0.0;
+        long total = hits + misses;
+        return total > 0 ? (double) hits / total : 0.0;
     }
 
-    /**
-     * Evicts the oldest entry (by last access time).
-     */
-    private void evictOldest() {
-        CacheKey oldestKey = null;
-        long oldestTime = Long.MAX_VALUE;
-
-        for (var entry : cache.entrySet()) {
-            if (entry.getValue().lastAccessTime < oldestTime) {
-                oldestTime = entry.getValue().lastAccessTime;
-                oldestKey = entry.getKey();
-            }
-        }
-
-        if (oldestKey != null) {
-            cache.remove(oldestKey);
-        }
-    }
-
-    @Override
-    public String toString() {
-        return "IlpV4SchemaCache{" +
-                "size=" + size() +
-                ", maxSize=" + maxSize +
-                ", hits=" + hits.get() +
-                ", misses=" + misses.get() +
-                ", hitRate=" + String.format("%.2f%%", getHitRate() * 100) +
-                '}';
+    private static long combineKey(int tableNameHash, long schemaHash) {
+        return ((long) tableNameHash << 32) ^ schemaHash;
     }
 }

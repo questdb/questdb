@@ -27,6 +27,7 @@ package io.questdb.cutlass.ilpv4.protocol;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.ilpv4.protocol.IlpV4Constants.*;
 
@@ -52,6 +53,8 @@ public class IlpV4MessageCursor implements Mutable {
 
     private final IlpV4TableBlockCursor tableBlockCursor = new IlpV4TableBlockCursor();
     private final IlpV4MessageHeader messageHeader = new IlpV4MessageHeader();
+    // Reusable array for varint parsing: [0]=value, [1]=bytes consumed
+    private final long[] varintResult = new long[2];
 
     // Message state
     private long payloadAddress;
@@ -124,15 +127,14 @@ public class IlpV4MessageCursor implements Mutable {
         }
 
         // Read deltaStartId
-        long[] result = new long[2];
-        readVarint(address, result);
-        int deltaStartId = (int) result[0];
-        address += result[1];
+        readVarint(address, varintResult);
+        int deltaStartId = (int) varintResult[0];
+        address += varintResult[1];
 
         // Read deltaCount
-        readVarint(address, result);
-        int deltaCount = (int) result[0];
-        address += result[1];
+        readVarint(address, varintResult);
+        int deltaCount = (int) varintResult[0];
+        address += varintResult[1];
 
         // Ensure connectionSymbolDict has capacity
         int requiredSize = deltaStartId + deltaCount;
@@ -150,9 +152,9 @@ public class IlpV4MessageCursor implements Mutable {
             }
 
             // Read symbol length
-            readVarint(address, result);
-            int symbolLen = (int) result[0];
-            address += result[1];
+            readVarint(address, varintResult);
+            int symbolLen = (int) varintResult[0];
+            address += varintResult[1];
 
             if (address + symbolLen > payloadEnd) {
                 throw IlpV4ParseException.create(
@@ -161,12 +163,8 @@ public class IlpV4MessageCursor implements Mutable {
                 );
             }
 
-            // Read symbol value as UTF-8
-            byte[] symbolBytes = new byte[symbolLen];
-            for (int j = 0; j < symbolLen; j++) {
-                symbolBytes[j] = Unsafe.getUnsafe().getByte(address + j);
-            }
-            String symbol = new String(symbolBytes, java.nio.charset.StandardCharsets.UTF_8);
+            // Read symbol value as UTF-8 directly from memory
+            String symbol = Utf8s.stringFromUtf8Bytes(address, address + symbolLen);
             address += symbolLen;
 
             // Store in dictionary

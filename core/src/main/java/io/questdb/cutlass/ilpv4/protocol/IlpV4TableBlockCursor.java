@@ -147,7 +147,7 @@ public class IlpV4TableBlockCursor implements Mutable {
                         "schema reference mode requires schema cache"
                 );
             }
-            schema = schemaCache.get(tableHeader.getTableName(), parseResult.schemaHash);
+            schema = schemaCache.get(tableHeader.getTableNameUtf8(), parseResult.schemaHash);
             if (schema == null) {
                 throw IlpV4ParseException.create(
                         IlpV4ParseException.ErrorCode.SCHEMA_NOT_FOUND,
