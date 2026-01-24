@@ -38,24 +38,39 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-JAR_VERSION="9.2.4-SNAPSHOT"
-MAIN_JAR="$SCRIPT_DIR/core/target/questdb-${JAR_VERSION}.jar"
-TEST_JAR="$SCRIPT_DIR/core/target/questdb-${JAR_VERSION}-tests.jar"
 QDB_ROOT="$SCRIPT_DIR/qdb-alloc-test"
+
+# Find JARs dynamically (don't rely on specific version)
+find_jars() {
+    # Find main JAR (questdb-*.jar but not -tests.jar or -sources.jar)
+    MAIN_JAR=$(find "$SCRIPT_DIR/core/target" -maxdepth 1 -name "questdb-*.jar" \
+               ! -name "*-tests.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
+               2>/dev/null | head -1)
+
+    # Find test JAR
+    TEST_JAR=$(find "$SCRIPT_DIR/core/target" -maxdepth 1 -name "questdb-*-tests.jar" \
+               2>/dev/null | head -1)
+}
 
 # Check if JARs exist
 check_jars() {
-    if [ ! -f "$MAIN_JAR" ]; then
-        echo "ERROR: Main JAR not found: $MAIN_JAR"
+    find_jars
+
+    if [ -z "$MAIN_JAR" ] || [ ! -f "$MAIN_JAR" ]; then
+        echo "ERROR: Main JAR not found in $SCRIPT_DIR/core/target/"
         echo "Run: mvn clean package -DskipTests -pl core"
         exit 1
     fi
 
-    if [ ! -f "$TEST_JAR" ]; then
-        echo "ERROR: Test JAR not found: $TEST_JAR"
+    if [ -z "$TEST_JAR" ] || [ ! -f "$TEST_JAR" ]; then
+        echo "ERROR: Test JAR not found in $SCRIPT_DIR/core/target/"
         echo "Run: mvn test-compile -pl core"
         exit 1
     fi
+
+    echo "Using JARs:"
+    echo "  Main: $MAIN_JAR"
+    echo "  Test: $TEST_JAR"
 }
 
 # Extract protocol from args for port defaulting
