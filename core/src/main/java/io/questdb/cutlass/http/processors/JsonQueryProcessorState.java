@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TimestampDriver;
@@ -910,7 +909,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 doQueryRecord(response, columnCount);
                 doQueryRecordSuffix(response);
             } while (doQueryNextRecord());
-        } catch (DataUnavailableException | EntryUnavailableException | NoSpaceLeftInResponseBufferException e) {
+        } catch (EntryUnavailableException | NoSpaceLeftInResponseBufferException e) {
             throw e;
         } catch (Throwable e) {
             response.resetToBookmark();
@@ -932,13 +931,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             long size = cursor.size();
             counter.clear();
             if (size < 0) {
-                try {
-                    cursor.calculateSize(circuitBreaker, counter);
-                    this.count += counter.get() + 1;
-                } catch (DataUnavailableException e) {
-                    this.count += counter.get();
-                    throw e;
-                }
+                cursor.calculateSize(circuitBreaker, counter);
+                this.count += counter.get() + 1;
             } else {
                 this.count = size;
             }
@@ -1014,8 +1008,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        // If there is an exception in the first record setup, then upper layers will handle it:
-        // Either they will send error or pause execution on DataUnavailableException
+        // If there is an exception in the first record setup, then upper layers will handle it
+        // by sending the error.
         setupFirstRecord();
         // If we make it past setup, then we optimistically send HTTP 200 header.
         // There is still a risk of exception while iterating over cursor, but there is not much we can do about it.

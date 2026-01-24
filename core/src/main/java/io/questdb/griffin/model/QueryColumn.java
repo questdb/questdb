@@ -76,7 +76,7 @@ public class QueryColumn implements Mutable, Sinkable {
         return includeIntoWildcard;
     }
 
-    public boolean isWindowColumn() {
+    public boolean isWindowExpression() {
         return false;
     }
 
