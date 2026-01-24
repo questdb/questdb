@@ -5243,18 +5243,28 @@ public class SqlOptimiser implements Mutable {
                 // check if it's an already selected column, so that we don't need to add it as a key
                 if (node.type == LITERAL) {
                     final CharSequence translatingAlias = translatingModel.getColumnNameToAliasMap().get(node.token);
-                    final CharSequence existingAlias = translatingAlias != null ? groupByModel.getColumnNameToAliasMap().get(translatingAlias) : null;
-                    if (existingAlias != null) {
-                        // great! there is a matching key, so let's refer its alias and call it a day
-                        final ExpressionNode replaceNode = !Chars.equalsIgnoreCase(existingAlias, node.token)
-                                ? nextLiteral(existingAlias)
-                                : node;
-                        // don't forget to add the column to group by lists, if it's not there already
-                        if (findColumnByAst(groupByNodes, groupByAliases, replaceNode) == null) {
-                            groupByNodes.add(replaceNode);
-                            groupByAliases.add(existingAlias);
+                    if (translatingAlias != null) {
+                        // For window joins, the caller passes windowJoinModel as both translatingModel and
+                        // groupByModel (see emitAggregatesAndLiterals call in rewriteSelect0HandleOperation).
+                        // In this case, the column was already added to windowJoinModel, so we can use
+                        // the translating alias directly. The groupByNodes/groupByAliases lists are not
+                        // used for window joins since GROUP BY is disallowed with WINDOW JOIN.
+                        if (translatingModel == groupByModel) {
+                            return nextLiteral(translatingAlias);
                         }
-                        return replaceNode;
+                        final CharSequence existingAlias = groupByModel.getColumnNameToAliasMap().get(translatingAlias);
+                        if (existingAlias != null) {
+                            // great! there is a matching key, so let's refer its alias and call it a day
+                            final ExpressionNode replaceNode = !Chars.equalsIgnoreCase(existingAlias, node.token)
+                                    ? nextLiteral(existingAlias)
+                                    : node;
+                            // don't forget to add the column to group by lists, if it's not there already
+                            if (findColumnByAst(groupByNodes, groupByAliases, replaceNode) == null) {
+                                groupByNodes.add(replaceNode);
+                                groupByAliases.add(existingAlias);
+                            }
+                            return replaceNode;
+                        }
                     }
                 }
 
@@ -7170,7 +7180,7 @@ public class SqlOptimiser implements Mutable {
             emitAggregatesAndLiterals(
                     qc.getAst(),
                     aggModel,
-                    translatingModel,
+                    isWindowJoin ? windowJoinModel : translatingModel,
                     innerVirtualModel,
                     baseModel,
                     groupByNodes,
