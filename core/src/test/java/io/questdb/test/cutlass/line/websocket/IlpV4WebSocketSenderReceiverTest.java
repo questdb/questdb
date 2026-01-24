@@ -3730,4 +3730,48 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
+
+    // ==================== Non-WAL Table Tests ====================
+
+    /**
+     * Tests that ILP v4 rejects writes to non-WAL tables.
+     * <p>
+     * ILP v4 only supports WAL tables. When attempting to write to a non-WAL table
+     * (created with BYPASS WAL), the server should return an error.
+     */
+    @Test
+    public void testNonWalTableRejected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Create a non-WAL table via SQL
+                serverMain.execute("CREATE TABLE non_wal_table (" +
+                        "tag SYMBOL, " +
+                        "value LONG, " +
+                        "timestamp TIMESTAMP" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+
+                // Verify the table exists and is non-WAL
+                serverMain.assertSql(
+                        "select walEnabled from tables() where table_name = 'non_wal_table'",
+                        "walEnabled\nfalse\n"
+                );
+
+                // Try to write to the non-WAL table via ILP - should fail
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("non_wal_table")
+                            .symbol("tag", "test")
+                            .longColumn("value", 42)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                    Assert.fail("Expected LineSenderException when writing to non-WAL table");
+                } catch (LineSenderException e) {
+                    // Expected: server rejects writes to non-WAL tables
+                    Assert.assertTrue("Error message should indicate table issue: " + e.getMessage(),
+                            e.getMessage().contains("WRITE_ERROR"));
+                }
+            }
+        });
+    }
 }

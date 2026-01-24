@@ -242,13 +242,16 @@ public class IlpV4WalAppender implements QuietCloseable {
             }
         }
 
-        if (writer instanceof WalWriter walWriter && canUseColumnarPath) {
-            // Use optimized columnar path for WAL writers
+        // Writer is always a WalWriter in this context (ILP v4 only supports WAL tables)
+        WalWriter walWriter = (WalWriter) writer;
+
+        if (canUseColumnarPath) {
+            // Use optimized columnar path
             appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud);
             return;
         }
 
-        // Fallback to row-by-row for non-WAL writers
+        // Fallback to row-by-row when columnar path is not possible (arrays, type mismatches)
         IlpV4ColumnCursor timestampCursor = timestampColumnInBlock >= 0 ?
                 tableBlock.getColumn(timestampColumnInBlock) : null;
 
@@ -944,17 +947,17 @@ public class IlpV4WalAppender implements QuietCloseable {
 
         // Try to lookup in WalWriter's internal symbol cache
         // This cache is always up-to-date (unlike SymbolMapReader which can be stale)
-        if (writer instanceof WalWriter walWriter) {
-            int tableId = walWriter.getCachedSymbolKey(columnIndex, symbolValue);
-            if (tableId != SymbolTable.VALUE_NOT_FOUND) {
-                // Only cache committed symbols (< watermark)
-                // Local symbols may be reassigned after segment rollover
-                if (tableId < watermark) {
-                    columnCache.put(clientSymbolId, tableId);
-                }
-                r.putSymIndex(columnIndex, tableId);
-                return true;
+        // Writer is always a WalWriter in this context (ILP v4 only supports WAL tables)
+        WalWriter walWriter = (WalWriter) writer;
+        int tableId = walWriter.getCachedSymbolKey(columnIndex, symbolValue);
+        if (tableId != SymbolTable.VALUE_NOT_FOUND) {
+            // Only cache committed symbols (< watermark)
+            // Local symbols may be reassigned after segment rollover
+            if (tableId < watermark) {
+                columnCache.put(clientSymbolId, tableId);
             }
+            r.putSymIndex(columnIndex, tableId);
+            return true;
         }
 
         // Not found - use putSym which will assign a new local ID
