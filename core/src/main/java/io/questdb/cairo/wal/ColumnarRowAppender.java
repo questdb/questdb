@@ -24,9 +24,15 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cutlass.ilpv4.protocol.IlpV4ArrayColumnCursor;
 import io.questdb.cutlass.ilpv4.protocol.IlpV4BooleanColumnCursor;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4DecimalColumnCursor;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4GeoHashColumnCursor;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4ParseException;
 import io.questdb.cutlass.ilpv4.protocol.IlpV4StringColumnCursor;
 import io.questdb.cutlass.ilpv4.protocol.IlpV4SymbolColumnCursor;
+import io.questdb.cutlass.ilpv4.protocol.IlpV4TimestampColumnCursor;
+import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 
 /**
  * Interface for bulk column-oriented row appending to WAL.
@@ -137,6 +143,31 @@ public interface ColumnarRowAppender {
     boolean putSymbolColumn(int columnIndex, IlpV4SymbolColumnCursor cursor, int rowCount);
 
     /**
+     * Writes a SYMBOL column with optional caching support.
+     * <p>
+     * When symbolCache is provided and cursor is in delta mode, avoids
+     * string allocation on cache hits by mapping clientSymbolId → tableSymbolId.
+     * <p>
+     * Cache behavior:
+     * <ul>
+     *   <li>Cache hit: writes cached tableSymbolId, skips string allocation, records hit</li>
+     *   <li>Cache miss + committed symbol: resolves, caches, writes, records miss</li>
+     *   <li>Cache miss + uncommitted symbol: resolves, DON'T cache (unstable), writes, records miss</li>
+     *   <li>Watermark changed: clears column cache before processing</li>
+     * </ul>
+     *
+     * @param columnIndex        the column index in the table
+     * @param cursor             the symbol column cursor
+     * @param rowCount           total number of rows
+     * @param symbolCache        connection-level symbol cache (null to disable caching)
+     * @param tableId            table ID for per-column cache lookup
+     * @param initialSymbolCount committed symbol count for stability check
+     * @return true if all symbols written successfully
+     */
+    boolean putSymbolColumn(int columnIndex, IlpV4SymbolColumnCursor cursor, int rowCount,
+                            ConnectionSymbolCache symbolCache, long tableId, int initialSymbolCount);
+
+    /**
      * Writes a BOOLEAN column.
      * <p>
      * Boolean values are bit-packed in ILP v4 wire format but stored as bytes in WAL.
@@ -155,6 +186,103 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      */
     void putNullColumn(int columnIndex, int columnType, int rowCount);
+
+    /**
+     * Writes a TIMESTAMP column with precision conversion.
+     * <p>
+     * Handles conversion between microseconds and nanoseconds based on ILP wire format
+     * and target column type:
+     * <ul>
+     *   <li>If ilpType is TYPE_TIMESTAMP_NANOS and columnType is TIMESTAMP (micros): divide by 1000</li>
+     *   <li>If ilpType is TYPE_TIMESTAMP and columnType is TIMESTAMP_NANO: multiply by 1000</li>
+     * </ul>
+     * <p>
+     * This method handles both direct-access and Gorilla-encoded timestamp cursors.
+     *
+     * @param columnIndex  the column index in the table
+     * @param cursor       the timestamp column cursor
+     * @param rowCount     total number of rows
+     * @param ilpType      the ILP wire type (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
+     * @param columnType   the target QuestDB column type
+     * @param isDesignated whether this is the designated timestamp column
+     * @param startRowId   starting row ID (needed for designated timestamps)
+     * @throws IlpV4ParseException if cursor iteration fails
+     */
+    void putTimestampColumnWithConversion(int columnIndex, IlpV4TimestampColumnCursor cursor,
+                                          int rowCount, byte ilpType, int columnType,
+                                          boolean isDesignated, long startRowId) throws IlpV4ParseException;
+
+    /**
+     * Writes a GeoHash column.
+     * <p>
+     * Handles the variable-width GeoHash wire format (1-8 bytes based on precision)
+     * and writes to the appropriate storage size based on column type (GEOBYTE/SHORT/INT/LONG).
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the GeoHash column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (GEOBYTE, GEOSHORT, GEOINT, or GEOLONG)
+     * @throws IlpV4ParseException if cursor iteration fails
+     */
+    void putGeoHashColumn(int columnIndex, IlpV4GeoHashColumnCursor cursor,
+                          int rowCount, int columnType) throws IlpV4ParseException;
+
+    /**
+     * Writes a DECIMAL64 column with optional scale conversion.
+     * <p>
+     * If the wire scale differs from the column scale, values are rescaled using Decimal256.rescale().
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     * @throws IlpV4ParseException if cursor iteration fails
+     */
+    void putDecimal64Column(int columnIndex, IlpV4DecimalColumnCursor cursor,
+                            int rowCount, int columnType) throws IlpV4ParseException;
+
+    /**
+     * Writes a DECIMAL128 column with optional scale conversion.
+     * <p>
+     * If the wire scale differs from the column scale, values are rescaled using Decimal256.rescale().
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     * @throws IlpV4ParseException if cursor iteration fails
+     */
+    void putDecimal128Column(int columnIndex, IlpV4DecimalColumnCursor cursor,
+                             int rowCount, int columnType) throws IlpV4ParseException;
+
+    /**
+     * Writes a DECIMAL256 column with optional scale conversion.
+     * <p>
+     * If the wire scale differs from the column scale, values are rescaled using Decimal256.rescale().
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     * @throws IlpV4ParseException if cursor iteration fails
+     */
+    void putDecimal256Column(int columnIndex, IlpV4DecimalColumnCursor cursor,
+                             int rowCount, int columnType) throws IlpV4ParseException;
+
+    /**
+     * Writes an array column (double or long arrays, 1-N dimensions).
+     * <p>
+     * Handles multi-dimensional arrays by building the array structure from the cursor
+     * and using ArrayTypeDriver for storage.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the array column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (encoded array type)
+     * @throws IlpV4ParseException if cursor iteration fails
+     */
+    void putArrayColumn(int columnIndex, IlpV4ArrayColumnCursor cursor,
+                        int rowCount, int columnType) throws IlpV4ParseException;
 
     /**
      * Completes the columnar write operation.

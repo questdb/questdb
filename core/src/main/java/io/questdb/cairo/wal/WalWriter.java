@@ -1358,6 +1358,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             if (events != null) {
                 events.close(truncate, Vm.TRUNCATE_TO_POINTER);
             }
+            if (columnarAppender != null) {
+                columnarAppender.close();
+                columnarAppender = null;
+            }
             freeSymbolMapReaders();
             freeColumns(truncate);
 
