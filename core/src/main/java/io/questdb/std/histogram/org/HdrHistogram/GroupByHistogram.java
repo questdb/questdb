@@ -317,7 +317,7 @@ public class GroupByHistogram implements Mutable {
         long srcAddr = ptr + headerSize + (oldNormalizedZeroIndex * 8L);
         long dstAddr = ptr + headerSize + (newNormalizedZeroIndex * 8L);
         long bytesToCopy = lengthToCopy * 8L;
-        Vect.memcpy(dstAddr, srcAddr, bytesToCopy);
+        Vect.memmove(dstAddr, srcAddr, bytesToCopy);
 
         long gapStart = ptr + headerSize + (oldNormalizedZeroIndex * 8L);
         long gapSize = countsDelta * 8L;
