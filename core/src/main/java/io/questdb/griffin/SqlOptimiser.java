@@ -5244,8 +5244,11 @@ public class SqlOptimiser implements Mutable {
                 if (node.type == LITERAL) {
                     final CharSequence translatingAlias = translatingModel.getColumnNameToAliasMap().get(node.token);
                     if (translatingAlias != null) {
-                        // For window joins, translatingModel and groupByModel are the same (windowJoinModel),
-                        // so we can use the translating alias directly
+                        // For window joins, the caller passes windowJoinModel as both translatingModel and
+                        // groupByModel (see emitAggregatesAndLiterals call in rewriteSelect0HandleOperation).
+                        // In this case, the column was already added to windowJoinModel, so we can use
+                        // the translating alias directly. The groupByNodes/groupByAliases lists are not
+                        // used for window joins since GROUP BY is disallowed with WINDOW JOIN.
                         if (translatingModel == groupByModel) {
                             return nextLiteral(translatingAlias);
                         }
