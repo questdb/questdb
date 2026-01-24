@@ -4372,6 +4372,64 @@ public class WindowJoinTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testWindowJoinSelfJoinWithAggregatesInSelectAndWhere() throws Exception {
+        // Reproducer for: https://demo.questdb.io error "Invalid column: price" at position 0
+        // Query: SELECT t.timestamp, t.order_id, t.symbol, t.side, t.price AS fill_price,
+        //        sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, ...
+        //        FROM fx_trades t WINDOW JOIN fx_trades w ON (t.symbol = w.symbol)
+        //        RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING EXCLUDE PREVAILING
+        //        WHERE t.symbol = 'EURUSD' ORDER BY t.timestamp LIMIT 100
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fx_trades (" +
+                    "timestamp TIMESTAMP, " +
+                    "symbol SYMBOL, " +
+                    "side SYMBOL, " +
+                    "price DOUBLE, " +
+                    "quantity DOUBLE, " +
+                    "order_id UUID" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("INSERT INTO fx_trades VALUES " +
+                    "('2025-01-01T00:00:00.000000Z', 'EURUSD', 'buy', 1.05, 1000, rnd_uuid4())," +
+                    "('2025-01-01T00:01:00.000000Z', 'EURUSD', 'sell', 1.051, 500, rnd_uuid4())," +
+                    "('2025-01-01T00:02:00.000000Z', 'EURUSD', 'buy', 1.052, 750, rnd_uuid4())," +
+                    "('2025-01-01T00:03:00.000000Z', 'GBPUSD', 'buy', 1.25, 1000, rnd_uuid4())," +
+                    "('2025-01-01T00:04:00.000000Z', 'EURUSD', 'sell', 1.053, 250, rnd_uuid4())," +
+                    "('2025-01-01T00:05:00.000000Z', 'EURUSD', 'buy', 1.054, 600, rnd_uuid4())");
+            drainWalQueue();
+
+            // Self-join with aggregates and WHERE clause - this was reproducing the "Invalid column: price" error
+            assertQueryNoLeakCheck(
+                    "timestamp\torder_id\tsymbol\tside\tfill_price\tvwap_5m\tslippage_bps\n" +
+                            "2025-01-01T00:00:00.000000Z\t0010cde8-12ce-40ee-8010-a928bb8b9650\tEURUSD\tbuy\t1.05\tnull\tnull\n" +
+                            "2025-01-01T00:01:00.000000Z\t9f9b2131-d49f-4d1d-ab81-39815c50d341\tEURUSD\tsell\t1.051\t1.05\t9.523809523808474\n" +
+                            "2025-01-01T00:02:00.000000Z\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\tEURUSD\tbuy\t1.052\t1.0503333333333333\t15.867978419549715\n" +
+                            "2025-01-01T00:04:00.000000Z\te8beef38-cd7b-43d8-9b2d-34586f6275fa\tEURUSD\tsell\t1.053\t1.050888888888889\t20.088813702684046\n" +
+                            "2025-01-01T00:05:00.000000Z\t322a2198-864b-4b14-b97f-a69eb8fec6cc\tEURUSD\tbuy\t1.054\t1.0511\t27.590143659025067\n",
+                    "SELECT " +
+                            "t.timestamp, " +
+                            "t.order_id, " +
+                            "t.symbol, " +
+                            "t.side, " +
+                            "t.price AS fill_price, " +
+                            "sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, " +
+                            "(t.price - sum(w.price * w.quantity) / sum(w.quantity)) " +
+                            "    / (sum(w.price * w.quantity) / sum(w.quantity)) * 10000 AS slippage_bps " +
+                            "FROM fx_trades t " +
+                            "WINDOW JOIN fx_trades w " +
+                            "    ON (t.symbol = w.symbol) " +
+                            "    RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING " +
+                            "    EXCLUDE PREVAILING " +
+                            "WHERE t.symbol = 'EURUSD' " +
+                            "ORDER BY t.timestamp " +
+                            "LIMIT 100",
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
+    }
+
     private void prepareTable() throws SqlException {
         executeWithRewriteTimestamp(
                 "create table trades (" +

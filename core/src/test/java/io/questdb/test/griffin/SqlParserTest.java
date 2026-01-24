@@ -13258,6 +13258,32 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price1", ColumnType.DOUBLE)
         );
         assertException("select t.price + 1, sum(q.price) from trades t WINDOW JOIN quotes q on tag", 71, "'range' expected");
+
+        // Self-join with aggregates, WHERE, ORDER BY, LIMIT - reproducer for "Invalid column: price" error
+        // BUG: The model incorrectly references bare "price" in slippage_bps expression instead of using the aliased "fill_price".
+        // In the inner select-window-join, we have both "t.price fill_price" (aliased) and a bare "price" reference.
+        // The outer select-virtual then references "price" which doesn't exist - it should reference "fill_price".
+        assertQuery(
+                "select-virtual timestamp, order_id, symbol, side, fill_price, sum1 / sum vwap_5m, (fill_price - sum1 / sum) / (sum1 / sum) * 10000 slippage_bps from (select-window-join [t.timestamp timestamp, t.order_id order_id, t.symbol symbol, t.side side, t.price fill_price, sum(w.quantity) sum, sum(w.price * w.quantity) sum1] t.timestamp timestamp, t.order_id order_id, t.symbol symbol, t.side side, t.price fill_price, sum(w.quantity) sum, sum(w.price * w.quantity) sum1 from (select [timestamp, order_id, symbol, side, price] from fx_trades t timestamp (timestamp) window join select [quantity, price, symbol] from fx_trades w timestamp (timestamp) between 5 minute preceding and 1 microsecond preceding exclude prevailing outer-join-expression t.symbol = w.symbol where symbol = 'EURUSD') t) t order by timestamp limit 100",
+                "SELECT " +
+                        "t.timestamp, " +
+                        "t.order_id, " +
+                        "t.symbol, " +
+                        "t.side, " +
+                        "t.price AS fill_price, " +
+                        "sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, " +
+                        "(t.price - sum(w.price * w.quantity) / sum(w.quantity)) " +
+                        "    / (sum(w.price * w.quantity) / sum(w.quantity)) * 10000 AS slippage_bps " +
+                        "FROM fx_trades t " +
+                        "WINDOW JOIN fx_trades w " +
+                        "    ON (t.symbol = w.symbol) " +
+                        "    RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING " +
+                        "    EXCLUDE PREVAILING " +
+                        "WHERE t.symbol = 'EURUSD' " +
+                        "ORDER BY t.timestamp " +
+                        "LIMIT 100",
+                modelOf("fx_trades").timestamp().col("order_id", ColumnType.UUID).col("symbol", ColumnType.SYMBOL).col("side", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).col("quantity", ColumnType.DOUBLE)
+        );
     }
 
     @Test
