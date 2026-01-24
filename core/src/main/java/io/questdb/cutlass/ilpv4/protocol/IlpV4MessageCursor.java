@@ -65,18 +65,6 @@ public class IlpV4MessageCursor implements Mutable {
     private ObjList<String> connectionSymbolDict;
 
     /**
-     * Initializes this cursor for the given message data.
-     *
-     * @param messageAddress address of message (including header)
-     * @param messageLength  total message length in bytes
-     * @param schemaCache    schema cache for reference mode (may be null)
-     * @throws IlpV4ParseException if parsing fails
-     */
-    public void of(long messageAddress, int messageLength, IlpV4SchemaCache schemaCache) throws IlpV4ParseException {
-        of(messageAddress, messageLength, schemaCache, null);
-    }
-
-    /**
      * Initializes this cursor for the given message data with delta symbol dictionary support.
      *
      * @param messageAddress       address of message (including header)

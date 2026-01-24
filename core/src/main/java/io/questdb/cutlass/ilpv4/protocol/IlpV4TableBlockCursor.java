@@ -99,21 +99,6 @@ public class IlpV4TableBlockCursor implements Mutable {
     private int bytesConsumed;
 
     /**
-     * Initializes this cursor for the given table block data.
-     *
-     * @param dataAddress    address of table block data
-     * @param dataLength     available bytes
-     * @param gorillaEnabled whether Gorilla encoding is enabled
-     * @param schemaCache    schema cache for reference mode (may be null)
-     * @return bytes consumed from dataAddress
-     * @throws IlpV4ParseException if parsing fails
-     */
-    public int of(long dataAddress, int dataLength, boolean gorillaEnabled, IlpV4SchemaCache schemaCache)
-            throws IlpV4ParseException {
-        return of(dataAddress, dataLength, gorillaEnabled, schemaCache, null, false);
-    }
-
-    /**
      * Initializes this cursor for the given table block data with delta symbol dictionary support.
      *
      * @param dataAddress            address of table block data
