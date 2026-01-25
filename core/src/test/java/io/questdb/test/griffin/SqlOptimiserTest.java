@@ -5976,10 +5976,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades";
 
             assertQueryNoLeakCheck(
-                    "ts\tprice\tamount\n" +
-                            "2021-12-31T23:00:00.000000Z\t100.0\t10.0\n" +
-                            "2022-06-15T11:00:00.000000Z\t150.0\t20.0\n" +
-                            "2022-12-31T23:00:00.000000Z\t200.0\t30.0\n",
+                    """
+                            ts\tprice\tamount
+                            2021-12-31T23:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T11:00:00.000000Z\t150.0\t20.0
+                            2022-12-31T23:00:00.000000Z\t200.0\t30.0
+                            """,
                     query
             );
         });
@@ -6121,9 +6123,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertQueryNoLeakCheck(
-                    "ts\tprice\tamount\n" +
-                            "2022-01-01T00:00:00.000000Z\t100.0\t10.0\n" +
-                            "2022-06-15T12:00:00.000000Z\t150.0\t20.0\n",
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T00:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T12:00:00.000000Z\t150.0\t20.0
+                            """,
                     query,
                     "ts",
                     true,
@@ -6154,9 +6158,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertQueryNoLeakCheck(
-                    "ts\tprice\tamount\n" +
-                            "2022-01-01T09:00:00.000000Z\t100.0\t10.0\n" +
-                            "2022-06-15T11:00:00.000000Z\t150.0\t20.0\n",
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T09:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T11:00:00.000000Z\t150.0\t20.0
+                            """,
                     query,
                     "ts",
                     true,
@@ -6183,8 +6189,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             // This query should still work, just without optimization
             assertQueryNoLeakCheck(
-                    "ts\tprice\tamount\n" +
-                            "2022-01-01T01:00:00.000000Z\t100.0\t10.0\n",
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T01:00:00.000000Z\t100.0\t10.0
+                            """,
                     query,
                     "ts",
                     true,
@@ -6218,9 +6226,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             // Row 2: timestamp='2022-06-15T12:00', ts='2022-06-15T11:00' - in '2022', included
             // Row 3: timestamp='2023-01-01', ts='2022-12-31T23:00' - in '2022', included
             assertQueryNoLeakCheck(
-                    "ts\tprice\tamount\n" +
-                            "2022-06-15T11:00:00.000000Z\t150.0\t20.0\n" +
-                            "2022-12-31T23:00:00.000000Z\t200.0\t30.0\n",
+                    """
+                            ts\tprice\tamount
+                            2022-06-15T11:00:00.000000Z\t150.0\t20.0
+                            2022-12-31T23:00:00.000000Z\t200.0\t30.0
+                            """,
                     query,
                     "ts",
                     true,
@@ -6251,8 +6261,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             // Second row: timestamp = 2022-06-15, ts = 2022-06-12 (NOT in range)
             // Third row: timestamp = 2022-12-30, ts = 2022-12-27 (NOT in range)
             assertQueryNoLeakCheck(
-                    "ts\tprice\tamount\n" +
-                            "2022-01-02T00:00:00.000000Z\t100.0\t10.0\n",
+                    """
+                            ts\tprice\tamount
+                            2022-01-02T00:00:00.000000Z\t100.0\t10.0
+                            """,
                     query,
                     "ts",
                     true,
@@ -6283,9 +6295,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             // Second row's ts = 2022-06-15T13:00:00 (in 2022)
             // Third row's ts = 2023-01-01T00:00:00 (NOT in 2022)
             assertQueryNoLeakCheck(
-                    "ts\tprice\tamount\n" +
-                            "2022-01-01T01:00:00.000000Z\t100.0\t10.0\n" +
-                            "2022-06-15T13:00:00.000000Z\t150.0\t20.0\n",
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T01:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T13:00:00.000000Z\t150.0\t20.0
+                            """,
                     query,
                     "ts",
                     true,

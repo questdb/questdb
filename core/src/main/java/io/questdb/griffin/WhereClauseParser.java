@@ -447,7 +447,7 @@ public final class WhereClauseParser implements Mutable {
         // and_offset args are stored in reverse order: [offset, unit, predicate]
         // This matches how ExpressionNode.toSink renders function args
         ObjList<ExpressionNode> args = node.args;
-        if (args == null || args.size() != 3) {
+        if (args.size() != 3) {
             return false;
         }
 

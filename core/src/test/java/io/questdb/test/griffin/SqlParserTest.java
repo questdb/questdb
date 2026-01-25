@@ -12298,6 +12298,44 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testTimestampOffsetDetectedWithoutExplicitTimestampClause() throws Exception {
+        // Test that timestampColumnIndex is set even without explicit timestamp(ts) clause
+        // This enables the timestamp clause to be optional for dateadd transformed columns
+        assertMemoryLeak(() -> {
+            AbstractCairoTest.create(
+                    modelOf("trades").col("price", ColumnType.DOUBLE).col("amount", ColumnType.DOUBLE).timestamp()
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // Query without explicit timestamp(ts) clause - just a subquery with dateadd
+                String sql = "SELECT * FROM (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)";
+                QueryModel model = (QueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
+
+                // The outer model should be a select-choose over a select-virtual
+                QueryModel nested = model.getNestedModel();
+                Assert.assertNotNull("Expected nested model", nested);
+
+                // Find the virtual model that has the dateadd expression
+                QueryModel virtualModel = nested;
+                while (virtualModel != null && virtualModel.getSelectModelType() != QueryModel.SELECT_MODEL_VIRTUAL) {
+                    virtualModel = virtualModel.getNestedModel();
+                }
+
+                Assert.assertNotNull("Expected to find virtual model", virtualModel);
+
+                // Verify timestamp column index is set correctly (should be 0 for 'ts' column)
+                int tsIndex = virtualModel.getTimestampColumnIndex();
+                Assert.assertTrue("Expected timestampColumnIndex to be set (>= 0), got: " + tsIndex, tsIndex >= 0);
+
+                // Verify offset info is also set
+                Assert.assertEquals("Expected offset unit 'h'", 'h', virtualModel.getTimestampOffsetUnit());
+                Assert.assertEquals("Expected offset value 1 (inverse of -1)", 1, virtualModel.getTimestampOffsetValue());
+                Assert.assertEquals("Expected offset alias 'ts'", "ts", virtualModel.getTimestampOffsetAlias().toString());
+            }
+        });
+    }
+
+    @Test
     public void testTooManyArgumentsInWindowFunction() throws Exception {
         assertException(
                 "select row_number(1,2,3) over (partition by symbol) from trades",
