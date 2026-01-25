@@ -12268,10 +12268,127 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testTimestampOffsetDetectedWithoutExplicitTimestampClause() throws Exception {
+        // Verify ts_offset is detected even without explicit timestamp(ts) clause
+        // The ts_offset ('h', 1, 0) indicates: unit='h', offset=1 (inverse of -1), column_index=0
+        assertQuery(
+                "select-choose ts, price, amount from (select-virtual [dateadd('h', -(1), timestamp) ts, price, amount] dateadd('h', -(1), timestamp) ts, price, amount from (select [timestamp, price, amount] from trades timestamp (timestamp)) ts_offset ('h', 1, 0))",
+                "SELECT * FROM (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)",
+                modelOf("trades").col("price", ColumnType.DOUBLE).col("amount", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateBetween() throws Exception {
+        // BETWEEN predicate on transformed timestamp
+        // Note: BETWEEN is represented as between(col, (lo, hi)) in the model
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', -(1), timestamp) ts, price] dateadd('h', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp between ('2022-01-01', '2022-12-31'), 'h', 1)) ts_offset ('h', 1, 0)) timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('h', -1, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts BETWEEN '2022-01-01' AND '2022-12-31'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateMergeInnerAndOuterWithOffset() throws Exception {
+        // Test merging predicates from both inner and outer queries:
+        // - Inner query has WHERE timestamp > '2022-01-01' (on original timestamp)
+        // - Outer query has WHERE ts < '2022-12-31' (on dateadd-transformed timestamp)
+        // Both should be pushed to innermost model, with outer predicate wrapped in and_offset
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', -(1), timestamp) ts, price] dateadd('h', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where timestamp > '2022-01-01' and and_offset(timestamp < '2022-12-31', 'h', 1)) ts_offset ('h', 1, 0)) timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('h', -1, timestamp) as ts, price FROM trades WHERE timestamp > '2022-01-01') timestamp (ts)) WHERE ts < '2022-12-31'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateMixedWithNonTimestampPredicate() throws Exception {
+        // Mixed predicates: timestamp predicate should be wrapped in and_offset,
+        // non-timestamp predicate (price > 100) should be pushed normally
+        // Note: and_offset predicate comes first in the WHERE clause
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', -(1), timestamp) ts, price] dateadd('h', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'h', 1) and price > 100) ts_offset ('h', 1, 0)) timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('h', -1, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022' AND price > 100",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateMultipleDateaddColumns() throws Exception {
+        // Multiple dateadd columns - only one can be the designated timestamp
+        // ts1 is used as timestamp(ts1), so predicate on ts1 should be optimized
+        assertQuery(
+                "select-choose ts1, ts2, price from (select-choose [ts1, ts2, price] ts1, ts2, price from (select-virtual [dateadd('h', -(1), timestamp) ts1, dateadd('d', -(1), timestamp) ts2, price] dateadd('h', -(1), timestamp) ts1, dateadd('d', -(1), timestamp) ts2, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'h', 1)) ts_offset ('h', 1, 0)) timestamp (ts1))",
+                "SELECT * FROM ((SELECT dateadd('h', -1, timestamp) as ts1, dateadd('d', -1, timestamp) as ts2, price FROM trades) timestamp (ts1)) WHERE ts1 in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateMultipleOuterWithOffset() throws Exception {
+        // Test multiple outer predicates on the transformed timestamp
+        // Both ts > '2022-01-01' AND ts < '2022-12-31' should be wrapped in and_offset
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', -(1), timestamp) ts, price] dateadd('h', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp > '2022-01-01', 'h', 1) and and_offset(timestamp < '2022-12-31', 'h', 1)) ts_offset ('h', 1, 0)) timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('h', -1, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts > '2022-01-01' AND ts < '2022-12-31'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateNestedDateaddNoPushdown() throws Exception {
+        // Nested dateadd - too complex, should NOT optimize
+        // dateadd('h', -1, dateadd('d', -1, timestamp)) - inner dateadd result is not the designated timestamp
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', -(1), dateadd('d', -(1), timestamp)) ts, price] dateadd('h', -(1), dateadd('d', -(1), timestamp)) ts, price from (select [timestamp, price] from trades timestamp (timestamp)) where ts in '2022') timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('h', -1, dateadd('d', -1, timestamp)) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateNestedSubqueriesMultipleOffsetLevels() throws Exception {
+        // Nested subqueries with multiple dateadd levels
+        // Inner level has ts_offset because dateadd is on designated timestamp
+        // Outer level does NOT have ts_offset because ts1 is not a designated timestamp column
+        // (it's just a column alias, not the table's timestamp)
+        assertQuery(
+                "select-choose ts2, price from (select-choose [ts2, price] ts2, price from (select-virtual [dateadd('d', -(1), ts1) ts2, price] dateadd('d', -(1), ts1) ts2, price from (select-choose [ts1, price] ts1, price from (select-virtual [dateadd('h', -(1), timestamp) ts1, price] dateadd('h', -(1), timestamp) ts1, price from (select [timestamp, price] from trades timestamp (timestamp)) ts_offset ('h', 1, 0)) timestamp (ts1))) timestamp (ts2))",
+                "SELECT * FROM ((SELECT dateadd('d', -1, ts1) as ts2, price FROM ((SELECT dateadd('h', -1, timestamp) as ts1, price FROM trades) timestamp (ts1))) timestamp (ts2))",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateNestedSubqueriesWithOuterPredicate() throws Exception {
+        // Nested subqueries with predicate on outermost level
+        // Current limitation: predicate is only pushed to the second level (where ts2 is defined)
+        // It does NOT get pushed through multiple offset levels to the base table
+        // because the outer dateadd(ts1) doesn't reference the original designated timestamp
+        assertQuery(
+                "select-choose ts2, price from (select-choose [ts2, price] ts2, price from (select-virtual [dateadd('d', -(1), ts1) ts2, price] dateadd('d', -(1), ts1) ts2, price from (select-choose [ts1, price] ts1, price from (select-virtual [dateadd('h', -(1), timestamp) ts1, price] dateadd('h', -(1), timestamp) ts1, price from (select [timestamp, price] from trades timestamp (timestamp)) ts_offset ('h', 1, 0)) timestamp (ts1)) where ts2 in '2022') timestamp (ts2))",
+                "SELECT * FROM ((SELECT dateadd('d', -1, ts1) as ts2, price FROM ((SELECT dateadd('h', -1, timestamp) as ts1, price FROM trades) timestamp (ts1))) timestamp (ts2)) WHERE ts2 in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateNoPushdownNonDesignatedTimestamp() throws Exception {
+        // dateadd on a non-designated timestamp column should NOT trigger optimization
+        // The predicate stays at select-virtual level, no ts_offset
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', -(1), other_ts) ts, price] dateadd('h', -(1), other_ts) ts, price from (select [other_ts, price] from trades timestamp (timestamp)) where ts in '2022') timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('h', -1, other_ts) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).col("other_ts", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
     public void testTimestampPredicatePushdownWithDateaddOffsetRewrite() throws Exception {
         // Predicate should be pushed with and_offset wrapper referencing the real 'timestamp' column
         assertQuery(
-                "select-choose ts, price, amount from (select-choose [ts, price, amount] ts, price, amount from (select-virtual [dateadd('h', -(1), timestamp) ts, price, amount] dateadd('h', -(1), timestamp) ts, price, amount from (select [timestamp, price, amount] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'h', 1))) timestamp (ts))",
+                "select-choose ts, price, amount from (select-choose [ts, price, amount] ts, price, amount from (select-virtual [dateadd('h', -(1), timestamp) ts, price, amount] dateadd('h', -(1), timestamp) ts, price, amount from (select [timestamp, price, amount] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'h', 1)) ts_offset ('h', 1, 0)) timestamp (ts))",
                 "SELECT * FROM ((SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades) timestamp (ts)) WHERE ts in '2022'",
                 modelOf("trades").col("price", ColumnType.DOUBLE).col("amount", ColumnType.DOUBLE).timestamp()
         );
@@ -12281,7 +12398,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTimestampPredicatePushdownWithDayOffset() throws Exception {
         // Predicate pushed with and_offset wrapper (offset is +3 for -3 dateadd)
         assertQuery(
-                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('d', -(3), timestamp) ts, price] dateadd('d', -(3), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp >= '2022-01-01', 'd', 3))) timestamp (ts))",
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('d', -(3), timestamp) ts, price] dateadd('d', -(3), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp >= '2022-01-01', 'd', 3)) ts_offset ('d', 3, 0)) timestamp (ts))",
                 "SELECT * FROM ((SELECT dateadd('d', -3, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts >= '2022-01-01'",
                 modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
         );
@@ -12291,48 +12408,62 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTimestampPredicatePushdownWithPositiveOffset() throws Exception {
         // Predicate pushed with and_offset wrapper (offset is -1 for +1 dateadd)
         assertQuery(
-                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', 1, timestamp) ts, price] dateadd('h', 1, timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp >= '2022-01-01', 'h', -1))) timestamp (ts))",
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', 1, timestamp) ts, price] dateadd('h', 1, timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp >= '2022-01-01', 'h', -1)) ts_offset ('h', -1, 0)) timestamp (ts))",
                 "SELECT * FROM ((SELECT dateadd('h', 1, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts >= '2022-01-01'",
                 modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
         );
     }
 
     @Test
-    public void testTimestampOffsetDetectedWithoutExplicitTimestampClause() throws Exception {
-        // Test that timestampColumnIndex is set even without explicit timestamp(ts) clause
-        // This enables the timestamp clause to be optional for dateadd transformed columns
-        assertMemoryLeak(() -> {
-            AbstractCairoTest.create(
-                    modelOf("trades").col("price", ColumnType.DOUBLE).col("amount", ColumnType.DOUBLE).timestamp()
-            );
+    public void testTimestampPredicateWithDifferentTimeUnits() throws Exception {
+        // Test various time units: seconds, minutes, months
+        // Using 's' for seconds
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('s', -(30), timestamp) ts, price] dateadd('s', -(30), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 's', 30)) ts_offset ('s', 30, 0)) timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('s', -30, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // Query without explicit timestamp(ts) clause - just a subquery with dateadd
-                String sql = "SELECT * FROM (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)";
-                QueryModel model = (QueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
+    @Test
+    public void testTimestampPredicateWithLargeOffset() throws Exception {
+        // Large offset value
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('d', -(365), timestamp) ts, price] dateadd('d', -(365), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'd', 365)) ts_offset ('d', 365, 0)) timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('d', -365, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
 
-                // The outer model should be a select-choose over a select-virtual
-                QueryModel nested = model.getNestedModel();
-                Assert.assertNotNull("Expected nested model", nested);
+    @Test
+    public void testTimestampPredicateWithMinuteUnit() throws Exception {
+        // Using 'm' for minutes
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('m', -(15), timestamp) ts, price] dateadd('m', -(15), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'm', 15)) ts_offset ('m', 15, 0)) timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('m', -15, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
 
-                // Find the virtual model that has the dateadd expression
-                QueryModel virtualModel = nested;
-                while (virtualModel != null && virtualModel.getSelectModelType() != QueryModel.SELECT_MODEL_VIRTUAL) {
-                    virtualModel = virtualModel.getNestedModel();
-                }
+    @Test
+    public void testTimestampPredicateWithMonthUnit() throws Exception {
+        // Using 'M' for months
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('M', -(1), timestamp) ts, price] dateadd('M', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'M', 1)) ts_offset ('M', 1, 0)) timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('M', -1, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
 
-                Assert.assertNotNull("Expected to find virtual model", virtualModel);
-
-                // Verify timestamp column index is set correctly (should be 0 for 'ts' column)
-                int tsIndex = virtualModel.getTimestampColumnIndex();
-                Assert.assertTrue("Expected timestampColumnIndex to be set (>= 0), got: " + tsIndex, tsIndex >= 0);
-
-                // Verify offset info is also set
-                Assert.assertEquals("Expected offset unit 'h'", 'h', virtualModel.getTimestampOffsetUnit());
-                Assert.assertEquals("Expected offset value 1 (inverse of -1)", 1, virtualModel.getTimestampOffsetValue());
-                Assert.assertEquals("Expected offset alias 'ts'", "ts", virtualModel.getTimestampOffsetAlias().toString());
-            }
-        });
+    @Test
+    public void testTimestampPredicateWithZeroOffset() throws Exception {
+        // Zero offset in dateadd - essentially a no-op but should still be detected
+        // offset value is 0 (inverse of 0)
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', 0, timestamp) ts, price] dateadd('h', 0, timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'h', 0)) ts_offset ('h', 0, 0)) timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('h', 0, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
     }
 
     @Test

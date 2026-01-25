@@ -1880,6 +1880,17 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 sink.putAscii(')');
             }
 
+            // Output timestamp offset info if present (for dateadd-transformed timestamps)
+            if (hasTimestampOffset()) {
+                sink.putAscii(" ts_offset ('");
+                sink.putAscii(timestampOffsetUnit);
+                sink.putAscii("', ");
+                sink.put(timestampOffsetValue);
+                sink.putAscii(", ");
+                sink.put(timestampColumnIndex);
+                sink.putAscii(')');
+            }
+
             if (getLatestByType() == LATEST_BY_DEPRECATED && getLatestBy().size() > 0) {
                 sink.putAscii(" latest by ");
                 for (int i = 0, n = getLatestBy().size(); i < n; i++) {

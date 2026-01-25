@@ -4014,11 +4014,9 @@ public class SqlOptimiser implements Mutable {
             return referencesColumn(node.lhs, columnName) || referencesColumn(node.rhs, columnName);
         } else {
             ObjList<ExpressionNode> args = node.args;
-            if (args != null) {
-                for (int i = 0, n = args.size(); i < n; i++) {
-                    if (referencesColumn(args.getQuick(i), columnName)) {
-                        return true;
-                    }
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (referencesColumn(args.getQuick(i), columnName)) {
+                    return true;
                 }
             }
         }
@@ -4040,10 +4038,8 @@ public class SqlOptimiser implements Mutable {
             rewriteColumnReferences(node.rhs, from, to);
         } else {
             ObjList<ExpressionNode> args = node.args;
-            if (args != null) {
-                for (int i = 0, n = args.size(); i < n; i++) {
-                    rewriteColumnReferences(args.getQuick(i), from, to);
-                }
+            for (int i = 0, n = args.size(); i < n; i++) {
+                rewriteColumnReferences(args.getQuick(i), from, to);
             }
         }
     }
