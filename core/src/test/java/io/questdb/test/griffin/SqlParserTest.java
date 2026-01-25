@@ -12350,11 +12350,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTimestampPredicateNestedSubqueriesMultipleOffsetLevels() throws Exception {
         // Nested subqueries with multiple dateadd levels
-        // Inner level has ts_offset because dateadd is on designated timestamp
-        // Outer level does NOT have ts_offset because ts1 is not a designated timestamp column
-        // (it's just a column alias, not the table's timestamp)
+        // Both levels should have ts_offset:
+        // - Inner: ts_offset ('h', 1, 0) for dateadd('h', -1, timestamp)
+        // - Outer: ts_offset ('d', 1, 0) for dateadd('d', -1, ts1) where ts1 is the inner timestamp column
         assertQuery(
-                "select-choose ts2, price from (select-choose [ts2, price] ts2, price from (select-virtual [dateadd('d', -(1), ts1) ts2, price] dateadd('d', -(1), ts1) ts2, price from (select-choose [ts1, price] ts1, price from (select-virtual [dateadd('h', -(1), timestamp) ts1, price] dateadd('h', -(1), timestamp) ts1, price from (select [timestamp, price] from trades timestamp (timestamp)) ts_offset ('h', 1, 0)) timestamp (ts1))) timestamp (ts2))",
+                "select-choose ts2, price from (select-choose [ts2, price] ts2, price from (select-virtual [dateadd('d', -(1), ts1) ts2, price] dateadd('d', -(1), ts1) ts2, price from (select-choose [ts1, price] ts1, price from (select-virtual [dateadd('h', -(1), timestamp) ts1, price] dateadd('h', -(1), timestamp) ts1, price from (select [timestamp, price] from trades timestamp (timestamp)) ts_offset ('h', 1, 0)) timestamp (ts1)) ts_offset ('d', 1, 0)) timestamp (ts2))",
                 "SELECT * FROM ((SELECT dateadd('d', -1, ts1) as ts2, price FROM ((SELECT dateadd('h', -1, timestamp) as ts1, price FROM trades) timestamp (ts1))) timestamp (ts2))",
                 modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
         );
@@ -12363,11 +12363,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTimestampPredicateNestedSubqueriesWithOuterPredicate() throws Exception {
         // Nested subqueries with predicate on outermost level
-        // Current limitation: predicate is only pushed to the second level (where ts2 is defined)
-        // It does NOT get pushed through multiple offset levels to the base table
-        // because the outer dateadd(ts1) doesn't reference the original designated timestamp
+        // Predicate is pushed through ALL offset levels to the base table
+        // The and_offset wrappers chain: and_offset(and_offset(original, 'd', 1), 'h', 1)
         assertQuery(
-                "select-choose ts2, price from (select-choose [ts2, price] ts2, price from (select-virtual [dateadd('d', -(1), ts1) ts2, price] dateadd('d', -(1), ts1) ts2, price from (select-choose [ts1, price] ts1, price from (select-virtual [dateadd('h', -(1), timestamp) ts1, price] dateadd('h', -(1), timestamp) ts1, price from (select [timestamp, price] from trades timestamp (timestamp)) ts_offset ('h', 1, 0)) timestamp (ts1)) where ts2 in '2022') timestamp (ts2))",
+                "select-choose ts2, price from (select-choose [ts2, price] ts2, price from (select-virtual [dateadd('d', -(1), ts1) ts2, price] dateadd('d', -(1), ts1) ts2, price from (select-choose [ts1, price] ts1, price from (select-virtual [dateadd('h', -(1), timestamp) ts1, price] dateadd('h', -(1), timestamp) ts1, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(and_offset(timestamp in '2022', 'd', 1), 'h', 1)) ts_offset ('h', 1, 0)) timestamp (ts1)) ts_offset ('d', 1, 0)) timestamp (ts2))",
                 "SELECT * FROM ((SELECT dateadd('d', -1, ts1) as ts2, price FROM ((SELECT dateadd('h', -1, timestamp) as ts1, price FROM trades) timestamp (ts1))) timestamp (ts2)) WHERE ts2 in '2022'",
                 modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
         );

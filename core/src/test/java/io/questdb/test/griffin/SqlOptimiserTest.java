@@ -5965,14 +5965,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTimestampDateaddBasicQuery() throws Exception {
-        // Verify basic dateadd query works correctly without any optimization
+        // Verify basic dateadd query works correctly and timestamp is auto-detected
+        // The dateadd on the designated timestamp is recognized and 'ts' becomes the timestamp column
         assertMemoryLeak(() -> {
             execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
             execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
             execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
             execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
 
-            // Simple query without timestamp() annotation and without WHERE
+            // Query without explicit timestamp() annotation - timestamp is auto-detected from dateadd
             final String query = "SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades";
 
             assertQueryNoLeakCheck(
@@ -5982,7 +5983,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             2022-06-15T11:00:00.000000Z\t150.0\t20.0
                             2022-12-31T23:00:00.000000Z\t200.0\t30.0
                             """,
-                    query
+                    query,
+                    "ts",  // ts is now the timestamp column (auto-detected from dateadd)
+                    true,  // supports random access
+                    true   // expect size
             );
         });
     }

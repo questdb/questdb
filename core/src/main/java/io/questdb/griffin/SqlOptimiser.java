@@ -3614,9 +3614,17 @@ public class SqlOptimiser implements Mutable {
         }
 
         // Check nested model for its timestamp to validate dateadd argument
+        // Traverse down through nested models to find one with timestamp info
         QueryModel timestampSourceModel = nested.getNestedModel();
         if (timestampSourceModel == null) {
             timestampSourceModel = nested;
+        }
+        // Keep traversing until we find a model with timestamp info
+        while (timestampSourceModel != null && !hasTimestampInfo(timestampSourceModel)) {
+            timestampSourceModel = timestampSourceModel.getNestedModel();
+        }
+        if (timestampSourceModel == null) {
+            return;
         }
 
         if (!isDateaddTimestampExpression(ast, timestampSourceModel)) {
@@ -3733,19 +3741,27 @@ public class SqlOptimiser implements Mutable {
             return;
         }
 
-        // Skip if no nested model or nested has no timestamp
+        // Skip if no nested model
         if (nested == null) {
             return;
         }
 
-        // Find the source of the timestamp - could be nested or nested's nested
+        // Find the source of the timestamp - traverse down through nested models
+        // We look for a model that has either:
+        // 1. A designated timestamp (getTimestamp() != null)
+        // 2. A timestampColumnIndex set (from a previous dateadd detection)
+        // 3. A timestampOffsetAlias set
         QueryModel timestampSourceModel = nested.getNestedModel();
-        if (timestampSourceModel == null || timestampSourceModel.getTimestamp() == null) {
+        if (timestampSourceModel == null) {
             timestampSourceModel = nested;
         }
+        // Keep traversing until we find a model with timestamp info
+        while (timestampSourceModel != null && !hasTimestampInfo(timestampSourceModel)) {
+            timestampSourceModel = timestampSourceModel.getNestedModel();
+        }
 
-        ExpressionNode nestedTimestamp = timestampSourceModel.getTimestamp();
-        if (nestedTimestamp == null) {
+        // If no timestamp info found, we can't detect offset
+        if (timestampSourceModel == null) {
             return;
         }
 
@@ -3790,6 +3806,19 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Checks if the model has any timestamp information that can be used for offset detection.
+     * This includes designated timestamp, timestampColumnIndex, or timestampOffsetAlias.
+     */
+    private boolean hasTimestampInfo(QueryModel model) {
+        if (model == null) {
+            return false;
+        }
+        return model.getTimestamp() != null
+                || model.getTimestampColumnIndex() >= 0
+                || model.getTimestampOffsetAlias() != null;
+    }
+
+    /**
      * Checks if the given predicate references the model's timestamp column or offset alias.
      */
     private boolean isTimestampPredicate(ExpressionNode node, QueryModel model) {
@@ -3805,7 +3834,8 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Detects if the given expression is a dateadd function call with constant unit and stride,
-     * where the timestamp argument references the nested model's designated timestamp.
+     * where the timestamp argument references the nested model's designated timestamp or
+     * a column that is itself a dateadd-transformed timestamp (for chained dateadd detection).
      *
      * @param ast         the expression node to check
      * @param nestedModel the nested model whose timestamp we're checking against
@@ -3842,17 +3872,34 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
 
-        // Check timestamp arg references the designated timestamp
+        // Check timestamp arg references a timestamp column
         if (timestampArg == null || timestampArg.type != LITERAL) {
             return false;
         }
 
+        // Check 1: Does it match the designated timestamp?
         ExpressionNode nestedTimestamp = nestedModel.getTimestamp();
-        if (nestedTimestamp == null) {
-            return false;
+        if (nestedTimestamp != null && Chars.equalsIgnoreCase(timestampArg.token, nestedTimestamp.token)) {
+            return true;
         }
 
-        return Chars.equalsIgnoreCase(timestampArg.token, nestedTimestamp.token);
+        // Check 2: Does it match a column that has timestampColumnIndex set?
+        // This handles chained dateadd: dateadd('d', -1, ts1) where ts1 is from dateadd('h', -1, timestamp)
+        int tsColIndex = nestedModel.getTimestampColumnIndex();
+        if (tsColIndex >= 0) {
+            // Use getColumns() to match how the index was set in detectTimestampOffsetInfo
+            ObjList<QueryColumn> cols = nestedModel.getColumns();
+            if (tsColIndex < cols.size()) {
+                QueryColumn tsCol = cols.getQuick(tsColIndex);
+                if (Chars.equalsIgnoreCase(timestampArg.token, tsCol.getAlias())) {
+                    return true;
+                }
+            }
+        }
+
+        // Check 3: Does it match the timestampOffsetAlias? (for virtual models)
+        CharSequence offsetAlias = nestedModel.getTimestampOffsetAlias();
+        return offsetAlias != null && Chars.equalsIgnoreCase(timestampArg.token, offsetAlias);
     }
 
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
