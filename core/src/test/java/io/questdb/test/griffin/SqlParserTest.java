@@ -12446,7 +12446,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTimestampPredicateWithMonthUnit() throws Exception {
-        // Using 'M' for months
+        // Using 'M' for months - predicates are pushed down with calendar-aware offset handling
         assertQuery(
                 "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('M', -(1), timestamp) ts, price] dateadd('M', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'M', 1)) ts_offset ('M', 1, 0)) timestamp (ts))",
                 "SELECT * FROM ((SELECT dateadd('M', -1, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",

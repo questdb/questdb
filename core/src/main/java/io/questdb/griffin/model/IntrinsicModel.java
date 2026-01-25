@@ -130,6 +130,10 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
     }
 
+    public void mergeIntervalModelWithAddMethod(RuntimeIntervalModel model, io.questdb.cairo.TimestampDriver.TimestampAddMethod addMethod, int offset) {
+        runtimeIntervalBuilder.mergeWithAddMethod(model, addMethod, offset);
+    }
+
     public void of(int timestampType, int partitionBy) {
         this.runtimeIntervalBuilder.of(timestampType, partitionBy);
     }

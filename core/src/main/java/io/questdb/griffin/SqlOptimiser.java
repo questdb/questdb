@@ -3702,7 +3702,15 @@ public class SqlOptimiser implements Mutable {
         }
         // Handle unary minus: -(constant)
         if (node.type == OPERATION && Chars.equals(node.token, "-") && node.paramCount == 1) {
-            return node.rhs != null && node.rhs.type == CONSTANT;
+            if (node.rhs != null && node.rhs.type == CONSTANT) {
+                try {
+                    Numbers.parseLong(node.rhs.token);
+                    return true;
+                } catch (NumericException e) {
+                    return false;
+                }
+            }
+            return false;
         }
         return false;
     }

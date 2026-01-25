@@ -465,15 +465,18 @@ public final class WhereClauseParser implements Mutable {
         }
 
         // Parse offset value
-        long offsetValue;
+        int offsetValue;
         try {
-            offsetValue = Numbers.parseLong(offsetNode.token);
+            offsetValue = Numbers.parseInt(offsetNode.token);
         } catch (NumericException e) {
             return false;
         }
 
-        // Convert offset to microseconds based on unit
-        long offsetMicros = convertToMicroseconds(unit, offsetValue);
+        // Get the add method for this unit from the timestamp driver
+        TimestampDriver.TimestampAddMethod addMethod = timestampDriver.getAddMethod(unit);
+        if (addMethod == null) {
+            return false;  // Unknown unit
+        }
 
         // Create a temporary model to extract intervals from the inner predicate
         IntrinsicModel tempModel = models.next();
@@ -495,38 +498,18 @@ public final class WhereClauseParser implements Mutable {
         );
 
         if (extracted || tempModel.hasIntervalFilters()) {
-            // Merge intervals with offset adjustment
-            // The merge method applies: lo = lo - loOffset, hi = hi + hiOffset
-            // To shift BOTH lo and hi by +offsetMicros, we need:
-            //   loOffset = -offsetMicros (so lo = lo - (-offset) = lo + offset)
-            //   hiOffset = +offsetMicros (so hi = hi + offset)
             RuntimeIntrinsicIntervalModel intervalModel = tempModel.buildIntervalModel();
             if (intervalModel instanceof RuntimeIntervalModel) {
-                model.mergeIntervalModel((RuntimeIntervalModel) intervalModel, -offsetMicros, offsetMicros);
+                // Use the calendar-aware merge method that applies the offset
+                // to each interval boundary using the timestamp driver's add method.
+                // This correctly handles variable-length units like months and years.
+                model.mergeIntervalModelWithAddMethod((RuntimeIntervalModel) intervalModel, addMethod, offsetValue);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             }
         }
 
         return false;
-    }
-
-    /**
-     * Converts a time offset value to microseconds based on the given unit.
-     */
-    private long convertToMicroseconds(char unit, long value) {
-        return switch (unit) {
-            case 'u' -> value;  // microseconds
-            case 'T' -> value * 1000L;  // milliseconds to micros
-            case 's' -> value * 1_000_000L;
-            case 'm' -> value * 60_000_000L;
-            case 'h' -> value * 3_600_000_000L;
-            case 'd' -> value * 86_400_000_000L;
-            case 'w' -> value * 604_800_000_000L;  // 7 days
-            case 'M' -> value * 2_592_000_000_000L;  // ~30 days
-            case 'y' -> value * 31_536_000_000_000L; // ~365 days
-            default -> value;
-        };
     }
 
     private boolean analyzeEquals(

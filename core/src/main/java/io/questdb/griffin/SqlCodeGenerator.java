@@ -6027,7 +6027,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (modelTimestampIndex == i) {
                     // Model explicitly indicates this column should be the timestamp
                     virtualMetadata.setTimestampIndex(i);
-                } else if (node.type == LITERAL && Chars.equalsNc(node.token, timestampColumn)) {
+                } else if (modelTimestampIndex < 0 && node.type == LITERAL && Chars.equalsNc(node.token, timestampColumn)) {
+                    // Only use literal match if model hasn't specified a timestamp index
                     virtualMetadata.setTimestampIndex(i);
                 }
 
