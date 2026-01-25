@@ -455,13 +455,26 @@ public final class WhereClauseParser implements Mutable {
         ExpressionNode unitNode = args.getQuick(1);
         ExpressionNode offsetNode = args.getQuick(0);
 
-        // Parse unit character (skip quotes if present)
+        // Parse unit character - must be a constant single-character token
+        // Valid forms: 'h' (quoted single char) or h (unquoted single char)
+        if (unitNode.type != ExpressionNode.CONSTANT) {
+            return false;  // Reject bind variables, columns, etc.
+        }
         CharSequence unitToken = unitNode.token;
+        if (unitToken == null || unitToken.length() == 0) {
+            return false;  // Reject empty tokens
+        }
         char unit;
-        if (unitToken.length() >= 2 && unitToken.charAt(0) == '\'') {
+        int len = unitToken.length();
+        if (len == 3 && unitToken.charAt(0) == '\'' && unitToken.charAt(2) == '\'') {
+            // Quoted single char: 'h'
             unit = unitToken.charAt(1);
-        } else {
+        } else if (len == 1) {
+            // Unquoted single char: h
             unit = unitToken.charAt(0);
+        } else {
+            // Reject multi-char tokens like 'ms', ':v', etc.
+            return false;
         }
 
         // Parse offset value

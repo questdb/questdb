@@ -3620,7 +3620,7 @@ public class SqlOptimiser implements Mutable {
             timestampSourceModel = nested;
         }
         // Keep traversing until we find a model with timestamp info
-        while (timestampSourceModel != null && !hasTimestampInfo(timestampSourceModel)) {
+        while (timestampSourceModel != null && lacksTimestampInfo(timestampSourceModel)) {
             timestampSourceModel = timestampSourceModel.getNestedModel();
         }
         if (timestampSourceModel == null) {
@@ -3764,7 +3764,7 @@ public class SqlOptimiser implements Mutable {
             timestampSourceModel = nested;
         }
         // Keep traversing until we find a model with timestamp info
-        while (timestampSourceModel != null && !hasTimestampInfo(timestampSourceModel)) {
+        while (timestampSourceModel != null && lacksTimestampInfo(timestampSourceModel)) {
             timestampSourceModel = timestampSourceModel.getNestedModel();
         }
 
@@ -3814,16 +3814,16 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Checks if the model has any timestamp information that can be used for offset detection.
-     * This includes designated timestamp, timestampColumnIndex, or timestampOffsetAlias.
+     * Checks if the model lacks timestamp information needed for offset detection.
+     * Returns true if none of: designated timestamp, timestampColumnIndex, or timestampOffsetAlias are set.
      */
-    private boolean hasTimestampInfo(QueryModel model) {
+    private boolean lacksTimestampInfo(QueryModel model) {
         if (model == null) {
-            return false;
+            return true;
         }
-        return model.getTimestamp() != null
-                || model.getTimestampColumnIndex() >= 0
-                || model.getTimestampOffsetAlias() != null;
+        return model.getTimestamp() == null
+                && model.getTimestampColumnIndex() < 0
+                && model.getTimestampOffsetAlias() == null;
     }
 
     /**
@@ -4055,13 +4055,31 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Checks if a token matches a column name, handling qualified names.
+     * "ts" matches "ts", and "v.ts" also matches "ts" (suffix after last dot).
+     */
+    private boolean matchesColumnName(CharSequence token, CharSequence columnName) {
+        if (Chars.equalsIgnoreCase(token, columnName)) {
+            return true;
+        }
+        // Check if token is qualified (contains a dot) and the suffix matches
+        int dotIndex = Chars.lastIndexOf(token, 0, token.length(), '.');
+        if (dotIndex >= 0 && dotIndex < token.length() - 1) {
+            CharSequence suffix = token.subSequence(dotIndex + 1, token.length());
+            return Chars.equalsIgnoreCase(suffix, columnName);
+        }
+        return false;
+    }
+
+    /**
      * Checks if the given expression references a specific column name.
+     * Handles both simple names ("ts") and qualified names ("v.ts").
      */
     private boolean referencesColumn(ExpressionNode node, CharSequence columnName) {
         if (node == null) {
             return false;
         }
-        if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, columnName)) {
+        if (node.type == LITERAL && matchesColumnName(node.token, columnName)) {
             return true;
         }
         // Check children
@@ -4080,13 +4098,14 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Recursively rewrites all column references from one name to another.
+     * Handles both simple names ("ts") and qualified names ("v.ts").
      */
     private void rewriteColumnReferences(ExpressionNode node, CharSequence from, CharSequence to) {
         if (node == null) {
             return;
         }
-        if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, from)) {
-            node.token = to;
+        if (node.type == LITERAL && matchesColumnName(node.token, from)) {
+            node.token = rewriteColumnToken(node.token, to);
         }
         if (node.paramCount < 3) {
             rewriteColumnReferences(node.lhs, from, to);
@@ -4096,6 +4115,25 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = args.size(); i < n; i++) {
                 rewriteColumnReferences(args.getQuick(i), from, to);
             }
+        }
+    }
+
+    /**
+     * Rewrites a column token to a new name, preserving any table prefix.
+     * "ts" -> "timestamp", "v.ts" -> "v.timestamp"
+     */
+    private CharSequence rewriteColumnToken(CharSequence token, CharSequence to) {
+        int dotIndex = Chars.lastIndexOf(token, 0, token.length(), '.');
+        if (dotIndex >= 0 && dotIndex < token.length() - 1) {
+            // Qualified name: preserve prefix and replace suffix
+            CharSequence prefix = token.subSequence(0, dotIndex + 1);
+            CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(prefix);
+            entry.put(to);
+            return entry.toImmutable();
+        } else {
+            // Simple name: just replace
+            return to;
         }
     }
 

@@ -574,6 +574,93 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQualifiedColumnNamePushdown() throws Exception {
+        // Test that qualified column names like "v.ts" are correctly matched and rewritten
+        // for timestamp predicate pushdown
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-01T02:30:00.000000Z');");
+
+            // Use explicit table alias with qualified column reference
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, timestamp) as ts, price FROM trades
+                    ) v WHERE v.ts IN '2022'
+                    """;
+
+            // Plan should show interval pushdown even with qualified column name v.ts
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            VirtualRecord
+                              functions: [dateadd('h',-1,timestamp),price]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
+                            """
+            );
+
+            // Verify correct data
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice
+                            2022-01-01T00:30:00.000000Z\t100.0
+                            2022-01-01T01:30:00.000000Z\t150.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testQuotedColumnNamePushdown() throws Exception {
+        // Test that quoted column names like "ts" are correctly matched for pushdown
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-01T02:30:00.000000Z');");
+
+            // Use quoted column reference in WHERE clause
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, timestamp) as ts, price FROM trades
+                    ) WHERE "ts" IN '2022'
+                    """;
+
+            // Plan should show interval pushdown even with quoted column name
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            VirtualRecord
+                              functions: [dateadd('h',-1,timestamp),price]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
+                            """
+            );
+
+            // Verify correct data
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice
+                            2022-01-01T00:30:00.000000Z\t100.0
+                            2022-01-01T01:30:00.000000Z\t150.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testSecondOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");

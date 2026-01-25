@@ -9201,7 +9201,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 // Also verify data is correct
                 Record record = cursor.getRecord();
                 Assert.assertTrue(cursor.hasNext());
-                // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642247200000000 microseconds
+                // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642244400000000 microseconds
                 Assert.assertEquals(100.0, record.getDouble(1), 0.001);
             }
         });
